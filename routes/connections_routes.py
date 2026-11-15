@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template
+from flask import Blueprint, render_template, request, redirect, url_for
 import requests
 import os
 import threading
@@ -601,6 +601,14 @@ def check_climount_connection():
         return {'name': 'Usenet Provider', 'connected': False, 'error': str(e), 'details': {}}
 
 
+def _indexer_usage_line(scraper_id):
+    try:
+        from usenet.indexer_quota import usage_line
+        return usage_line(scraper_id)
+    except Exception:
+        return ''
+
+
 def check_scraper_connection(scraper_id, scraper_config):
     """Check connection to a specific scraper."""
     scraper_type = scraper_config.get('type')
@@ -770,7 +778,8 @@ def check_scraper_connection(scraper_id, scraper_config):
             base_response['details'].update({
                 'url': url,
                 'subscription_expiry_date': scraper_config.get('subscription_expiry_date', ''),
-                'auto_renew': scraper_config.get('auto_renew', False)
+                'auto_renew': scraper_config.get('auto_renew', False),
+                'indexer_usage': _indexer_usage_line(scraper_id),
             })
 
         elif scraper_type == 'AIOStreams':
@@ -975,7 +984,7 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
 
                 api_key = (get_setting('MDBList', 'api_key', '') or '').strip()
                 if not api_key:
-                    base_response['error'] = 'MDBList API key not configured (Additional Settings -> MDBList)'
+                    base_response['error'] = 'MDBList API key not configured (Settings -> Tracking accounts -> MDBList)'
                     base_response['connected'] = False
                     return base_response
 
@@ -1237,7 +1246,7 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
             tmdb_api_key = get_setting('TMDB', 'api_key', '').strip()
 
             if not tmdb_api_key:
-                base_response['error'] = 'TMDB API key not configured in Additional Settings'
+                base_response['error'] = 'TMDB API key not configured (Settings → UI Settings → Metadata Providers)'
                 base_response['connected'] = False
                 return base_response
 
@@ -1261,13 +1270,34 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
                 base_response['error'] = f'TMDB API error: {str(e)}'
                 base_response['connected'] = False
 
+        # --- Floppy / Simkl sources ---
+        elif source_type in ['Floppy Watchlist', 'Floppy Lists']:
+            from content_checkers.floppy import get_floppy_config, test_connection
+            floppy_config = get_floppy_config()
+            if not floppy_config:
+                base_response['error'] = 'Floppy URL or API key not configured (Settings → Tracking accounts)'
+                base_response['connected'] = False
+                return base_response
+            ok, message = test_connection()
+            base_response['connected'] = ok
+            if ok:
+                base_response['details'].update({'url': floppy_config['base_url']})
+            else:
+                base_response['error'] = message
+        elif source_type == 'Simkl Watchlist':
+            from content_checkers.simkl import auth_status
+            status = auth_status()
+            base_response['connected'] = bool(status.get('signed_in'))
+            if not status.get('signed_in'):
+                base_response['error'] = 'Not signed in to Simkl (Settings → Tracking accounts)'
+
         # --- Scrob Sources (Lists, Collection, Special Lists) ---
         elif source_type in ['Scrob Lists', 'Scrob Collection', 'Special Scrob Lists']:
             from content_checkers.scrob import get_scrob_config, _scrob_get
 
             scrob_config = get_scrob_config()
             if not scrob_config:
-                base_response['error'] = 'Scrob URL or API key not configured in Additional Settings'
+                base_response['error'] = 'Scrob URL or API key not configured (Settings → Tracking accounts)'
                 base_response['connected'] = False
                 return base_response
 
@@ -1557,7 +1587,11 @@ def api_stream_content_sources():
 @connections_bp.route('/')
 @user_required
 def index():
-    """Render the connections status page instantly with skeleton cards."""
+    """Render the connections status page instantly with skeleton cards.
+
+    Shown as a tab of the Performance Dashboard (loaded with ?embed=1)."""
+    if not request.args.get('embed'):
+        return redirect(url_for('performance.performance_dashboard') + '#connections')
     # Build skeleton cards from config using exact SSE name format
     skeleton_scrapers = []
     skeleton_sources = []
@@ -1572,6 +1606,7 @@ def index():
                 if scraper_type == 'Newznab':
                     details['subscription_expiry_date'] = scfg.get('subscription_expiry_date', '')
                     details['auto_renew'] = scfg.get('auto_renew', False)
+                    details['indexer_usage'] = _indexer_usage_line(sid)
                 skeleton_scrapers.append({'name': name, 'connected': None, 'details': details})
         for sid, scfg in _cfg.get('Content Sources', {}).items():
             if scfg.get('enabled', False) and scfg.get('type') != 'Collected':

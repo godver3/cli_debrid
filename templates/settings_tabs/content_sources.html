@@ -7,8 +7,8 @@
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                 </svg>
         <div class="info-banner-content">
-            <strong>Note:</strong> To enable or disable content sources, please use the <a href="/program_operation/task_timings" class="info-link">Task Manager page</a>.
-            The Task Manager allows you to control which content sources are active and their processing intervals.
+            <strong>Note:</strong> To enable or disable content sources, please use the <a href="/program_operation/automation" class="info-link">Automation page</a>.
+            It controls which content sources are active and how often each one is checked.
         </div>
     </div>
 
@@ -268,48 +268,139 @@
         }
     }
 
+    // Add Source picker: cards grouped by what each source does, with what it needs.
+    const SOURCE_CATALOG = [
+        { group: 'Watchlists', items: [
+            ['My Plex Watchlist', 'Everything on your own Plex watchlist.', 'Your Plex token (Required settings)'],
+            ['Other Plex Watchlist', 'The watchlist of another plex.tv account or Plex Home profile.', 'That account\'s username and token'],
+            ['Plex Friends Watchlist', 'Watchlists of your Plex friends (all, or the ones you name).', 'Your Plex token; friends must share their watchlist'],
+            ['My Plex RSS Watchlist', 'Your Plex watchlist through its RSS feed.', 'RSS URL. Only the 25 newest items, up to ~48h late'],
+            ['My Friends Plex RSS Watchlist', 'Your friends\' Plex watchlists through their RSS feed.', 'RSS URL. Only the 25 newest items, up to ~48h late'],
+            ['Trakt Watchlist', 'Everything on your Trakt watchlist.', 'Trakt sign-in (Additional settings)'],
+            ['Friends Trakt Watchlist', 'A friend\'s Trakt watchlist.', 'The friend signs in on the Trakt Friends page first'],
+            ['Simkl Watchlist', 'Your Simkl Plan to Watch list (movies, shows and anime); other statuses optional.', 'Simkl sign-in (Additional settings)'],
+            ['Floppy Watchlist', 'Movies and shows you track in Floppy with the chosen statuses (Planning = watchlist).', 'Floppy URL and API key (Additional settings)'],
+        ]},
+        { group: 'Lists', items: [
+            ['MDBList', 'Any MDBList list, or a compatible JSON list URL.', 'List URL, or an MDBList API key for API mode'],
+            ['Trakt Lists', 'Your own or public Trakt lists, by URL.', 'Trakt sign-in (Additional settings)'],
+            ['Scrob Lists', 'Lists on your Scrob server, by list ID.', 'Scrob URL and API key (Additional settings)'],
+            ['Floppy Lists', 'Custom lists on your Floppy server, by list ID.', 'Floppy URL and API key (Additional settings)'],
+            ['Special Trakt Lists', 'Trakt charts: Trending, Popular, Anticipated, Box Office and more.', 'Trakt sign-in (Additional settings)'],
+            ['Special Scrob Lists', 'Scrob charts: Trending, Top Rated, Upcoming, For You and more.', 'Scrob URL and API key (Additional settings)'],
+            ['Adaptive List', 'TMDB filters (genre, year, rating...) whose results change over time. Built and edited on Discover.', 'TMDB API key'],
+        ]},
+        { group: 'Collections', items: [
+            ['Collected', 'Shows already in your library: new and missing episodes are added as they air.', 'Nothing'],
+            ['Trakt Collection', 'Everything in your Trakt collection.', 'Trakt sign-in (Additional settings)'],
+            ['Scrob Collection', 'Everything in your Scrob collection.', 'Scrob URL and API key (Additional settings)'],
+        ]},
+        { group: 'Requests', items: [
+            ['Overseerr', 'Approved requests from Seerr (Overseerr / Jellyseerr).', 'Seerr URL and API key'],
+            ['Agregarr', 'Agregarr sends its requests to cli_debrid as if it were Overseerr.', 'Point Agregarr at this cli_debrid'],
+        ]},
+    ];
+    const SOURCE_LABELS = { 'Overseerr': 'Seerr', 'MDBList': 'MDBList' };
+
     function showAddSourcePopup() {
         fetch('/settings/content-sources/types')
             .then(response => response.json())
-            .then(data => {
-                const sourceTypes = data.source_types;
-                const dropdownOptions = sourceTypes.map(type => ({
-                    value: type,
-                    text: type === 'MDBList' ? 'MDBList (JSON list URL or API)' :
-                          type === 'Overseerr' ? 'Seerr' : type
-                }));
-
-                window.showPopup({
-                    type: POPUP_TYPES.PROMPT,
-                    title: 'Add New Content Source',
-                    message: 'Select a content source type:',
-                    dropdownOptions: dropdownOptions,
-                    confirmText: 'Add Source',
-                    cancelText: 'Cancel',
-                    onConfirm: (selectedType) => {
-                        if (selectedType === 'Friends Trakt Watchlist') {
-                            showTraktFriendsDropdown();
-                        } else if (selectedType === 'Trakt Lists') {
-                            addContentSource({
-                                type: 'Trakt Lists',
-                                url: '',
-                                versions: {},
-                                media_type: 'All'
-                            });
-                        } else {
-                            addContentSource({
-                                type: selectedType,
-                                display_name: selectedType,
-                                versions: {}
-                            });
-                        }
-                    }
-                });
-            })
+            .then(data => openSourcePicker(data.source_types || []))
             .catch(error => {
                 console.error('Error fetching content source types:', error);
                 window.showPopup({ type: POPUP_TYPES.ERROR, message: 'Error fetching types.' });
             });
+    }
+
+    function openSourcePicker(sourceTypes) {
+        const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        const available = new Set(sourceTypes);
+        const listed = new Set();
+        const groups = SOURCE_CATALOG.map(g => {
+            const items = g.items.filter(([type]) => available.has(type));
+            items.forEach(([type]) => listed.add(type));
+            return { group: g.group, items };
+        }).filter(g => g.items.length);
+        // Types the catalog doesn't describe yet still show up.
+        const other = sourceTypes.filter(t => !listed.has(t)).map(t => [t, '', '']);
+        if (other.length) groups.push({ group: 'Other', items: other });
+
+        document.getElementById('csp-overlay')?.remove();
+        const overlay = document.createElement('div');
+        overlay.id = 'csp-overlay';
+        overlay.className = 'csp-overlay';
+        overlay.innerHTML = `
+            <div class="csp-modal" role="dialog" aria-modal="true" aria-labelledby="csp-title">
+                <div class="csp-head">
+                    <div>
+                        <h3 id="csp-title">Add a content source</h3>
+                        <p>Content sources tell cli_debrid what to get. Pick one; you set it up on the next screen.</p>
+                    </div>
+                    <button type="button" class="csp-close" aria-label="Close">&times;</button>
+                </div>
+                <input type="search" class="csp-search" placeholder="Search sources..." aria-label="Search sources">
+                <div class="csp-body">
+                    ${groups.map(g => `
+                        <div class="csp-group" data-group="${esc(g.group)}">
+                            <div class="csp-group-title">${esc(g.group)}</div>
+                            <div class="csp-grid">
+                                ${g.items.map(([type, desc, needs]) => `
+                                    <button type="button" class="csp-card" data-type="${esc(type)}">
+                                        <span class="csp-name">${esc(SOURCE_LABELS[type] || type)}</span>
+                                        ${desc ? `<span class="csp-desc">${esc(desc)}</span>` : ''}
+                                        ${needs ? `<span class="csp-needs">Needs: ${esc(needs)}</span>` : ''}
+                                    </button>`).join('')}
+                            </div>
+                        </div>`).join('')}
+                    <div class="csp-empty" hidden>No source matches.</div>
+                </div>
+            </div>`;
+        document.body.appendChild(overlay);
+
+        const close = () => { overlay.remove(); document.removeEventListener('keydown', onKey); };
+        const onKey = e => { if (e.key === 'Escape') close(); };
+        document.addEventListener('keydown', onKey);
+        overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+        overlay.querySelector('.csp-close').addEventListener('click', close);
+        overlay.querySelectorAll('.csp-card').forEach(card => card.addEventListener('click', () => {
+            close();
+            addSourceOfType(card.dataset.type);
+        }));
+        const search = overlay.querySelector('.csp-search');
+        search.addEventListener('input', () => {
+            const q = search.value.trim().toLowerCase();
+            let shown = 0;
+            overlay.querySelectorAll('.csp-group').forEach(g => {
+                let any = false;
+                g.querySelectorAll('.csp-card').forEach(c => {
+                    const hit = !q || c.textContent.toLowerCase().includes(q);
+                    c.hidden = !hit;
+                    if (hit) { any = true; shown++; }
+                });
+                g.hidden = !any;
+            });
+            overlay.querySelector('.csp-empty').hidden = shown > 0;
+        });
+        setTimeout(() => search.focus(), 0);
+    }
+
+    function addSourceOfType(selectedType) {
+        if (selectedType === 'Friends Trakt Watchlist') {
+            showTraktFriendsDropdown();
+        } else if (selectedType === 'Trakt Lists') {
+            addContentSource({
+                type: 'Trakt Lists',
+                url: '',
+                versions: {},
+                media_type: 'All'
+            });
+        } else {
+            addContentSource({
+                type: selectedType,
+                display_name: selectedType,
+                versions: {}
+            });
+        }
     }
 
     function showTraktFriendsDropdown() {
@@ -904,7 +995,7 @@
                     const opt = document.createElement('option');
                     opt.value = '';
                     opt.disabled = true;
-                    opt.textContent = 'No Scrob lists found (check URL/API Key in Additional Settings → Scrob)';
+                    opt.textContent = 'No Scrob lists found (check URL/API Key in Settings → Tracking accounts → Scrob)';
                     select.appendChild(opt);
                     return;
                 }
@@ -1295,6 +1386,62 @@
 </script>
 
 <style>
+/* Add Source picker */
+.csp-overlay {
+    position: fixed; inset: 0; z-index: 10000;
+    background: rgba(0, 0, 0, .65);
+    display: flex; align-items: center; justify-content: center;
+    padding: 16px;
+}
+.csp-modal {
+    width: min(860px, 100%); max-height: calc(100vh - 32px);
+    display: flex; flex-direction: column;
+    background: var(--st-surf, #1a1a1a);
+    border: 1px solid var(--st-border, #2d2d2d);
+    border-radius: 10px;
+    box-shadow: 0 16px 48px #000a;
+    overflow: hidden;
+}
+.csp-head { display: flex; gap: 12px; align-items: flex-start; padding: 16px 18px 10px; }
+.csp-head h3 { margin: 0 0 4px; font-size: 16px; color: var(--st-text, #e0e0e0); }
+.csp-head p { margin: 0; font-size: 12px; color: var(--st-text2, #aaa); }
+.csp-close {
+    margin-left: auto; background: none; border: none; cursor: pointer;
+    color: var(--st-text2, #aaa); font-size: 22px; line-height: 1; padding: 0 4px;
+}
+.csp-close:hover { color: var(--st-text, #e0e0e0); }
+.csp-search {
+    margin: 0 18px 10px; padding: 8px 10px;
+    background: var(--st-bg, #111); color: var(--st-text, #e0e0e0);
+    border: 1px solid var(--st-border, #2d2d2d); border-radius: 6px; font-size: 13px;
+}
+.csp-search:focus { outline: none; border-color: var(--st-accent, #e8601c); }
+.csp-body { overflow-y: auto; padding: 0 18px 18px; }
+.csp-group { margin-top: 10px; }
+.csp-group-title {
+    font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--st-text3, #777); margin-bottom: 6px;
+}
+.csp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; }
+.csp-card {
+    display: flex; flex-direction: column; gap: 4px; text-align: left;
+    padding: 10px 12px; cursor: pointer;
+    background: var(--st-surf2, #222); color: var(--st-text, #e0e0e0);
+    border: 1px solid var(--st-border, #2d2d2d); border-radius: 8px;
+    transition: border-color .12s, background .12s;
+}
+.csp-card:hover, .csp-card:focus-visible {
+    border-color: var(--st-accent, #e8601c); background: #e8601c14; outline: none;
+}
+.csp-card[hidden], .csp-group[hidden] { display: none; }
+.csp-name { font-size: 13px; font-weight: 600; }
+.csp-desc { font-size: 12px; color: var(--st-text2, #aaa); line-height: 1.4; }
+.csp-needs { font-size: 11px; color: var(--st-text3, #777); line-height: 1.35; }
+.csp-empty { padding: 20px 0; text-align: center; color: var(--st-text3, #777); font-size: 13px; }
+@media (max-width: 600px) {
+    .csp-grid { grid-template-columns: 1fr; }
+    .csp-overlay { padding: 8px; }
+}
     .cs-tags-pill-input{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-height:38px;padding:6px 10px;background:#1a1a1a;border:1px solid #444;border-radius:6px;cursor:text;}
     .cs-tag-pill{display:inline-flex;align-items:center;gap:4px;background:#e8651a;color:#fff;border-radius:12px;padding:2px 10px;font-size:12px;}
     .cs-tag-pill button{background:none;border:none;color:#fff;cursor:pointer;padding:0;font-size:14px;line-height:1;opacity:.8;}.cs-tag-pill button:hover{opacity:1;}
@@ -1575,6 +1722,8 @@
                             </label>
                             <p class="settings-description">Allow TV show specials (Season 0) to be added from this source.</p>
                         </div>
+
+                        {% include 'settings_tabs/_source_collected_options.html' %}
 
                         {# Unblacklist on Source Run #}
                         {% set key = 'unblacklist_on_source_run' %}
@@ -1983,6 +2132,8 @@
                            </div>
                         {% endif %}
 
+                        {% include 'settings_tabs/_source_collected_options.html' %}
+
                         {# Unblacklist on Source Run #}
                         {% set key = 'unblacklist_on_source_run' %}
                         {% set value = config.get(key, False) %}
@@ -2097,7 +2248,7 @@
                         {% for key, value in config.items() %}
                             {# Skip standard 'type' field and any empty/invalid keys #}
                             {% if key and key != 'type' %}
-                                {% set _skip = key in ['enabled', 'plex_labels', 'label_mode', 'fixed_label', 'label_template', 'allow_specials', 'unblacklist_on_source_run', 'plex_collection', 'allowed_requesters', 'seasons_per_show', 'season_grab_order', 'tags', 'tags_exclusive'] or (key == 'ignore_tags' and config.type == 'Overseerr') or (config.type == 'MDBList' and key in ['source_mode', 'urls', 'username', 'listname', 'list_id']) %}
+                                {% set _skip = key in ['enabled', 'plex_labels', 'label_mode', 'fixed_label', 'label_template', 'allow_specials', 'unblacklist_on_source_run', 'remove_when_collected', 'keep_series', 'allow_partial_requests', 'plex_collection', 'allowed_requesters', 'seasons_per_show', 'season_grab_order', 'tags', 'tags_exclusive'] or (key == 'ignore_tags' and config.type == 'Overseerr') or (config.type == 'MDBList' and key in ['source_mode', 'urls', 'username', 'listname', 'list_id']) %}
                                 {% if not _skip %}
                                 <div class="settings-form-group">
                                     {% if key == 'versions' %}
@@ -2151,7 +2302,7 @@
                                                 value="{{ value }}"
                                                 data-section="Content Sources"
                                                 data-key="{{ source_id }}.scrob_list_ids">
-                                         <p class="settings-description">Select one or more of your Scrob lists. Requires Scrob URL/API Key to be configured under Additional Settings → Scrob.</p>
+                                         <p class="settings-description">Select one or more of your Scrob lists. Requires Scrob URL/API Key to be configured under Settings → Tracking accounts → Scrob.</p>
                                     {% elif key == 'trakt_lists' and config.type == 'Trakt Lists' %}
                                          {# ... trakt_lists rendering ... #}
                                          <label for="content-sources-{{ source_id }}-trakt_lists" class="settings-title">Trakt List URL(s):</label>
@@ -2390,6 +2541,8 @@
                                  {% endif %}
                              </div>
                          {% endif %}
+
+                        {% include 'settings_tabs/_source_collected_options.html' %}
 
                         {# Unblacklist on Source Run #}
                         {% set key = 'unblacklist_on_source_run' %}

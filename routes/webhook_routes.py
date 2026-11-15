@@ -76,9 +76,8 @@ def webhook():
                             logging.info(f"Parsed requested_seasons from webhook: {requested_seasons}")
                     except ValueError as e:
                         logging.error(f"Error parsing season information from webhook: {str(e)}")
-            # The previous 'allow_partial_overseerr_requests' setting conditional logic is removed from here.
-            # Downstream functions (like process_overseerr_webhook in run_program.py and subsequently process_metadata)
-            # will determine if these parsed requested_seasons are ultimately used.
+            # Whether these requested_seasons are honoured is decided downstream, per
+            # content source (its allow_partial_overseerr_requests option).
 
         # Mark this request as coming from Overseerr
         if data.get('media'):

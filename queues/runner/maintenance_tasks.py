@@ -13,9 +13,6 @@ import uuid
 import ntplib
 from utilities.log_redaction import RedactingFormatter
 from utilities.settings import get_setting
-from debrid import ProviderUnavailableError
-import asyncio
-from debrid import get_debrid_provider
 
 
 class MaintenanceTasks:
@@ -38,17 +35,6 @@ class MaintenanceTasks:
     def task_reset_trakt_auth(self):
         from utilities.trakt_auth_cleanup import reset_trakt_auth
         reset_trakt_auth()
-
-    def task_debug_log(self):
-        current_time = time.time()
-        debug_info = []
-        for task, interval in self.task_intervals.items():
-            time_until_next_run = interval - (current_time - self.last_run_times[task])
-            minutes, seconds = divmod(int(time_until_next_run), 60)
-            hours, minutes = divmod(minutes, 60)
-            debug_info.append(f"{task}: {hours:02d}:{minutes:02d}:{seconds:02d}")
-
-        logging.info("Time until next task run:\n" + "\n".join(debug_info))
 
     def task_send_notifications(self):
         db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content/')
@@ -940,30 +926,14 @@ class MaintenanceTasks:
 
     # Modified task for library size cache refresh (now fully synchronous structure)
     def task_refresh_library_size_cache(self):
-        """Scheduled task to refresh the Debrid library size cache."""
-        logging.info("Initiating scheduled library size cache refresh task.")
+        """Scheduled task to refresh the debrid library size cache (every provider)."""
         try:
-            provider = get_debrid_provider()
-            # Use provider capability or method presence instead of concrete type
-            if hasattr(provider, 'get_total_library_size'):
-                logging.info("Background task: Refreshing library size cache via Debrid provider...")
-                # The provider's get_total_library_size is async, so we run it in a new event loop.
-                # This call is expected to fetch the size and update the cache file itself.
-                calculated_size = asyncio.run(provider.get_total_library_size())
-                if calculated_size is not None and not str(calculated_size).startswith("Error"):
-                    logging.info(f"Background task: Library size cache refresh successful. Provider reported size: {calculated_size}")
-                else:
-                    logging.warning(f"Background task: Library size cache refresh via provider failed or returned error. Result: {calculated_size}")
-            else:
-                logging.info("Background task: Library size cache refresh skipped (provider does not implement total size API or not configured).")
-        except ProviderUnavailableError:
-            logging.warning("Background task: Debrid provider unavailable during library size cache refresh.")
-        except RuntimeError as e_runtime:
-            # This might happen if asyncio.run() is called from an already running loop,
-            # though less likely with BackgroundScheduler's default thread-based execution.
-             logging.error(f"Background task: Runtime error during library size cache refresh: {e_runtime}", exc_info=True)
+            from database.statistics import refresh_debrid_library_size
+            size = refresh_debrid_library_size()
+            if size is None:
+                logging.info("Library size cache not refreshed (no debrid provider, or one didn't answer).")
         except Exception as e:
-            logging.error(f"Background task: General error during library size cache refresh: {e}", exc_info=True)
+            logging.error(f"Background task: error during library size cache refresh: {e}", exc_info=True)
 
     def task_upgrade_hub_scan(self):
         """Scheduled nightly scan for better-quality releases via Zilean."""

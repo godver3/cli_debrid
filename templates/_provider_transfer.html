@@ -1,7 +1,7 @@
-{# Migrate between usenet providers (Debug -> Library). Self-contained: prefills
+{# Migrate between usenet providers (Tools -> Usenet). Self-contained: prefills
    from /program_operation/api/provider_transfer/config; no Jinja `settings`
    dependency (the debug template doesn't pass it). #}
-<div class="debug_item" id="provider-transfer">
+<div class="debug_item" id="provider-transfer" data-cat="usenet">
   <h3>Migrate between usenet providers</h3>
   <p class="description">Moves the stored <code>.nzb</code> of each item from one usenet backend to the other; the target re-fetches it from usenet. No re-search, categories preserved where the source exposes them. cli-debrid runs in a container, so it reads NzbDAV over HTTP and cli_mount from a mounted path (no Docker needed).</p>
 

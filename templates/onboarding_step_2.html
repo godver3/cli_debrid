@@ -38,13 +38,13 @@
             </div>
 
             <div id="panel-usenet" style="display:none;">
-                <label for="usenet_backend" class="onboarding-label">Usenet Provider:</label>
+                <label for="usenet_backend" class="onboarding-label">Usenet Mount:</label>
                 <select id="usenet_backend" name="usenet_backend" class="onboarding-input">
                     <option value="climount" {% if usenet_backend == 'climount' %}selected{% endif %}>cli_mount (recommended)</option>
                     <option value="nzbdav" {% if usenet_backend == 'nzbdav' %}selected{% endif %}>NzbDAV</option>
                     <option value="zurg" {% if usenet_backend == 'zurg' %}selected{% endif %}>Zurg 2.0</option>
                 </select>
-                <label for="usenet_url" class="onboarding-label">URL:</label>
+                <label for="usenet_url" class="onboarding-label">Mount URL: <button type="button" id="usenet-detect-btn" style="margin-left:6px;font-size:11px;padding:2px 8px;border-radius:4px;border:1px solid #555;background:#222;color:#ddd;cursor:pointer">Detect</button> <span id="usenet-detect-status" style="font-size:11px;color:#999"></span></label>
                 <div class="settings-description" id="usenet-url-hint"></div>
                 <input type="text" id="usenet_url" name="usenet_url" class="onboarding-input" value="{{ settings.get('Usenet Provider', {}).get('url', '') }}">
                 <label for="usenet_api_token" class="onboarding-label" id="usenet-token-label">API Token:</label>
@@ -1194,7 +1194,28 @@ function checkTraktAuthStatus() {
 </script>
 
 {% include 'onboarding_navigation.html' with context %}
+<script>
+(function () {
+  // Look for the usenet mount and fill Mount URL when it is empty and one match is found.
+  const btn = document.getElementById('usenet-detect-btn');
+  if (!btn) return;
+  const status = document.getElementById('usenet-detect-status');
+  async function detect() {
+    const url = document.getElementById('usenet_url');
+    status.textContent = 'Looking…';
+    try {
+      const r = await fetch('/settings_validation/usenet-mount-detect', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: document.getElementById('usenet_backend').value, url: url.value,
+                               token: (document.getElementById('usenet_api_token') || {}).value || '' }) });
+      const j = await r.json();
+      const urls = (j.urls || []).map(u => u.url);
+      if (!urls.length) { status.textContent = 'Nothing found — enter it yourself.'; return; }
+      if (!url.value.trim() && urls.length === 1) url.value = urls[0];
+      status.textContent = urls.length === 1 ? 'Found ' + urls[0] : 'Found: ' + urls.join(', ');
+    } catch (e) { status.textContent = 'Detect failed'; }
+  }
+  btn.addEventListener('click', detect);
+  document.getElementById('usenet_backend').addEventListener('change', detect);
+})();
+</script>
 {% endblock %}
-
-
-

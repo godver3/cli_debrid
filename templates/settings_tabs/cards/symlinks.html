@@ -1,0 +1,220 @@
+{# Settings card; rendered from a settings page in templates/settings_tabs/page_*.html #}
+<!-- Symlink Settings Section -->
+<div class="settings-section settings-card">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Symlink Settings</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        <div class="settings-form-group">
+            <p class="settings-info-text">
+                <i class="fas fa-info-circle"></i> If you change any symlink settings (templates, folder names, organization options), please use the "Resync Symlinks with New Settings" function on the <strong>Debug</strong> page to update your existing symlink structure.
+            </p>
+            <label for="additional-symlink_movie_template" class="settings-title">Symlink Movie Template:</label>
+            <input type="text" id="additional-symlink_movie_template" name="Debug.symlink_movie_template"
+                   value="{{ settings.get('Debug', {}).get('symlink_movie_template', '{title} ({year})/{title} ({year}) - {imdb_id} - {version} - ({original_filename})') }}" 
+                   class="settings-input"
+                   data-section="Debug" data-key="symlink_movie_template">
+            <div id="symlink_movie_template_imdb_warning" class="settings-warning-text"></div>
+            <p class="settings-description">Template for movie symlink filenames</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="additional-symlink_episode_template" class="settings-title">Symlink Episode Template:</label>
+            <input type="text" id="additional-symlink_episode_template" name="Debug.symlink_episode_template"
+                   value="{{ settings.get('Debug', {}).get('symlink_episode_template', '{title} ({year})/Season {season_number:02d}/{title} ({year}) - S{season_number:02d}E{episode_number:02d} - {episode_title} - {imdb_id} - {version} - ({original_filename})') }}" 
+                   class="settings-input"
+                   data-section="Debug" data-key="symlink_episode_template">
+            <div id="symlink_episode_template_imdb_warning" class="settings-warning-text"></div>
+            <p class="settings-description">Template for episode symlink filenames</p>
+        </div>
+
+        <!-- Template Tags Reference -->
+        <div class="settings-form-group" style="margin-top: 20px; padding: 15px; background-color: #252525; border-radius: 4px; border-left: 4px solid #4CAF50;">
+            <h5 class="settings-title" style="margin-bottom: 10px; color: #4CAF50;">Supported Template Tags:</h5>
+            
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 15px;">
+                <div>
+                    <h6 style="color: #ddd; margin-bottom: 8px; font-size: 0.95em;">Common Tags (Movies & Episodes):</h6>
+                    <ul style="list-style: none; padding: 0; margin: 0; font-size: 0.85em; line-height: 1.4;">
+                        <li><code style="color: #7fddff;">{title}</code> - Movie/show title</li>
+                        <li><code style="color: #7fddff;">{year}</code> - Release year</li>
+                        <li><code style="color: #7fddff;">{imdb_id}</code> - IMDb ID (recommended)</li>
+                        <li><code style="color: #7fddff;">{tmdb_id}</code> - TMDb ID</li>
+                        <li><code style="color: #7fddff;">{version}</code> - Quality/version info</li>
+                        <li><code style="color: #7fddff;">{original_filename}</code> - Original filename (no ext)</li>
+                        <li><code style="color: #7fddff;">{content_source}</code> - Content source</li>
+                        <li><code style="color: #7fddff;">{resolution}</code> - Video resolution</li>
+                    </ul>
+                </div>
+                
+                <div>
+                    <h6 style="color: #ddd; margin-bottom: 8px; font-size: 0.95em;">Episode-Only Tags:</h6>
+                    <ul style="list-style: none; padding: 0; margin: 0; font-size: 0.85em; line-height: 1.4;">
+                        <li><code style="color: #7fddff;">{season_number}</code> - Season number</li>
+                        <li><code style="color: #7fddff;">{episode_number}</code> - Episode number</li>
+                        <li><code style="color: #7fddff;">{episode_title}</code> - Episode title</li>
+                        <li><code style="color: #7fddff;">{season_year}</code> - Year season first aired</li>
+                    </ul>
+                    
+                    <h6 style="color: #ddd; margin: 12px 0 8px 0; font-size: 0.95em;">Number Formatting:</h6>
+                    <ul style="list-style: none; padding: 0; margin: 0; font-size: 0.85em; line-height: 1.4;">
+                        <li><code style="color: #7fddff;">{season_number:02d}</code> - Zero-padded (01, 02)</li>
+                        <li><code style="color: #7fddff;">{episode_number:02d}</code> - Zero-padded (01, 02)</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <p class="settings-description" style="margin: 0; font-size: 0.85em; color: #aaa;">
+                <i class="fas fa-info-circle" style="margin-right: 5px;"></i>
+                <strong>Important:</strong> Including <code>{imdb_id}</code> in templates is highly recommended for symlink recovery and media server integration.
+            </p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-symlink_organize_by_resolution" class="settings-title">Organize By Resolution:</label>
+            <input type="checkbox" id="additional-symlink_organize_by_resolution" name="File Management.symlink_organize_by_resolution"
+                   data-section="File Management" data-key="symlink_organize_by_resolution"
+                   {% if settings.get('File Management', {}).get('symlink_organize_by_resolution') %}checked{% endif %}>
+            <p class="settings-description">Organize symlinked files by resolution (e.g., 1080p, 2160p) before media type folders</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="additional-symlink_organize_by_version" class="settings-title">Organize By Version:</label>
+            <input type="checkbox" id="additional-symlink_organize_by_version" name="File Management.symlink_organize_by_version"
+                   data-section="File Management" data-key="symlink_organize_by_version"
+                   {% if settings.get('File Management', {}).get('symlink_organize_by_version') %}checked{% endif %}>
+            <p class="settings-description">Organize symlinked files by version (e.g., Remux, WEB-DL) before media type folders. This is a new setting that will be used by symlink_folder_order.</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="symlink-folder-order-list" class="settings-title">Symlink Folder Order:</label>
+            <p class="settings-description" style="margin-bottom: 5px;">
+                Drag and drop to customize the order of organizational folders (e.g., Version, Resolution, Content Type).
+                The individual "Organize By X" toggles still control if a specific folder component is actually included in the path.
+            </p>
+            <ul id="symlink-folder-order-list" class="content-source-list">
+                <!-- Draggable items will be populated by JavaScript -->
+            </ul>
+            <input type="hidden" id="symlink_folder_order_input" name="File Management.symlink_folder_order"
+                   value="{{ settings.get('File Management', {}).get('symlink_folder_order', 'type,version,resolution') }}"
+                   data-section="File Management" data-key="symlink_folder_order">
+            <p class="settings-description" style="margin-top: 5px;">
+                Current order (saved): {{ settings.get('File Management', {}).get('symlink_folder_order', 'type,version,resolution') }}
+            </p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-enable_separate_anime_folders" class="settings-title">Enable Separate Anime Folders:</label>
+            <input type="checkbox" id="additional-enable_separate_anime_folders" name="Debug.enable_separate_anime_folders"
+                   data-section="Debug" data-key="enable_separate_anime_folders"
+                   {% if settings.get('Debug', {}).get('enable_separate_anime_folders') %}checked{% endif %}>
+            <p class="settings-description">Enable separate folders for anime content</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-enable_separate_documentary_folders" class="settings-title">Enable Separate Documentary Folders:</label>
+            <input type="checkbox" id="additional-enable_separate_documentary_folders" name="Debug.enable_separate_documentary_folders"
+                   data-section="Debug" data-key="enable_separate_documentary_folders"
+                   {% if settings.get('Debug', {}).get('enable_separate_documentary_folders') %}checked{% endif %}>
+            <p class="settings-description">Enable separate folders for documentary content</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-movies_folder_name" class="settings-title">Movies Folder Name:</label>
+            <input type="text" id="additional-movies_folder_name" name="Debug.movies_folder_name"
+                   value="{{ settings.get('Debug', {}).get('movies_folder_name', 'Movies') }}" 
+                   class="settings-input"
+                   data-section="Debug" data-key="movies_folder_name">
+            <p class="settings-description">Name of the movies folder</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-tv_shows_folder_name" class="settings-title">TV Shows Folder Name:</label>
+            <input type="text" id="additional-tv_shows_folder_name" name="Debug.tv_shows_folder_name"
+                   value="{{ settings.get('Debug', {}).get('tv_shows_folder_name', 'TV Shows') }}" 
+                   class="settings-input"
+                   data-section="Debug" data-key="tv_shows_folder_name">
+            <p class="settings-description">Name of the TV shows folder</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-anime_movies_folder_name" class="settings-title">Anime Movies Folder Name:</label>
+            <input type="text" id="additional-anime_movies_folder_name" name="Debug.anime_movies_folder_name"
+                   value="{{ settings.get('Debug', {}).get('anime_movies_folder_name', 'Anime Movies') }}" 
+                   class="settings-input"
+                   data-section="Debug" data-key="anime_movies_folder_name">
+            <p class="settings-description">Name of the anime movies folder</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-anime_tv_shows_folder_name" class="settings-title">Anime TV Shows Folder Name:</label>
+            <input type="text" id="additional-anime_tv_shows_folder_name" name="Debug.anime_tv_shows_folder_name"
+                   value="{{ settings.get('Debug', {}).get('anime_tv_shows_folder_name', 'Anime TV Shows') }}" 
+                   class="settings-input"
+                   data-section="Debug" data-key="anime_tv_shows_folder_name">
+            <p class="settings-description">Name of the anime TV shows folder</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-documentary_movies_folder_name" class="settings-title">Documentary Movies Folder Name:</label>
+            <input type="text" id="additional-documentary_movies_folder_name" name="Debug.documentary_movies_folder_name"
+                   value="{{ settings.get('Debug', {}).get('documentary_movies_folder_name', 'Documentary Movies') }}"
+                   class="settings-input"
+                   data-section="Debug" data-key="documentary_movies_folder_name">
+            <p class="settings-description">Name of the documentary movies folder</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-documentary_tv_shows_folder_name" class="settings-title">Documentary TV Shows Folder Name:</label>
+            <input type="text" id="additional-documentary_tv_shows_folder_name" name="Debug.documentary_tv_shows_folder_name"
+                   value="{{ settings.get('Debug', {}).get('documentary_tv_shows_folder_name', 'Documentary TV Shows') }}"
+                   class="settings-input"
+                   data-section="Debug" data-key="documentary_tv_shows_folder_name">
+            <p class="settings-description">Name of the documentary TV shows folder</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-use_symlinks_on_windows" class="settings-title">Use Symlinks on Windows:</label>
+            <input type="checkbox" id="additional-use_symlinks_on_windows" name="Debug.use_symlinks_on_windows"
+                   data-section="Debug" data-key="use_symlinks_on_windows"
+                   {% if settings.get('Debug', {}).get('use_symlinks_on_windows') %}checked{% endif %}>
+            <p class="settings-description">Allow the use of symlinks on Windows. WARNING: Creating symlinks on Windows requires administrator privileges or Developer Mode to be enabled.</p>
+        </div>
+
+        <div class="settings-form-group example-paths-container" style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #444;">
+            <h5 class="settings-title" style="margin-bottom: 10px;">Example Symlink Paths (Based on Current Settings):</h5>
+            
+            <div class="example-path-item">
+                <strong class="example-label">Movie:</strong>
+                <code id="example-movie-path" class="example-path-display"></code>
+            </div>
+            <div class="example-path-item">
+                <strong class="example-label">Anime Movie:</strong>
+                <code id="example-anime-movie-path" class="example-path-display"></code>
+            </div>
+            <div class="example-path-item">
+                <strong class="example-label">TV Episode:</strong>
+                <code id="example-tv-episode-path" class="example-path-display"></code>
+            </div>
+            <div class="example-path-item">
+                <strong class="example-label">Anime TV Episode:</strong>
+                <code id="example-anime-tv-episode-path" class="example-path-display"></code>
+            </div>
+            <div class="example-path-item">
+                <strong class="example-label">Documentary Movie:</strong>
+                <code id="example-documentary-movie-path" class="example-path-display"></code>
+            </div>
+            <div class="example-path-item">
+                <strong class="example-label">Documentary TV Episode:</strong>
+                <code id="example-documentary-tv-episode-path" class="example-path-display"></code>
+            </div>
+            <p class="settings-description" style="margin-top: 10px;">
+                Examples show the path relative to your 'Symlinked Files Path'. Refresh might be needed if base path changes. Path length truncation is not simulated in this preview.
+            </p>
+        </div>
+
+    </div>
+</div>

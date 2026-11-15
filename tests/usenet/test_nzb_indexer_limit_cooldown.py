@@ -172,6 +172,30 @@ class TestProcessNzbResult(unittest.TestCase):
         self.assertEqual(hits, 0)
         self.client.add_nzb_content.assert_not_called()
 
+    def test_raised_http_error_still_starts_cooldown(self):
+        # The real api.get calls raise_for_status(), so a 429 arrives as an
+        # exception carrying the response, not as a returned 429 response.
+        import requests
+        resp = _Resp(429, 'Too Many Requests')
+        err = requests.exceptions.HTTPError('429 Client Error', response=resp)
+        api = mock.Mock()
+        api.get.side_effect = lambda url, **kw: (_ for _ in ()).throw(err) if url == self.URL else _Resp(404, '')
+        with mock.patch('routes.api_tracker.api', api):
+            out = self.proc._process_nzb_result(dict(self.result), dict(self.item))
+        hits = [c for c in api.get.call_args_list if c.args and c.args[0] == self.URL]
+        self.assertIs(out, NZB_DEFERRED_INDEXER_COOLDOWN)
+        self.assertEqual(len(hits), 1, 'no URL submit / direct-upload retry after a raised 429')
+        self.client.add_nzb.assert_not_called()
+        self.assertIsNotNone(cd.cooldown_reason(self.URL))
+
+    def test_daily_grab_limit_defers_without_touching_the_indexer(self):
+        with mock.patch('usenet.indexer_quota.allow_url', return_value=False):
+            out, hits = self._run(_Resp(200, NZB_XML))
+        self.assertIs(out, NZB_DEFERRED_INDEXER_COOLDOWN)
+        self.assertEqual(hits, 0)
+        self.client.add_nzb.assert_not_called()
+        self.client.add_nzb_content.assert_not_called()
+
     def test_newznab_limit_error_with_http_200(self):
         out, hits = self._run(_Resp(200, LIMIT_XML))
         self.assertIs(out, NZB_DEFERRED_INDEXER_COOLDOWN)

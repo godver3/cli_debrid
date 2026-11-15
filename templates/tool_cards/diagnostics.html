@@ -1,0 +1,44 @@
+{# Cards moved from the old Debug page; data-cat picks the tab. #}
+<div data-cat="diagnostics" class="debug_item">
+            <h3>Current Rate Limit State</h3>
+            <div id="rate-limit-info">
+                <p id="rate-limit-loading">Loading rate limit information...</p>
+                <div id="rate-limit-content" style="display: none;"></div>
+            </div>
+            <button id="refresh-rate-limits">Refresh Rate Limits</button>
+        </div>
+<div data-cat="diagnostics" class="debug_item">
+            <h3>Plex Token Status</h3>
+            <div id="plex-token-status">
+                <div class="token-status-container">
+                    <!-- Status will be populated here -->
+                </div>
+                <button id="refresh-plex-tokens" class="btn">Refresh Tokens</button>
+            </div>
+        </div>
+<div data-cat="diagnostics" class="debug_item">
+            <h3>Personal Trakt Token Status</h3>
+            <div id="trakt-token-status">
+                <div class="token-status-container">
+                    <!-- Status will be populated here -->
+                </div>
+                <button id="refresh-trakt-tokens" class="btn">Refresh Status</button>
+            </div>
+        </div>
+<div data-cat="diagnostics" class="debug_item">
+            <h3>Torrent Tracking</h3>
+            <p class="description">View the history of torrent additions and their current status.</p>
+            <a href="{{ url_for('debug.torrent_tracking') }}" class="btn">View Torrent History</a>
+        </div>
+<div data-cat="diagnostics" class="debug_item" id="api-summary-card">
+            <h3>API Summary</h3>
+            <p class="description">API call counts grouped by domain and time period.</p>
+            <div id="api-summary-preview"></div>
+            <button id="api-summary-open-btn" class="btn">View Full Summary</button>
+        </div>
+<div data-cat="diagnostics" class="debug_item" id="realtime-api-card">
+            <h3>Real Time API</h3>
+            <p class="description">Most recent API calls from the log.</p>
+            <div id="realtime-api-preview"></div>
+            <button id="realtime-api-open-btn" class="btn">View All Calls</button>
+        </div>

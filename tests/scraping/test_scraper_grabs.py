@@ -387,6 +387,7 @@ class TestNewznabIndexerNames(unittest.TestCase):
             return mock.Mock(status_code=200, text=body)
 
         self.nz._NZB_CACHE.clear()
+        self.nz.reset_search_cooldowns()
         with mock.patch.object(self.nz.api, 'get', side_effect=fake_get), \
              mock.patch.object(self.nz, '_get_retention_days', return_value=0):
             packs = self.nz.scrape_newznab_season_aggregate(

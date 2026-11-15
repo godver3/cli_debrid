@@ -68,7 +68,7 @@ A chronological log of every torrent that cli_debrid has ever sent to your debri
 
 **Maintenance Tab**
 
-Configuration and execution of automated backup and cleanup tasks for your debrid account. Settings here control what runs on schedule; actual scheduling is managed separately in the Task Manager (a notice at the top links there directly if scheduling is active).
+Configuration and execution of automated backup and cleanup tasks for your debrid account. Settings here control what runs on schedule; actual scheduling is managed separately on the Automation page (a notice at the top links there directly if scheduling is active).
 
 **Debrid Backup**
 
@@ -155,7 +155,7 @@ Displays your debrid account's current usage statistics, fetched live from the d
 *   **Reinsert vs Delete + Re-queue:** Reinsert is a fast in-place fix that keeps the existing database state intact. It is the preferred way to unstick a No Files or error torrent without disrupting the app's tracking of that item.
 *   **Backup restore is additive.** Restoring from a backup slot only adds torrents that are missing from your current account — it never deletes anything. You can restore safely at any time.
 *   **Backup slots use a promotion model.** The daily slot is overwritten on every backup run. The 3-day slot is only updated when the daily slot data is 3+ days old; the 7-day slot is only updated when the 3-day slot data is 7+ days old. This ensures that older slots always contain genuinely older snapshots rather than being overwritten by recent runs.
-*   **Scheduled tasks:** Backup and Cleanup can be toggled on in Maintenance, but they also need a corresponding task enabled in the Task Manager (Settings → Task Manager → Features tab) for them to execute on schedule.
+*   **Scheduled tasks:** Backup and Cleanup can be toggled on in Maintenance, but they also need a corresponding task turned on on the Automation page (Library & Upgrades) for them to execute on schedule.
 *   **Audit tab requires Battery:** The Battery sub-panel in the Audit tab requires the Battery service to be running and its database accessible. If the Battery database is absent or has been deleted, use the Debug Functions page to reinitialise it before running an audit.
 
 ---

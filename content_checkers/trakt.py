@@ -1218,16 +1218,14 @@ def get_wanted_from_trakt_watchlist(versions: Dict[str, bool], unblacklist: bool
     cache = load_trakt_cache(TRAKT_WATCHLIST_CACHE_FILE)
     current_time = datetime.now()
 
-    # Check if watchlist removal is enabled
-    should_remove = get_setting('Debug', 'trakt_watchlist_removal', False)
-    keep_series = get_setting('Debug', 'trakt_watchlist_keep_series', False)
-
-    if should_remove:
-        logging.debug("Trakt watchlist removal enabled" + (" (keeping series)" if keep_series else ""))
-
     # Process Trakt Watchlist
     for watchlist_source in trakt_sources['watchlist']:
         if watchlist_source.get('enabled', False):
+            # Removal options are per source (Settings → Content Sources)
+            should_remove = bool(watchlist_source.get('remove_when_collected', False))
+            keep_series = bool(watchlist_source.get('keep_series', False))
+            if should_remove:
+                logging.debug("Trakt watchlist removal enabled" + (" (keeping series)" if keep_series else ""))
             # Skip API fetch if watchlist hasn't changed and removal is not enabled
             # (removal needs fresh items to check which are collected)
             cached_processed = cache.get('processed_items') if isinstance(cache, dict) else None

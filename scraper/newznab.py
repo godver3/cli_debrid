@@ -16,6 +16,7 @@ from utilities.settings import get_setting
 from PTT import parse_title as ptt_parse
 from rapidfuzz import fuzz as _fuzz
 from scraper.request_dedup import SingleFlightGuard
+from usenet import indexer_quota
 
 def _get_retention_days() -> int:
     """Get configured usenet retention days. 0 = disabled."""
@@ -53,10 +54,91 @@ _NZB_CACHE: Dict[str, tuple] = {}   # key -> (timestamp, results)
 _NZB_CACHE_LOCK = threading.Lock()
 _NZB_CACHE_TTL = 600  # 10 minutes
 
+# Season prefetch: one whole-season search per indexer, reused by every
+# episode of that season scraped shortly after (the NZBBatch loop). Without it
+# a season of N episodes costs ~2N indexer API calls; with it, ~2-5 per indexer.
+# key -> (timestamp, results), keyed by (endpoint, clean imdb, season).
+_SEASON_CACHE: Dict[tuple, tuple] = {}
+_SEASON_CACHE_LOCK = threading.Lock()
+_SEASON_CACHE_TTL = 600     # same window as the query cache
+_SEASON_PAGE = 100          # results per request (most indexers cap at 100)
+_SEASON_MAX_PAGES = 4       # follow the ID search for at most this many pages
+_SEASON_MAX_EPISODES = 2    # a release with more episodes than this is a pack, not served per episode
+
 # Coalesces concurrent identical searches (e.g. the same ID-based query fired
 # by two title-variant threads within milliseconds of each other) so only one
 # of them actually hits the indexer — see scraper/request_dedup.py.
 _NZB_INFLIGHT = SingleFlightGuard()
+
+# Indexer-wide search backoff. A 429/503 or a Newznab <error> limit response
+# (often sent with HTTP 200) means every other query to that indexer would be
+# refused too, so stop searching it for the cooldown instead of only caching
+# the one failed query. Kept apart from usenet.nzb_fetch_cooldown, which covers
+# NZB downloads: API and grab limits are separate quotas on most indexers.
+_SEARCH_COOLDOWN: Dict[str, float] = {}   # endpoint -> monotonic deadline
+_SEARCH_COOLDOWN_LOCK = threading.Lock()
+
+
+def _search_cooldown_left(endpoint: str) -> float:
+    with _SEARCH_COOLDOWN_LOCK:
+        until = _SEARCH_COOLDOWN.get(endpoint)
+        if until is None:
+            return 0.0
+        left = until - time.monotonic()
+        if left <= 0:
+            del _SEARCH_COOLDOWN[endpoint]
+            return 0.0
+        return left
+
+
+# Search pauses are short: a search refusal is often a burst rate limit that
+# clears in a minute, and a paused indexer drops out of every item's scrape.
+# NZB downloads keep their own, longer cooldown (usenet.nzb_fetch_cooldown).
+_SEARCH_PAUSE_RATE_LIMIT = 2 * 60    # plain 429 with no limit wording
+_SEARCH_PAUSE_UNAVAILABLE = 60       # bare 503
+_SEARCH_PAUSE_QUOTA = 10 * 60        # explicit API limit / quota reached
+_SEARCH_PAUSE_MAX = 10 * 60          # cap for a Retry-After the indexer sends
+# Wording that means a quota is used up, as opposed to "too many requests" /
+# "rate limited", which is a burst limit that clears on its own quickly.
+_QUOTA_RE = re.compile(r'\b(?:quota|limit (?:reached|exceeded)|exceeded|maximum (?:number|grabs|downloads|api)|daily)\b',
+                       re.IGNORECASE)
+
+
+def _search_refusal_seconds(status_code: int, headers, body: str) -> int:
+    """How long to pause searches after a refused search response, 0 when it isn't one."""
+    from usenet.nzb_fetch_cooldown import _retry_after_seconds, classify_refusal
+    body = (body or '')[:2000]
+    # A 200 is only a refusal when it is a Newznab <error> document; never
+    # phrase-match a real result feed (release titles can contain anything).
+    if status_code == 200 and '<error' not in body[:500].lower():
+        return 0
+    try:
+        if not classify_refusal(status_code, headers, body):
+            return 0
+        retry_after = _retry_after_seconds(headers)
+        if retry_after:
+            return min(retry_after, _SEARCH_PAUSE_MAX)
+        if _QUOTA_RE.search(body) or re.search(r'<error\b[^>]*\bcode\s*=\s*"50[01]"', body, re.IGNORECASE):
+            return _SEARCH_PAUSE_QUOTA
+        if status_code == 503:
+            return _SEARCH_PAUSE_UNAVAILABLE
+        return _SEARCH_PAUSE_RATE_LIMIT   # 429, or a Newznab <error> asking to slow down
+    except Exception:
+        return 0
+
+
+def _record_search_refusal(endpoint: str, instance: str, seconds: int, status_code) -> None:
+    with _SEARCH_COOLDOWN_LOCK:
+        until = time.monotonic() + seconds
+        if until > _SEARCH_COOLDOWN.get(endpoint, 0):
+            _SEARCH_COOLDOWN[endpoint] = until
+    logging.warning(f"Newznab '{instance}' refused a search (HTTP {status_code}); "
+                    f"pausing searches to it for {seconds // 60} min {seconds % 60} s")
+
+
+def reset_search_cooldowns() -> None:
+    with _SEARCH_COOLDOWN_LOCK:
+        _SEARCH_COOLDOWN.clear()
 
 
 def _normalize_imdb(value: str) -> str:
@@ -194,6 +276,21 @@ def scrape_newznab_instance(
         logging.error(f"Newznab instance '{instance}' is missing URL.")
         return []
 
+    # With NZB season packs disabled every pack a season-pack (multi) search
+    # finds is rejected after the fact (filter_results), so don't spend the
+    # request on packs. The single-episode releases that search also turned up
+    # are still wanted, so search for this episode instead; with no episode
+    # number there is nothing usable to search for.
+    if (multi and content_type.lower() == 'episode'
+            and get_setting('Usenet Provider', 'disable_nzb_season_packs', True)):
+        if episode is None or season is None:
+            logging.info(f"Newznab '{instance}': skipping season-pack search for '{title}' "
+                         f"S{season if season is not None else '?'} (NZB season packs are disabled)")
+            return []
+        logging.debug(f"Newznab '{instance}': NZB season packs are disabled; searching "
+                     f"'{title}' S{season:02d}E{episode:02d} as a single episode instead of a season pack")
+        multi = False
+
     clean_imdb = imdb_id.replace('tt', '') if imdb_id else ''
     endpoint = f'{url}/api'
     # scraper_timeout's own setting description says "0 to disable" — requests
@@ -204,15 +301,36 @@ def scrape_newznab_instance(
         api_key, clean_imdb, title, year, content_type, season, episode, multi
     )
 
+    # One episode of a season that was just prefetched (NZBBatch): serve it
+    # from that list instead of spending two API calls on it.
+    _served = None
+    if (content_type.lower() == 'episode' and not multi
+            and season is not None and episode is not None):
+        _served = _season_cached_episode(endpoint, clean_imdb, season, episode, title)
+        if _served is not None:
+            logging.info(f"[NZBSeason] '{instance}' S{season:02d}E{episode:02d} served from season "
+                         f"prefetch ({len(_served)} results, no API call)")
+
     def _fetch(params):
         ck = _cache_key(endpoint, params)
         cached = _cache_get(ck)
         if cached is not None:
             logging.info(f"Newznab '{instance}' cache hit for {params.get('t')} query")
             return cached
+        _left = _search_cooldown_left(endpoint)
+        if _left:
+            logging.info(f"Newznab '{instance}' skipped: searches paused for {int(_left // 60) + 1} more min "
+                         f"after the indexer refused one")
+            return []
+        if not indexer_quota.allow(instance, 'api'):
+            return []
         try:
             r = api.get(endpoint, params=params, timeout=timeout)
             logging.info(f"Newznab '{instance}' full request URL: {r.url}")
+            _refused = _search_refusal_seconds(r.status_code, getattr(r, 'headers', None), r.text)
+            if _refused:
+                _record_search_refusal(endpoint, instance, _refused, r.status_code)
+                return []
             if r.status_code != 200:
                 logging.error(f"Newznab '{instance}' HTTP {r.status_code}: {r.text[:200]}")
                 # Cache empty on rate limit or server errors to avoid hammering
@@ -224,6 +342,13 @@ def scrape_newznab_instance(
             return results
         except Exception as exc:
             logging.error(f"Newznab '{instance}' request error: {exc}")
+            # api.get raises on 4xx/5xx: the refusal arrives here with the response.
+            _resp = getattr(exc, 'response', None)
+            if _resp is not None:
+                _refused = _search_refusal_seconds(_resp.status_code, getattr(_resp, 'headers', None),
+                                                   getattr(_resp, 'text', '') or '')
+                if _refused:
+                    _record_search_refusal(endpoint, instance, _refused, _resp.status_code)
             # Cache empty result on rate limit or server errors to avoid immediate retry
             _exc_str = str(exc)
             if any(code in _exc_str for code in ('429', '503', '502', '500')):
@@ -251,7 +376,9 @@ def scrape_newznab_instance(
 
     # Run both queries in parallel if there are 2, otherwise just run one
     all_results: List[Dict[str, Any]] = []
-    if len(params_list) == 1:
+    if _served is not None:
+        all_results = _served
+    elif len(params_list) == 1:
         all_results = _fetch_coalesced(params_list[0])
     else:
         with ContextThreadPoolExecutor(max_workers=2) as ex:
@@ -304,6 +431,178 @@ def scrape_newznab_instance(
         _msg += f", {_retention_filtered} filtered by retention ({_retention}d)"
     logging.info(_msg)
     return deduped
+
+
+def _season_cache_key(endpoint: str, clean_imdb: str, season: int, title: str = '') -> tuple:
+    # Without an IMDb id the show is only known by its title: key on that, or
+    # every id-less show would share one (endpoint, '', season) entry.
+    show = clean_imdb or ('title:' + re.sub(r'\s+', ' ', (title or '').lower()).strip())
+    return (endpoint, show, int(season))
+
+
+def prefetch_season(
+    instance: str,
+    settings: Dict[str, Any],
+    imdb_id: Optional[str],
+    title: str,
+    season: int,
+) -> int:
+    """Fetch every result for one season from one Newznab indexer, once.
+
+    Runs the ID tvsearch for the season with no episode number (following up
+    to _SEASON_MAX_PAGES pages) plus the "<title> Sxx" text search, and keeps
+    the parsed results for _SEASON_CACHE_TTL. scrape_newznab_instance() then
+    serves each episode of that season from this list instead of making two
+    API calls per episode. Returns the number of results cached (0 if the
+    indexer couldn't be reached; episodes then fall back to live queries).
+    """
+    url = (settings.get('url') or '').rstrip('/')
+    api_key = (settings.get('api_key') or '').strip()
+    clean_imdb = imdb_id.replace('tt', '') if imdb_id else ''
+    if not url or not api_key or season is None:
+        return 0
+    endpoint = f'{url}/api'
+    # NZBBatch calls this on every Scraping tick while any episode of the batch
+    # is still unresolved; a fresh prefetch already holds everything this would
+    # fetch, so reuse it instead of re-paging the whole season every tick.
+    with _SEASON_CACHE_LOCK:
+        fresh = _SEASON_CACHE.get(_season_cache_key(endpoint, clean_imdb, season, title))
+    if fresh and time.monotonic() - fresh[0] <= _SEASON_CACHE_TTL:
+        logging.info(f"[NZBSeason] '{instance}' S{season:02d} of '{title}': reusing prefetch "
+                     f"from {int(time.monotonic() - fresh[0])}s ago ({len(fresh[1])} results, no API call)")
+        return len(fresh[1])
+    timeout = get_setting('Scraping', 'scraper_timeout', 30) or None
+    results: List[Dict[str, Any]] = []
+    calls = 0
+    ok = False
+    complete = True    # every page of the ID search was fetched
+    page_meta = {}     # raw item count / total of the last page _get parsed
+
+    def _get(params):
+        nonlocal calls, ok
+        if _search_cooldown_left(endpoint) or not indexer_quota.allow(instance, 'api'):
+            return None
+        calls += 1
+        try:
+            r = api.get(endpoint, params=params, timeout=timeout)
+        except Exception as exc:
+            logging.warning(f"[NZBSeason] '{instance}' season prefetch request error: {exc}")
+            _resp = getattr(exc, 'response', None)
+            if _resp is not None:
+                _refused = _search_refusal_seconds(_resp.status_code, getattr(_resp, 'headers', None),
+                                                   getattr(_resp, 'text', '') or '')
+                if _refused:
+                    _record_search_refusal(endpoint, instance, _refused, _resp.status_code)
+            return None
+        _refused = _search_refusal_seconds(r.status_code, getattr(r, 'headers', None), r.text)
+        if _refused:
+            _record_search_refusal(endpoint, instance, _refused, r.status_code)
+            return None
+        if r.status_code != 200:
+            logging.warning(f"[NZBSeason] '{instance}' season prefetch HTTP {r.status_code}")
+            return None
+        ok = True
+        page_meta.clear()
+        page_meta.update(_page_meta(r.text))
+        return _parse_newznab_xml(r.text, instance)
+
+    if clean_imdb:
+        offset = 0
+        for page in range(_SEASON_MAX_PAGES + 1):
+            if page == _SEASON_MAX_PAGES:
+                complete = False   # more pages than we follow
+                break
+            got = _get({'apikey': api_key, 't': 'tvsearch', 'imdbid': clean_imdb, 'season': season,
+                        'cat': _CAT_TV, 'limit': _SEASON_PAGE, 'offset': offset,
+                        'extended': 1})
+            if got is None:
+                complete = False   # refused / failed / limit reached mid-way
+                break
+            results.extend(_drop_other_titles(got, clean_imdb, instance))
+            # Page on the raw <item> count, not the parsed count: unparseable
+            # items would otherwise look like a short (last) page.
+            raw = page_meta.get('items', len(got))
+            total = page_meta.get('total')
+            offset += raw
+            if raw == 0:
+                break
+            if total is not None:
+                # newznab:response total (most indexers send it): exact, and
+                # right for indexers that cap a page below what we asked for.
+                if offset >= total:
+                    break
+                continue
+            if raw < _SEASON_PAGE:
+                break
+    q = _SANITIZE_RE.sub('', f'{title} S{season:02d}').strip()
+    got = _get({'apikey': api_key, 't': 'search', 'q': q, 'cat': _CAT_TV, 'limit': _SEASON_PAGE})
+    if got is None:
+        complete = False
+    else:
+        results.extend(got)
+        # One page only: if the indexer has more text matches than it returned,
+        # an episode's untagged releases may be past this page, so don't serve
+        # episodes from it (they get their own live "Title SxxEyy" search).
+        raw = page_meta.get('items', len(got))
+        total = page_meta.get('total')
+        if (total is not None and total > raw) or (total is None and raw >= _SEASON_PAGE):
+            complete = False
+    if not ok:
+        return 0
+    with _SEASON_CACHE_LOCK:
+        _SEASON_CACHE[_season_cache_key(endpoint, clean_imdb, season, title)] = (
+            time.monotonic(), results, complete)
+    logging.info(f"[NZBSeason] '{instance}' prefetched S{season:02d} of '{title}': "
+                 f"{len(results)} results in {calls} API call(s)"
+                 + ('' if complete else ' (incomplete: episodes will be searched live)'))
+    return len(results)
+
+
+def _page_meta(xml_text: str) -> Dict[str, int]:
+    """{'items': raw <item> count, 'total': newznab:response total (when given)}."""
+    out: Dict[str, int] = {}
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return out
+    channel = root.find('channel')
+    if channel is None:
+        return out
+    out['items'] = len(channel.findall('item'))
+    resp = channel.find('{http://www.newznab.com/DTD/2010/feeds/attributes/}response')
+    if resp is not None:
+        try:
+            out['total'] = int(resp.get('total'))
+        except (TypeError, ValueError):
+            pass
+    return out
+
+
+def _season_cached_episode(endpoint: str, clean_imdb: str, season: int,
+                           episode: int, title: str = '') -> Optional[List[Dict[str, Any]]]:
+    """This episode's results from a fresh, complete season prefetch, or None if
+    there's no such prefetch or it holds nothing for this episode (caller then
+    queries live). A prefetch that couldn't fetch every page is never served:
+    the missing pages may hold this episode's better releases."""
+    with _SEASON_CACHE_LOCK:
+        entry = _SEASON_CACHE.get(_season_cache_key(endpoint, clean_imdb, season, title))
+    if not entry or time.monotonic() - entry[0] > _SEASON_CACHE_TTL or not entry[2]:
+        return None
+    matches = []
+    for r in entry[1]:
+        pi = r.get('parsed_info') or {}
+        seasons = pi.get('seasons') or []
+        eps = pi.get('episodes') or []
+        if seasons and int(season) not in seasons:
+            continue
+        if episode in eps and len(eps) <= _SEASON_MAX_EPISODES:
+            matches.append(r)
+    return copy.deepcopy(matches) if matches else None
+
+
+def clear_season_cache() -> None:
+    with _SEASON_CACHE_LOCK:
+        _SEASON_CACHE.clear()
 
 
 def _item_indexer_name(item, ns) -> str:
@@ -529,6 +828,8 @@ def scrape_newznab_season_aggregate(
             return []
         ep_endpoint = f'{url}/api'
         results = []
+        if not indexer_quota.allow(instance, 'api'):
+            return results
         # ID-based tvsearch first
         if clean_imdb:
             id_params = {

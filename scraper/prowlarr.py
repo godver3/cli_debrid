@@ -138,7 +138,7 @@ def scrape_prowlarr_instance(
     # scraper_timeout's own setting description says "0 to disable" — requests
     # treats timeout=None (not 0) as no timeout, so 0/falsy must map to None.
     timeout = get_setting('Scraping', 'scraper_timeout', 30) or None
-    seeders_only = get_setting('Scraping', 'prowlarr_seeders_only', get_setting('Scraping', 'jackett_seeders_only', True))
+    seeders_only = True  # torrents with no seeders are always dropped; NZBs are exempt below
 
     params_list = _build_prowlarr_params_list(
         title, year, content_type, imdb_id, tmdb_id, season, episode, multi, tags_setting

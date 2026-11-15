@@ -1,0 +1,39 @@
+{# Settings card; rendered from a settings page in templates/settings_tabs/page_*.html #}
+<!-- Custom Post-Processing Settings Section -->
+<div class="settings-section settings-card">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Custom Post-Processing Settings</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        <div class="settings-form-group">
+            <label for="additional-enable_custom_script" class="settings-title">Enable Custom Script:</label>
+            <input type="checkbox" id="additional-enable_custom_script" name="Custom Post-Processing.enable_custom_script"
+                   data-section="Custom Post-Processing" data-key="enable_custom_script"
+                   {% if settings.get('Custom Post-Processing', {}).get('enable_custom_script') %}checked{% endif %}>
+            <p class="settings-description">Enable running a custom script during post-processing</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-custom_script_path" class="settings-title">Custom Script Path:</label>
+            <input type="text" id="additional-custom_script_path" name="Custom Post-Processing.custom_script_path"
+                   value="{{ settings.get('Custom Post-Processing', {}).get('custom_script_path', '') }}" 
+                   class="settings-input"
+                   data-section="Custom Post-Processing" data-key="custom_script_path">
+            <p class="settings-description">Absolute path to your custom post-processing script</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-custom_script_args" class="settings-title">Custom Script Arguments:</label>
+            <input type="text" id="additional-custom_script_args" name="Custom Post-Processing.custom_script_args"
+                   value="{{ settings.get('Custom Post-Processing', {}).get('custom_script_args', '{title} {imdb_id}') }}" 
+                   class="settings-input"
+                   data-section="Custom Post-Processing" data-key="custom_script_args">
+            <p class="settings-description">Arguments template for the script. Available variables: {title}, {year}, {type}, {imdb_id}, {location_on_disk}, {original_path_for_symlink}, {state}, {version}</p>
+        </div>
+    </div>
+</div>

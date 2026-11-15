@@ -16,6 +16,7 @@ import os
 import re
 import threading
 import time
+import urllib.parse
 from typing import Optional, Dict, Any, Tuple
 
 from utilities.settings import get_setting
@@ -216,6 +217,13 @@ class CliMountClient:
                 files={k: (None, v) for k, v in fields},
                 timeout=30,
             )
+            # cli_mount downloads the NZB from the indexer itself: that is a grab
+            # api.get never sees, so count it here.
+            try:
+                from usenet import indexer_quota
+                indexer_quota.record_url(nzb_url, 'grab')
+            except Exception:
+                pass
             if r.status_code == 200:
                 result = r.json()
                 if isinstance(result, list) and result:
@@ -247,7 +255,7 @@ class CliMountClient:
         # Fast path: try direct URL with the original (un-normalised) name
         if original_name:
             try:
-                r = api.get(f'{self.base_url}/api/browse/nzbs/{original_name}',
+                r = api.get(f'{self.base_url}/api/browse/nzbs/{urllib.parse.quote(original_name, safe="")}',
                             headers=self._headers(), timeout=10)
                 if r.status_code == 200:
                     return original_name
@@ -288,7 +296,7 @@ class CliMountClient:
         """Return all video files inside a cli_mount NZB folder."""
         _VIDEO_EXTS = {'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.m4v', '.ts'}
         try:
-            r = api.get(f'{self.base_url}/api/browse/nzbs/{folder_name}',
+            r = api.get(f'{self.base_url}/api/browse/nzbs/{urllib.parse.quote(folder_name, safe="")}',
                         headers=self._headers(), timeout=15)
             if r.status_code != 200:
                 return []

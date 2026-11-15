@@ -24,6 +24,54 @@
         </div>
     </div>
 
+    <div class="ob-section" id="ob-overlays">
+        <h3>Poster overlays <span style="font-weight:400;color:#888;font-size:.8em">(optional)</span></h3>
+        <p class="ob-section-intro">cli_debrid can draw ratings on your Plex posters. The <b>Simple</b> layout puts the Rotten Tomatoes critics and audience scores and the IMDb rating along the bottom of each poster. You can change it, or build your own, on the <a href="/overlays" target="_blank" rel="noopener">Overlays</a> page any time.</p>
+        <div class="ob-ov-wrap">
+            <div class="ob-ov-poster" aria-label="Preview of the Simple overlay">
+                <div class="ob-ov-art"><span>Your poster</span></div>
+                <div class="ob-ov-badges">
+                    <span class="ob-ov-badge"><img src="/api/overlays/logos/serve/rating/RT-Crit-Fresh.png" alt="">92%</span>
+                    <span class="ob-ov-badge"><img src="/api/overlays/logos/serve/rating/RT-Aud-Fresh.png" alt="">88%</span>
+                    <span class="ob-ov-badge ob-ov-imdb"><img src="/api/overlays/logos/serve/rating/IMDb.png" alt="">8.4</span>
+                </div>
+            </div>
+            <div class="ob-ov-choice">
+                <button type="button" class="onboarding-btn" id="ov-enable-btn">Use Simple overlays</button>
+                <button type="button" class="ob-test-btn" id="ov-skip-btn">Skip</button>
+                <p class="ob-msg" id="ov-msg"></p>
+            </div>
+        </div>
+    </div>
+    <style>
+    .ob-ov-wrap{display:flex;gap:20px;align-items:center;flex-wrap:wrap}
+    .ob-ov-poster{position:relative;width:180px;aspect-ratio:2/3;border-radius:6px;overflow:hidden;background:linear-gradient(160deg,#3b4a6b,#1b2236 55%,#0e1220);box-shadow:0 6px 18px rgba(0,0,0,.4);flex:0 0 auto}
+    .ob-ov-art{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#ffffff55;font-size:12px;letter-spacing:.08em;text-transform:uppercase}
+    .ob-ov-badges{position:absolute;left:4px;right:4px;bottom:6px;display:flex;justify-content:space-between;gap:3px}
+    .ob-ov-badge{display:inline-flex;align-items:center;gap:3px;background:#1a1a1acc;color:#fff;font:700 12px/1 'DejaVu Sans','Inter',sans-serif;padding:4px 5px;border-radius:7px}
+    .ob-ov-badge img{height:14px;width:auto}
+    .ob-ov-imdb img{height:11px}
+    .ob-ov-choice{display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+    #ov-msg.ok{color:#4ade80}#ov-msg.bad{color:#f87171}
+    </style>
+    <script>
+    (function () {
+        const msg = document.getElementById('ov-msg');
+        async function choose(enable) {
+            msg.className = 'ob-msg'; msg.textContent = enable ? 'Setting up…' : '';
+            try {
+                const r = await fetch('/onboarding/overlays', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enable }) });
+                const j = await r.json();
+                if (!j.success) throw new Error(j.error || 'failed');
+                msg.className = 'ob-msg ok';
+                msg.textContent = enable ? 'Simple overlays are on. Customise them on the Overlays page whenever you like.' : 'Skipped — no overlays. You can turn them on later on the Overlays page.';
+            } catch (e) { msg.className = 'ob-msg bad'; msg.textContent = 'Could not save: ' + e.message; }
+        }
+        document.getElementById('ov-enable-btn').addEventListener('click', () => choose(true));
+        document.getElementById('ov-skip-btn').addEventListener('click', () => choose(false));
+    })();
+    </script>
+
     <div class="ob-actions">
         <button type="button" class="onboarding-btn" id="start-program-btn">Start Program &amp; Go to Dashboard</button>
     </div>

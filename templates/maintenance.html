@@ -1,0 +1,49 @@
+{% extends "tool_cards/layout.html" %}
+{% block title %}Maintenance{% endblock %}
+{% block page_title %}Maintenance{% endblock %}
+{% block intro %}<p class="tdb-intro">Backups, cleanups and repairs for cli_debrid's databases and caches. Most of these change data; dry run first where a card offers it.</p>{% endblock %}
+{% block tabs %}
+<button class="tab" data-cat="backups">Backups</button>
+<button class="tab" data-cat="cleanup">Cleanup &amp; repair</button>
+<button class="tab danger" data-cat="danger">Danger zone</button>
+{% endblock %}
+{% block before_grid %}
+<div class="danger-note" id="dangerNote">These delete data and can't be undone. Back up first (Backups tab).</div>
+<script>
+document.addEventListener('click', function (e) {
+  var t = e.target.closest && e.target.closest('#tngDebug .tab');
+  if (t) document.getElementById('dangerNote').style.display = t.dataset.cat === 'danger' ? 'block' : 'none';
+});
+window.addEventListener('load', function () {
+  var a = document.querySelector('#tngDebug .tab.active');
+  if (a && a.dataset.cat === 'danger') document.getElementById('dangerNote').style.display = 'block';
+});
+</script>
+{% endblock %}
+{% block cards %}
+{% include 'tool_cards/maintenance.html' %}
+<div data-cat="cleanup" class="debug_item">
+  <h3>Not Wanted list</h3>
+  <p class="description">Releases cli_debrid will skip because they failed before (magnets, URLs). Remove single entries or purge the list.</p>
+  <a class="btn" href="{{ url_for('debug.not_wanted') }}">Open the Not Wanted list</a>
+</div>
+<div data-cat="cleanup" class="debug_item">
+  <h3>Full cli_mount sync</h3>
+  <p class="description">Re-reads every entry from cli_mount (not just recent changes) and updates the database to match. The queue pauses while it runs and resumes on its own.</p>
+  <button type="button" class="btn" id="full-climount-sync-btn">Run full sync</button>
+  <p id="full-climount-sync-result" style="margin-top:8px;"></p>
+</div>
+<script>
+document.addEventListener('click', async function (e) {
+  if (!e.target.closest || !e.target.closest('#full-climount-sync-btn')) return;
+  if (!confirm('Run a full cli_mount sync now? The queue pauses until it finishes.')) return;
+  var out = document.getElementById('full-climount-sync-result');
+  out.textContent = 'Starting…';
+  try {
+    var r = await fetch('/debug/run_full_climount_sync', { method: 'POST' });
+    var j = await r.json();
+    out.textContent = j.message || (j.success ? 'Started' : (j.error || 'Failed'));
+  } catch (err) { out.textContent = 'Failed: ' + err; }
+});
+</script>
+{% endblock %}

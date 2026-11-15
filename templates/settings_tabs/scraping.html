@@ -919,9 +919,9 @@ document.addEventListener('scrapingContentLoaded', function() {
         {# Get list of scraper IDs to exclude from automatic rendering #}
         {% set scraper_ids = settings.Scrapers.keys()|list %}
         {% for key in sorted_keys %}
-            {% if key in config and key not in ['filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out', 'hybrid_mode', 'jackett_seeders_only', 'fallback_version', 'fallback_at_scrape_time', 'fallback_after_attempts', 'enable_scraper_priorities', 'scraper_priorities', 'preferred-filter-out-term', 'preferred-filter-out-weight', 'preferred-filter-in-term', 'preferred-filter-in-weight'] and key not in scraper_ids %}
+            {% if key in config and key not in ['filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out', 'hybrid_mode', 'fallback_version', 'fallback_at_scrape_time', 'fallback_after_attempts', 'enable_scraper_priorities', 'scraper_priorities', 'preferred-filter-out-term', 'preferred-filter-out-weight', 'preferred-filter-in-term', 'preferred-filter-in-weight'] and key not in scraper_ids %}
                 {% set value = config[key] %}
-                <div class="settings-form-group" {% if key == 'hybrid_mode' or key == 'jackett_seeders_only' %}style="display: none !important;"{% endif %}>
+                <div class="settings-form-group" {% if key == 'hybrid_mode' %}style="display: none !important;"{% endif %}>
                     {% if value is boolean %}
                         <label class="settings-title">
                             <input type="checkbox" id="scraping-{{ version }}-{{ key }}" 
@@ -929,7 +929,6 @@ document.addEventListener('scrapingContentLoaded', function() {
                                    data-section="Scraping" 
                                    data-key="versions.{{ version }}.{{ key }}"
                                    {% if key == 'hybrid_mode' %}data-hybrid-mode="true"{% endif %}
-                                   {% if key == 'jackett_seeders_only' %}data-jackett-seeders-only="true"{% endif %}
                                    {% if value %}checked{% endif %}>
                             {% if key == 'enable_spanish_episode_parsing' %}Enable Spanish Episode/Movie Parsing
                             {% elif key == 'use_alternative_titles' %}Use Alternative Titles
@@ -1050,9 +1049,9 @@ document.addEventListener('scrapingContentLoaded', function() {
                         {% if key == 'language_code' %}
                             <p class="settings-description">Preferred language code(s), comma-separated (e.g., fr, es, ja). The first language found will be used. See ISO 639-1.</p>
                         {% elif key == 'foreign_language_penalty' %}
-                            <p class="settings-description">Penalty for a release tagged with a different audio language (e.g. GERMAN for an 'en' version), multiplied by Language Weight. Subtitle tags (SWESUB, VOSTFR, NORDiC) don't count; MULTi, Dual Audio and DL (dual-language) releases are exempt. For a title whose original language isn't the version's (e.g. a Korean show on an 'en' version), releases tagged DUAL or with the version's language get a small tiebreaker bonus instead (this amount × Language Weight, at most 50; half for a bare MULTi/DL). Untagged releases are never penalized. 0 disables both. A cached release is still taken before any uncached one whatever its score, so the penalty alone can't keep out a tagged release that is the only cached match (e.g. a freshly aired episode whose only cached copy is a foreign dub). To drop tagged releases instead, set a large penalty (e.g. 1000) together with a Minimum Scrape Score above 0 (Version Settings → Other Scraping Settings; the one under Advanced Settings only applies with delayed scrape).</p>
+                            <p class="settings-description">Penalty for a release tagged with a different audio language (e.g. GERMAN for an 'en' version), multiplied by Language Weight. Subtitle tags (SWESUB, VOSTFR, NORDiC) don't count; MULTi, Dual Audio and DL (dual-language) releases are exempt. For a title whose original language isn't the version's (e.g. a Korean show on an 'en' version), releases tagged DUAL or with the version's language get a small tiebreaker bonus instead (this amount × Language Weight, at most 50; half for a bare MULTi/DL). Untagged releases are never penalized. 0 disables both. A cached release is still taken before any uncached one whatever its score, so the penalty alone can't keep out a tagged release that is the only cached match (e.g. a freshly aired episode whose only cached copy is a foreign dub). To drop tagged releases instead, set a large penalty (e.g. 1000) together with a Minimum Scrape Score above 0 (Settings → Scraping; the Delayed Scrape Minimum Score only applies with delayed scrape).</p>
                         {% elif key == 'audio_description_penalty' %}
-                            <p class="settings-description">Penalty for an audio-description release (e.g. 'with Audio Description'), whose audio is narrated for blind viewers. The default 10000 ranks one below every other release, so it is only picked when nothing else is available; with a Minimum Scrape Score set (Version Settings → Other Scraping Settings), it falls below that and is dropped instead. Use a negative number to prefer them instead, or 0 to treat them like any other release.</p>
+                            <p class="settings-description">Penalty for an audio-description release (e.g. 'with Audio Description'), whose audio is narrated for blind viewers. The default 10000 ranks one below every other release, so it is only picked when nothing else is available; with a Minimum Scrape Score set (Settings → Scraping), it falls below that and is dropped instead. Use a negative number to prefer them instead, or 0 to treat them like any other release.</p>
                         {% endif %}
                     {% endif %}
                 </div>
@@ -1243,103 +1242,7 @@ document.addEventListener('scrapingContentLoaded', function() {
     </div>
 </div>
 
-<div class="settings-section settings-card">
-    <div class="settings-section-header">
-        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-        </svg>
-        <div class="settings-header-left">
-            <h4>Other Scraping Settings</h4>
-        </div>
-    </div>
-    <div class="settings-section-content">
-        <div class="settings-subsection">
-            <!-- Debug: environment_mode = {{ environment_mode }} -->
-            {% for key, value in settings_schema.Scraping.items() %}
-                {% if key not in ['versions', 'tab', 'upgrade_similarity_threshold', 'hybrid_mode', 'jackett_seeders_only', 'ultimate_sort_order', 'soft_max_size_gb'] %}
-                    <!-- Debug: Processing key "{{ key }}" -->
-                    {% if environment_mode is not defined or environment_mode == 'full' or key not in ['uncached_content_handling', 'accept_uncached_within_hours'] %}
-                    <div class="settings-form-group" {% if key == 'hybrid_mode' or key == 'jackett_seeders_only' or key == 'ultimate_sort_order' or key == 'soft_max_size_gb' %}style="display: none !important;"{% endif %}>
-                        <label for="scraping-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
-                        {% if value.type == 'boolean' %}
-                            <input type="checkbox" id="scraping-{{ key }}" name="Scraping.{{ key }}"
-                                   data-section="Scraping" data-key="{{ key }}"
-                                   {% if key == 'hybrid_mode' %}data-hybrid-mode="true"{% endif %}
-                                   {% if key == 'jackett_seeders_only' %}data-jackett-seeders-only="true"{% endif %}
-                                   {% if settings.get('Scraping', {}).get(key) %}checked{% endif %}>
-                        {% elif value.choices %}
-                            <select id="scraping-{{ key }}" name="Scraping.{{ key }}" class="settings-input"
-                                    data-section="Scraping" data-key="{{ key }}">
-                                {% if key == 'uncached_content_handling' %}
-                                    <option value="None" {% if settings.get('Scraping', {}).get(key) == 'None' and not settings.get('Scraping', {}).get('hybrid_mode', False) %}selected{% endif %}>None</option>
-                                    <option value="Hybrid" {% if settings.get('Scraping', {}).get('hybrid_mode', False) and settings.get('Scraping', {}).get(key) == 'None' %}selected{% endif %}>Hybrid</option>
-                                    <option value="Full" {% if settings.get('Scraping', {}).get(key) == 'Full' %}selected{% endif %}>Full</option>
-                                {% else %}
-                                    {% for choice in value.choices %}
-                                        <option value="{{ choice }}" {% if settings.get('Scraping', {}).get(key) == choice %}selected{% endif %}>{{ choice }}</option>
-                                    {% endfor %}
-                                {% endif %}
-                            </select>
-                            {% if key == 'uncached_content_handling' %}
-                                <p class="settings-description">
-                                    <strong>None:</strong> Only take the best Cached result<br>
-                                    <strong>Hybrid:</strong> Take the first best Cached result, and if no Cached results found, take the best Uncached result<br>
-                                    <strong>Full:</strong> Take the best result, whether it's Cached or Uncached
-                                </p>
-                            {% endif %}
-                        {% elif value.type == 'integer' and key in ['scraper_timeout'] %}
-                            <input type="number" id="scraping-{{ key }}" name="Scraping.{{ key }}"
-                                   value="{% set val = settings.get('Scraping', {}).get(key, value.default) %}{{ val if val != None else '' }}" class="settings-input"
-                                   data-section="Scraping" data-key="{{ key }}"
-                                   min="{{ value.min }}" step="1">
-                            <p class="settings-description">{{ value.description }}</p>
-                        {% elif value.type == 'integer' and key == 'delayed_upgrade_scrape_days' %}
-                            <input type="number" id="scraping-{{ key }}" name="Scraping.{{ key }}"
-                                   value="{% set val = settings.get('Scraping', {}).get(key, value.default) %}{{ val if val != None else '' }}" class="settings-input"
-                                   data-section="Scraping" data-key="{{ key }}"
-                                   min="{{ value.min }}" step="1" placeholder="0">
-                        {% else %}
-                            {% set input_field_type = value.type %}
-                            {% if value.type == 'float' or value.type == 'integer' %}
-                                {% set input_field_type = 'number' %}
-                            {% endif %}
-                            <input type="{{ input_field_type }}" id="scraping-{{ key }}" name="Scraping.{{ key }}"
-                                   value="{% set val = settings.get('Scraping', {}).get(key, value.default) %}{{ val if val != None else '' }}" class="settings-input"
-                                   data-section="Scraping" data-key="{{ key }}"
-                                   {% if value.sensitive %}type="password"{% endif %}
-                                   {% if value.type == 'float' %}{% if value.min is defined %}min="{{ value.min }}"{% endif %} {% if value.max is defined %}max="{{ value.max }}"{% endif %} step="{{ value.step | default('any') }}"{% endif %} {# Use 'any' for float steps #}
-                                   {% if value.type == 'integer' and key not in ['scraper_timeout'] %}{% if value.min is defined %}min="{{ value.min }}"{% endif %} {% if value.max is defined %}max="{{ value.max }}"{% endif %} step="1"{% endif %}>
-                        {% endif %}
-                        {% if value.description %}
-                            {% if value.description is string %}
-                                {% if key != 'uncached_content_handling' and key not in ['scraper_timeout'] %}
-                                    <p class="settings-description">{{ value.description }}</p>
-                                {% endif %}
-                            {% else %}
-                                {% if key != 'uncached_content_handling' %}
-                                    <div class="settings-description">
-                                        {% for item in value.description %}
-                                            {% if loop.first %}
-                                                <p>{{ item }}</p>
-                                                <ul>
-                                            {% elif loop.last %}
-                                                <li>{{ item }}</li>
-                                                </ul>
-                                            {% else %}
-                                                <li>{{ item }}</li>
-                                            {% endif %}
-                                        {% endfor %}
-                                    </div>
-                                {% endif %}
-                            {% endif %}
-                        {% endif %}
-                    </div>
-                    {% endif %}
-                {% endif %}
-            {% endfor %}
-        </div>
-    </div>
-</div>
+<!-- Other Scraping Settings moved to the Scraping settings page: they are global, not per version. -->
 
         </div>
     </div>

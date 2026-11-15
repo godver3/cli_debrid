@@ -869,8 +869,6 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
 
                     airtime = item.get('airtime') or '19:00'
                     initial_state = 'Wanted'
-                    if get_setting('Debug', 'allow_partial_overseerr_requests'):
-                         initial_state = 'Wanted' if item.get('is_requested_season', True) else 'Blacklisted'
                     blacklisted_date = datetime.now(timezone.utc) if initial_state == 'Blacklisted' else None
 
                     # Battery fallback for Unknown release dates

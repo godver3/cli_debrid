@@ -531,28 +531,65 @@ def _find_db_items_by_entry_name(entry_name: str):
 # File readability verification (subprocess with hard timeout — safe on FUSE)
 # ---------------------------------------------------------------------------
 
+_HEADER_MEMO: dict = {}   # (path, size, mtime) -> (monotonic time, header dict or None)
+_HEADER_MEMO_TTL = 30.0
+
+
+def _media_header(file_path: str, timeout: int = 10):
+    """Stream types and duration from ONE ffprobe header read, or None if it failed.
+
+    The playability gate needs both (no-video check, then a read offset from the
+    duration); asking ffprobe once for both saves a process and a header read on
+    the mount per check. Memoised briefly per file so the two callers share it.
+    """
+    import json as _json_h
+    import os as _os_h
+    import subprocess as _sp
+    import shutil as _sh
+    import time as _time_h
+    if not _sh.which('ffprobe'):
+        return None
+    try:
+        st = _os_h.stat(file_path)
+        key = (file_path, st.st_size, st.st_mtime)
+    except OSError:
+        key = (file_path, None, None)
+    now = _time_h.monotonic()
+    hit = _HEADER_MEMO.get(key)
+    if hit and now - hit[0] < _HEADER_MEMO_TTL:
+        return hit[1]
+    info = None
+    try:
+        r = _sp.run(
+            ['ffprobe', '-v', 'error',
+             '-show_entries', 'stream=codec_type:format=duration',
+             '-of', 'json', file_path],
+            timeout=timeout, capture_output=True, text=True,
+        )
+        if r.returncode == 0:
+            data = _json_h.loads(r.stdout or '{}')
+            try:
+                duration = float((data.get('format') or {}).get('duration'))
+            except (TypeError, ValueError):
+                duration = None
+            info = {'types': [st.get('codec_type') for st in (data.get('streams') or [])],
+                    'duration': duration}
+    except Exception:
+        info = None
+    if len(_HEADER_MEMO) > 256:
+        _HEADER_MEMO.clear()
+    _HEADER_MEMO[key] = (now, info)
+    return info
+
+
 def _media_duration_seconds(file_path: str, timeout: int = 10):
     """Best-effort media duration in seconds via ffprobe (reads header only).
 
     Returns a float, or None if ffprobe is unavailable / the duration can't be
     determined. Used to pick a read offset deeper into the file.
     """
-    import subprocess as _sp
-    import shutil as _sh
-    if not _sh.which('ffprobe'):
-        return None
-    try:
-        r = _sp.run(
-            ['ffprobe', '-v', 'error',
-             '-show_entries', 'format=duration',
-             '-of', 'csv=p=0', file_path],
-            timeout=timeout, capture_output=True, text=True,
-        )
-        if r.returncode == 0:
-            return float((r.stdout or '').strip())
-    except Exception:
-        pass
-    return None
+    info = _media_header(file_path, timeout=timeout)
+    return info.get('duration') if info else None
 
 
 def _media_lacks_video(file_path: str, timeout: int = 10) -> bool:
@@ -563,23 +600,11 @@ def _media_lacks_video(file_path: str, timeout: int = 10) -> bool:
     yields packets, so the packet read below would pass it. Any ffprobe error,
     timeout or missing binary returns False: that is not proof of anything.
     """
-    import json as _json_lv
-    import subprocess as _sp
-    import shutil as _sh
-    if not _sh.which('ffprobe'):
+    info = _media_header(file_path, timeout=timeout)
+    if not info:
         return False
-    try:
-        r = _sp.run(
-            ['ffprobe', '-v', 'error', '-show_entries', 'stream=codec_type',
-             '-of', 'json', file_path],
-            timeout=timeout, capture_output=True, text=True,
-        )
-        if r.returncode != 0:
-            return False
-        types = [st.get('codec_type') for st in (_json_lv.loads(r.stdout or '{}').get('streams') or [])]
-        return bool(types) and 'video' not in types
-    except Exception:
-        return False
+    types = info.get('types') or []
+    return bool(types) and 'video' not in types
 
 
 def _probe_readable_once(file_path: str, offset_seconds=None, timeout: int = 10):
@@ -630,6 +655,30 @@ def _probe_readable_once(file_path: str, offset_seconds=None, timeout: int = 10)
         return None
 
 
+_EMPTY_READ_WARNED_AT = 0.0
+
+
+def _reads_empty(file_path: str, timeout: int = 10):
+    """True when the first block of the file reads back as 0 bytes.
+
+    A dead release on cli_mount / a debrid mount fails its reads with an I/O
+    error; it does not read as an empty file. An empty first read on a media
+    file means this process's view of the mount is broken - seen live when
+    cli_mount remounted its FUSE filesystem and the cli_debrid container kept
+    the old, dead mount: every file listed fine but read 0 bytes, and the
+    ffprobe gate rejected (and deleted) every good download. Returns None when
+    the check itself couldn't run.
+    """
+    import subprocess as _sp
+    try:
+        r = _sp.run(['head', '-c', '4096', file_path], timeout=timeout, capture_output=True)
+    except Exception:
+        return None
+    if r.returncode != 0:
+        return False   # a real read error: let the normal probe judge it
+    return len(r.stdout or b'') == 0
+
+
 def probe_file_playable(location_on_disk: str, timeout: int = 10, attempts: int = 3):
     """Tri-state playability probe: True readable, False confidently dead, None inconclusive.
 
@@ -649,6 +698,26 @@ def probe_file_playable(location_on_disk: str, timeout: int = 10, attempts: int 
     if not _os.path.exists(file_path):
         logger.debug(f'[NZBRepair] File not on mount: {file_path!r}')
         return False
+
+    # A file the mount itself lists as 0 bytes really is empty: it can't play,
+    # and an empty read from it says nothing about the mount being stale. The
+    # stale-mount case below is a file listed with its real size reading 0 bytes.
+    try:
+        if _os.stat(file_path).st_size == 0:
+            logger.warning(f'[NZBRepair] {file_path!r} is 0 bytes on the mount — treating as unplayable')
+            return False
+    except OSError:
+        pass
+
+    if _reads_empty(file_path, timeout=timeout):
+        global _EMPTY_READ_WARNED_AT
+        if _t.monotonic() - _EMPTY_READ_WARNED_AT > 600:
+            _EMPTY_READ_WARNED_AT = _t.monotonic()
+            logger.error(
+                f'[NZBRepair] {file_path!r} reads as 0 bytes. The mount looks stale in this '
+                f'container (e.g. cli_mount remounted after this container started); restart '
+                f'the cli_debrid container. Treating the probe as inconclusive, not as a dead file.')
+        return None
 
     if _media_lacks_video(file_path, timeout=timeout):
         logger.warning(f'[NZBRepair] no video stream in {file_path!r} — treating as unplayable')
@@ -1143,20 +1212,29 @@ def _scrape_for_replacement(item: dict, broken_nzb_title: str, version_override:
         return []
 
 
-def _prefetch_candidate_nzb(result: dict) -> bool:
+def _prefetch_candidate_nzb(result: dict) -> Optional[bool]:
     """Download one candidate's NZB just before submission.
 
     Stores the XML in ``result['_prefetched_nzb']`` (which also makes its
     segment key visible to candidate_keys) and returns False when the NZB's
     segment is blacklisted, so the caller skips it. A failed download returns
     True and leaves the candidate to be submitted by URL, as before.
+    Returns None (falsy, so callers still skip it) when the indexer's daily
+    grab limit is used up: the release itself is fine and must not be
+    recorded as a failed candidate.
     """
     if result.get('_prefetched_nzb'):
         return True
     nzb_url = result.get('nzb_url') or result.get('magnet', '')
     if not nzb_url:
         return True
+    from usenet import indexer_quota
+    if not indexer_quota.allow_url(nzb_url, 'grab'):
+        # Submitting it by URL would make cli_mount grab it anyway: skip it.
+        logger.info(f'[NZBRepair] Skipping {result.get("title")!r}: its indexer\'s daily grab limit is used up')
+        return None
     try:
+        indexer_quota.record_url(nzb_url, 'grab')
         resp = requests.get(nzb_url, timeout=15, allow_redirects=True,
                             headers={'User-Agent': 'Sabnzbd/3.0.0'})
         if resp.status_code == 200 and '<nzb' in resp.text.lower():
@@ -1339,8 +1417,13 @@ def _prefetch_playback_candidate(item_id, candidate: dict) -> bool:
     """_prefetch_candidate_nzb plus the segment-key exclusion check that the
     title/guid-only check before the download could not do. A candidate
     rejected here is recorded as failed so its title/guid keys exclude it
-    before any download on the next retry."""
-    if not _prefetch_candidate_nzb(candidate):
+    before any download on the next retry. A candidate skipped only because
+    its indexer's grab limit is used up is not recorded: it must stay eligible
+    once the limit resets."""
+    fetched = _prefetch_candidate_nzb(candidate)
+    if fetched is None:
+        return False
+    if not fetched:
         record_failed_candidate(item_id, candidate, '')
         return False
     if candidate.get('_prefetched_nzb') and candidate_is_excluded(item_id, candidate):
