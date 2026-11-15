@@ -120,7 +120,7 @@
         <div class="settings-list">
 
 {% for section, section_data in settings_schema.items() %}
-    {% if section_data.tab == "Additional Settings" and section != "Staleness Threshold" and section != "Subtitle Settings" and section != "Custom Post-Processing" and section != "Blacklist Duration" and section != "Queue" and section != "UI Settings" and section != "Library Manager" and section != "Bazarr Integration" and section != "AI Assistant" and section != "SSO" and section != "Plex Smart Collections" and section != "Plex Movie Box Sets" and section != "Tags" and section != "Trakt" and section != "Scrob" %}
+    {% if section_data.tab == "Additional Settings" and section != "Staleness Threshold" and section != "Subtitle Settings" and section != "Custom Post-Processing" and section != "Blacklist Duration" and section != "Queue" and section != "UI Settings" and section != "Library Manager" and section != "Discover Settings" and section != "Bazarr Integration" and section != "AI Assistant" and section != "SSO" and section != "Plex Smart Collections" and section != "Plex Movie Box Sets" and section != "Tags" and section != "Trakt" and section != "Scrob" %}
     <div class="settings-section settings-card">
         <div class="settings-section-header">
             <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1149,6 +1149,7 @@ document.addEventListener('DOMContentLoaded', function() {
     </div>
 </div>
 
+{# AI Assistant disabled: settings section hidden (routes not registered).
 <!-- AI Assistant Section -->
 <div class="settings-section settings-card">
     <div class="settings-section-header">
@@ -1296,6 +1297,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     })();
 </script>
+#}
 
 <script>
     // Persist just the Trakt client_id/client_secret fields before starting
@@ -1908,8 +1910,6 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 </script>
-
-
 
 <!-- Plex Smart Collection Posters Section -->
 <div class="settings-section settings-card plex-only-section">

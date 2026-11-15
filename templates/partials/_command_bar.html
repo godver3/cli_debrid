@@ -86,9 +86,7 @@
     '/blacklist': { args: '<title | item id>', help: 'Find library items and blacklist one.' },
     '/queue': { args: '<state>', help: 'Show items in a state on the Database page (wanted, scraping, checking, collected...).' },
     '/run': { args: '<task>', help: 'Run an Automation task now (e.g. /run backup database).' },
-    '/status': { args: '', help: 'Is the program running?' },
-    '/start': { args: '', help: 'Start the program.' },
-    '/stop': { args: '', help: 'Stop the program.' },
+    '/delete': { args: '<title | id> [S01 | S01E05]', help: 'Fully delete a movie, a whole show, a season or an episode (database, media server, files, debrid, symlinks), like the Library page.' },
     '/godver': { args: '', help: 'Open the MediaStorm GitHub.' },
     '/clear': { args: '', help: 'Clear this output.' },
     '/help': { args: '', help: 'List the commands.' },
@@ -150,6 +148,62 @@
         catch (e) { err(`${verb} failed for #${it.id}: ${e.message}`); ev.target.disabled = false; }
       });
     });
+  }
+
+  // /delete <title | item id> [S01 | S01E05]: one row per movie or show; the button
+  // asks once more before calling the same Library delete routes (same layers).
+  const DELETE_LAYERS = ['database', 'media_server', 'filesystem', 'debrid', 'symlinks', 'cache'];
+  async function cmdDelete(arg) {
+    const m = arg.match(/^(.*?)\s+s(\d{1,2})(?:e(\d{1,4}))?$/i);
+    const q = (m ? m[1] : arg).trim();
+    const season = m ? parseInt(m[2], 10) : null;
+    const episode = m && m[3] ? parseInt(m[3], 10) : null;
+    if (!q) return err('Usage: /delete <title | item id> [S01 | S01E05]');
+    let url = '/api/command/titles?q=' + encodeURIComponent(q);
+    if (season != null) url += '&season=' + season;
+    if (episode != null) url += '&episode=' + episode;
+    const j = await getJSON(url);
+    if (!j.titles.length) return dim('No library items match.');
+    const s = j.season, e = j.episode;
+    const pad = n => String(n).padStart(2, '0');
+    j.titles.forEach(t => {
+      if (t.kind === 'movie' && s != null) return;
+      let what, path, body;
+      const id = encodeURIComponent(t.imdb_id);
+      if (t.kind === 'movie') {
+        what = 'movie'; path = `/library/delete_movie/${id}`; body = { blacklist: false, layers: [...DELETE_LAYERS, 'content_source'] };
+      } else if (s == null) {
+        what = 'whole show'; path = `/library/delete_show/${id}`; body = { blacklist: false, layers: [...DELETE_LAYERS, 'content_source'] };
+      } else if (e == null) {
+        what = `season ${s}`; path = `/library/delete_season/${id}/${s}`; body = { blacklist: false, layers: DELETE_LAYERS };
+      } else {
+        what = `S${pad(s)}E${pad(e)}`; path = `/library/delete_episode/${id}/${s}/${e}`; body = { layers: DELETE_LAYERS };
+      }
+      const label = `${t.title || '?'}${t.year ? ' (' + t.year + ')' : ''} · ${what} · ${t.items} item${t.items === 1 ? '' : 's'}` +
+        (t.states.length ? ' · ' + t.states.join(', ') : '');
+      const row = print(`<span>${esc(label)}</span> <button type="button">delete</button>`, 'c-row');
+      const btn = row.querySelector('button');
+      let armed = false;
+      btn.addEventListener('click', async () => {
+        if (!armed) { armed = true; btn.textContent = 'confirm delete'; btn.classList.add('go'); return; }
+        btn.disabled = true; btn.textContent = 'deleting…';
+        try {
+          const r = await postJSON(path, body);
+          if (r && r.success === false) throw new Error(r.error || r.message || 'failed');
+          ok(`${t.title}: ${(r && r.message) || what + ' deleted'}`);
+          btn.textContent = 'deleted';
+        } catch (ex) {
+          if (/HTTP 504/.test(ex.message)) {
+            dim(`${t.title}: the request timed out, but the delete keeps running in the background; check the Library page later.`);
+            btn.textContent = 'deleting (background)';
+            return;
+          }
+          err(`delete failed for ${t.title}: ${ex.message}`);
+          btn.disabled = false; armed = false; btn.textContent = 'delete'; btn.classList.remove('go');
+        }
+      });
+    });
+    if (s == null && j.titles.some(t => t.kind === 'show')) dim('add S01 or S01E05 to delete just a season or an episode');
   }
 
   // /request: numbered results; pick one (click, its number, or ↑/↓ + Enter),
@@ -359,14 +413,7 @@
           location.href = '/database/?filters=' + encodeURIComponent(filters); break;
         }
         case '/run': await cmdRun(arg); break;
-        case '/status': {
-          const j = await getJSON('/program_operation/api/program_status');
-          print(`Program: <b>${esc(j.status || (j.running ? 'Running' : 'Stopped'))}</b>`); break;
-        }
-        case '/start': case '/stop': {
-          const j = await getJSON(`/program_operation/api/${cmd.slice(1)}_program`, { method: 'POST' });
-          (j.status === 'error' || j.success === false ? err : ok)(j.message || j.status || 'done'); break;
-        }
+        case '/delete': await cmdDelete(arg); break;
         default:
           err(`Unknown command ${cmd}. Type /help.`);
       }

@@ -73,6 +73,57 @@ def command_items():
     return jsonify({'items': [dict(zip(keys, tuple(r))) for r in rows]})
 
 
+@tool_pages_bp.route('/api/command/titles')
+@admin_required
+def command_titles():
+    """Movies and shows matching a title or an item ID, for the command bar's /delete.
+
+    ?season= / ?episode= narrow the item count to that season or episode; a numeric
+    q is an item ID and its own season/episode is used. One row per (imdb_id, kind),
+    since the library delete routes work by IMDb ID.
+    """
+    from database.core import get_db_connection
+    q = (request.args.get('q') or '').strip()
+    season = request.args.get('season', type=int)
+    episode = request.args.get('episode', type=int)
+    if not q:
+        return jsonify({'titles': []})
+    conn = get_db_connection()
+    try:
+        if q.isdigit():
+            row = conn.execute('SELECT imdb_id, type, season_number, episode_number FROM media_items WHERE id = ?',
+                               (int(q),)).fetchone()
+            if not row or not row['imdb_id']:
+                return jsonify({'titles': []})
+            where, params = 'imdb_id = ?', [row['imdb_id']]
+            if row['type'] == 'episode':
+                season, episode = row['season_number'], row['episode_number']
+                where += " AND type = 'episode'"
+            else:
+                where += " AND type = 'movie'"
+        else:
+            where, params = 'title LIKE ?', [f'%{q}%']
+        where += " AND imdb_id IS NOT NULL AND imdb_id != ''"
+        if season is not None:
+            where += " AND type = 'episode' AND season_number = ?"
+            params.append(season)
+            if episode is not None:
+                where += ' AND episode_number = ?'
+                params.append(episode)
+        rows = conn.execute(
+            "SELECT imdb_id, MIN(title) AS title, MIN(year) AS year, "
+            "CASE WHEN type = 'movie' THEN 'movie' ELSE 'show' END AS kind, "
+            "COUNT(*) AS items, GROUP_CONCAT(DISTINCT state) AS states "
+            f"FROM media_items WHERE {where} GROUP BY imdb_id, kind ORDER BY title LIMIT 15",
+            params).fetchall()
+    finally:
+        conn.close()
+    titles = [{'imdb_id': r['imdb_id'], 'title': r['title'], 'year': r['year'], 'kind': r['kind'],
+               'items': r['items'], 'states': sorted(set((r['states'] or '').split(',')) - {''})}
+              for r in rows]
+    return jsonify({'titles': titles, 'season': season, 'episode': episode})
+
+
 @tool_pages_bp.route('/api/command/progress')
 @admin_required
 def command_progress():
