@@ -267,10 +267,6 @@
                         console.log('Dispatching scrapingContentLoaded event');
                         const event = new CustomEvent('scrapingContentLoaded');
                         document.dispatchEvent(event);
-                    } else if (tabName === 'true-debug') {
-                        console.log('Dispatching trueDebugContentLoaded event');
-                        const event = new CustomEvent('trueDebugContentLoaded');
-                        document.dispatchEvent(event);
                     }
                     initializeExpandCollapse();
                     if (callback && typeof callback === 'function') {
@@ -542,11 +538,9 @@
         let totalMatches = 0;
         const matchesByTab = {};
 
-        // Search through all tabs (skip true-debug — it's merged into Advanced Settings
-        // and inaccessible via the nav, so its matches would duplicate the debug tab count)
+        // Search through all tabs
         tabContents.forEach(tabContent => {
             const tabId = tabContent.id;
-            if (tabId === 'true-debug') return;
             const sections = tabContent.querySelectorAll('.settings-section');
             let tabMatches = 0;
 
@@ -663,11 +657,10 @@
                 'content-sources': 'Content Sources',
                 'debug': 'Advanced Settings',
                 'notifications': 'Notifications',
-                'reverse-parser': 'Reverse Parser',
-                'true-debug': 'Advanced Settings'
+                'reverse-parser': 'Reverse Parser'
             };
 
-            // Merge counts for tabs that share the same display name (debug + true-debug → Advanced Settings)
+            // Merge counts for tabs that share the same display name
             const mergedMatches = {};
             const mergedTabId = {};  // display name → first tab id (for navigation)
             Object.entries(matchesByTab).forEach(([tabId, count]) => {

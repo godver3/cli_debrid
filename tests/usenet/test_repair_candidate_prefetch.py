@@ -162,6 +162,17 @@ class TestPlaybackCandidateRetry(_Base):
         self.assertEqual(self.failed, ['Dead'])
         self.assertEqual(self.submitted, ['Good'])
 
+    def test_grab_limit_skip_is_not_recorded_as_failed(self):
+        # A used-up grab limit says nothing about the release: it must stay
+        # eligible after the limit resets, not be excluded as "failed".
+        from usenet import indexer_quota
+        self._patch(indexer_quota, 'allow_url', lambda url, kind: 'Capped' not in url)
+        self._patch(indexer_quota, 'record_url', lambda url, kind: None)
+        outcome = self._run(_candidate('Capped'), _candidate('Good'))
+        self.assertEqual(outcome, 'submitted')
+        self.assertEqual(self.failed, [])
+        self.assertEqual(self.submitted, ['Good'])
+
 
 class TestPrefetchCandidateNzb(_Base):
     def test_already_prefetched_candidate_is_not_downloaded_again(self):

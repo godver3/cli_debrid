@@ -168,6 +168,23 @@ class TestSeasonPrefetch(unittest.TestCase):
         # Page 2 may hold E01's better releases: E01 goes to a live query.
         self.assertIsNone(self.nz._season_cached_episode('http://idx/api', '0000001', 1, 1))
 
+    def test_full_text_search_page_is_not_served(self):
+        # The "Show S01" text search is one page: when the indexer has more
+        # matches than that page holds, episodes go to their own live search.
+        def big_text_search(url, params=None, timeout=None):
+            params = params or {}
+            self.calls.append(dict(params))
+            if params.get('t') == 'tvsearch':
+                return mock.Mock(status_code=200, text=_rss('Show.S01E01.1080p.WEB-GRP'))
+            items = ''.join(_ITEM.format(title=f'Show S01E02 720p-G{i}', guid=f'g{i}') for i in range(5))
+            return mock.Mock(status_code=200, text=_RSS.format(
+                items='<newznab:response offset="0" total="400"/>' + items))
+
+        with mock.patch.object(self.nz.api, 'get', side_effect=big_text_search), \
+             mock.patch.object(self.nz, '_get_retention_days', return_value=0):
+            self.nz.prefetch_season('Idx', self.settings, 'tt0000001', 'Show', 1)
+        self.assertIsNone(self.nz._season_cached_episode('http://idx/api', '0000001', 1, 1))
+
     def test_shows_without_imdb_do_not_share_a_prefetch(self):
         with mock.patch.object(self.nz.api, 'get', side_effect=self.fake_get), \
              mock.patch.object(self.nz, '_get_retention_days', return_value=0):

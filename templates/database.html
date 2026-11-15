@@ -3779,7 +3779,16 @@ document.addEventListener('DOMContentLoaded', function() {
     });
     document.addEventListener('DOMContentLoaded', function () {
         fillSlots(document);
-        new MutationObserver(() => fillSlots(document)).observe(document.body, { childList: true, subtree: true });
+        // Rows arrive from infinite scroll / filter reloads. Coalesce bursts into
+        // one pass per frame, and ignore the observer's own slot/badge writes.
+        let pending = false;
+        new MutationObserver(muts => {
+            if (pending) return;
+            const relevant = muts.some(m => !(m.target.closest && m.target.closest('.db-quick-slot, td')));
+            if (!relevant) return;
+            pending = true;
+            requestAnimationFrame(() => { pending = false; fillSlots(document); });
+        }).observe(document.body, { childList: true, subtree: true });
     });
 })();
 </script>

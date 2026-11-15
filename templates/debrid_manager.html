@@ -2726,9 +2726,14 @@ function _dmPickedProvider() {
     return sel ? sel.value : '';
 }
 
-// ?provider=<name> for a request about a torrent whose provider is known (Audit rows):
-// it comes before the one the header picker appends, so it wins.
+// ?provider=<name> for a request about one Audit row's torrent: it comes before
+// the one the header picker appends, so it wins. Older rows have no provider
+// recorded; those went to the primary before multi-provider, so pin them there
+// rather than letting the header picker redirect them.
 function _dmProviderQS(name) {
+    if (!name && Array.isArray(_allProviders) && _allProviders.length > 1) {
+        name = _allProviders[0].name;
+    }
     return name ? `?provider=${encodeURIComponent(name)}` : '';
 }
 

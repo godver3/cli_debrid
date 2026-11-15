@@ -1029,7 +1029,8 @@ def enable_task():
         if not program_runner:
             return jsonify({'success': False, 'error': 'Program is not running'})
         
-        program_runner.enable_task(task_name)
+        if program_runner.enable_task(task_name) is False:
+            return jsonify({'success': False, 'error': f'Could not enable task: {task_name} (see logs)'})
         _persisted, _persist_err = _persist_task_toggles_from_runner(program_runner)
         if not _persisted:
             logging.warning(f"Enabled task '{task_name}' live, but failed to persist toggle state: {_persist_err}")
@@ -1049,7 +1050,8 @@ def disable_task():
         if not program_runner:
             return jsonify({'success': False, 'error': 'Program is not running'})
         
-        program_runner.disable_task(task_name)
+        if program_runner.disable_task(task_name) is False:
+            return jsonify({'success': False, 'error': f'Could not disable task: {task_name} (see logs)'})
         _persisted, _persist_err = _persist_task_toggles_from_runner(program_runner)
         if not _persisted:
             logging.warning(f"Disabled task '{task_name}' live, but failed to persist toggle state: {_persist_err}")

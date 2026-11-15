@@ -269,7 +269,7 @@
         case '/request': await cmdRequest(arg); break;
         case '/search':
           if (!arg) return err('Usage: /search <title>');
-          location.href = '/discover/?search=' + encodeURIComponent(arg); break;
+          location.href = '/discover/?q=' + encodeURIComponent(arg); break;
         case '/rescrape':
           await findItems(arg, 'rescrape', it => postJSON('/debug/rescrape_item', { item_id: it.id })); break;
         case '/blacklist':

@@ -154,6 +154,16 @@ class FileTests(unittest.TestCase):
         self.assertIn(('Debug', 'enable_library_maintenance_task'), dropped)
         self.assertIn(('Debug', 'content_source_check_period'), dropped)
 
+    def test_migrate_keeps_library_maintenance_off_when_user_disabled_it(self):
+        # Debug setting on, but the task switched off in the old Task Manager:
+        # the upgrade must not turn this destructive task back on.
+        self._write('task_toggles.json', {'_migration_version': '0.6.34',
+                                          'task_run_library_maintenance': False})
+        config = {'Debug': {'enable_library_maintenance_task': True}}
+        with mock.patch.object(reg, '_drop_setting'):
+            reg.migrate(_settings(**config), lambda: config)
+        self.assertFalse(reg.load_overrides().get('task_run_library_maintenance', False))
+
     def test_migrate_keeps_existing_custom_interval(self):
         self._write('task_toggles.json', {'_migration_version': reg.TOGGLES_VERSION})
         self._write('task_intervals.json', {'task_Trakt Lists_1_wanted': 600})

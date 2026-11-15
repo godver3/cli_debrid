@@ -105,8 +105,21 @@ class QuotaTest(unittest.TestCase):
             self.assertIsNone(iq.instance_for_url('http://prowlarr:9696/3/api'))   # not charged to 1 or 2
             self.assertEqual(iq.instance_for_url('http://localhost:5076/getnzb/api/1'), 'Hydra')
             self.assertEqual(iq.instance_for_url('http://localhost:9696/7/download?x'), 'Prowlarr_L')
-            # A lone scraper on a host still matches across scheme/port.
+            # A lone scraper on a host still matches across http/https.
             self.assertEqual(iq.instance_for_url('http://nzbgeek.info/getnzb/a.nzb'), 'Geek_1')
+
+    def test_other_services_on_a_lone_indexers_host_are_not_charged(self):
+        lone = {'Prowlarr_5': {'type': 'Newznab', 'url': 'http://192.168.1.10:9696/5',
+                               'api_limit_per_day': '100'}}
+
+        def setting(section, key=None, default=None):
+            return lone if section == 'Scrapers' and key is None else default
+        iq.reset_for_tests()
+        with mock.patch.object(iq, 'get_setting', side_effect=setting):
+            self.assertEqual(iq.instance_for_url('http://192.168.1.10:9696/5/api?t=search'), 'Prowlarr_5')
+            # cli_mount and Plex on the same box are different services.
+            self.assertIsNone(iq.instance_for_url('http://192.168.1.10:8888/api/torrents'))
+            self.assertIsNone(iq.instance_for_url('http://192.168.1.10:32400/library/sections'))
 
     def test_same_grab_url_counted_once(self):
         url = 'https://api.nzbgeek.info/api?t=get&id=abc'

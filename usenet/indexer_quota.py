@@ -178,10 +178,18 @@ def instance_for_url(url: str) -> Optional[str]:
     host, port, path = parts
     on_host = [(pt, p, name) for h, pt, p, name in _host_map()
                if host == h or host.endswith('.' + h)]
-    if len(on_host) <= 1:
-        # One scraper on this host: it's that one whatever the scheme/port
-        # (indexers often return https links for an http-configured URL).
-        return on_host[0][2] if on_host else None
+    if not on_host:
+        return None
+
+    def _same_port(pt):
+        # Indexers often return https links for an http-configured URL, so
+        # 80/443 count as one; any other port is a different service on the
+        # same box (cli_mount :8888, Plex :32400 next to Prowlarr :9696).
+        return pt == port or {pt, port} <= {80, 443}
+
+    if len(on_host) == 1:
+        pt, _p, name = on_host[0]
+        return name if _same_port(pt) else None
     cands = [(p, name) for pt, p, name in on_host if pt == port]
     if not cands:
         return None

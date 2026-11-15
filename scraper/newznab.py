@@ -287,7 +287,7 @@ def scrape_newznab_instance(
             logging.info(f"Newznab '{instance}': skipping season-pack search for '{title}' "
                          f"S{season if season is not None else '?'} (NZB season packs are disabled)")
             return []
-        logging.info(f"Newznab '{instance}': NZB season packs are disabled; searching "
+        logging.debug(f"Newznab '{instance}': NZB season packs are disabled; searching "
                      f"'{title}' S{season:02d}E{episode:02d} as a single episode instead of a season pack")
         multi = False
 
@@ -536,10 +536,17 @@ def prefetch_season(
                 break
     q = _SANITIZE_RE.sub('', f'{title} S{season:02d}').strip()
     got = _get({'apikey': api_key, 't': 'search', 'q': q, 'cat': _CAT_TV, 'limit': _SEASON_PAGE})
-    if got:
-        results.extend(got)
-    elif got is None:
+    if got is None:
         complete = False
+    else:
+        results.extend(got)
+        # One page only: if the indexer has more text matches than it returned,
+        # an episode's untagged releases may be past this page, so don't serve
+        # episodes from it (they get their own live "Title SxxEyy" search).
+        raw = page_meta.get('items', len(got))
+        total = page_meta.get('total')
+        if (total is not None and total > raw) or (total is None and raw >= _SEASON_PAGE):
+            complete = False
     if not ok:
         return 0
     with _SEASON_CACHE_LOCK:

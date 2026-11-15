@@ -1323,7 +1323,7 @@ document.addEventListener('scrapingContentLoaded', hideHybridModeCheckboxes);
 
 // Function to handle debug settings synchronization
 function syncDebugSettings() {
-    // Get the debug settings from the true_debug tab
+    // Get the scraping settings shown on the Advanced (debug) tab
     const ultimateSortOrderSelect = document.getElementById('debug-ultimate_sort_order');
     const softMaxSizeGbCheckbox = document.getElementById('debug-soft_max_size_gb');
     const stalenessThresholdInput = document.getElementById('debug-staleness_threshold');
@@ -1359,8 +1359,6 @@ function syncDebugSettings() {
     }
 }
 
-// Add event listener for the true_debug tab content loaded event
-document.addEventListener('trueDebugContentLoaded', syncDebugSettings);
 document.addEventListener('DOMContentLoaded', syncDebugSettings);
 
 // Function to save a single setting

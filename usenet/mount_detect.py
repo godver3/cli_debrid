@@ -50,11 +50,19 @@ def candidate_urls(provider: str, current_url: str = '') -> List[str]:
         hosts.append(gw)
     hosts += ['localhost', '127.0.0.1']
     ports = PORTS.get(provider, [])
+    # cli_debrid's own Phalanx DB listens on localhost:<phalanx port> (8888 by
+    # default, cli_mount's port too): never offer it as the cli_mount URL.
+    try:
+        phalanx_port = int(os.environ.get('CLI_DEBRID_PHALANX_PORT', 8888))
+    except ValueError:
+        phalanx_port = 8888
     urls = []
     if current_url:
         urls.append(current_url.rstrip('/'))
     for host in hosts:
         for port in ports:
+            if provider == 'climount' and port == phalanx_port and host in ('localhost', '127.0.0.1'):
+                continue
             url = f'http://{host}:{port}'
             if url not in urls:
                 urls.append(url)

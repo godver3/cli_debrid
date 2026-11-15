@@ -1621,7 +1621,12 @@ class CheckingQueue:
                                                 # plex_update_item would skip it, so don't count it as ours.
                                                 return
                                             _scan_item = {'full_path': _candidate, 'location_on_disk': _candidate, 'type': _itype}
-                                            if plex_update_item(_scan_item):
+                                            _ok = plex_update_item(_scan_item)
+                                            if not any(i.get('filled_by_torrent_id') == _tid for i in list(self.items)):
+                                                # The job left Checking while Plex was scanning; its
+                                                # state was already cleaned up, so don't re-create it.
+                                                return
+                                            if _ok:
                                                 accepted = True
                                                 self._plex_scans.setdefault(_tid, []).append(time.time())
                                                 logging.info(f'[NZB] Plex accepted a scan of {_candidate!r}')

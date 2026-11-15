@@ -431,9 +431,15 @@ def migrate(get_setting, get_all_settings) -> None:
 
     debug = settings.get('Debug', {}) or {}
 
-    # Debug.enable_library_maintenance_task -> an Automation toggle
+    # Debug.enable_library_maintenance_task -> an Automation toggle.
+    # On dev the task ran only with the Debug setting on AND its Task Manager
+    # toggle on, so an explicit legacy toggle wins: a user who switched this
+    # destructive task off must not have it re-enabled by the upgrade.
     if 'enable_library_maintenance_task' in debug:
-        if debug.get('enable_library_maintenance_task'):
+        legacy_toggle = None
+        if version == LEGACY_TOGGLES_VERSION and 'task_run_library_maintenance' in data:
+            legacy_toggle = bool(data.get('task_run_library_maintenance'))
+        if debug.get('enable_library_maintenance_task') and legacy_toggle is not False:
             overrides = load_overrides()
             overrides.setdefault('task_run_library_maintenance', True)
             _write_toggles_file(overrides)

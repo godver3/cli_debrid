@@ -34,7 +34,6 @@
         // Select only forms intended for the generic handler
         const genericFormIds = [
             'bulk-delete-form',
-            'download-logs-form', 
             'delete-database-form',
             'refresh-release-dates-form',
             'move-to-upgrading-form',
@@ -93,11 +92,6 @@
                     e.preventDefault();
                     const url = form.action;
                     const method = form.method;
-
-                    if (form.id === 'download-logs-form') {
-                        downloadLogs();
-                        return;
-                    }
 
                     let confirmMessage = 'Are you sure you want to perform this action?';
                     if (form.id === 'delete-database-form') {
@@ -169,37 +163,6 @@
                     title: 'Error'
                 });
             });
-        }
-
-        function downloadLogs() {
-            const lines = document.getElementById('log_lines').value;
-            const url = `/logs/api/logs?lines=${lines}&download=true`;
-            
-            fetch(url)
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error('Network response was not ok');
-                    }
-                    return response.blob();
-                })
-                .then(blob => {
-                    const url = window.URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.style.display = 'none';
-                    a.href = url;
-                    a.download = 'debug.log';
-                    document.body.appendChild(a);
-                    a.click();
-                    window.URL.revokeObjectURL(url);
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    showPopup({
-                        type: POPUP_TYPES.ERROR,
-                        message: 'Failed to download logs',
-                        title: 'Error'
-                    });
-                });
         }
 
         function checkProgramStatus() {
@@ -549,64 +512,6 @@
             });
         } else {
             console.error('Refresh rate limits button not found!');
-        }
-
-        const sendTestNotificationForm = document.getElementById('send-test-notification-form');
-        if (sendTestNotificationForm) {
-            sendTestNotificationForm.addEventListener('submit', function(e) {
-                e.preventDefault();
-                sendTestNotification();
-            });
-        }
-
-        function sendTestNotification() {
-            console.log('sendTestNotification function called');
-            const url = '/debug/send_test_notification';
-            console.log('Sending request to:', url);
-            fetch(url, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({})  // Send an empty object as body
-            })
-            .then(response => {
-                console.log('Response status:', response.status);
-                console.log('Response headers:', response.headers);
-                return response.text().then(text => {
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}, body: ${text}`);
-                    }
-                    try {
-                        return JSON.parse(text);
-                    } catch (e) {
-                        console.error('Error parsing JSON:', e);
-                        throw new Error(`Invalid JSON response: ${text}`);
-                    }
-                });
-            })
-            .then(data => {
-                if (data.success) {
-                    showPopup({
-                        type: POPUP_TYPES.SUCCESS,
-                        message: data.message || 'Test notification sent successfully',
-                        title: 'Success'
-                    });
-                } else {
-                    throw new Error(data.error || 'An error occurred while sending the test notification');
-                }
-            })
-            .catch(error => {
-                console.error('Error details:', error);
-                console.error('Error name:', error.name);
-                console.error('Error message:', error.message);
-                console.error('Error stack:', error.stack);
-                showPopup({
-                    type: POPUP_TYPES.ERROR,
-                    message: `An error occurred: ${error.message}. Please check the server logs for more details.`,
-                    title: 'Error'
-                });
-            });
         }
 
         // Define pollTaskStatus function once
@@ -4155,12 +4060,8 @@
     window.dcyToggleAll = dcyToggleAll;
     window.dcyDeleteSelected = dcyDeleteSelected;
 
-    // Auto-load providers when library tab is shown
-    document.querySelector('[onclick="switchDebugTab(\'library\')"]')?.addEventListener('click', () => {
-        if (!document.getElementById('dcy-provider').value) dcyLoadProviders();
-    });
-    // Also load on page ready if library tab is active
-    if (document.getElementById('library-tab')?.classList.contains('active')) dcyLoadProviders();
+    // The cleanup card lives on the Maintenance page: fill its provider list on load.
+    if (document.getElementById('dcy-provider')) dcyLoadProviders();
 
     async function backfillNzbNamesRun() {
         const btn = document.getElementById('backfill-nzb-run-btn');

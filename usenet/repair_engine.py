@@ -1212,13 +1212,16 @@ def _scrape_for_replacement(item: dict, broken_nzb_title: str, version_override:
         return []
 
 
-def _prefetch_candidate_nzb(result: dict) -> bool:
+def _prefetch_candidate_nzb(result: dict) -> Optional[bool]:
     """Download one candidate's NZB just before submission.
 
     Stores the XML in ``result['_prefetched_nzb']`` (which also makes its
     segment key visible to candidate_keys) and returns False when the NZB's
     segment is blacklisted, so the caller skips it. A failed download returns
     True and leaves the candidate to be submitted by URL, as before.
+    Returns None (falsy, so callers still skip it) when the indexer's daily
+    grab limit is used up: the release itself is fine and must not be
+    recorded as a failed candidate.
     """
     if result.get('_prefetched_nzb'):
         return True
@@ -1229,7 +1232,7 @@ def _prefetch_candidate_nzb(result: dict) -> bool:
     if not indexer_quota.allow_url(nzb_url, 'grab'):
         # Submitting it by URL would make cli_mount grab it anyway: skip it.
         logger.info(f'[NZBRepair] Skipping {result.get("title")!r}: its indexer\'s daily grab limit is used up')
-        return False
+        return None
     try:
         indexer_quota.record_url(nzb_url, 'grab')
         resp = requests.get(nzb_url, timeout=15, allow_redirects=True,
@@ -1414,8 +1417,13 @@ def _prefetch_playback_candidate(item_id, candidate: dict) -> bool:
     """_prefetch_candidate_nzb plus the segment-key exclusion check that the
     title/guid-only check before the download could not do. A candidate
     rejected here is recorded as failed so its title/guid keys exclude it
-    before any download on the next retry."""
-    if not _prefetch_candidate_nzb(candidate):
+    before any download on the next retry. A candidate skipped only because
+    its indexer's grab limit is used up is not recorded: it must stay eligible
+    once the limit resets."""
+    fetched = _prefetch_candidate_nzb(candidate)
+    if fetched is None:
+        return False
+    if not fetched:
         record_failed_candidate(item_id, candidate, '')
         return False
     if candidate.get('_prefetched_nzb') and candidate_is_excluded(item_id, candidate):

@@ -44,11 +44,20 @@ class UrlTests(unittest.TestCase):
         self.assertIn('http://172.17.0.1:3000', urls)
 
     def test_only_answering_hosts_returned_once_per_server(self):
-        answers = {'http://localhost:8888': (True, '2.5.13'), 'http://127.0.0.1:8888': (True, '2.5.13')}
+        answers = {'http://localhost:8282': (True, '2.5.13'), 'http://127.0.0.1:8282': (True, '2.5.13')}
         with mock.patch.object(md, '_default_gateway', return_value=None), \
                 mock.patch.object(md, 'probe', side_effect=lambda p, u, t='': answers.get(u, (False, ''))):
             found = md.detect_urls('climount')
-        self.assertEqual(found, [{'url': 'http://localhost:8888', 'version': '2.5.13'}])
+        self.assertEqual(found, [{'url': 'http://localhost:8282', 'version': '2.5.13'}])
+
+    def test_own_phalanx_port_on_localhost_is_not_offered_as_climount(self):
+        with mock.patch.object(md, '_default_gateway', return_value=None), \
+                mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('CLI_DEBRID_PHALANX_PORT', None)
+            urls = md.candidate_urls('climount')
+        self.assertNotIn('http://localhost:8888', urls)
+        self.assertNotIn('http://127.0.0.1:8888', urls)
+        self.assertIn('http://climount:8888', urls)
 
     def test_nothing_found(self):
         with mock.patch.object(md, '_default_gateway', return_value=None), \
