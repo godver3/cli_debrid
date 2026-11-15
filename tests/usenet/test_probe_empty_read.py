@@ -20,10 +20,18 @@ class EmptyReadGuardTest(unittest.TestCase):
         return path
 
     def test_empty_read_is_inconclusive_and_passes_the_gate(self):
-        path = self._file(b'')
-        with mock.patch.object(re_, '_probe_readable_once', return_value=False) as probe:
+        # Stale mount: the file lists with its real size but reads back 0 bytes.
+        path = self._file(b'\x1a\x45\xdf\xa3' + b'\0' * 64)
+        with mock.patch.object(re_, '_reads_empty', return_value=True), \
+             mock.patch.object(re_, '_probe_readable_once', return_value=False) as probe:
             self.assertIsNone(re_.probe_file_playable(path))
             self.assertTrue(re_._verify_file_readable(path))
+        probe.assert_not_called()
+
+    def test_zero_byte_file_is_dead_not_inconclusive(self):
+        path = self._file(b'')
+        with mock.patch.object(re_, '_probe_readable_once', return_value=True) as probe:
+            self.assertIs(re_.probe_file_playable(path), False)
         probe.assert_not_called()
 
     def test_real_content_still_goes_through_the_probe(self):

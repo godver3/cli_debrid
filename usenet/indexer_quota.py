@@ -39,6 +39,11 @@ _usage: Optional[Dict[str, Dict[str, list]]] = None
 _last_save = 0.0
 _dirty = False
 _warned: Dict[tuple, float] = {}
+# NZB URL -> when its grab was counted. One release is often fetched more than
+# once in a row (a pre-fetch that isn't usable, then cli_mount fetching the same
+# URL on submit); count it once.
+_recent_grabs: Dict[str, float] = {}
+_GRAB_DEDUPE_SECONDS = 600
 
 
 def _load() -> Dict[str, Dict[str, list]]:
@@ -118,41 +123,79 @@ def resets_at(mode: str, now: Optional[float] = None) -> float:
     return (datetime.fromtimestamp(start) + timedelta(days=1)).timestamp()
 
 
-_host_map_cache = (0.0, {})   # (built at, {base host: scraper name})
+_host_map_cache = (0.0, [])   # (built at, [(host, port, path, scraper name)])
 
 
-def _host_map() -> Dict[str, str]:
+def _split_url(url: str):
+    """(host without api./www., effective port, path without trailing '/') or None."""
+    parsed = urlparse(url or '')
+    host = (parsed.hostname or '').lower()
+    if not host:
+        return None
+    for prefix in ('api.', 'www.'):
+        if host.startswith(prefix):
+            host = host[len(prefix):]
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    if port is None:
+        port = 443 if (parsed.scheme or '').lower() == 'https' else 80
+    return host, port, (parsed.path or '').rstrip('/')
+
+
+def _host_map() -> list:
     global _host_map_cache
-    built, mapping = _host_map_cache
+    built, entries = _host_map_cache
     if time.time() - built < 60:
-        return mapping
-    mapping = {}
+        return entries
+    entries = []
     for name, cfg in _newznab_scrapers().items():
         try:
-            base = (urlparse(cfg.get('url') or '').netloc or '').lower().split(':')[0]
+            parts = _split_url(cfg.get('url') or '')
         except Exception:
-            continue
-        for prefix in ('api.', 'www.'):
-            if base.startswith(prefix):
-                base = base[len(prefix):]
-        if base:
-            mapping[base] = name
-    _host_map_cache = (time.time(), mapping)
-    return mapping
+            parts = None
+        if parts:
+            entries.append((*parts, name))
+    _host_map_cache = (time.time(), entries)
+    return entries
 
 
 def instance_for_url(url: str) -> Optional[str]:
-    """The configured Newznab scraper an NZB / API URL belongs to, matched by host."""
+    """The configured Newznab scraper an NZB / API URL belongs to.
+
+    Matched by host (or a subdomain of it); when several scrapers share the
+    host, by port too. When several still share a host and port (Prowlarr/Hydra serving many indexers), the one whose URL
+    path is the longest prefix of this URL's path wins; if none or several tie,
+    the URL is not attributed rather than charged to the wrong indexer.
+    """
     try:
-        host = (urlparse(url).netloc or '').lower().split('@')[-1].split(':')[0]
+        parts = _split_url(url)
     except Exception:
         return None
-    if not host:
+    if not parts:
         return None
-    for base, name in _host_map().items():
-        if host == base or host.endswith('.' + base):
-            return name
-    return None
+    host, port, path = parts
+    on_host = [(pt, p, name) for h, pt, p, name in _host_map()
+               if host == h or host.endswith('.' + h)]
+    if len(on_host) <= 1:
+        # One scraper on this host: it's that one whatever the scheme/port
+        # (indexers often return https links for an http-configured URL).
+        return on_host[0][2] if on_host else None
+    cands = [(p, name) for pt, p, name in on_host if pt == port]
+    if not cands:
+        return None
+    if len(cands) == 1:
+        return cands[0][1]
+    matched = [(len(p), name) for p, name in cands
+               if p and (path == p or path.startswith(p + '/'))]
+    if matched:
+        matched.sort(reverse=True)
+        if len(matched) == 1 or matched[0][0] != matched[1][0]:
+            return matched[0][1]
+        return None
+    bare = [name for p, name in cands if not p]
+    return bare[0] if len(bare) == 1 else None
 
 
 def request_kind(url: str, params=None) -> str:
@@ -173,12 +216,33 @@ def request_kind(url: str, params=None) -> str:
     return 'api'
 
 
+def _grab_key(url: str, params=None) -> str:
+    if isinstance(params, dict) and params:
+        return url + '?' + '&'.join(f'{k}={params[k]}' for k in sorted(params, key=str))
+    return url
+
+
+def _record_for_url(url: str, kind: str, params=None) -> None:
+    inst = instance_for_url(url)
+    if not inst:
+        return
+    if kind == 'grab':
+        key = _grab_key(url, params)
+        now = time.time()
+        with _lock:
+            if now - _recent_grabs.get(key, 0) < _GRAB_DEDUPE_SECONDS:
+                return
+            if len(_recent_grabs) > 500:
+                for k in [k for k, t in _recent_grabs.items() if now - t >= _GRAB_DEDUPE_SECONDS]:
+                    del _recent_grabs[k]
+            _recent_grabs[key] = now
+    record(inst, kind)
+
+
 def note_request(url: str, params=None) -> None:
     """Count one request if it goes to a configured Newznab indexer (called by api.get)."""
     try:
-        inst = instance_for_url(url)
-        if inst:
-            record(inst, request_kind(url, params))
+        _record_for_url(url, request_kind(url, params), params)
     except Exception:
         pass
 
@@ -232,7 +296,8 @@ def allow_url(url: str, kind: str) -> bool:
 
 
 def record_url(url: str, kind: str) -> None:
-    record(instance_for_url(url), kind)
+    """Count a call to `url`; a grab of a URL already counted in the last 10 min isn't counted again."""
+    _record_for_url(url, kind)
 
 
 def summary(now: Optional[float] = None) -> Dict[str, dict]:
@@ -271,7 +336,8 @@ def usage_line(instance: str) -> str:
 def reset_for_tests() -> None:
     global _usage, _dirty, _last_save, _host_map_cache
     with _lock:
-        _host_map_cache = (0.0, {})
+        _host_map_cache = (0.0, [])
+        _recent_grabs.clear()
         _usage = {}
         _dirty = False
         _last_save = 0.0

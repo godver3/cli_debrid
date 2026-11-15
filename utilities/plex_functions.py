@@ -2639,8 +2639,13 @@ def plex_update_item(item: Dict[str, Any]) -> bool:
             plex_update_timeout = 60
             logger.warning(f"Invalid plex_section_update_timeout value; defaulting to {plex_update_timeout}s")
 
+        # Set when some library section was tried, so a caller can tell "no
+        # library holds this folder" (a retry can't help) from a failed scan.
+        _tried_a_section = []
+
         def _update_section_with_timeout(sec, dir_path) -> bool:
             """Run `sec.update(path=dir_path)` in a background thread with a hard timeout."""
+            _tried_a_section.append(True)
             section_name = getattr(sec, 'title', 'Unknown')
             if not claim_plex_mode_scan(dir_path):
                 logger.debug(f"Skipping Plex section.update for '{section_name}' on '{dir_path}' — scanned under {PLEX_MODE_SCAN_COOLDOWN}s ago")
@@ -2817,6 +2822,8 @@ def plex_update_item(item: Dict[str, Any]) -> bool:
                 f"  Skipping Plex scan to avoid triggering full library scan.\n"
                 f"  Please verify your Plex library configuration matches your symlink paths."
             )
+            if not _tried_a_section:
+                item['_plex_scan_outcome'] = 'no_library'
             return False
 
         return False  # Should not be reached, but as final fallback

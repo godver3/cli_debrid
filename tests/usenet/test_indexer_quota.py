@@ -87,6 +87,38 @@ class QuotaTest(unittest.TestCase):
         self.assertEqual(iq.request_kind('https://api.nzbgeek.info/api?t=get&id=x'), 'grab')
         self.assertEqual(iq.request_kind('https://api.nzbplanet.net/getnzb/f.nzb&i=1'), 'grab')
 
+    def test_indexers_sharing_a_host_are_told_apart(self):
+        shared = dict(SCRAPERS)
+        shared.update({
+            'Prowlarr_1': {'type': 'Newznab', 'url': 'http://prowlarr:9696/1/'},
+            'Prowlarr_2': {'type': 'Newznab', 'url': 'http://prowlarr:9696/2'},
+            'Hydra': {'type': 'Newznab', 'url': 'http://localhost:5076'},
+            'Prowlarr_L': {'type': 'Newznab', 'url': 'http://localhost:9696/7'},
+        })
+
+        def setting(section, key=None, default=None):
+            return shared if section == 'Scrapers' and key is None else default
+        iq.reset_for_tests()
+        with mock.patch.object(iq, 'get_setting', side_effect=setting):
+            self.assertEqual(iq.instance_for_url('http://prowlarr:9696/1/api?t=search'), 'Prowlarr_1')
+            self.assertEqual(iq.instance_for_url('http://prowlarr:9696/2/download?link=x'), 'Prowlarr_2')
+            self.assertIsNone(iq.instance_for_url('http://prowlarr:9696/3/api'))   # not charged to 1 or 2
+            self.assertEqual(iq.instance_for_url('http://localhost:5076/getnzb/api/1'), 'Hydra')
+            self.assertEqual(iq.instance_for_url('http://localhost:9696/7/download?x'), 'Prowlarr_L')
+            # A lone scraper on a host still matches across scheme/port.
+            self.assertEqual(iq.instance_for_url('http://nzbgeek.info/getnzb/a.nzb'), 'Geek_1')
+
+    def test_same_grab_url_counted_once(self):
+        url = 'https://api.nzbgeek.info/api?t=get&id=abc'
+        iq.note_request(url)            # pre-fetch through api.get
+        iq.record_url(url, 'grab')      # then cli_mount fetches it on submit
+        self.assertEqual(iq.used('Geek_1', 'grab'), 1)
+        iq.record_url('https://api.nzbgeek.info/api?t=get&id=def', 'grab')
+        self.assertEqual(iq.used('Geek_1', 'grab'), 2)
+        iq.note_request('https://api.nzbgeek.info/api', {'t': 'search', 'q': 'x'})
+        iq.note_request('https://api.nzbgeek.info/api', {'t': 'search', 'q': 'x'})
+        self.assertEqual(iq.used('Geek_1', 'api'), 2)   # searches are never deduped
+
     def test_api_tracker_counts_indexer_requests(self):
         import routes.api_tracker as tracker
         api = tracker.api

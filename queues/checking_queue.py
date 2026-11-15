@@ -90,6 +90,7 @@ class CheckingQueue:
             cls._instance._finished_at = {}  # torrent_id -> first pass that saw it at 100% (Plex mode's timeout clock)
             cls._instance._plex_scans = {}  # torrent_id -> times Plex accepted a scan of its folder
             cls._instance._plex_scan_tried_at = {}  # torrent_id -> last time a scan of its folder was sent
+            cls._instance._plex_scan_no_library = set()  # torrent_ids whose folder no Plex library holds
             cls._instance._nzb_plex_scan_triggered = set()  # reset by __init__ too
         return cls._instance
 
@@ -170,6 +171,7 @@ class CheckingQueue:
             # Jobs collected by the recent scan leave through here, not remove_item.
             for _state in (self._plex_stall_held_at, self._finished_at, self._plex_scans, self._plex_scan_tried_at):
                 _state.pop(_tid, None)
+            self._plex_scan_no_library.discard(_tid)
             self._nzb_plex_scan_triggered.discard(_tid)
 
     def get_contents(self, raw=False):
@@ -1195,6 +1197,7 @@ class CheckingQueue:
             self._finished_at.pop(torrent_id, None)
             self._plex_scans.pop(torrent_id, None)
             self._plex_scan_tried_at.pop(torrent_id, None)
+            self._plex_scan_no_library.discard(torrent_id)
             self._nzb_plex_scan_triggered.discard(torrent_id)
         
         # Also clean up any uncached torrent tracking if this was the last item.
@@ -1270,6 +1273,8 @@ class CheckingQueue:
             reason = 'Plex is still scanning' if scanning else 'Plex is unreachable or timing out'
             return self._plex_hold_if_nzb(torrent_id, items, finished_at, now, reason)
         scans = len(self._plex_scans.get(torrent_id, []))
+        if torrent_id in self._plex_scan_no_library and not scans:
+            return 'give_up', 'Plex is idle and no Plex library holds its folder, so it can\'t be scanned in'
         if scans < self.PLEX_SCANS_BEFORE_GIVING_UP:
             verdict = self._plex_hold_if_nzb(torrent_id, items, finished_at, now,
                                              f'Plex is idle and accepted {scans} scan(s) of it; asking again')
@@ -1572,10 +1577,17 @@ class CheckingQueue:
                             # a scan Plex refused (down, timing out) is sent again on a later pass, and
                             # _plex_mode_verdict asks for another before giving up on the release.
                             from utilities import plex_health as _plex_health
+                            from utilities.plex_functions import PLEX_MODE_SCAN_COOLDOWN as _scan_cooldown
+                            # An accepted scan puts the folder on Plex mode's scan cooldown;
+                            # a thread started before it ends would only list the mount and
+                            # find the scan not due, so wait it out.
+                            _last_accepted = max(self._plex_scans.get(torrent_id) or [0])
                             if (torrent_id not in self._nzb_plex_scan_triggered
+                                    and torrent_id not in self._plex_scan_no_library
                                     and plex_scan_budget > 0
                                     and _plex_health.recent_failure(60) is None
-                                    and current_time - self._plex_scan_tried_at.get(torrent_id, 0) >= self.PLEX_SCAN_RETRY_INTERVAL):
+                                    and current_time - self._plex_scan_tried_at.get(torrent_id, 0) >= self.PLEX_SCAN_RETRY_INTERVAL
+                                    and current_time - _last_accepted >= _scan_cooldown):
                                 plex_scan_budget -= 1
                                 self._nzb_plex_scan_triggered.add(torrent_id)
                                 self._plex_scan_tried_at[torrent_id] = current_time
@@ -1608,10 +1620,18 @@ class CheckingQueue:
                                                 # Scanned inside the cooldown (e.g. by task_check_plex_files);
                                                 # plex_update_item would skip it, so don't count it as ours.
                                                 return
-                                            if plex_update_item({'full_path': _candidate, 'location_on_disk': _candidate, 'type': _itype}):
+                                            _scan_item = {'full_path': _candidate, 'location_on_disk': _candidate, 'type': _itype}
+                                            if plex_update_item(_scan_item):
                                                 accepted = True
                                                 self._plex_scans.setdefault(_tid, []).append(time.time())
                                                 logging.info(f'[NZB] Plex accepted a scan of {_candidate!r}')
+                                            elif _scan_item.get('_plex_scan_outcome') == 'no_library':
+                                                # No Plex library holds this folder (e.g. Plex sees the
+                                                # mount under another path): asking again can't help, so
+                                                # the release isn't held waiting for scans Plex won't take.
+                                                self._plex_scan_no_library.add(_tid)
+                                                logging.warning(f'[NZB] No Plex library holds {_candidate!r}; '
+                                                                f'not holding it in Checking for more scans')
                                             elif _retry_scans:
                                                 logging.warning(f"[NZB] Plex didn't take the scan of {_candidate!r}; will ask again")
                                         except Exception as _pe:

@@ -699,6 +699,16 @@ def probe_file_playable(location_on_disk: str, timeout: int = 10, attempts: int 
         logger.debug(f'[NZBRepair] File not on mount: {file_path!r}')
         return False
 
+    # A file the mount itself lists as 0 bytes really is empty: it can't play,
+    # and an empty read from it says nothing about the mount being stale. The
+    # stale-mount case below is a file listed with its real size reading 0 bytes.
+    try:
+        if _os.stat(file_path).st_size == 0:
+            logger.warning(f'[NZBRepair] {file_path!r} is 0 bytes on the mount — treating as unplayable')
+            return False
+    except OSError:
+        pass
+
     if _reads_empty(file_path, timeout=timeout):
         global _EMPTY_READ_WARNED_AT
         if _t.monotonic() - _EMPTY_READ_WARNED_AT > 600:

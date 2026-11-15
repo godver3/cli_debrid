@@ -276,14 +276,20 @@ def scrape_newznab_instance(
         logging.error(f"Newznab instance '{instance}' is missing URL.")
         return []
 
-    # A season-pack search (multi) can only return packs, and with NZB season
-    # packs disabled every one of them is rejected after the fact
-    # (filter_results), so the request is pure waste: skip it.
+    # With NZB season packs disabled every pack a season-pack (multi) search
+    # finds is rejected after the fact (filter_results), so don't spend the
+    # request on packs. The single-episode releases that search also turned up
+    # are still wanted, so search for this episode instead; with no episode
+    # number there is nothing usable to search for.
     if (multi and content_type.lower() == 'episode'
             and get_setting('Usenet Provider', 'disable_nzb_season_packs', True)):
-        logging.info(f"Newznab '{instance}': skipping season-pack search for '{title}' "
-                     f"S{season if season is not None else '?'} (NZB season packs are disabled)")
-        return []
+        if episode is None or season is None:
+            logging.info(f"Newznab '{instance}': skipping season-pack search for '{title}' "
+                         f"S{season if season is not None else '?'} (NZB season packs are disabled)")
+            return []
+        logging.info(f"Newznab '{instance}': NZB season packs are disabled; searching "
+                     f"'{title}' S{season:02d}E{episode:02d} as a single episode instead of a season pack")
+        multi = False
 
     clean_imdb = imdb_id.replace('tt', '') if imdb_id else ''
     endpoint = f'{url}/api'
@@ -300,7 +306,7 @@ def scrape_newznab_instance(
     _served = None
     if (content_type.lower() == 'episode' and not multi
             and season is not None and episode is not None):
-        _served = _season_cached_episode(endpoint, clean_imdb, season, episode)
+        _served = _season_cached_episode(endpoint, clean_imdb, season, episode, title)
         if _served is not None:
             logging.info(f"[NZBSeason] '{instance}' S{season:02d}E{episode:02d} served from season "
                          f"prefetch ({len(_served)} results, no API call)")
@@ -427,8 +433,11 @@ def scrape_newznab_instance(
     return deduped
 
 
-def _season_cache_key(endpoint: str, clean_imdb: str, season: int) -> tuple:
-    return (endpoint, clean_imdb, int(season))
+def _season_cache_key(endpoint: str, clean_imdb: str, season: int, title: str = '') -> tuple:
+    # Without an IMDb id the show is only known by its title: key on that, or
+    # every id-less show would share one (endpoint, '', season) entry.
+    show = clean_imdb or ('title:' + re.sub(r'\s+', ' ', (title or '').lower()).strip())
+    return (endpoint, show, int(season))
 
 
 def prefetch_season(
@@ -457,7 +466,7 @@ def prefetch_season(
     # is still unresolved; a fresh prefetch already holds everything this would
     # fetch, so reuse it instead of re-paging the whole season every tick.
     with _SEASON_CACHE_LOCK:
-        fresh = _SEASON_CACHE.get(_season_cache_key(endpoint, clean_imdb, season))
+        fresh = _SEASON_CACHE.get(_season_cache_key(endpoint, clean_imdb, season, title))
     if fresh and time.monotonic() - fresh[0] <= _SEASON_CACHE_TTL:
         logging.info(f"[NZBSeason] '{instance}' S{season:02d} of '{title}': reusing prefetch "
                      f"from {int(time.monotonic() - fresh[0])}s ago ({len(fresh[1])} results, no API call)")
@@ -466,6 +475,8 @@ def prefetch_season(
     results: List[Dict[str, Any]] = []
     calls = 0
     ok = False
+    complete = True    # every page of the ID search was fetched
+    page_meta = {}     # raw item count / total of the last page _get parsed
 
     def _get(params):
         nonlocal calls, ok
@@ -491,38 +502,84 @@ def prefetch_season(
             logging.warning(f"[NZBSeason] '{instance}' season prefetch HTTP {r.status_code}")
             return None
         ok = True
+        page_meta.clear()
+        page_meta.update(_page_meta(r.text))
         return _parse_newznab_xml(r.text, instance)
 
     if clean_imdb:
-        for page in range(_SEASON_MAX_PAGES):
+        offset = 0
+        for page in range(_SEASON_MAX_PAGES + 1):
+            if page == _SEASON_MAX_PAGES:
+                complete = False   # more pages than we follow
+                break
             got = _get({'apikey': api_key, 't': 'tvsearch', 'imdbid': clean_imdb, 'season': season,
-                        'cat': _CAT_TV, 'limit': _SEASON_PAGE, 'offset': page * _SEASON_PAGE,
+                        'cat': _CAT_TV, 'limit': _SEASON_PAGE, 'offset': offset,
                         'extended': 1})
             if got is None:
+                complete = False   # refused / failed / limit reached mid-way
                 break
             results.extend(_drop_other_titles(got, clean_imdb, instance))
-            if len(got) < _SEASON_PAGE:
+            # Page on the raw <item> count, not the parsed count: unparseable
+            # items would otherwise look like a short (last) page.
+            raw = page_meta.get('items', len(got))
+            total = page_meta.get('total')
+            offset += raw
+            if raw == 0:
+                break
+            if total is not None:
+                # newznab:response total (most indexers send it): exact, and
+                # right for indexers that cap a page below what we asked for.
+                if offset >= total:
+                    break
+                continue
+            if raw < _SEASON_PAGE:
                 break
     q = _SANITIZE_RE.sub('', f'{title} S{season:02d}').strip()
     got = _get({'apikey': api_key, 't': 'search', 'q': q, 'cat': _CAT_TV, 'limit': _SEASON_PAGE})
     if got:
         results.extend(got)
+    elif got is None:
+        complete = False
     if not ok:
         return 0
     with _SEASON_CACHE_LOCK:
-        _SEASON_CACHE[_season_cache_key(endpoint, clean_imdb, season)] = (time.monotonic(), results)
+        _SEASON_CACHE[_season_cache_key(endpoint, clean_imdb, season, title)] = (
+            time.monotonic(), results, complete)
     logging.info(f"[NZBSeason] '{instance}' prefetched S{season:02d} of '{title}': "
-                 f"{len(results)} results in {calls} API call(s)")
+                 f"{len(results)} results in {calls} API call(s)"
+                 + ('' if complete else ' (incomplete: episodes will be searched live)'))
     return len(results)
 
 
+def _page_meta(xml_text: str) -> Dict[str, int]:
+    """{'items': raw <item> count, 'total': newznab:response total (when given)}."""
+    out: Dict[str, int] = {}
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return out
+    channel = root.find('channel')
+    if channel is None:
+        return out
+    out['items'] = len(channel.findall('item'))
+    resp = channel.find('{http://www.newznab.com/DTD/2010/feeds/attributes/}response')
+    if resp is not None:
+        try:
+            out['total'] = int(resp.get('total'))
+        except (TypeError, ValueError):
+            pass
+    return out
+
+
 def _season_cached_episode(endpoint: str, clean_imdb: str, season: int,
-                           episode: int) -> Optional[List[Dict[str, Any]]]:
-    """This episode's results from a fresh season prefetch, or None if there's
-    no prefetch or it holds nothing for this episode (caller then queries live)."""
+                           episode: int, title: str = '') -> Optional[List[Dict[str, Any]]]:
+    """This episode's results from a fresh, complete season prefetch, or None if
+    there's no such prefetch or it holds nothing for this episode (caller then
+    queries live). A prefetch that couldn't fetch every page is never served:
+    the missing pages may hold this episode's better releases."""
     with _SEASON_CACHE_LOCK:
-        entry = _SEASON_CACHE.get(_season_cache_key(endpoint, clean_imdb, season))
-    if not entry or time.monotonic() - entry[0] > _SEASON_CACHE_TTL:
+        entry = _SEASON_CACHE.get(_season_cache_key(endpoint, clean_imdb, season, title))
+    if not entry or time.monotonic() - entry[0] > _SEASON_CACHE_TTL or not entry[2]:
         return None
     matches = []
     for r in entry[1]:

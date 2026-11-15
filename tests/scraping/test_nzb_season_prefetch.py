@@ -93,8 +93,8 @@ class TestSeasonPrefetch(unittest.TestCase):
              mock.patch.object(self.nz, '_get_retention_days', return_value=0):
             self.nz.prefetch_season('Idx', self.settings, 'tt0000001', 'Show', 1)
         key = self.nz._season_cache_key('http://idx/api', '0000001', 1)
-        ts, res = self.nz._SEASON_CACHE[key]
-        self.nz._SEASON_CACHE[key] = (ts - self.nz._SEASON_CACHE_TTL - 1, res)
+        ts, res, done = self.nz._SEASON_CACHE[key]
+        self.nz._SEASON_CACHE[key] = (ts - self.nz._SEASON_CACHE_TTL - 1, res, done)
         self.assertIsNone(self.nz._season_cached_episode('http://idx/api', '0000001', 1, 1))
 
 
@@ -107,17 +107,77 @@ class TestSeasonPrefetch(unittest.TestCase):
             self.assertEqual(self.nz.prefetch_season('Idx', self.settings, 'tt0000001', 'Show', 1), 5)
             self.assertEqual(len(self.calls), first)
 
-    def test_pack_search_skipped_when_nzb_packs_disabled(self):
+    def test_pack_search_becomes_episode_search_when_nzb_packs_disabled(self):
         def setting(section, key, default=None):
             if key == 'disable_nzb_season_packs':
                 return True
             return default
         with mock.patch.object(self.nz.api, 'get', side_effect=self.fake_get), \
+             mock.patch.object(self.nz, '_get_retention_days', return_value=0), \
              mock.patch.object(self.nz, 'get_setting', side_effect=setting):
             out = self.nz.scrape_newznab_instance(
                 'Idx', self.settings, 'tt0000001', 'Show', 2024, 'episode', season=1, episode=3, multi=True)
-        self.assertEqual(out, [])
-        self.assertEqual(self.calls, [])
+            # No episode number: nothing usable to search for.
+            none = self.nz.scrape_newznab_instance(
+                'Idx', self.settings, 'tt0000001', 'Show', 2024, 'episode', season=1, episode=None, multi=True)
+        self.assertEqual(none, [])
+        self.assertTrue(out)
+        # Only single-episode queries went out: no season-only (pack) search.
+        self.assertTrue(self.calls)
+        for c in self.calls:
+            if c.get('t') == 'tvsearch':
+                self.assertEqual(c.get('ep'), 3)
+            else:
+                self.assertTrue(c.get('q', '').endswith('S01E03'))
+
+    def test_season_search_follows_newznab_total_when_pages_are_capped(self):
+        # An indexer capping pages at 2 items, reporting total=5.
+        titles = [f'Show.S01E{e:02d}.1080p.WEB-G' for e in range(1, 6)]
+
+        def capped(url, params=None, timeout=None):
+            params = params or {}
+            self.calls.append(dict(params))
+            if params.get('t') == 'tvsearch':
+                off = params.get('offset', 0)
+                items = ''.join(_ITEM.format(title=t, guid=t) for t in titles[off:off + 2])
+                return mock.Mock(status_code=200, text=_RSS.format(
+                    items=f'<newznab:response offset="{off}" total="5"/>' + items))
+            return mock.Mock(status_code=200, text=_rss())
+
+        with mock.patch.object(self.nz.api, 'get', side_effect=capped), \
+             mock.patch.object(self.nz, '_get_retention_days', return_value=0):
+            self.assertEqual(self.nz.prefetch_season('Idx', self.settings, 'tt0000001', 'Show', 1), 5)
+        offsets = [c.get('offset') for c in self.calls if c.get('t') == 'tvsearch']
+        self.assertEqual(offsets, [0, 2, 4])
+        self.assertIsNotNone(self.nz._season_cached_episode('http://idx/api', '0000001', 1, 5))
+
+    def test_incomplete_prefetch_is_not_served(self):
+        def failing_page2(url, params=None, timeout=None):
+            params = params or {}
+            self.calls.append(dict(params))
+            if params.get('t') == 'tvsearch':
+                if params.get('offset', 0):
+                    return mock.Mock(status_code=500, text='')
+                return mock.Mock(status_code=200, text=_rss(
+                    *[f'Show.S01E01.720p.WEB-G{i}' for i in range(100)]))
+            return mock.Mock(status_code=200, text=_rss())
+
+        with mock.patch.object(self.nz.api, 'get', side_effect=failing_page2), \
+             mock.patch.object(self.nz, '_get_retention_days', return_value=0):
+            self.nz.prefetch_season('Idx', self.settings, 'tt0000001', 'Show', 1)
+        # Page 2 may hold E01's better releases: E01 goes to a live query.
+        self.assertIsNone(self.nz._season_cached_episode('http://idx/api', '0000001', 1, 1))
+
+    def test_shows_without_imdb_do_not_share_a_prefetch(self):
+        with mock.patch.object(self.nz.api, 'get', side_effect=self.fake_get), \
+             mock.patch.object(self.nz, '_get_retention_days', return_value=0):
+            self.nz.prefetch_season('Idx', self.settings, None, 'Show', 1)
+            first = len(self.calls)
+            self.nz.prefetch_season('Idx', self.settings, None, 'Other Show', 1)
+            self.assertGreater(len(self.calls), first)   # fetched, not "reusing" Show's
+        self.assertNotEqual(self.nz._season_cache_key('http://idx/api', '', 1, 'Show'),
+                            self.nz._season_cache_key('http://idx/api', '', 1, 'Other Show'))
+        self.assertEqual(len(self.nz._SEASON_CACHE), 2)
 
     def test_pack_search_runs_when_nzb_packs_allowed(self):
         def setting(section, key, default=None):

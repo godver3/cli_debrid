@@ -249,6 +249,17 @@ def test_replaced_once_an_idle_plex_scanned_it_twice_and_has_not_added_it(verdic
     assert verdict(scans=2) == "give_up"
 
 
+def test_replaced_at_the_normal_timeout_when_no_plex_library_holds_the_folder(verdict):
+    # Plex sees the mount under another path: every scan is refused, so holding
+    # the release for scans Plex won't take would keep a dead release for 6 h.
+    verdict.queue._plex_scan_no_library = {JOB}
+    try:
+        assert verdict() == "give_up"
+        assert verdict(scans=1) == "hold"   # a scan was accepted once: keep the usual rule
+    finally:
+        verdict.queue._plex_scan_no_library = set()
+
+
 def test_given_up_at_the_cap_even_while_plex_is_failing(verdict):
     verdict.health.record_contact_failure()
     assert verdict(finished=NOW - 7 * HOUR) == "give_up"
@@ -278,8 +289,10 @@ def test_plex_state_is_forgotten_when_the_job_leaves_checking(env):
     queue._finished_at = {JOB: HOUR}
     queue._plex_scans = {JOB: [HOUR]}
     queue._plex_scan_tried_at = {JOB: HOUR}
+    queue._plex_scan_no_library = {JOB}
     queue._nzb_plex_scan_triggered = {JOB}
     queue.remove_item(item)
     for state in (queue._plex_stall_held_at, queue._finished_at, queue._plex_scans,
-                  queue._plex_scan_tried_at, queue._nzb_plex_scan_triggered):
+                  queue._plex_scan_tried_at, queue._plex_scan_no_library,
+                  queue._nzb_plex_scan_triggered):
         assert JOB not in state

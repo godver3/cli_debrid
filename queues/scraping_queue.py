@@ -580,12 +580,6 @@ class ScrapingQueue:
                 if not processed_successfully_or_moved:
                     # --- Multi-pack check logic ---
                     is_multi_pack = False # Default to false
-                    # Set when the season still has unaired episodes (and isn't an old
-                    # season): no full-season pack can exist yet, so the final
-                    # multi-pack fallback below is skipped instead of costing a
-                    # season search on every scraper.
-                    season_has_unaired = False
-
                     if str(item_id_being_processed) == DEBUG_ITEM_ID and not processed_successfully_or_moved:
                         # logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] Passed all preliminary checks. Proceeding to multi-pack logic and scraping attempts.")
                         pass
@@ -701,7 +695,6 @@ class ScrapingQueue:
                                                 # is_multi_pack remains False
                                         else: # has_unaired_episodes is True AND not is_likely_old_season
                                             logging.info("Some episodes haven't aired yet in this recent season - skipping multi-pack")
-                                            season_has_unaired = True
                                             # is_multi_pack remains False
                                     # else: (can_attempt_multi_pack is False)
                                         # is_multi_pack remains False - already logged reason above (finale check)
@@ -1209,10 +1202,11 @@ class ScrapingQueue:
 
                     # If no filtered results from the first attempt (which includes multi->single internal fallback)
                     # AND the item is an episode, try the final fallback: multi-pack with check_pack_wantedness=False
-                    if not filtered_results and item_to_process['type'] == 'episode' and season_has_unaired:
-                        logging.info(f"No valid results for {item_identifier}; skipping the final multi-pack "
-                                     f"fallback because the season still has unaired episodes (no season pack yet).")
-                    elif not filtered_results and item_to_process['type'] == 'episode':
+                    # Runs for airing seasons too: partial multi-episode packs (S05E01-E04,
+                    # anime batches) exist before the season ends. With NZB season packs
+                    # disabled, Newznab answers this from the single-episode query it just
+                    # cached, so it costs no extra indexer calls there.
+                    if not filtered_results and item_to_process['type'] == 'episode':
                         logging.info(f"No valid results after initial scraping for {item_identifier}. "
                                      f"Attempting final multi-pack fallback (check_pack_wantedness=False).")
                         
