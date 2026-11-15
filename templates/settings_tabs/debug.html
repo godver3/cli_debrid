@@ -487,18 +487,18 @@
     </div>
 </div>
 
-<!-- Scraping (all versions): global Scraping.* settings, moved from Version Settings -->
+<!-- Scraping: global Scraping.* settings (moved from Version Settings) plus scoring and strategy -->
 <div class="settings-section settings-card">
     <div class="settings-section-header">
         <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
         </svg>
         <div class="settings-header-left">
-            <h4>Scraping (all versions)</h4>
+            <h4>Scraping</h4>
         </div>
     </div>
     <div class="settings-section-content">
-        <p class="settings-description">These apply to every version. Per-version settings are on the Version Settings page.</p>
+        <p class="settings-description">Scraping settings that apply to every version. Per-version settings are on the Version Settings page.</p>
         <div class="settings-subsection">
             <!-- Debug: environment_mode = {{ environment_mode }} -->
             {% for key, value in settings_schema.Scraping.items() %}
@@ -583,20 +583,9 @@
                 {% endif %}
             {% endfor %}
         </div>
-    </div>
-</div>
+    
+        <div class="settings-subheader"><h5>Scoring and sorting</h5></div>
 
-<!-- Scraping & Scoring Section -->
-<div class="settings-section settings-card">
-    <div class="settings-section-header">
-        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-        </svg>
-        <div class="settings-header-left">
-            <h4>Scraping & Scoring</h4>
-        </div>
-    </div>
-    <div class="settings-section-content">
         <div class="settings-form-group">
             <label for="debug-ultimate_sort_order" class="settings-title">Ultimate Sort Order:</label>
             <select id="debug-ultimate_sort_order" name="Scraping.ultimate_sort_order" class="settings-input"
@@ -642,20 +631,9 @@
                    {% if settings.get('Debug', {}).get('scale_final_scores', settings_schema.Debug.scale_final_scores.default) == True %}checked{% endif %}>
             <p class="settings-description">{{ settings_schema.Debug.scale_final_scores.description }}</p>
         </div>
-    </div>
-</div>
+    
+        <div class="settings-subheader"><h5>Strategy</h5></div>
 
-<!-- Scraping Strategy Section -->
-<div class="settings-section settings-card">
-    <div class="settings-section-header">
-        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-        </svg>
-        <div class="settings-header-left">
-            <h4>Scraping Strategy</h4>
-        </div>
-    </div>
-    <div class="settings-section-content">
         <div class="settings-form-group">
             <label for="debug-enable_reverse_order_scraping" class="settings-title">Enable Reverse Order Scraping:</label>
             <input type="checkbox" id="debug-enable_reverse_order_scraping" name="Debug.enable_reverse_order_scraping"
