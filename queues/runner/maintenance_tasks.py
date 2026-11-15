@@ -36,17 +36,6 @@ class MaintenanceTasks:
         from utilities.trakt_auth_cleanup import reset_trakt_auth
         reset_trakt_auth()
 
-    def task_debug_log(self):
-        current_time = time.time()
-        debug_info = []
-        for task, interval in self.task_intervals.items():
-            time_until_next_run = interval - (current_time - self.last_run_times[task])
-            minutes, seconds = divmod(int(time_until_next_run), 60)
-            hours, minutes = divmod(minutes, 60)
-            debug_info.append(f"{task}: {hours:02d}:{minutes:02d}:{seconds:02d}")
-
-        logging.info("Time until next task run:\n" + "\n".join(debug_info))
-
     def task_send_notifications(self):
         db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content/')
         notifications_file = Path(db_content_dir) / "collected_notifications.pkl"

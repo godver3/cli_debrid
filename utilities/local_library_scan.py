@@ -1858,7 +1858,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 item_title = item.get('title') # For logging
                 logging.info(f"[UPGRADE] Processing confirmed upgrade for {item_identifier}")
 
-                upgrading_cleanup_enabled = get_setting("Scraping", "enable_upgrading_cleanup", default=False)
+                upgrading_cleanup_enabled = get_setting("Scraping", "enable_upgrading_cleanup", default=True)
 
                 # --- Start: Torrent/File Removal Logic ---
                 old_torrent_id = item.get('upgrading_from_torrent_id')

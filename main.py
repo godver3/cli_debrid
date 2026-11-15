@@ -1564,22 +1564,32 @@ def main():
     migrate_clean_stale_scraper_keys_from_versions()
     # --- End migration ---
 
-    # Batch set deprecated settings
-    set_setting('Scraping', 'jackett_seeders_only', True)
-    set_setting('Scraping', 'enable_upgrading_cleanup', True)
-    set_setting('Sync Deletions', 'sync_deletions', True)
-    #set_setting('Debrid Provider', 'provider', 'RealDebrid')
-    set_setting('Debug', 'rescrape_missing_files', False)
-    set_setting('Debug', 'symlink_organize_by_type', True)
-
-    # Removed settings: skip_initial_plex_update (startup never scans Plex when
-    # Collected items exist) and anime_renaming_using_anidb (disabled since 0.7.10)
+    # Retired settings, dropped from config.json. Nothing has read the first block
+    # for several releases; the second block was forced to one value on every start
+    # (upgrading cleanup was too, but is a real choice again and is no longer forced).
+    RETIRED_SETTINGS = (
+        ('Debug', 'skip_initial_plex_update'),    # startup never scans Plex when Collected items exist
+        ('Debug', 'anime_renaming_using_anidb'),  # disabled since 0.7.10
+        ('Scraping', 'upgrade_similarity_threshold'),
+        ('Scraping', 'soft_max_size_gb'),
+        ('Debug', 'sort_by_uncached_status'),
+        ('File Management', 'process_non_checking_items'),
+        ('Subtitle Settings', 'include_ai_translated_subtitles'),
+        ('Bazarr Integration', 'delete_subtitles_on_removal'),
+        ('Debug', 'rescrape_missing_files'),      # missing files are always deleted
+        ('Scraping', 'jackett_seeders_only'),     # zero-seeder torrents are always dropped
+        ('Debug', 'symlink_organize_by_type'),    # wrong section; File Management has the real one
+    )
     config = load_config()
-    removed = [k for k in ('skip_initial_plex_update', 'anime_renaming_using_anidb')
-               if k in config.get('Debug', {})]
+    removed = []
+    for section, key in RETIRED_SETTINGS:
+        if isinstance(config.get(section), dict) and key in config[section]:
+            del config[section][key]
+            removed.append(f"{section}.{key}")
+    if 'Sync Deletions' in config:
+        del config['Sync Deletions']
+        removed.append('Sync Deletions')
     if removed:
-        for key in removed:
-            del config['Debug'][key]
         save_config(config)
         logging.info(f"Removed retired settings: {', '.join(removed)}")
 

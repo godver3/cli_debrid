@@ -185,11 +185,6 @@
       "action": "Run a full Plex library scan.",
       "runs": "Plex mode only, unless you turn it on by hand."
     },
-    "task_manual_plex_full_scan": {
-      "description": "The same full Plex library scan as Plex Full Scan, but runs in any mode. Meant for libraries that mix symlinks with files Plex already has.",
-      "action": "Run a full Plex library scan regardless of mode.",
-      "runs": "Off by default."
-    },
     "task_check_plex_files": {
       "description": "In Plex mode, looks on the mount for the files of items in Checking. When one appears, it asks Plex to scan just that folder, so new files show up fast instead of waiting for Plex's own scan. With Disable Plex Library Checks on, items are marked Collected as soon as the file is on the mount, or right away if no mounted file location is set. Also fixes upgraded items whose saved location still points to the old file.",
       "action": "Look for new files on the mount and trigger Plex scans.",

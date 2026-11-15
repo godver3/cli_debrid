@@ -120,7 +120,7 @@
         <div class="settings-list">
 
 {% for section, section_data in settings_schema.items() %}
-    {% if section_data.tab == "Additional Settings" and section != "Staleness Threshold" and section != "Sync Deletions" and section != "Subtitle Settings" and section != "Custom Post-Processing" and section != "Blacklist Duration" and section != "Queue" and section != "UI Settings" and section != "Library Manager" and section != "Bazarr Integration" and section != "AI Assistant" and section != "SSO" and section != "Plex Smart Collections" and section != "Plex Movie Box Sets" and section != "Tags" and section != "Trakt" and section != "Scrob" %}
+    {% if section_data.tab == "Additional Settings" and section != "Staleness Threshold" and section != "Subtitle Settings" and section != "Custom Post-Processing" and section != "Blacklist Duration" and section != "Queue" and section != "UI Settings" and section != "Library Manager" and section != "Bazarr Integration" and section != "AI Assistant" and section != "SSO" and section != "Plex Smart Collections" and section != "Plex Movie Box Sets" and section != "Tags" and section != "Trakt" and section != "Scrob" %}
     <div class="settings-section settings-card">
         <div class="settings-section-header">
             <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1099,14 +1099,6 @@ document.addEventListener('DOMContentLoaded', function() {
                    data-section="Subtitle Settings" data-key="subtitle_languages">
             <p class="settings-description">Comma-separated list of language codes (e.g., eng,zho,spa). Uses ISO-639-3 codes.</p>
         </div>
-
-        <!-- <div class="settings-form-group">
-            <label for="additional-include_ai_translated_subtitles" class="settings-title">Include AI Translated Subtitles:</label>
-            <input type="checkbox" id="additional-include_ai_translated_subtitles" name="Subtitle Settings.include_ai_translated_subtitles"
-                   data-section="Subtitle Settings" data-key="include_ai_translated_subtitles"
-                   {% if settings.get('Subtitle Settings', {}).get('include_ai_translated_subtitles', True) %}checked{% endif %}>
-            <p class="settings-description">Include AI translated subtitles in search results. These may have lower quality but provide broader language coverage.</p>
-        </div>-->
 
         <div class="settings-form-group">
             <label for="additional-probe_for_embedded_subtitles" class="settings-title">Probe for Embedded Subtitles:</label>

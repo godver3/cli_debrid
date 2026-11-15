@@ -164,7 +164,6 @@ _SPECS = [
              executor='queue'),
     TaskSpec('task_plex_full_scan', 'Plex full library scan', 'media_server', 1800, default=_plex_full_scan_default,
              controlled_by='On in Plex file management mode'),
-    TaskSpec('task_manual_plex_full_scan', 'Plex full scan (extra)', 'media_server', HOUR, default=False),
     TaskSpec('task_verify_plex_removals', 'Detect items removed from the media server', 'media_server', 900),
     TaskSpec('task_process_standalone_plex_removals', 'Process media server removals', 'media_server', HOUR),
     TaskSpec('task_verify_symlinked_files', 'Verify symlinks are in the media server', 'media_server', 2 * HOUR,
@@ -251,12 +250,8 @@ _SPECS = [
     TaskSpec('task_purge_not_wanted_nzbs_files', 'Purge not-wanted NZBs', 'one_time', kind=MANUAL, destructive=True),
     TaskSpec('task_purge_all_not_wanted_files', 'Purge all not-wanted lists', 'one_time', kind=MANUAL, destructive=True),
     TaskSpec('task_reset_trakt_auth', 'Reset Trakt sign-in', 'one_time', kind=MANUAL, destructive=True),
-    TaskSpec('task_regenerate_labels_full', 'Rebuild Plex labels (full)', 'one_time', kind=MANUAL),
+    TaskSpec('task_regenerate_labels_full', 'Rebuild Plex labels (all)', 'one_time', kind=MANUAL),
     TaskSpec('task_regenerate_labels_incremental', 'Rebuild Plex labels (recent)', 'one_time', kind=MANUAL),
-    TaskSpec('task_regenerate_labels_from_backfilled_details', 'Rebuild Plex labels from details', 'one_time', kind=MANUAL),
-    TaskSpec('task_backfill_missing_labels', 'Backfill missing Plex labels', 'one_time', kind=MANUAL),
-    TaskSpec('task_backfill_plex_labels_content_source_detail', 'Backfill Plex label details', 'one_time', kind=MANUAL),
-    TaskSpec('task_debug_log', 'Write a debug log line', 'one_time', kind=MANUAL),
 ]
 
 SPECS: Dict[str, TaskSpec] = {s.name: s for s in _SPECS}

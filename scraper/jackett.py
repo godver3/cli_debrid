@@ -43,9 +43,9 @@ def scrape_jackett_instance(instance: str, settings: Dict[str, Any], imdb_id: st
     jackett_api = settings.get('api', '')
     enabled_indexers = settings.get('enabled_indexers', '').lower()
     
-    # Get the global setting instead
-    global_seeders_only = get_setting('Scraping', 'jackett_seeders_only', True)
-    #logging.debug(f"Using global 'jackett_seeders_only' setting: {global_seeders_only} for instance {instance}")
+    # Torrent results with no seeders are always dropped (was the hidden, always-on
+    # Scraping.jackett_seeders_only setting).
+    global_seeders_only = True
 
     search_queries = []
 

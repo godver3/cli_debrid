@@ -258,7 +258,7 @@
         </div>
     </div>
     <div class="settings-section-content">
-        {% for key in ['sort_by_uncached_status', 'checking_queue_period', 'ignore_wanted_queue_throttling', 'disable_not_wanted_check', 'max_upgrading_score', 'upgrade_queue_duration_hours'] %}
+        {% for key in ['checking_queue_period', 'ignore_wanted_queue_throttling', 'disable_not_wanted_check', 'max_upgrading_score', 'upgrade_queue_duration_hours'] %}
             {% set value = settings_schema.Debug.get(key) %}
             {% if value %}
             <div class="settings-form-group">
@@ -507,13 +507,6 @@
                 <option value="Size: small to large" {% if settings.get('Scraping', {}).get('ultimate_sort_order') == 'Size: small to large' %}selected{% endif %}>Size: small to large</option>
             </select>
             <p class="settings-description">Ultimate sort order for scraped results. Recommend leaving off and using existing versioning logic</p>
-        </div>
-        <div class="settings-form-group">
-            <label for="debug-soft_max_size_gb" class="settings-title">Soft Max Size Gb:</label>
-            <input type="checkbox" id="debug-soft_max_size_gb" name="Scraping.soft_max_size_gb"
-                   data-section="Scraping" data-key="soft_max_size_gb"
-                   {% if settings.get('Scraping', {}).get('soft_max_size_gb', False) %}checked{% endif %}>
-            <p class="settings-description">If enabled, apply the assigned max size to the scraped results, but if no results are returned accept the smallest result available</p>
         </div>
         <div class="settings-form-group">
             <label for="debug-emphasize_number_of_items_over_quality" class="settings-title">Emphasize Number of Items Over Quality:</label>

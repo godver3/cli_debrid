@@ -250,11 +250,6 @@ SETTINGS_SCHEMA = {
             "description": "Defines the customizable order of organizational folders for symlinks. Use a comma-separated list containing 'type', 'version', and 'resolution' in your desired order (e.g., 'version,type,resolution'). The individual 'Organize by X' toggles still control if a specific folder component is included in the path.",
             "default": "type,version,resolution"
         },
-        "process_non_checking_items": {
-            "type": "boolean",
-            "description": "Process files in rclone webhook even if they don't match any items in the checking state",
-            "default": False
-        },
         "scan_mount_for_external_adds": {
             "type": "boolean",
             "description": "Periodically scan the original files path for content added outside cli_debrid (e.g. via DMM or the debrid provider's own UI) and import it - symlink it and trigger a media server scan. Use this when your mount provider has no library-update webhook (Decypharr, plain rclone); zurg users already get this via its on_library_update hook. The first run records existing mount content as a baseline without importing it.",
@@ -482,14 +477,6 @@ SETTINGS_SCHEMA = {
             "default": 7
         }
     },
-    "Sync Deletions": {
-        "tab": "Additional Settings",
-        "sync_deletions": {
-            "type": "boolean",
-            "description": "[DEPRECATED - Defaults to true] Sync deletions from the Database to Plex",
-            "default": False
-        }
-    },
     "Queue": {
         "tab": "Additional Settings",
         "queue_sort_order": {
@@ -609,21 +596,9 @@ SETTINGS_SCHEMA = {
             "default": 0.0
             # Consider adding min/max if score range is known, otherwise leave open.
         },
-        "upgrade_similarity_threshold": {
-            "type": "float",
-            "description": "Threshold for title similarity when upgrading (0.0 to 1.0). Higher values mean titles must be more different to be considered an upgrade. Default 0.95 means 95% similar.",
-            "default": 0.95,
-            "min": 0.0,
-            "max": 1.0
-        },
         "hybrid_mode": {
             "type": "boolean",
             "description": "Enable hybrid mode to add best uncached result if no cached results found in 'None' mode",
-            "default": False
-        },
-        "jackett_seeders_only": {
-            "type": "boolean",
-            "description": "Return only results with seeders in Jackett",
             "default": False
         },
         "ultimate_sort_order": {
@@ -631,11 +606,6 @@ SETTINGS_SCHEMA = {
             "description": "Ultimate sort order for scraped results. Recommend leaving off and using existing versioning logic",
             "default": "None",
             "choices": ["None", "Size: large to small", "Size: small to large"]
-        },
-        "soft_max_size_gb": {
-            "type": "boolean",
-            "description": "If enabled, apply the assigned max size to the scraped results, but if no results are returned accept the smallest result available",
-            "default": False
         },
         "enable_upgrading": {
             "type": "boolean",
@@ -658,7 +628,7 @@ SETTINGS_SCHEMA = {
         "enable_upgrading_cleanup": {
             "type": "boolean",
             "description": "Enable cleanup of original items after successful upgrade (removes original item from Debrid Provider)",
-            "default": False
+            "default": True
         },
         "disable_adult": {
             "type": "boolean",
@@ -871,11 +841,6 @@ SETTINGS_SCHEMA = {
             "description": "Allow the use of symlinks on Windows. WARNING: Creating symlinks on Windows requires administrator privileges or Developer Mode to be enabled.",
             "default": False
         },
-        "sort_by_uncached_status": {
-            "type": "boolean",
-            "description": "Sort results by uncached status over cached status",
-            "default": False
-        },
         "enable_plex_removal_caching": {
             "type": "boolean",
             "description": "Enable caching of Plex removal operations before executing them",
@@ -885,11 +850,6 @@ SETTINGS_SCHEMA = {
             "type": "integer",
             "description": "Checking queue max period (in seconds) before moving items back to Wanted queue",
             "default": 3600
-        },
-        "rescrape_missing_files": {
-            "type": "boolean",
-            "description": "[DEPRECATED - Handled through library maintenance task] Rescrape items that are missing their associated file (i.e. if Plex Library cleanup is enabled)",
-            "default": False
         },
         "enable_reverse_order_scraping": {
             "type": "boolean",
@@ -3232,11 +3192,6 @@ SETTINGS_SCHEMA = {
             "description": "Comma-separated list of language codes (e.g., eng,zho,spa). Uses ISO-639-3 codes.",
             "default": "eng,zho"
         },
-        "include_ai_translated_subtitles": {
-            "type": "boolean",
-            "description": "Include AI translated subtitles in search results. These may have lower quality but provide broader language coverage.",
-            "default": True
-        },
         "subtitle_providers": {
             "type": "list",
             "description": "Select subtitle providers to use",
@@ -3381,11 +3336,6 @@ SETTINGS_SCHEMA = {
             "description": "Version number to report to Bazarr. Change only if Bazarr requires a specific version.",
             "default": "5.14.0.9383"
         },
-        "delete_subtitles_on_removal": {
-            "type": "boolean",
-            "description": "When deleting media, also delete any subtitle files (.srt, .ass, .sub, etc.) left in the symlink folder by Bazarr. Disable this to keep subtitle files after deletion.",
-            "default": True
-        }
     },
     "AI Assistant": {
         "tab": "Additional Settings",

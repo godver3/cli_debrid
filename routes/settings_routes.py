@@ -1441,8 +1441,6 @@ def index():
         if 'UI Settings' not in config:
             config['UI Settings'] = {}
 
-        if 'Sync Deletions' not in config:
-            config['Sync Deletions'] = {}
         
         # Ensure 'enable_user_system' exists in 'UI Settings'
         if 'enable_user_system' not in config['UI Settings']:

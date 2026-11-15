@@ -919,9 +919,9 @@ document.addEventListener('scrapingContentLoaded', function() {
         {# Get list of scraper IDs to exclude from automatic rendering #}
         {% set scraper_ids = settings.Scrapers.keys()|list %}
         {% for key in sorted_keys %}
-            {% if key in config and key not in ['filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out', 'hybrid_mode', 'jackett_seeders_only', 'fallback_version', 'fallback_at_scrape_time', 'fallback_after_attempts', 'enable_scraper_priorities', 'scraper_priorities', 'preferred-filter-out-term', 'preferred-filter-out-weight', 'preferred-filter-in-term', 'preferred-filter-in-weight'] and key not in scraper_ids %}
+            {% if key in config and key not in ['filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out', 'hybrid_mode', 'fallback_version', 'fallback_at_scrape_time', 'fallback_after_attempts', 'enable_scraper_priorities', 'scraper_priorities', 'preferred-filter-out-term', 'preferred-filter-out-weight', 'preferred-filter-in-term', 'preferred-filter-in-weight'] and key not in scraper_ids %}
                 {% set value = config[key] %}
-                <div class="settings-form-group" {% if key == 'hybrid_mode' or key == 'jackett_seeders_only' %}style="display: none !important;"{% endif %}>
+                <div class="settings-form-group" {% if key == 'hybrid_mode' %}style="display: none !important;"{% endif %}>
                     {% if value is boolean %}
                         <label class="settings-title">
                             <input type="checkbox" id="scraping-{{ version }}-{{ key }}" 
@@ -929,7 +929,6 @@ document.addEventListener('scrapingContentLoaded', function() {
                                    data-section="Scraping" 
                                    data-key="versions.{{ version }}.{{ key }}"
                                    {% if key == 'hybrid_mode' %}data-hybrid-mode="true"{% endif %}
-                                   {% if key == 'jackett_seeders_only' %}data-jackett-seeders-only="true"{% endif %}
                                    {% if value %}checked{% endif %}>
                             {% if key == 'enable_spanish_episode_parsing' %}Enable Spanish Episode/Movie Parsing
                             {% elif key == 'use_alternative_titles' %}Use Alternative Titles
@@ -1256,16 +1255,15 @@ document.addEventListener('scrapingContentLoaded', function() {
         <div class="settings-subsection">
             <!-- Debug: environment_mode = {{ environment_mode }} -->
             {% for key, value in settings_schema.Scraping.items() %}
-                {% if key not in ['versions', 'tab', 'upgrade_similarity_threshold', 'hybrid_mode', 'jackett_seeders_only', 'ultimate_sort_order', 'soft_max_size_gb'] %}
+                {% if key not in ['versions', 'tab', 'hybrid_mode', 'ultimate_sort_order'] %}
                     <!-- Debug: Processing key "{{ key }}" -->
                     {% if environment_mode is not defined or environment_mode == 'full' or key not in ['uncached_content_handling', 'accept_uncached_within_hours'] %}
-                    <div class="settings-form-group" {% if key == 'hybrid_mode' or key == 'jackett_seeders_only' or key == 'ultimate_sort_order' or key == 'soft_max_size_gb' %}style="display: none !important;"{% endif %}>
+                    <div class="settings-form-group" {% if key == 'hybrid_mode' or key == 'ultimate_sort_order' %}style="display: none !important;"{% endif %}>
                         <label for="scraping-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
                         {% if value.type == 'boolean' %}
                             <input type="checkbox" id="scraping-{{ key }}" name="Scraping.{{ key }}"
                                    data-section="Scraping" data-key="{{ key }}"
                                    {% if key == 'hybrid_mode' %}data-hybrid-mode="true"{% endif %}
-                                   {% if key == 'jackett_seeders_only' %}data-jackett-seeders-only="true"{% endif %}
                                    {% if settings.get('Scraping', {}).get(key) %}checked{% endif %}>
                         {% elif value.choices %}
                             <select id="scraping-{{ key }}" name="Scraping.{{ key }}" class="settings-input"

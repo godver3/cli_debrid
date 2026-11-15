@@ -1864,7 +1864,7 @@ def sync_plex_labels():
             }), 500
 
         # Run the task directly (not queued, runs immediately)
-        runner.task_regenerate_labels_from_backfilled_details(incremental=incremental, days_back=days_back)
+        runner._rebuild_plex_labels(incremental=incremental, days_back=days_back)
 
         mode_desc = f"incremental (last {days_back} days)" if incremental else "full"
         return jsonify({
@@ -1895,11 +1895,8 @@ def get_available_tasks():
         {'id': 'upgrading', 'display_name': 'Upgrading'},
         {'id': 'task_plex_full_scan', 'display_name': 'Plex Full Scan'},
         {'id': 'task_sync_plex_labels', 'display_name': 'Sync Plex Labels'},
-        {'id': 'task_backfill_plex_labels_content_source_detail', 'display_name': 'Backfill Plex Labels Content Source Detail'},
-        {'id': 'task_regenerate_labels_full', 'display_name': 'Sync Labels from Content Sources (Full - All Items)'},
-        {'id': 'task_regenerate_labels_incremental', 'display_name': 'Sync Labels from Content Sources (Incremental - Last 7 Days)'},
-        {'id': 'task_backfill_missing_labels', 'display_name': 'Backfill Missing Labels'},
-        {'id': 'task_debug_log', 'display_name': 'Debug Log'},
+        {'id': 'task_regenerate_labels_full', 'display_name': 'Rebuild Plex Labels (All Items)'},
+        {'id': 'task_regenerate_labels_incremental', 'display_name': 'Rebuild Plex Labels (Never Synced + Last 7 Days)'},
         {'id': 'task_refresh_release_dates', 'display_name': 'Refresh Release Dates'},
         {'id': 'task_purge_not_wanted_magnets_file', 'display_name': 'Purge Not Wanted Magnets File'},
         {'id': 'task_purge_not_wanted_urls_file', 'display_name': 'Purge Not Wanted URLs File'},

@@ -541,7 +541,7 @@ export function updateSettings() {
     }
     
     // Update the list of top-level fields to include UI Settings
-    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Debrid Provider', 'Usenet Provider', 'Torrentio', 'Scraping', 'Queue', 'Trakt', 'Scrob', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'TVDB', 'UI Settings', 'Sync Deletions', 'File Management', 'Subtitle Settings', 'Bazarr Integration', 'Overlay Settings', 'Staleness Threshold', 'Custom Post-Processing', 'System Load Regulation', 'Library Manager', 'MDBList', 'Discover Settings', 'AI Assistant', 'Plex Smart Collections', 'Plex Movie Box Sets', 'Plex Reported Issues'];
+    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Debrid Provider', 'Usenet Provider', 'Torrentio', 'Scraping', 'Queue', 'Trakt', 'Scrob', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'TVDB', 'UI Settings', 'File Management', 'Subtitle Settings', 'Bazarr Integration', 'Overlay Settings', 'Staleness Threshold', 'Custom Post-Processing', 'System Load Regulation', 'Library Manager', 'MDBList', 'Discover Settings', 'AI Assistant', 'Plex Smart Collections', 'Plex Movie Box Sets', 'Plex Reported Issues'];
     Object.keys(settingsData).forEach(key => {
         if (!topLevelFields.includes(key)) {
             delete settingsData[key];
@@ -725,34 +725,6 @@ export function updateSettings() {
             settingsData['Scraping']['hybrid_mode'] = false;
         }
         
-        // Always set jackett_seeders_only to true
-        settingsData['Scraping']['jackett_seeders_only'] = true;
-        
-        // Always set enable_upgrading_cleanup to true
-        settingsData['Scraping']['enable_upgrading_cleanup'] = true;
-        
-    } else {
-    }
-
-    const jackettSeedersOnly = document.getElementById('scraping-jackett_seeders_only');
-
-    const softMaxSize = document.getElementById('scraping-soft_max_size_gb');
-    
-    if (jackettSeedersOnly) {
-        
-        if (!settingsData['Scraping']) {
-            settingsData['Scraping'] = {};
-        }
-        
-        settingsData['Scraping']['jackett_seeders_only'] = true;
-        
-    } else {
-    }
-
-    if (softMaxSize) {
-
-        settingsData['Scraping']['soft_max_size_gb'] = softMaxSize.checked;
-
     } else {
     }
 
@@ -760,14 +732,6 @@ export function updateSettings() {
     
     if (ultimateSortOrder) {
         settingsData['Scraping']['ultimate_sort_order'] = ultimateSortOrder.value;
-
-    } else {
-    }
-
-    const sortByUncachedStatus = document.getElementById('debug-sort_by_uncached_status');
-    
-    if (sortByUncachedStatus) {
-        settingsData['Debug']['sort_by_uncached_status'] = sortByUncachedStatus.checked;
 
     } else {
     }
@@ -820,14 +784,6 @@ export function updateSettings() {
 
     settingsData['Reverse Parser'] = reverseParserSettings;
 
-
-    const rescrapeMissingFiles = document.getElementById('debug-rescrape_missing_files');
-    
-    if (rescrapeMissingFiles) {
-        settingsData['Debug']['rescrape_missing_files'] = rescrapeMissingFiles.checked;
-
-    } else {
-    }
 
     // Handle Disable Content Source Caching
     const disableContentSourceCaching = document.getElementById('debug-disable_content_source_caching');
@@ -883,16 +839,6 @@ export function updateSettings() {
     }
         
 
-    // Set default sync_deletions if not set
-    if (!settingsData['Sync Deletions']) {
-        settingsData['Sync Deletions'] = {};
-    }
-    
-    if (settingsData['Sync Deletions']['sync_deletions'] === undefined) {
-        settingsData['Sync Deletions']['sync_deletions'] = true;
-    }
-        
-
     const enableReverseOrderScraping = document.getElementById('scraping-enable_reverse_order_scraping');
     
     if (enableReverseOrderScraping) {
@@ -913,14 +859,6 @@ export function updateSettings() {
 
     if (enableSeadexPriority) {
         settingsData['Scraping']['enable_seadex_priority'] = enableSeadexPriority.checked;
-
-    } else {
-    }
-
-    const syncDeletions = document.getElementById('sync deletions-sync_deletions');
-    
-    if (syncDeletions) {
-        settingsData['Sync Deletions']['sync_deletions'] = syncDeletions.checked;
 
     } else {
     }
@@ -1295,25 +1233,11 @@ function hideHybridModeCheckboxes() {
         }
     }
     
-    // Hide jackett_seeders_only checkbox completely
-    const jackettSeedersOnlyCheckbox = document.getElementById('scraping-jackett_seeders_only');
-    if (jackettSeedersOnlyCheckbox) {
-        const jackettSeedersOnlyFormGroup = jackettSeedersOnlyCheckbox.closest('.settings-form-group');
-        if (jackettSeedersOnlyFormGroup) {
-            jackettSeedersOnlyFormGroup.classList.add('jackett-seeders-only-group');
-        }
-    }
-    
-    // Also hide any version-specific hybrid_mode and jackett_seeders_only checkboxes
-    document.querySelectorAll('input[data-hybrid-mode="true"], input[data-jackett-seeders-only="true"]').forEach(function(checkbox) {
+    // Also hide any version-specific hybrid_mode checkboxes
+    document.querySelectorAll('input[data-hybrid-mode="true"]').forEach(function(checkbox) {
         const formGroup = checkbox.closest('.settings-form-group');
         if (formGroup) {
-            if (checkbox.hasAttribute('data-hybrid-mode')) {
-                formGroup.classList.add('hybrid-mode-group');
-            }
-            if (checkbox.hasAttribute('data-jackett-seeders-only')) {
-                formGroup.classList.add('jackett-seeders-only-group');
-            }
+            formGroup.classList.add('hybrid-mode-group');
         }
     });
 }
@@ -1325,24 +1249,15 @@ document.addEventListener('scrapingContentLoaded', hideHybridModeCheckboxes);
 function syncDebugSettings() {
     // Get the scraping settings shown on the Advanced (debug) tab
     const ultimateSortOrderSelect = document.getElementById('debug-ultimate_sort_order');
-    const softMaxSizeGbCheckbox = document.getElementById('debug-soft_max_size_gb');
     const stalenessThresholdInput = document.getElementById('debug-staleness_threshold');
     
-    if (ultimateSortOrderSelect && softMaxSizeGbCheckbox) {
+    if (ultimateSortOrderSelect) {
         // Add change event listeners to sync with the original settings
         ultimateSortOrderSelect.addEventListener('change', function() {
             // Find the original setting in the scraping tab (if it exists)
             const originalSelect = document.getElementById('scraping-ultimate_sort_order');
             if (originalSelect) {
                 originalSelect.value = ultimateSortOrderSelect.value;
-            }
-        });
-        
-        softMaxSizeGbCheckbox.addEventListener('change', function() {
-            // Find the original setting in the scraping tab (if it exists)
-            const originalCheckbox = document.getElementById('scraping-soft_max_size_gb');
-            if (originalCheckbox) {
-                originalCheckbox.checked = softMaxSizeGbCheckbox.checked;
             }
         });
     }

@@ -60,28 +60,6 @@ class PlexTasks:
         logging.info("Triggering queue reconciliation after full Plex scan.")
         self.task_reconcile_queues()
 
-    # Add manual Plex full scan task method
-    def task_manual_plex_full_scan(self):
-        """Manually trigger a full Plex scan, bypassing the mode check."""
-        from queues.run_program import backfill_resolution_from_stored_paths, get_and_add_all_collected_from_plex  # defined there; imported when called
-        logging.info("Executing manual Plex full scan task...")
-        get_and_add_all_collected_from_plex(bypass=True)
-
-        # Backfill resolution for items with NULL resolution
-        logging.info("Starting resolution backfill from stored paths...")
-        try:
-            result = backfill_resolution_from_stored_paths()
-            if result.get('success'):
-                logging.info(f"Resolution backfill completed: {result.get('updated', 0)} items updated, {result.get('failed', 0)} failed")
-            else:
-                logging.error(f"Resolution backfill failed: {result.get('error', 'Unknown error')}")
-        except Exception as e:
-            logging.error(f"Error during resolution backfill: {e}", exc_info=True)
-
-        # Add reconciliation call after full scan processing
-        logging.info("Triggering queue reconciliation after manual Plex full scan.")
-        self.task_reconcile_queues()
-
     def task_check_plex_files(self):
         """Check for new files in Plex location and update libraries"""
         updated_sections = set()  # Initialize here to prevent UnboundLocalError
@@ -892,7 +870,7 @@ class PlexTasks:
                                     # as local_library_scan.py's upgrade handling).
                                     _old_torrent_id = _notif.get('upgrading_from_torrent_id')
                                     _upgrading_from_path = _notif.get('upgrading_from')
-                                    if not get_setting("Scraping", "enable_upgrading_cleanup", default=False):
+                                    if not get_setting("Scraping", "enable_upgrading_cleanup", default=True):
                                         logging.info(f"[PlexCheck] Scraping.enable_upgrading_cleanup is disabled — keeping old file/torrent for item {item_id} ({item_title_for_log}).")
                                     else:
                                         if _old_torrent_id:
@@ -1675,99 +1653,41 @@ class PlexTasks:
         except Exception as e:
             logging.error(f"Error in task_process_plex_reported_issues: {e}", exc_info=True)
 
-    def task_backfill_plex_labels_content_source_detail(self):
-        """
-        Backfill content_source_detail for items with NULL value
+    def _rebuild_plex_labels(self, incremental: bool, days_back: int = 7):
+        """Fill in missing content_source_detail, then rebuild Plex labels from it.
 
-        Parses the content_source field and extracts appropriate detail values
-        for all source types. Used to fix old items that were added before
-        content_source_detail was properly populated.
+        Labels are built from content_source_detail (requester, list name...), so
+        items without it are skipped by the rebuild; filling it first means one task
+        covers what the old backfill/missing/regenerate tasks did separately.
+        incremental: only items never synced or collected in the last days_back days.
         """
+        from utilities.plex_label_manager import backfill_content_source_detail, regenerate_labels_from_backfilled_details
         try:
-            from utilities.plex_label_manager import backfill_content_source_detail
             result = backfill_content_source_detail()
-
             if result['success']:
-                logging.info(f"Backfilled {result['total_updated']} items: {result['by_source']}")
+                logging.info(f"[PlexLabels] Filled in content_source_detail for {result['total_updated']} items: {result['by_source']}")
             else:
-                logging.error(f"Backfill failed: {result.get('error', 'Unknown error')}")
-
+                logging.error(f"[PlexLabels] content_source_detail backfill failed: {result.get('error', 'Unknown error')}")
         except Exception as e:
-            logging.error(f"Error in task_backfill_plex_labels_content_source_detail: {e}", exc_info=True)
-
-    def task_regenerate_labels_from_backfilled_details(self, incremental: bool = False, days_back: int = 7):
-        """
-        Regenerate Plex labels from updated content_source_detail values
-
-        Args:
-            incremental: If True, only sync items that need updating (not synced or recently changed)
-            days_back: When incremental=True, also sync items collected in last N days (default 7)
-
-        After backfilling content_source_detail, this regenerates the plex_labels
-        column from the updated detail values and syncs them to Plex. Handles all
-        source types including Overseerr, Agregarr, and internal sources.
-
-        When incremental=True, only processes items with plex_labels_last_synced IS NULL
-        or items collected in the last N days, resulting in 95%+ time reduction.
-        """
+            logging.error(f"[PlexLabels] content_source_detail backfill failed: {e}", exc_info=True)
         try:
-            from utilities.plex_label_manager import regenerate_labels_from_backfilled_details
             result = regenerate_labels_from_backfilled_details(incremental=incremental, days_back=days_back)
-
             if result['success']:
-                mode_info = f" ({result.get('mode', 'full')} mode)" if 'mode' in result else ""
-                logging.info(f"Regenerated labels for {result['total_regenerated']} items ({result['unique_items']} unique TMDB IDs){mode_info}")
+                logging.info(f"[PlexLabels] Rebuilt labels for {result['total_regenerated']} items ({result['unique_items']} unique TMDB IDs, {result.get('mode', 'full')} mode)")
             else:
-                logging.error(f"Label regeneration failed: {result.get('error', 'Unknown error')}")
-
+                logging.error(f"[PlexLabels] Label rebuild failed: {result.get('error', 'Unknown error')}")
         except Exception as e:
-            logging.error(f"Error in task_regenerate_labels_from_backfilled_details: {e}", exc_info=True)
+            logging.error(f"[PlexLabels] Label rebuild failed: {e}", exc_info=True)
 
     def task_regenerate_labels_full(self):
-        """
-        Full sync: Regenerate Plex labels for ALL items
-
-        Processes all 5922 items regardless of when they were last synced.
-        Use this for initial setup, troubleshooting, or after bulk configuration changes.
-
-        Expected time: 13-14 hours
-        """
-        logging.info("Starting FULL label sync (all items)")
-        self.task_regenerate_labels_from_backfilled_details(incremental=False)
+        """Rebuild Plex labels for every Collected item (slow on large libraries)."""
+        logging.info("[PlexLabels] Starting full label rebuild (all items)")
+        self._rebuild_plex_labels(incremental=False)
 
     def task_regenerate_labels_incremental(self):
-        """
-        Incremental sync: Regenerate Plex labels for changed/new items only
-
-        Only processes items that:
-        - Have never been synced (plex_labels_last_synced IS NULL), OR
-        - Were collected in the last 7 days
-
-        Use this for routine maintenance and regular syncs.
-
-        Expected time: 5-15 minutes
-        """
-        logging.info("Starting INCREMENTAL label sync (last 7 days + never synced)")
-        self.task_regenerate_labels_from_backfilled_details(incremental=True, days_back=7)
-
-    def task_backfill_missing_labels(self):
-        """
-        Backfill Plex labels for items with NULL/empty plex_labels
-
-        Generates and syncs labels only for items that don't have labels yet,
-        without overwriting existing labels. Safe to run multiple times.
-        """
-        try:
-            from utilities.plex_label_manager import backfill_missing_labels
-            result = backfill_missing_labels()
-
-            if result['success']:
-                logging.info(f"Backfilled labels for {result['total_backfilled']} items ({result['unique_items']} unique TMDB IDs)")
-            else:
-                logging.error(f"Label backfill failed: {result.get('error', 'Unknown error')}")
-
-        except Exception as e:
-            logging.error(f"Error in task_backfill_missing_labels: {e}", exc_info=True)
+        """Rebuild Plex labels for items never synced or collected in the last 7 days."""
+        logging.info("[PlexLabels] Starting label rebuild (never synced + last 7 days)")
+        self._rebuild_plex_labels(incremental=True, days_back=7)
 
     def task_backfill_plex_ms_item_id(self):
         """

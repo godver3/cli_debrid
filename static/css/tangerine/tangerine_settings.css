@@ -892,17 +892,14 @@ button.delete-scraper-btn:disabled,
     align-items: center;
 }
 
-/* Hide hybrid mode and jackett seeders only checkboxes */
-.settings-form-group.hybrid-mode-group,
-.settings-form-group.jackett-seeders-only-group {
+/* Hide hybrid mode checkboxes */
+.settings-form-group.hybrid-mode-group {
     display: none !important;
 }
 
-/* Also hide any form group with hybrid_mode or jackett_seeders_only checkbox */
+/* Also hide any form group with a hybrid_mode checkbox */
 .settings-form-group:has(#scraping-hybrid_mode),
-.settings-form-group:has(input[data-hybrid-mode="true"]),
-.settings-form-group:has(#scraping-jackett_seeders_only),
-.settings-form-group:has(input[data-jackett-seeders-only="true"]) {
+.settings-form-group:has(input[data-hybrid-mode="true"]) {
     display: none !important;
 }
 
@@ -5672,6 +5669,11 @@ body[data-theme="tangerine"] .settings-form-group:has(> input[type="checkbox"]) 
     grid-column: 2 !important;
     grid-row: 2 !important;
     margin: 0 !important;
+}
+/* Anything else under the checkbox (notes, warnings) goes in the text column, not the
+   16px checkbox column (the Phalanx restart note wrapped one word per line). */
+body[data-theme="tangerine"] .settings-form-group:has(> input[type="checkbox"]) > :not(input[type="checkbox"]):not(label.settings-title):not(.settings-description) {
+    grid-column: 2 !important;
 }
 
 /* Also handle structure A form-group wrapper */
