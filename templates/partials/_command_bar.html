@@ -53,6 +53,17 @@
 .cmdbar-out button.on{background:#14532d;border-color:#28c840;color:#bbf7d0}
 .cmdbar-out button.go{background:#28c840;border-color:#28c840;color:#062b0f;font-weight:700}
 .cmdbar-out a{color:#7dd3fc}
+.cmdbar-out .c-feed{border-left:2px solid #334155;padding:2px 10px;margin:4px 0 6px}
+.cmdbar-out .c-feed .f-head{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.cmdbar-out .c-feed .f-title{color:#e8f0e8;font-weight:600}
+.cmdbar-out .c-feed .f-sum{color:#7dd3fc}
+.cmdbar-out .c-feed .f-time{color:#4b554b}
+.cmdbar-out .c-feed .f-item{color:#c4b5fd}
+.cmdbar-out .c-feed .k-state{color:#7dd3fc}
+.cmdbar-out .c-feed .k-ok{color:#4ade80}
+.cmdbar-out .c-feed .k-bad{color:#f87171}
+.cmdbar-out .c-feed .k-try{color:#cfd8cf}
+.cmdbar-out .c-feed .k-scrape,.cmdbar-out .c-feed .k-info{color:#8a948a}
 .cmdbar-form{display:flex;align-items:center;gap:8px;padding:6px 14px 10px}
 .cmdbar-ps1{color:#28c840;font-weight:600;white-space:nowrap}
 #cmdbar .cmdbar-input,#cmdbar .cmdbar-input:focus{flex:1;min-width:0;background:transparent!important;border:none!important;box-shadow:none!important;outline:none!important;color:#e8f0e8;font:inherit;padding:2px 0!important;margin:0!important;height:auto!important;border-radius:0!important;caret-color:#28c840}
@@ -69,7 +80,7 @@
   const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
   const COMMANDS = {
-    '/request': { args: '<title>', help: 'Search TMDB and add a movie or show as Wanted (pick versions, then Request).' },
+    '/request': { args: '<title>', help: 'Search TMDB and add a movie or show as Wanted (pick versions, then Request); then follows its progress live.' },
     '/search': { args: '<title>', help: 'Open the title on Discover.' },
     '/rescrape': { args: '<title | item id>', help: 'Find library items and rescrape one.' },
     '/blacklist': { args: '<title | item id>', help: 'Find library items and blacklist one.' },
@@ -209,11 +220,73 @@
     const go = box.querySelector('button.go');
     go.disabled = true;
     try {
+      // The server's log clock, read before requesting, so the feed starts at this request.
+      let since = '';
+      try { since = (await getJSON('/api/command/progress')).now || ''; } catch (e) {}
       const r = await postJSON('/content/request', { id: it.res.id, mediaType: it.type, versions: chosen, title: it.res.title || it.res.name });
       ok((r && r.message) || `requested ${it.res.title || it.res.name} (${it.year}) — ${chosen.join(', ')}`);
       picked = null;
       input.placeholder = '/request the matrix   (type /help)';
+      if (since) follow(it, since);
     } catch (e) { err('request failed: ' + e.message); go.disabled = false; }
+  }
+
+  // ── Live progress feed for a request ──────────────────────────────────
+  const FOLLOW_POLL_MS = 3000, FOLLOW_MAX_MS = 30 * 60 * 1000, FOLLOW_MAX = 3;
+  const watchers = [];
+  function follow(it, since) {
+    while (watchers.length >= FOLLOW_MAX) watchers[0]('stopped following (too many at once)');
+    const title = it.res.title || it.res.name;
+    const block = print(
+      `<div class="f-head"><span class="c-dim">following</span> <span class="f-title">${esc(title)}</span>` +
+      ` <span class="f-sum">waiting for it to be added…</span> <button type="button" class="f-stop">stop</button></div>`, 'c-feed');
+    const sum = block.querySelector('.f-sum');
+    const shown = new Map();   // event key -> its line
+    const started = Date.now();
+    let timer = null, stopped = false;
+    function line(html, cls) {
+      const atBottom = out.scrollHeight - out.scrollTop - out.clientHeight < 40;
+      const d = document.createElement('div');
+      d.className = 'f-ev ' + (cls || '');
+      d.innerHTML = html;
+      block.appendChild(d);
+      if (atBottom) out.scrollTop = out.scrollHeight;
+      return d;
+    }
+    function stop(msg, cls) {
+      if (stopped) return;
+      stopped = true;
+      clearTimeout(timer);
+      const b = block.querySelector('.f-stop'); if (b) b.remove();
+      if (msg) line(esc(msg), cls || 'k-info');
+      const i = watchers.indexOf(stop); if (i >= 0) watchers.splice(i, 1);
+    }
+    watchers.push(stop);
+    block.querySelector('.f-stop').addEventListener('click', () => stop('stopped following (it keeps going in the background)'));
+    async function poll() {
+      if (stopped) return;
+      if (!document.hidden) {
+        try {
+          const j = await getJSON(`/api/command/progress?tmdb_id=${encodeURIComponent(it.res.id)}` +
+                                  `&type=${it.type === 'movie' ? 'movie' : 'show'}&since=${encodeURIComponent(since)}`);
+          (j.events || []).forEach(ev => {
+            // A search's line grows as more sources answer: update it in place.
+            const key = [ev.ts, ev.item, ev.kind, ev.kind === 'scrape' ? '' : ev.text].join('|');
+            const html = `<span class="f-time">${esc(ev.time)}</span>` +
+                         (ev.item ? ` <span class="f-item">${esc(ev.item)}</span>` : '') + ` ${esc(ev.text)}`;
+            const old = shown.get(key);
+            if (old) { if (old.innerHTML !== html) old.innerHTML = html; return; }
+            shown.set(key, line(html, 'k-' + ev.kind));
+          });
+          const s = j.summary || {};
+          if (s.total) sum.textContent = Object.entries(s.counts || {}).map(([st, n]) => `${n} ${st}`).join(' · ');
+          if (s.done) return stop(s.total === 1 ? 'finished' : `finished: all ${s.total} items are done`, 'k-ok');
+        } catch (e) { /* a missed poll is retried */ }
+      }
+      if (Date.now() - started > FOLLOW_MAX_MS) return stop('stopped following after 30 min (it keeps going in the background)');
+      timer = setTimeout(poll, FOLLOW_POLL_MS);
+    }
+    timer = setTimeout(poll, 1000);
   }
 
   async function cmdRun(arg) {
@@ -265,7 +338,7 @@
           window.open('https://github.com/godver3/mediastorm', '_blank', 'noopener');
           ok('opening github.com/godver3/mediastorm');
           break;
-        case '/clear': out.innerHTML = ''; results = null; picked = null; break;
+        case '/clear': watchers.slice().forEach(stop => stop()); out.innerHTML = ''; results = null; picked = null; break;
         case '/request': await cmdRequest(arg); break;
         case '/search':
           if (!arg) return err('Usage: /search <title>');

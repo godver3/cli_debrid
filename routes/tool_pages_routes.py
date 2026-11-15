@@ -73,6 +73,39 @@ def command_items():
     return jsonify({'items': [dict(zip(keys, tuple(r))) for r in rows]})
 
 
+@tool_pages_bp.route('/api/command/progress')
+@admin_required
+def command_progress():
+    """States and a simplified log feed for a title requested from the command bar.
+
+    Without ?since it only returns the server's log clock ({'now': ...}): the
+    terminal reads that just before requesting, then polls with
+    ?tmdb_id=&type=movie|show&since=<that value> until every item is done.
+    """
+    from database.core import get_db_connection
+    from utilities import request_progress as rp
+    since = request.args.get('since') or ''
+    if not since:
+        return jsonify({'now': rp.now_ts()})
+    if not rp.valid_ts(since):
+        return jsonify({'error': 'since must be a value returned by this endpoint'}), 400
+    tmdb_id = (request.args.get('tmdb_id') or '').strip()
+    if not tmdb_id:
+        return jsonify({'error': 'tmdb_id is required'}), 400
+    kind = 'movie' if request.args.get('type') == 'movie' else 'episode'
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            'SELECT id, type, season_number, episode_number, version, state FROM media_items '
+            'WHERE tmdb_id = ? AND type = ? ORDER BY season_number, episode_number, version',
+            (tmdb_id, kind)).fetchall()
+    finally:
+        conn.close()
+    keys = ['id', 'type', 'season_number', 'episode_number', 'version', 'state']
+    items = [dict(zip(keys, tuple(r))) for r in rows]
+    return jsonify({'summary': rp.summarize(items), 'events': rp.events_for(items, since)})
+
+
 @tool_pages_bp.route('/api/command/versions')
 @admin_required
 def command_versions():
