@@ -55,6 +55,13 @@ class RequestProgressTest(unittest.TestCase):
         self.assertFalse(any(t.startswith(('searched', 'trying')) for t in texts))
         self.assertIn('✗ missing articles: X.S01E01.1080p-GRP', texts)
 
+    def test_long_show_keeps_only_outcomes(self):
+        items = _ITEMS + [dict(_ITEMS[0], id=i, episode_number=i) for i in range(100, 125)]
+        texts = self.events(items=items)
+        self.assertNotIn('Wanted → Scraping', texts)
+        self.assertIn('Checking → Collected: ✓ in your library', texts)
+        self.assertIn('Checking → Wanted: download rejected, searching again', texts)
+
     def test_episode_labels(self):
         evs = rp.events_for(_ITEMS, '2026-11-15 10:11:41,000', self.path)
         self.assertEqual({e['item'] for e in evs}, {'S01E01'})

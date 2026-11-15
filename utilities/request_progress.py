@@ -122,6 +122,9 @@ def events_for(items: List[Dict], since: str, path: Optional[str] = None) -> Lis
         return []
     # Many episodes: per-scraper counts and every release tried would flood the terminal.
     detailed = len(labels) <= 3
+    # A whole long show: routine moves (Wanted -> Scraping -> Adding...) would bury
+    # everything, so keep only outcomes; the summary line carries the progress.
+    brief = len(labels) > 20
     show_label = len(labels) > 1 or items[0].get('type') == 'episode'
     out = []
     last_state = {}    # item -> (second, "Old -> New") of its last state line
@@ -135,6 +138,8 @@ def events_for(items: List[Dict], since: str, path: Optional[str] = None) -> Lis
             continue
         text, kind = simple
         item = m[3]
+        if kind == 'state' and brief and (': ' not in text or 'not released yet' in text):
+            continue
         if kind == 'state':
             # The queue manager and the database writer can both log one move.
             move = (m[1][:19], text.split(' (')[0].split(':')[0])
