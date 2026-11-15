@@ -754,12 +754,12 @@ SETTINGS_SCHEMA = {
                 "foreign_language_penalty": {
                     "type": "number",
                     "default": 30,
-                    "description": "Penalty for a release whose name is tagged with an audio language other than the version's language code (e.g. GERMAN for an 'en' version), multiplied by Language Weight. Subtitle tags (SWESUB, VOSTFR, NORDiC) don't count; MULTi, Dual Audio and DL (dual-language) releases are exempt. For a title whose original language isn't the version's (e.g. a Korean show on an 'en' version), releases tagged DUAL or with the version's language get a small tiebreaker bonus instead (this amount × Language Weight, at most 50; half for a bare MULTi/DL). Untagged releases are never penalized. 0 disables both. A cached release is still taken before any uncached one whatever its score, so the penalty alone can't keep out a tagged release that is the only cached match (e.g. a freshly aired episode whose only cached copy is a foreign dub). To drop tagged releases instead, set a large penalty (e.g. 1000) together with a Minimum Scrape Score above 0 (Version Settings → Other Scraping Settings; the one under Advanced Settings only applies with delayed scrape)."
+                    "description": "Penalty for a release whose name is tagged with an audio language other than the version's language code (e.g. GERMAN for an 'en' version), multiplied by Language Weight. Subtitle tags (SWESUB, VOSTFR, NORDiC) don't count; MULTi, Dual Audio and DL (dual-language) releases are exempt. For a title whose original language isn't the version's (e.g. a Korean show on an 'en' version), releases tagged DUAL or with the version's language get a small tiebreaker bonus instead (this amount × Language Weight, at most 50; half for a bare MULTi/DL). Untagged releases are never penalized. 0 disables both. A cached release is still taken before any uncached one whatever its score, so the penalty alone can't keep out a tagged release that is the only cached match (e.g. a freshly aired episode whose only cached copy is a foreign dub). To drop tagged releases instead, set a large penalty (e.g. 1000) together with a Minimum Scrape Score above 0 (Advanced Settings → Scraping (all versions); the Delayed Scrape Minimum Score only applies with delayed scrape)."
                 },
                 "audio_description_penalty": {
                     "type": "number",
                     "default": 10000,
-                    "description": "Penalty for an audio-description release (e.g. 'with Audio Description'), whose audio is narrated for blind viewers. The default 10000 ranks one below every other release, so it is only picked when nothing else is available; with a Minimum Scrape Score set (Version Settings → Other Scraping Settings), it falls below that and is dropped instead. Use a negative number to prefer them instead, or 0 to treat them like any other release."
+                    "description": "Penalty for an audio-description release (e.g. 'with Audio Description'), whose audio is narrated for blind viewers. The default 10000 ranks one below every other release, so it is only picked when nothing else is available; with a Minimum Scrape Score set (Advanced Settings → Scraping (all versions)), it falls below that and is dropped instead. Use a negative number to prefer them instead, or 0 to treat them like any other release."
                 },
                 "wake_count": {
                     "type": "integer",
@@ -2005,76 +2005,6 @@ SETTINGS_SCHEMA = {
                             "default": ""
                         }
                     }
-                },
-                "plex_collection": {
-                    "type": "dict",
-                    "description": "Configure a Plex collection that mirrors this source list order",
-                    "default": {},
-                    "schema": {
-                        "enabled": {
-                            "type": "boolean",
-                            "description": "Enable automatic Plex collection management for this source",
-                            "default": False
-                        },
-                        "collection_name": {
-                            "type": "string",
-                            "description": "Collection name. Defaults to the source display name. For mixed (Movies+Shows) lists, ' Movies' and ' Shows' suffixes are added automatically unless overridden below.",
-                            "default": ""
-                        },
-                        "collection_name_movies": {
-                            "type": "string",
-                            "description": "Override collection name for movies in a mixed list. Leave empty to use auto-suffix.",
-                            "default": ""
-                        },
-                        "collection_name_shows": {
-                            "type": "string",
-                            "description": "Override collection name for shows in a mixed list. Leave empty to use auto-suffix.",
-                            "default": ""
-                        },
-                        "sort_prefix": {
-                            "type": "string",
-                            "description": "Prefix added to the sort title so the collection sorts to the top in Plex (e.g. '!' gives '!My List'). Leave empty to use the collection name as-is.",
-                            "default": "!!!!"
-                        },
-                        "sort_by": {
-                            "type": "string",
-                            "description": "Sort order for items in the Plex collection. Scrob has no server-side sort/rank API, so ordering follows Scrob's own list display order (added_at ascending).",
-                            "default": "default",
-                            "choices": ["default", "added", "title", "released", "runtime",
-                                        "popularity", "random", "imdb_rating", "tmdb_rating"]
-                        },
-                        "sort_how": {
-                            "type": "string",
-                            "description": "Sort direction: asc = ascending, desc = descending.",
-                            "default": "asc",
-                            "choices": ["asc", "desc"]
-                        },
-                        "poster_design": {
-                            "type": "integer",
-                            "description": "Collection poster design (0 = Plex default, 1-8 = custom designs).",
-                            "default": 0
-                        },
-                        "poster_accent": {
-                            "type": "string",
-                            "description": "Accent color for the poster (hex, e.g. #E6A800).",
-                            "default": "#E6A800"
-                        },
-                        "poster_eyebrow": {
-                            "type": "string",
-                            "description": "Optional eyebrow text shown above the collection title on the poster. Leave blank to hide.",
-                            "default": ""
-                        },
-                        "poster_icon": {
-                            "type": "string",
-                            "description": "Icon path for the poster (relative to overlay assets logos folder). Leave blank to use source default.",
-                            "default": ""
-                        },
-                        "libraries": {
-                            "type": "list",
-                            "description": "Plex library section keys to sync this collection into. Leave empty to use the first library of each type.",
-                            "default": []
-                        }
-                    }
                 }
             },
             "Floppy Lists": {
@@ -2319,76 +2249,6 @@ SETTINGS_SCHEMA = {
                             "type": "string",
                             "description": "Fixed label(s) to apply (only used when label_mode is 'fixed'). Supports comma-separated values for multiple labels (e.g., 'ufc,ppv')",
                             "default": ""
-                        }
-                    }
-                },
-                "plex_collection": {
-                    "type": "dict",
-                    "description": "Configure a Plex collection that mirrors this source list order",
-                    "default": {},
-                    "schema": {
-                        "enabled": {
-                            "type": "boolean",
-                            "description": "Enable automatic Plex collection management for this source",
-                            "default": False
-                        },
-                        "collection_name": {
-                            "type": "string",
-                            "description": "Collection name. Defaults to the source display name. For mixed (Movies+Shows) lists, ' Movies' and ' Shows' suffixes are added automatically unless overridden below.",
-                            "default": ""
-                        },
-                        "collection_name_movies": {
-                            "type": "string",
-                            "description": "Override collection name for movies in a mixed list. Leave empty to use auto-suffix.",
-                            "default": ""
-                        },
-                        "collection_name_shows": {
-                            "type": "string",
-                            "description": "Override collection name for shows in a mixed list. Leave empty to use auto-suffix.",
-                            "default": ""
-                        },
-                        "sort_prefix": {
-                            "type": "string",
-                            "description": "Prefix added to the sort title so the collection sorts to the top in Plex (e.g. '!' gives '!My List'). Leave empty to use the collection name as-is.",
-                            "default": "!!!!"
-                        },
-                        "sort_by": {
-                            "type": "string",
-                            "description": "Sort order for items in the Plex collection. Scrob has no server-side sort/rank API, so ordering follows Scrob's own list display order (added_at ascending).",
-                            "default": "default",
-                            "choices": ["default", "added", "title", "released", "runtime",
-                                        "popularity", "random", "imdb_rating", "tmdb_rating"]
-                        },
-                        "sort_how": {
-                            "type": "string",
-                            "description": "Sort direction: asc = ascending, desc = descending.",
-                            "default": "asc",
-                            "choices": ["asc", "desc"]
-                        },
-                        "poster_design": {
-                            "type": "integer",
-                            "description": "Collection poster design (0 = Plex default, 1-8 = custom designs).",
-                            "default": 0
-                        },
-                        "poster_accent": {
-                            "type": "string",
-                            "description": "Accent color for the poster (hex, e.g. #E6A800).",
-                            "default": "#E6A800"
-                        },
-                        "poster_eyebrow": {
-                            "type": "string",
-                            "description": "Optional eyebrow text shown above the collection title on the poster. Leave blank to hide.",
-                            "default": ""
-                        },
-                        "poster_icon": {
-                            "type": "string",
-                            "description": "Icon path for the poster (relative to overlay assets logos folder). Leave blank to use source default.",
-                            "default": ""
-                        },
-                        "libraries": {
-                            "type": "list",
-                            "description": "Plex library section keys to sync this collection into. Leave empty to use the first library of each type.",
-                            "default": []
                         }
                     }
                 }

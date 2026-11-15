@@ -487,6 +487,105 @@
     </div>
 </div>
 
+<!-- Scraping (all versions): global Scraping.* settings, moved from Version Settings -->
+<div class="settings-section settings-card">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Scraping (all versions)</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        <p class="settings-description">These apply to every version. Per-version settings are on the Version Settings page.</p>
+        <div class="settings-subsection">
+            <!-- Debug: environment_mode = {{ environment_mode }} -->
+            {% for key, value in settings_schema.Scraping.items() %}
+                {% if key not in ['versions', 'tab', 'hybrid_mode', 'ultimate_sort_order'] %}
+                    <!-- Debug: Processing key "{{ key }}" -->
+                    {% if environment_mode is not defined or environment_mode == 'full' or key not in ['uncached_content_handling', 'accept_uncached_within_hours'] %}
+                    <div class="settings-form-group" {% if key == 'hybrid_mode' or key == 'ultimate_sort_order' %}style="display: none !important;"{% endif %}>
+                        <label for="scraping-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                        {% if value.type == 'boolean' %}
+                            <input type="checkbox" id="scraping-{{ key }}" name="Scraping.{{ key }}"
+                                   data-section="Scraping" data-key="{{ key }}"
+                                   {% if key == 'hybrid_mode' %}data-hybrid-mode="true"{% endif %}
+                                   {% if settings.get('Scraping', {}).get(key) %}checked{% endif %}>
+                        {% elif value.choices %}
+                            <select id="scraping-{{ key }}" name="Scraping.{{ key }}" class="settings-input"
+                                    data-section="Scraping" data-key="{{ key }}">
+                                {% if key == 'uncached_content_handling' %}
+                                    <option value="None" {% if settings.get('Scraping', {}).get(key) == 'None' and not settings.get('Scraping', {}).get('hybrid_mode', False) %}selected{% endif %}>None</option>
+                                    <option value="Hybrid" {% if settings.get('Scraping', {}).get('hybrid_mode', False) and settings.get('Scraping', {}).get(key) == 'None' %}selected{% endif %}>Hybrid</option>
+                                    <option value="Full" {% if settings.get('Scraping', {}).get(key) == 'Full' %}selected{% endif %}>Full</option>
+                                {% else %}
+                                    {% for choice in value.choices %}
+                                        <option value="{{ choice }}" {% if settings.get('Scraping', {}).get(key) == choice %}selected{% endif %}>{{ choice }}</option>
+                                    {% endfor %}
+                                {% endif %}
+                            </select>
+                            {% if key == 'uncached_content_handling' %}
+                                <p class="settings-description">
+                                    <strong>None:</strong> Only take the best Cached result<br>
+                                    <strong>Hybrid:</strong> Take the first best Cached result, and if no Cached results found, take the best Uncached result<br>
+                                    <strong>Full:</strong> Take the best result, whether it's Cached or Uncached
+                                </p>
+                            {% endif %}
+                        {% elif value.type == 'integer' and key in ['scraper_timeout'] %}
+                            <input type="number" id="scraping-{{ key }}" name="Scraping.{{ key }}"
+                                   value="{% set val = settings.get('Scraping', {}).get(key, value.default) %}{{ val if val != None else '' }}" class="settings-input"
+                                   data-section="Scraping" data-key="{{ key }}"
+                                   min="{{ value.min }}" step="1">
+                            <p class="settings-description">{{ value.description }}</p>
+                        {% elif value.type == 'integer' and key == 'delayed_upgrade_scrape_days' %}
+                            <input type="number" id="scraping-{{ key }}" name="Scraping.{{ key }}"
+                                   value="{% set val = settings.get('Scraping', {}).get(key, value.default) %}{{ val if val != None else '' }}" class="settings-input"
+                                   data-section="Scraping" data-key="{{ key }}"
+                                   min="{{ value.min }}" step="1" placeholder="0">
+                        {% else %}
+                            {% set input_field_type = value.type %}
+                            {% if value.type == 'float' or value.type == 'integer' %}
+                                {% set input_field_type = 'number' %}
+                            {% endif %}
+                            <input type="{{ input_field_type }}" id="scraping-{{ key }}" name="Scraping.{{ key }}"
+                                   value="{% set val = settings.get('Scraping', {}).get(key, value.default) %}{{ val if val != None else '' }}" class="settings-input"
+                                   data-section="Scraping" data-key="{{ key }}"
+                                   {% if value.sensitive %}type="password"{% endif %}
+                                   {% if value.type == 'float' %}{% if value.min is defined %}min="{{ value.min }}"{% endif %} {% if value.max is defined %}max="{{ value.max }}"{% endif %} step="{{ value.step | default('any') }}"{% endif %} {# Use 'any' for float steps #}
+                                   {% if value.type == 'integer' and key not in ['scraper_timeout'] %}{% if value.min is defined %}min="{{ value.min }}"{% endif %} {% if value.max is defined %}max="{{ value.max }}"{% endif %} step="1"{% endif %}>
+                        {% endif %}
+                        {% if value.description %}
+                            {% if value.description is string %}
+                                {% if key != 'uncached_content_handling' and key not in ['scraper_timeout'] %}
+                                    <p class="settings-description">{{ value.description }}</p>
+                                {% endif %}
+                            {% else %}
+                                {% if key != 'uncached_content_handling' %}
+                                    <div class="settings-description">
+                                        {% for item in value.description %}
+                                            {% if loop.first %}
+                                                <p>{{ item }}</p>
+                                                <ul>
+                                            {% elif loop.last %}
+                                                <li>{{ item }}</li>
+                                                </ul>
+                                            {% else %}
+                                                <li>{{ item }}</li>
+                                            {% endif %}
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                            {% endif %}
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                {% endif %}
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
 <!-- Scraping & Scoring Section -->
 <div class="settings-section settings-card">
     <div class="settings-section-header">
@@ -530,7 +629,7 @@
             <p class="settings-description">Time limit (in hours) to only accept results above the minimum scrape score before accepting lower scored releases.</p>
         </div>
         <div class="settings-form-group">
-            <label for="debug-minimum_scrape_score" class="settings-title">Minimum Scrape Score:</label>
+            <label for="debug-minimum_scrape_score" class="settings-title">Delayed Scrape Minimum Score:</label>
             <input type="number" step="any" min="0.0" id="debug-minimum_scrape_score" name="Debug.minimum_scrape_score"
                    value="{% set val = settings.get('Debug', {}).get('minimum_scrape_score', settings_schema.Debug.minimum_scrape_score.default) %}{{ val if val != None else '' }}" class="settings-input"
                    data-section="Debug" data-key="minimum_scrape_score">
@@ -606,6 +705,22 @@
                    data-section="Staleness Threshold" data-key="staleness_threshold">
             <p class="settings-description">Staleness threshold for metadata (in days)</p>
         </div>
+        <div class="settings-subheader"><h5>System Load Regulation</h5></div>
+        <p class="settings-description">Slows the queues down when CPU or RAM use is high. Only used while the Automation task <b>Slow down under high system load</b> is on (on by default in limited environments).</p>
+        {% for key, value in settings_schema['System Load Regulation'].items() %}
+            {% if key != 'tab' %}
+            <div class="settings-form-group">
+                <label for="additional-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                <input type="number" id="additional-{{ key }}" name="System Load Regulation.{{ key }}"
+                       value="{% set val = settings.get('System Load Regulation', {}).get(key, value.default) %}{{ val if val != None else '' }}" class="settings-input"
+                       data-section="System Load Regulation" data-key="{{ key }}"
+                       {% if value.min is defined %}min="{{ value.min }}"{% endif %}
+                       {% if value.max is defined %}max="{{ value.max }}"{% endif %}
+                       step="{{ 'any' if value.type == 'float' else '1' }}">
+                {% if value.description %}<p class="settings-description">{{ value.description }}</p>{% endif %}
+            </div>
+            {% endif %}
+        {% endfor %}
     </div>
 </div>
 

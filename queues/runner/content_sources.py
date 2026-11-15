@@ -543,7 +543,7 @@ class ContentSourceTasks:
             # Use config 'type' field for matching — source_type is split on '_' which
             # truncates multi-word types like 'Trakt Lists' to just 'Trakt'
             _source_config_type = data.get('type', source_type)
-            if _source_config_type in ('MDBList', 'Trakt Lists', 'Scrob Lists', 'Adaptive List'):
+            if _source_config_type in ('MDBList', 'Trakt Lists', 'Scrob Lists', 'Floppy Lists', 'Adaptive List'):
                 # Always read live settings — cached source_data may be stale if plex_collection
                 # was enabled after startup without a full restart
                 try:
