@@ -7745,7 +7745,7 @@ async function loadMDBListContent(listKey) {
         } else{
             console.error('[MDBList] API Error:', data.error);
             if (data.error && data.error.includes('API key not configured')) {
-                showError('MDBList API key not configured. Go to Settings > Additional Settings to add your API key.');
+                showError('MDBList API key not configured. Go to Settings > Tracking accounts to add your API key.');
             } else {
                 showError(data.error || 'Failed to load list');
             }

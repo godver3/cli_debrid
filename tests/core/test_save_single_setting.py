@@ -1,6 +1,6 @@
 """/settings/save_single_setting — the logo picker's instant save.
 
-static/js/settings.js and settings_tabs/additional.html POST here when a logo
+static/js/settings.js and the settings page scripts POST here when a logo
 radio changes; the route had been removed, so every pick 404'd silently.
 """
 import os

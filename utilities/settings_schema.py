@@ -754,12 +754,12 @@ SETTINGS_SCHEMA = {
                 "foreign_language_penalty": {
                     "type": "number",
                     "default": 30,
-                    "description": "Penalty for a release whose name is tagged with an audio language other than the version's language code (e.g. GERMAN for an 'en' version), multiplied by Language Weight. Subtitle tags (SWESUB, VOSTFR, NORDiC) don't count; MULTi, Dual Audio and DL (dual-language) releases are exempt. For a title whose original language isn't the version's (e.g. a Korean show on an 'en' version), releases tagged DUAL or with the version's language get a small tiebreaker bonus instead (this amount × Language Weight, at most 50; half for a bare MULTi/DL). Untagged releases are never penalized. 0 disables both. A cached release is still taken before any uncached one whatever its score, so the penalty alone can't keep out a tagged release that is the only cached match (e.g. a freshly aired episode whose only cached copy is a foreign dub). To drop tagged releases instead, set a large penalty (e.g. 1000) together with a Minimum Scrape Score above 0 (Advanced Settings → Scraping; the Delayed Scrape Minimum Score only applies with delayed scrape)."
+                    "description": "Penalty for a release whose name is tagged with an audio language other than the version's language code (e.g. GERMAN for an 'en' version), multiplied by Language Weight. Subtitle tags (SWESUB, VOSTFR, NORDiC) don't count; MULTi, Dual Audio and DL (dual-language) releases are exempt. For a title whose original language isn't the version's (e.g. a Korean show on an 'en' version), releases tagged DUAL or with the version's language get a small tiebreaker bonus instead (this amount × Language Weight, at most 50; half for a bare MULTi/DL). Untagged releases are never penalized. 0 disables both. A cached release is still taken before any uncached one whatever its score, so the penalty alone can't keep out a tagged release that is the only cached match (e.g. a freshly aired episode whose only cached copy is a foreign dub). To drop tagged releases instead, set a large penalty (e.g. 1000) together with a Minimum Scrape Score above 0 (Settings → Scraping; the Delayed Scrape Minimum Score only applies with delayed scrape)."
                 },
                 "audio_description_penalty": {
                     "type": "number",
                     "default": 10000,
-                    "description": "Penalty for an audio-description release (e.g. 'with Audio Description'), whose audio is narrated for blind viewers. The default 10000 ranks one below every other release, so it is only picked when nothing else is available; with a Minimum Scrape Score set (Advanced Settings → Scraping), it falls below that and is dropped instead. Use a negative number to prefer them instead, or 0 to treat them like any other release."
+                    "description": "Penalty for an audio-description release (e.g. 'with Audio Description'), whose audio is narrated for blind viewers. The default 10000 ranks one below every other release, so it is only picked when nothing else is available; with a Minimum Scrape Score set (Settings → Scraping), it falls below that and is dropped instead. Use a negative number to prefer them instead, or 0 to treat them like any other release."
                 },
                 "wake_count": {
                     "type": "integer",
@@ -1209,7 +1209,7 @@ SETTINGS_SCHEMA = {
                 "enabled": {"type": "boolean", "default": False},
                 "source_mode": {
                     "type": "string",
-                    "description": "How this source fetches its items. 'json_url' appends /json to a public MDBList (or compatible) list URL and needs no API key. The 'api_*' modes call the MDBList API directly and require an MDBList API key (Additional Settings -> MDBList).",
+                    "description": "How this source fetches its items. 'json_url' appends /json to a public MDBList (or compatible) list URL and needs no API key. The 'api_*' modes call the MDBList API directly and require an MDBList API key (Settings -> Tracking accounts -> MDBList).",
                     "default": "json_url",
                     "choices": ["json_url", "api_watchlist", "api_user_list", "api_list_id"]
                 },
@@ -1770,7 +1770,7 @@ SETTINGS_SCHEMA = {
                 "enabled": {"type": "boolean", "default": False},
                 "scrob_list_ids": {
                     "type": "string",
-                    "description": "Comma-separated Scrob list IDs (numeric, from Settings → Connections → API Key page or the list's URL in the Scrob UI), e.g. '2,7'. Requires Scrob URL/API Key to be configured under Additional Settings → Scrob.",
+                    "description": "Comma-separated Scrob list IDs (numeric, from Settings → Connections → API Key page or the list's URL in the Scrob UI), e.g. '2,7'. Requires Scrob URL/API Key to be configured under Settings → Tracking accounts → Scrob.",
                     "default": ""
                 },
                 "versions": {"type": "dict", "default": {"Default": True}},
@@ -1925,7 +1925,7 @@ SETTINGS_SCHEMA = {
                 "enabled": {"type": "boolean", "default": False},
                 "floppy_statuses": {
                     "type": "list",
-                    "description": "Which Floppy statuses to add. Planning is Floppy's watchlist. Requires the Floppy URL/API key under Additional Settings → Tracking accounts.",
+                    "description": "Which Floppy statuses to add. Planning is Floppy's watchlist. Requires the Floppy URL/API key under Settings → Tracking accounts.",
                     "default": ["Planning"],
                     "choices": ["Planning", "In progress", "Paused", "Completed", "Dropped"]
                 },
@@ -2011,7 +2011,7 @@ SETTINGS_SCHEMA = {
                 "enabled": {"type": "boolean", "default": False},
                 "floppy_list_ids": {
                     "type": "string",
-                    "description": "Comma-separated Floppy list IDs (the number in the list's URL, e.g. /lists/3), e.g. '3,7'. Requires the Floppy URL/API key under Additional Settings → Tracking accounts.",
+                    "description": "Comma-separated Floppy list IDs (the number in the list's URL, e.g. /lists/3), e.g. '3,7'. Requires the Floppy URL/API key under Settings → Tracking accounts.",
                     "default": ""
                 },
                 "versions": {"type": "dict", "default": {"Default": True}},
@@ -2166,7 +2166,7 @@ SETTINGS_SCHEMA = {
                 "enabled": {"type": "boolean", "default": False},
                 "simkl_statuses": {
                     "type": "list",
-                    "description": "Which Simkl lists to add. Plan to Watch is Simkl's watchlist; Watching and On Hold only apply to shows and anime. Requires Simkl sign-in under Additional Settings → Tracking accounts.",
+                    "description": "Which Simkl lists to add. Plan to Watch is Simkl's watchlist; Watching and On Hold only apply to shows and anime. Requires Simkl sign-in under Settings → Tracking accounts.",
                     "default": ["Plan to Watch"],
                     "choices": ["Plan to Watch", "Watching", "On Hold", "Completed", "Dropped"]
                 },

@@ -1,0 +1,48 @@
+{# Needs `section` = "Library Manager" and `section_data`. #}
+    <div class="settings-section settings-card">
+        <div class="settings-section-header">
+            <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+            <div class="settings-header-left">
+                <h4>Library Manager</h4>
+            </div>
+        </div>
+        <div class="settings-section-content">
+            <!-- Auto Ghostlist Deleted -->
+            <div class="settings-form-group">
+                <label for="additional-ghostlist_mode" class="settings-title">Auto Ghostlist Deleted:</label>
+                <input type="checkbox" id="additional-ghostlist_mode" name="Library Manager.ghostlist_mode"
+                       data-section="Library Manager" data-key="ghostlist_mode"
+                       {% if settings.get('Library Manager', {}).get('ghostlist_mode', False) %}checked{% endif %}>
+                <p class="settings-description">Automatically add deleted shows and movies to the ghostlist to prevent them from being re-added. When enabled, deleting a show will mark it as ghosted in the database. When disabled, deleted shows can be re-added by content sources.</p>
+            </div>
+
+            <!-- Remove From Content Sources -->
+            <div class="settings-form-group">
+                <label for="additional-remove_from_content_sources" class="settings-title">Remove From Content Sources:</label>
+                <input type="checkbox" id="additional-remove_from_content_sources" name="Library Manager.remove_from_content_sources"
+                       data-section="Library Manager" data-key="remove_from_content_sources"
+                       {% if settings.get('Library Manager', {}).get('remove_from_content_sources', True) %}checked{% endif %}>
+                <p class="settings-description">Remove items from content sources (Trakt, Overseerr, etc.) during deletion. Enable when ghostlist OFF (prevents re-addition, slower). Disable when ghostlist ON (faster, ghostlist already prevents re-addition).</p>
+            </div>
+
+            <!-- Hide Season 0 -->
+            <div class="settings-form-group">
+                <label for="additional-hide_season_zero" class="settings-title">Hide Season 0:</label>
+                <input type="checkbox" id="additional-hide_season_zero" name="Library Manager.hide_season_zero"
+                       data-section="Library Manager" data-key="hide_season_zero"
+                       {% if settings.get('Library Manager', {}).get('hide_season_zero', True) %}checked{% endif %}>
+                <p class="settings-description">Hide Season 0 (Specials) tab and its episodes from the TV show page.</p>
+            </div>
+
+            <!-- Clear Cache Button -->
+            <div class="settings-form-group">
+                <label class="settings-title">Clear Artwork Cache:</label>
+                <button type="button" id="clear-library-cache-btn" class="btn btn-danger" style="padding: 8px 16px;">
+                    Clear Cache
+                </button>
+                <p class="settings-description">Remove all cached posters and backdrops. Artwork will be re-downloaded from the primary source on next library load.</p>
+            </div>
+        </div>
+    </div>

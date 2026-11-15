@@ -1,0 +1,26 @@
+{# Shared page frame for settings pages: title, subtitle, Collapse/Expand all. #}
+{% macro page_open(title, subtitle) %}
+<div class="additional-settings-page">
+    <h2 class="additional-settings-title">{{ title }}</h2>
+    <p class="additional-settings-subtitle">{{ subtitle }}</p>
+
+    <div class="content-section">
+        <div class="additional-settings-header section-header">
+            <h3 class="additional-settings-settings-title section-title">
+                <span class="title-bar"></span>
+                Settings
+            </h3>
+            <div class="additional-settings-actions action-buttons settings-expand-collapse-buttons">
+                <button type="button" class="additional-settings-btn btn-secondary settings-collapse-all"><i class="fa-solid fa-compress"></i> Collapse All</button>
+                <button type="button" class="additional-settings-btn btn-secondary settings-expand-all"><i class="fa-solid fa-expand"></i> Expand All</button>
+            </div>
+        </div>
+
+        <div class="settings-list">
+{% endmacro %}
+
+{% macro page_close() %}
+        </div>
+    </div>
+</div>
+{% endmacro %}

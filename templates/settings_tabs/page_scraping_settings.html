@@ -1,0 +1,7 @@
+{% from 'settings_tabs/_page.html' import page_open, page_close %}
+{{ page_open('Scraping', 'Settings that apply to every version: uncached handling, upgrades, scoring and filtering. Per-version settings are on Version Settings.') }}
+{% if environment_mode == 'full' %}
+{% include 'settings_tabs/cards/scraping.html' %}
+{% include 'settings_tabs/cards/filtering_blacklist.html' %}
+{% endif %}
+{{ page_close() }}

@@ -1,0 +1,4 @@
+{% from 'settings_tabs/_page.html' import page_open, page_close %}
+{{ page_open('Tracking accounts', 'Accounts on list and tracking services. Content sources and Discover use them.') }}
+{% include 'settings_tabs/cards/tracking_accounts.html' %}
+{{ page_close() }}

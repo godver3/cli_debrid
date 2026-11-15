@@ -1,0 +1,7 @@
+{% from 'settings_tabs/_page.html' import page_open, page_close %}
+{{ page_open('Media Server', 'Plex collections and posters, poster overlays and Plex issue reports.') }}
+{% include 'settings_tabs/cards/plex_collections.html' %}
+{% for section in ['Overlay Settings', 'Plex Reported Issues'] %}{% if section in settings_schema %}{% set section_data = settings_schema[section] %}
+{% include 'settings_tabs/cards/generic_section.html' %}
+{% endif %}{% endfor %}
+{{ page_close() }}

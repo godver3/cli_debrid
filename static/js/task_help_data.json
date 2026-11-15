@@ -298,7 +298,7 @@
     "task_process_plex_reported_issues": {
       "description": "Checks every 30 seconds for issues reported with Plex's Report Issue on items in your library (Plex has no way to push them). A reported movie or episode is sent back to Wanted to get a different release, and the current file keeps playing until the new one is in. The reporter gets a reply in Plex when it's picked up and again once it's replaced. Reports on a whole show or season are only flagged for you.",
       "action": "Check for new reported issues now.",
-      "runs": "When Plex Reported Issues is enabled in Additional Settings."
+      "runs": "When Plex Reported Issues is enabled in Settings → Media Server."
     },
     "task_plex_smart_collection_posters": {
       "description": "Applies your shared custom poster design to the Plex smart collections you've enabled for it.",

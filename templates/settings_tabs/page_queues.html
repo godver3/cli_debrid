@@ -1,0 +1,9 @@
+{% from 'settings_tabs/_page.html' import page_open, page_close %}
+{{ page_open('Queues & Upgrades', 'How items move through the queues, and upgrade behaviour.') }}
+{% set section = 'Queue' %}{% set section_data = settings_schema['Queue'] %}
+{% include 'settings_tabs/cards/queue.html' %}
+{% if environment_mode == 'full' %}
+{% include 'settings_tabs/cards/queue_upgrades.html' %}
+{% include 'settings_tabs/cards/content_processing.html' %}
+{% endif %}
+{{ page_close() }}

@@ -933,11 +933,11 @@ def get_scrob_lists():
         from content_checkers.scrob import get_scrob_config, _scrob_get
 
         if not get_scrob_config():
-            return jsonify({'success': False, 'error': 'Scrob URL/API key not configured in Additional Settings → Scrob'}), 400
+            return jsonify({'success': False, 'error': 'Scrob URL/API key not configured in Settings → Tracking accounts → Scrob'}), 400
 
         data = _scrob_get('/lists')
         if data is None:
-            return jsonify({'success': False, 'error': 'Failed to reach Scrob. Check the URL/API key in Additional Settings → Scrob.'}), 502
+            return jsonify({'success': False, 'error': 'Failed to reach Scrob. Check the URL/API key in Settings → Tracking accounts → Scrob.'}), 502
 
         lists = [{'id': lst['id'], 'name': lst.get('name', f"List {lst['id']}"), 'item_count': lst.get('item_count', 0)}
                  for lst in data.get('lists', [])]

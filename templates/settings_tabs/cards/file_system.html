@@ -1,0 +1,20 @@
+{# Advanced card: only rendered when environment_mode == "full". #}
+<div class="settings-section settings-card">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>File System</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        <div class="settings-form-group">
+            <label for="debug-sanitizer_replacement_character-tangerine" class="settings-title">Sanitizer Replacement Character:</label>
+            <input type="text" id="debug-sanitizer_replacement_character-tangerine" name="Debug.sanitizer_replacement_character"
+                   value="{{ settings.get('Debug', {}).get('sanitizer_replacement_character', '_') }}" class="settings-input"
+                   data-section="Debug" data-key="sanitizer_replacement_character" maxlength="1">
+            <p class="settings-description">Character to use when replacing invalid characters in filenames (default: '_'). Must be a valid character for both Windows and Linux filesystems.</p>
+        </div>
+    </div>
+</div>

@@ -984,7 +984,7 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
 
                 api_key = (get_setting('MDBList', 'api_key', '') or '').strip()
                 if not api_key:
-                    base_response['error'] = 'MDBList API key not configured (Additional Settings -> MDBList)'
+                    base_response['error'] = 'MDBList API key not configured (Settings -> Tracking accounts -> MDBList)'
                     base_response['connected'] = False
                     return base_response
 
@@ -1246,7 +1246,7 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
             tmdb_api_key = get_setting('TMDB', 'api_key', '').strip()
 
             if not tmdb_api_key:
-                base_response['error'] = 'TMDB API key not configured in Additional Settings'
+                base_response['error'] = 'TMDB API key not configured (Settings → UI Settings → Metadata Providers)'
                 base_response['connected'] = False
                 return base_response
 
@@ -1275,7 +1275,7 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
             from content_checkers.floppy import get_floppy_config, test_connection
             floppy_config = get_floppy_config()
             if not floppy_config:
-                base_response['error'] = 'Floppy URL or API key not configured in Additional Settings'
+                base_response['error'] = 'Floppy URL or API key not configured (Settings → Tracking accounts)'
                 base_response['connected'] = False
                 return base_response
             ok, message = test_connection()
@@ -1289,7 +1289,7 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
             status = auth_status()
             base_response['connected'] = bool(status.get('signed_in'))
             if not status.get('signed_in'):
-                base_response['error'] = 'Not signed in to Simkl (Additional Settings → Tracking accounts)'
+                base_response['error'] = 'Not signed in to Simkl (Settings → Tracking accounts)'
 
         # --- Scrob Sources (Lists, Collection, Special Lists) ---
         elif source_type in ['Scrob Lists', 'Scrob Collection', 'Special Scrob Lists']:
@@ -1297,7 +1297,7 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
 
             scrob_config = get_scrob_config()
             if not scrob_config:
-                base_response['error'] = 'Scrob URL or API key not configured in Additional Settings'
+                base_response['error'] = 'Scrob URL or API key not configured (Settings → Tracking accounts)'
                 base_response['connected'] = False
                 return base_response
 
