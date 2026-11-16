@@ -36,6 +36,38 @@ from queues.runner import task_registry
 
 
 class ContentSourceTasks:
+    def _run_sibling_overseerr_sources_now(self, source, data):
+        """Run the other Overseerr sources on the same server now, instead of on their own timers.
+
+        A request only stays in Overseerr's approved list until the media shows up in Plex,
+        and cli_debrid triggers Overseerr's Plex scan right after collecting. With one source
+        per version (1080p and 2160p) on the same server, the source that ran first could get
+        its version collected and the request marked available before the other source's
+        next run, so the other version was never requested at all.
+        """
+        url = (data.get('url') or '').strip().rstrip('/')
+        scheduler = getattr(self, 'scheduler', None)
+        if not url or scheduler is None:
+            return
+        from datetime import datetime
+        for sibling_id, sibling in (get_all_settings().get('Content Sources', {}) or {}).items():
+            if (sibling_id == source or not isinstance(sibling, dict)
+                    or sibling.get('type', sibling_id.split('_')[0]) != 'Overseerr'
+                    or not sibling.get('enabled', False)
+                    or (sibling.get('url') or '').strip().rstrip('/') != url):
+                continue
+            job_id = task_registry.content_source_task_name(sibling_id)
+            try:
+                with self.scheduler_lock:
+                    job = scheduler.get_job(job_id)
+                    # next_run_time None = paused (disabled in the Task Manager): leave it paused.
+                    if job is None or job.next_run_time is None:
+                        continue
+                    job.modify(next_run_time=datetime.now(job.next_run_time.tzinfo))
+                logging.info(f"{source} found new requests: running {sibling_id} (same Overseerr server) now")
+            except Exception as e:
+                logging.warning(f"Could not run {sibling_id} early after {source}: {e}")
+
     def get_content_sources(self, force_refresh=False):
         """Load content sources and register a task_<source>_wanted task for each.
 
@@ -538,6 +570,8 @@ class ContentSourceTasks:
                 stats_msg += ")"
                 logging.info(stats_msg)
                 report.log(cache_skipped=cache_skipped)
+                if source_type == 'Overseerr' and items_processed > 0:
+                    self._run_sibling_overseerr_sources_now(source, data)
 
             # ── Plex Collection sync — runs even when all items are cached ────
             # Use config 'type' field for matching — source_type is split on '_' which

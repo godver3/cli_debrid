@@ -1149,6 +1149,13 @@ class TorrentProcessor:
             return _re_dc.sub(r'\s*-\s*\([^)]*\)\s*$', '', t).strip()
 
         _job_prefix = _title_prefix(job_title)
+        # The prefix ("Title (year) - {imdb} - Version") stands for one item in one
+        # version only when the version is in it. Without it (the name was shortened
+        # past the version, or "Include version in NZB naming" is off), a 1080p item
+        # matched the 2160p job of the same movie and was never submitted itself.
+        _prefix_ver = _re_dc.sub(r'[\\/*?:"<>|]', '', str((item or {}).get('version') or '')).strip().strip('*')
+        if _prefix_ver and _prefix_ver not in _job_prefix.split(' - '):
+            _job_prefix = ''
 
         # GUID blacklist, checked here too and not only at scrape time: the Adding
         # queue submits from scrape results stored before an earlier attempt at
