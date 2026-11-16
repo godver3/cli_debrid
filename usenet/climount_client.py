@@ -488,6 +488,37 @@ class CliMountClient:
             logging.debug(f'[cli_mount] register_cli_ids error for {info_hash}: {e}')
             return False
 
+    def sync_debrid_torrent(self, info_hash: str, provider: str, provider_id: str) -> bool:
+        """Ask cli_mount to fetch one newly-created debrid torrent by ID.
+
+        TorBox's bulk list is eventually consistent (documented as cached for
+        up to ten minutes), while the create response and ID-specific endpoint
+        are available immediately. This local callback avoids waiting for the
+        bulk list and costs exactly one provider detail request per new add.
+        """
+        if not self.is_enabled() or not info_hash or not provider or not provider_id:
+            return False
+        try:
+            r = api.post(
+                f'{self.base_url}/api/torrents/{info_hash}/sync',
+                params={'provider': provider, 'providerId': str(provider_id)},
+                headers=self._headers(),
+                timeout=10,
+            )
+            if r.status_code in (200, 204):
+                logging.info(
+                    '[cli_mount] Immediately synced %s torrent %s (%s)',
+                    provider, provider_id, info_hash,
+                )
+                return True
+            logging.debug(
+                '[cli_mount] targeted %s sync returned %s for %s',
+                provider, r.status_code, info_hash,
+            )
+        except Exception as e:
+            logging.debug(f'[cli_mount] targeted debrid sync failed for {info_hash}: {e}')
+        return False
+
     def remove_nzb_exact(self, info_hash: str) -> bool:
         """Remove one exact UUID; never fall back to a release-name match."""
         if not self.is_enabled() or not info_hash:
