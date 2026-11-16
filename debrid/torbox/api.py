@@ -19,6 +19,36 @@ _api_rate_limiter = {
     'lock': threading.Lock(),
 }
 
+_create_limit = {
+    'paused_until': 0.0,
+    'lock': threading.Lock(),
+}
+
+
+def _create_pause_remaining() -> float:
+    with _create_limit['lock']:
+        return max(0.0, _create_limit['paused_until'] - time.time())
+
+
+def _pause_creates(response=None) -> float:
+    """Pause create calls locally after TorBox rejects the add quota.
+
+    createtorrent is non-idempotent and has a separate uncached-add quota.
+    Retrying it can duplicate work and turns one rejected grab into several API
+    calls, so later adds fail locally until Retry-After (or five minutes).
+    """
+    wait = 300
+    if response is not None:
+        try:
+            wait = int(response.headers.get('Retry-After') or wait)
+        except (TypeError, ValueError):
+            wait = 300
+    wait = min(max(wait, 1), 3600)
+    with _create_limit['lock']:
+        _create_limit['paused_until'] = max(
+            _create_limit['paused_until'], time.time() + wait)
+        return _create_limit['paused_until']
+
 
 def _wait_for_rate_limit() -> None:
     with _api_rate_limiter['lock']:
@@ -65,6 +95,12 @@ def make_request(
     **kwargs,
 ) -> Any:
     url = f"https://api.torbox.app/v1/api{endpoint}"
+    is_create = endpoint.rstrip('/').endswith('/torrents/createtorrent')
+    if is_create:
+        remaining = _create_pause_remaining()
+        if remaining > 0:
+            raise ProviderUnavailableError(
+                f"Torbox torrent adds paused for another {int(remaining) + 1}s after rate limiting")
     headers = kwargs.get('headers', {})
     headers['Authorization'] = f'Bearer {api_key}'
     kwargs['headers'] = headers
@@ -90,6 +126,10 @@ def make_request(
             if response.status_code == 403:
                 raise TorboxAuthError("Access denied")
             if response.status_code == 429:
+                if is_create:
+                    until = _pause_creates(response)
+                    raise ProviderUnavailableError(
+                        f"Torbox torrent add limit reached; adds paused until {time.ctime(until)}")
                 retry_after = response.headers.get('Retry-After')
                 if retry_after:
                     try:
@@ -100,20 +140,27 @@ def make_request(
                     _api_rate_limiter['min_interval'] = min(5.0, _api_rate_limiter['min_interval'] * 2)
                 raise RateLimitError("Torbox rate limit exceeded")
             if response.status_code in [500, 502, 503, 504]:
+                if is_create:
+                    # A create may have reached TorBox even when its response
+                    # failed. Do not replay this non-idempotent request.
+                    raise ProviderUnavailableError(
+                        f"Torbox create request failed (HTTP {response.status_code}); not retrying")
                 raise TorboxAPIError(f"Torbox service temporarily unavailable (HTTP {response.status_code})")
             try:
                 err_body = response.json()
             except Exception:
                 err_body = response.text[:500]
-            # Torbox returns 400 for rate limiting on createtorrent — treat as retryable
-            if response.status_code == 400 and isinstance(err_body, dict):
+            # TorBox sometimes reports the create quota as HTTP 400. Pause
+            # locally; retrying the same add only spends more quota.
+            if is_create and response.status_code == 400 and isinstance(err_body, dict):
                 err_code = (err_body.get('error') or '').upper()
                 if 'RATE_LIMIT' in err_code or 'TOO_MANY' in err_code:
                     with _api_rate_limiter['lock']:
                         _api_rate_limiter['min_interval'] = min(30.0, _api_rate_limiter['min_interval'] * 2)
-                    logging.warning(f"Torbox 400 rate limit on {endpoint}: sleeping 30s")
-                    time.sleep(30)
-                    raise RateLimitError(f"Torbox rate limit (400): {err_body.get('detail', err_code)}")
+                    until = _pause_creates(response)
+                    logging.warning(f"Torbox 400 rate limit on {endpoint}; adds paused until {time.ctime(until)}")
+                    raise ProviderUnavailableError(
+                        f"Torbox torrent add limit reached: {err_body.get('detail', err_code)}")
             logging.error(f"Torbox {response.status_code} on {endpoint}: {err_body}")
             raise ProviderUnavailableError(f"Torbox request failed: {response.status_code} - {err_body}")
 
@@ -132,6 +179,10 @@ def make_request(
             detail = result.get('detail') or 'Unknown error'
             if error_code in {'BAD_TOKEN', 'AUTH_ERROR'}:
                 raise TorboxAuthError(detail)
+            if is_create and any(marker in str(error_code).upper() for marker in ('RATE_LIMIT', 'TOO_MANY')):
+                until = _pause_creates(response)
+                raise ProviderUnavailableError(
+                    f"Torbox torrent add limit reached; adds paused until {time.ctime(until)}")
             raise TorboxAPIError(f"Torbox API error {error_code}: {detail}")
 
         _decrease_rate_limit_on_success()
