@@ -18,6 +18,7 @@ from .statistics_routes import statistics_bp, root_bp
 from .webhook_routes import webhook_bp
 from .trakt_friends_routes import trakt_friends_bp
 from .debug_routes import debug_bp
+from .tool_pages_routes import tool_pages_bp
 from .trakt_routes import trakt_bp
 from .log_viewer_routes import logs_bp
 from .settings_routes import settings_bp
@@ -44,7 +45,9 @@ from .bazarr_spoofing_routes import bazarr_bp
 from .overlay_routes import overlay_bp, overlay_page_bp
 from .debrid_manager_routes import debrid_manager_bp
 from .upgrade_hub_routes import upgrade_hub_bp
-from .ai_routes import ai_bp
+# AI Assistant disabled: the AI Butler routes (/api/ai/*) are not registered.
+# from .ai_routes import ai_bp
+from .tracker_account_routes import tracker_account_bp
 from .oidc_routes import oidc_bp
 
 tooltip_bp = Blueprint('tooltip', __name__)
@@ -146,6 +149,7 @@ def register_blueprints(app):
         (trakt_friends_bp, '/trakt_friends'),
         (webhook_bp, '/webhook'),
         (debug_bp, '/debug'),
+        (tool_pages_bp, ''),
         (trakt_bp, '/trakt'),
         (logs_bp, '/logs'),
         (settings_bp, '/settings'),
@@ -175,8 +179,9 @@ def register_blueprints(app):
         (overlay_bp, ''),  # Mounted at root for /api/overlays/* paths (includes prefix in blueprint)
         (debrid_manager_bp, '/debrid_manager'),
         (upgrade_hub_bp, '/upgrade_hub'),
-        (ai_bp, ''),  # /api/ai/* routes
+        # (ai_bp, ''),  # /api/ai/* routes (AI Assistant disabled)
         (oidc_bp, '/auth/oidc'),  # OIDC SSO routes
+        (tracker_account_bp, '/tracking'),  # Simkl sign-in, Floppy test
     ]
     
     for blueprint, url_prefix in blueprints:

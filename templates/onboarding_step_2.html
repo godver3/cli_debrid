@@ -17,7 +17,7 @@
             <div class="ob-choice-row">
                 <label class="ob-choice">
                     <input type="checkbox" id="use_debrid" name="use_debrid" {% if use_debrid or not use_usenet %}checked{% endif %}>
-                    <span>Debrid<small>Real-Debrid, AllDebrid, Premiumize, Torbox, Debrid-Link</small></span>
+                    <span>Debrid<small>Real-Debrid, AllDebrid, Premiumize, Torbox, Debrid-Link, HighWay</small></span>
                 </label>
                 <label class="ob-choice">
                     <input type="checkbox" id="use_usenet" name="use_usenet" {% if use_usenet %}checked{% endif %}>
@@ -28,7 +28,7 @@
             <div id="panel-debrid">
                 <label for="debrid_provider" class="onboarding-label">Debrid Provider:</label>
                 <select id="debrid_provider" name="debrid_provider" class="onboarding-input">
-                    {% for value, label in [('RealDebrid', 'RealDebrid'), ('AllDebrid', 'AllDebrid'), ('Premiumize', 'Premiumize'), ('Torbox', 'Torbox'), ('DebridLink', 'Debrid-Link')] %}
+                    {% for value, label in [('RealDebrid', 'RealDebrid'), ('AllDebrid', 'AllDebrid'), ('Premiumize', 'Premiumize'), ('Torbox', 'Torbox'), ('DebridLink', 'Debrid-Link'), ('HighWay', 'HighWay')] %}
                     <option value="{{ value }}" {% if settings.get('Debrid Provider', {}).get('provider', '') == value %}selected{% endif %}>{{ label }}</option>
                     {% endfor %}
                 </select>
@@ -38,13 +38,13 @@
             </div>
 
             <div id="panel-usenet" style="display:none;">
-                <label for="usenet_backend" class="onboarding-label">Usenet Provider:</label>
+                <label for="usenet_backend" class="onboarding-label">Usenet Mount:</label>
                 <select id="usenet_backend" name="usenet_backend" class="onboarding-input">
                     <option value="climount" {% if usenet_backend == 'climount' %}selected{% endif %}>cli_mount (recommended)</option>
                     <option value="nzbdav" {% if usenet_backend == 'nzbdav' %}selected{% endif %}>NzbDAV</option>
                     <option value="zurg" {% if usenet_backend == 'zurg' %}selected{% endif %}>Zurg 2.0</option>
                 </select>
-                <label for="usenet_url" class="onboarding-label">URL:</label>
+                <label for="usenet_url" class="onboarding-label">Mount URL: <button type="button" id="usenet-detect-btn" style="margin-left:6px;font-size:11px;padding:2px 8px;border-radius:4px;border:1px solid #555;background:#222;color:#ddd;cursor:pointer">Detect</button> <span id="usenet-detect-status" style="font-size:11px;color:#999"></span></label>
                 <div class="settings-description" id="usenet-url-hint"></div>
                 <input type="text" id="usenet_url" name="usenet_url" class="onboarding-input" value="{{ settings.get('Usenet Provider', {}).get('url', '') }}">
                 <label for="usenet_api_token" class="onboarding-label" id="usenet-token-label">API Token:</label>
@@ -245,11 +245,12 @@
                 <summary>Use Trakt instead (optional)</summary>
                 <p class="settings-description">Without a TVDB key, cli_debrid looks shows and movies up on Trakt instead. Trakt is also needed for Trakt-based content sources. Create an application at <a href="https://trakt.tv/oauth/applications/" target="_blank" style="color: #3498db;">Trakt Applications</a>. All you need to add is a <b>Name</b>, and the <b>Redirect URI</b> which is:</p>
                 <code><b>urn:ietf:wg:oauth:2.0:oob</b></code><br>
+                <p class="settings-description">Trakt may warn that this redirect URI is insecure. cli_debrid signs in with a device code and never uses it, so the warning can be ignored.</p>
 
                 <label for="trakt_client_id" class="onboarding-label"><br>Trakt Client ID:</label>
                 <input type="text" id="trakt_client_id" name="trakt_client_id" class="onboarding-input" value="{{ settings.get('Trakt', {}).get('client_id', '') }}">
 
-                <label for="trakt_client_secret" class="onboarding-label">Trakt Client Secret:</label>
+                <label for="trakt_client_secret" class="onboarding-label">Trakt Client Secret (optional, new Trakt apps don't get one):</label>
                 <input type="text" id="trakt_client_secret" name="trakt_client_secret" class="onboarding-input" value="{{ settings.get('Trakt', {}).get('client_secret', '') }}">
 
                 <div class="settings-section">
@@ -992,7 +993,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const mountTool = document.getElementById('mount_tool');
     const mountPath = document.getElementById('original_files_path');
     const MOUNT_HINTS = {
-        climount: ['The folder you mapped to /mnt in the cli_mount container, plus /__all__. Debrid and usenet files both show up there.', '/mnt/climount/__all__'],
+        climount: ['cli_mount\'s mount path as cli_debrid sees it, plus /__all__. Debrid and usenet files both show up there.', '/mnt/cli_mount/__all__'],
         decypharr: ['Decypharr\'s mount folder for your debrid service, ending in /__all__.', '/mnt/decypharr/__all__'],
         zurg: ['Your rclone mount of Zurg, ending in /__all__.', '/mnt/zurg/__all__'],
         nzbdav: ['Your rclone mount of NzbDAV\'s WebDAV share.', '/mnt/nzbdav'],
@@ -1070,8 +1071,8 @@ function saveTraktCredentials() {
     const clientSecretInput = document.getElementById('trakt_client_secret');
     const clientId = clientIdInput ? clientIdInput.value.trim() : '';
     const clientSecret = clientSecretInput ? clientSecretInput.value.trim() : '';
-    if (!clientId || !clientSecret) {
-        return Promise.reject(new Error('Enter both a Trakt Client ID and Client Secret first.'));
+    if (!clientId) {
+        return Promise.reject(new Error('Enter a Trakt Client ID first.'));
     }
     return fetch('/settings/api/settings', {
         method: 'POST',
@@ -1193,7 +1194,28 @@ function checkTraktAuthStatus() {
 </script>
 
 {% include 'onboarding_navigation.html' with context %}
+<script>
+(function () {
+  // Look for the usenet mount and fill Mount URL when it is empty and one match is found.
+  const btn = document.getElementById('usenet-detect-btn');
+  if (!btn) return;
+  const status = document.getElementById('usenet-detect-status');
+  async function detect() {
+    const url = document.getElementById('usenet_url');
+    status.textContent = 'Looking…';
+    try {
+      const r = await fetch('/settings_validation/usenet-mount-detect', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: document.getElementById('usenet_backend').value, url: url.value,
+                               token: (document.getElementById('usenet_api_token') || {}).value || '' }) });
+      const j = await r.json();
+      const urls = (j.urls || []).map(u => u.url);
+      if (!urls.length) { status.textContent = 'Nothing found — enter it yourself.'; return; }
+      if (!url.value.trim() && urls.length === 1) url.value = urls[0];
+      status.textContent = urls.length === 1 ? 'Found ' + urls[0] : 'Found: ' + urls.join(', ');
+    } catch (e) { status.textContent = 'Detect failed'; }
+  }
+  btn.addEventListener('click', detect);
+  document.getElementById('usenet_backend').addEventListener('change', detect);
+})();
+</script>
 {% endblock %}
-
-
-

@@ -32,98 +32,69 @@ from content_checkers.content_cache_management import save_source_cache
 from content_checkers.content_cache_management import should_process_item
 import traceback
 from content_checkers.content_cache_management import update_cache_for_item
+from queues.runner import task_registry
 
 
 class ContentSourceTasks:
+    def _run_sibling_overseerr_sources_now(self, source, data):
+        """Run the other Overseerr sources on the same server now, instead of on their own timers.
+
+        A request only stays in Overseerr's approved list until the media shows up in Plex,
+        and cli_debrid triggers Overseerr's Plex scan right after collecting. With one source
+        per version (1080p and 2160p) on the same server, the source that ran first could get
+        its version collected and the request marked available before the other source's
+        next run, so the other version was never requested at all.
+        """
+        url = (data.get('url') or '').strip().rstrip('/')
+        scheduler = getattr(self, 'scheduler', None)
+        if not url or scheduler is None:
+            return
+        from datetime import datetime
+        for sibling_id, sibling in (get_all_settings().get('Content Sources', {}) or {}).items():
+            if (sibling_id == source or not isinstance(sibling, dict)
+                    or sibling.get('type', sibling_id.split('_')[0]) != 'Overseerr'
+                    or not sibling.get('enabled', False)
+                    or (sibling.get('url') or '').strip().rstrip('/') != url):
+                continue
+            job_id = task_registry.content_source_task_name(sibling_id)
+            try:
+                with self.scheduler_lock:
+                    job = scheduler.get_job(job_id)
+                    # next_run_time None = paused (disabled in the Task Manager): leave it paused.
+                    if job is None or job.next_run_time is None:
+                        continue
+                    job.modify(next_run_time=datetime.now(job.next_run_time.tzinfo))
+                logging.info(f"{source} found new requests: running {sibling_id} (same Overseerr server) now")
+            except Exception as e:
+                logging.warning(f"Could not run {sibling_id} early after {source}: {e}")
+
     def get_content_sources(self, force_refresh=False):
+        """Load content sources and register a task_<source>_wanted task for each.
+
+        Source tasks are on by default; an override saved on the Automation page
+        switches one off. Custom intervals come from task_intervals.json.
+        """
         if self.content_sources is None or force_refresh:
-            settings = get_all_settings()
-            self.content_sources = settings.get('Content Sources', {})
-            debug_settings = settings.get('Debug', {})
-            custom_check_periods = debug_settings.get('content_source_check_period', {})
-            
-            default_intervals = {
-                'Overseerr': 900,
-                'MDBList': 900,
-                'Collected': 86400,
-                'Trakt Watchlist': 900,
-                'Trakt Lists': 900,
-                'Trakt Collection': 900,
-                'My Plex Watchlist': 900,
-                'Other Plex Watchlist': 900,
-                'My Plex RSS Watchlist': 900,
-                'My Friends Plex RSS Watchlist': 900,
-                'Plex Friends Watchlist': 900,
-                'My Friends Trakt Watchlist': 900,
-                'Special Trakt Lists': 900,
-                'Scrob Lists': 900,
-                'Scrob Collection': 900,
-                'Special Scrob Lists': 900,
-                'Adaptive List': 900  # TMDB discover-based adaptive lists
-            }
-            
-            log_intervals_message = ["Content source intervals being applied to effective set:"] # Prepare log message
-            
+            self.content_sources = get_all_settings().get('Content Sources', {})
+            overrides = getattr(self, '_task_overrides', None)
+            if overrides is None:
+                overrides = task_registry.load_overrides()
             for source, data in self.content_sources.items():
                 if isinstance(data, str):
                     data = {'enabled': data.lower() == 'true'}
-                
+                    self.content_sources[source] = data
                 if not isinstance(data, dict):
                     logging.error(f"Unexpected data type for content source {source}: {type(data)}")
                     continue
-                
-                source_type = source.split('_')[0]
-
-                # Use custom check period if present, otherwise use default
-                custom_interval = custom_check_periods.get(source)
-                final_interval = 0 # Initialize
-                if custom_interval is not None:
-                    try:
-                        final_interval = int(float(custom_interval) * 60)
-                        data['interval'] = final_interval
-                    except ValueError:
-                         logging.error(f"Invalid custom interval '{custom_interval}' for source {source}. Using default.")
-                         final_interval = int(data.get('interval', default_intervals.get(source_type, 3600)))
-                         data['interval'] = final_interval
-                else:
-                    final_interval = int(data.get('interval', default_intervals.get(source_type, 3600)))
-                    data['interval'] = final_interval
-
-                task_name = f'task_{source}_wanted'
-                
-                # Store the calculated default interval (before any custom overrides)
-                calculated_default_interval = final_interval
-                
-                # Check if a custom interval was already loaded for this task (from user's saved preferences)
-                if task_name in self.task_intervals:
-                    # A custom interval exists, preserve it instead of overwriting with defaults
-                    existing_custom_interval = self.task_intervals[task_name]
-                    logging.info(f"Preserving custom interval for content source '{task_name}': {existing_custom_interval}s (would have been {calculated_default_interval}s from source defaults)")
-                    # Update final_interval so the log message below shows the preserved value
-                    final_interval = existing_custom_interval
-                else:
-                    # No custom interval exists, use the calculated default interval
-                    self.task_intervals[task_name] = final_interval
-                
-                # Add to original_task_intervals with the calculated default (not the custom value)
-                # This ensures that resets will go back to the true calculated default
-                if task_name not in self.original_task_intervals:
-                    self.original_task_intervals[task_name] = calculated_default_interval
-
-                log_intervals_message.append(f"  {task_name}: {final_interval} seconds")
-                
                 if isinstance(data.get('enabled'), str):
                     data['enabled'] = data['enabled'].lower() == 'true'
-                
-                # Add content source tasks by default; toggles will disable later if set to False
-                if task_name not in self.enabled_tasks:
+                task_name = task_registry.content_source_task_name(source)
+                default_interval = task_registry.content_source_default_interval(source, data)
+                self.original_task_intervals[task_name] = default_interval
+                self.task_intervals.setdefault(task_name, default_interval)
+                self.default_enabled_tasks.add(task_name)
+                if overrides.get(task_name, True):
                     self.enabled_tasks.add(task_name)
-                    logging.info(f"Enabled content source task by default (ignoring config flag): {task_name}")
-                # Do not remove here based on config; rely solely on saved toggles applied later
-
-            # Log the intervals once after processing all sources
-            logging.info("\n".join(log_intervals_message))
-
         return self.content_sources
 
     def process_content_source(self, source, data, bypass_cache=False):
@@ -205,7 +176,7 @@ class ContentSourceTasks:
             wanted_content = []
             # Pass the original versions_from_config to fetchers, assuming they expect list/dict as per config
             if source_type == 'Overseerr':
-                wanted_content = get_wanted_from_overseerr(versions_from_config)
+                wanted_content = get_wanted_from_overseerr(versions_from_config, source_id=source)
             elif source_type == 'MDBList':
                 wanted_content = get_wanted_from_mdblist_source(data, versions_from_config)
             elif source_type == 'Trakt Watchlist':
@@ -238,17 +209,26 @@ class ContentSourceTasks:
                 wanted_content = get_wanted_from_scrob_collection(versions_from_config, unblacklist=unblacklist_on_source_run)
             elif source_type == 'Special Scrob Lists':
                 wanted_content = get_wanted_from_scrob_special(data, versions_from_config, unblacklist=unblacklist_on_source_run)
+            elif source_type == 'Floppy Watchlist':
+                from content_checkers.floppy import get_wanted_from_floppy_watchlist
+                wanted_content = get_wanted_from_floppy_watchlist(data, versions_from_config, unblacklist=unblacklist_on_source_run)
+            elif source_type == 'Floppy Lists':
+                from content_checkers.floppy import get_wanted_from_floppy_lists
+                wanted_content = get_wanted_from_floppy_lists(data.get('floppy_list_ids', ''), versions_from_config, unblacklist=unblacklist_on_source_run)
+            elif source_type == 'Simkl Watchlist':
+                from content_checkers.simkl import get_wanted_from_simkl_watchlist
+                wanted_content = get_wanted_from_simkl_watchlist(data, versions_from_config, unblacklist=unblacklist_on_source_run)
             elif source_type == 'Collected':
                 wanted_content = get_wanted_from_collected() # Doesn't take versions arg
             elif source_type == 'My Plex Watchlist':
                 from content_checkers.plex_watchlist import get_wanted_from_plex_watchlist
-                wanted_content = get_wanted_from_plex_watchlist(versions_from_config)
+                wanted_content = get_wanted_from_plex_watchlist(versions_from_config, remove_when_collected=bool(data.get('remove_when_collected')), keep_series=bool(data.get('keep_series')))
             elif source_type == 'My Plex RSS Watchlist':
                 plex_rss_url = data.get('url', '')
-                wanted_content = get_wanted_from_plex_rss(plex_rss_url, versions_from_config)
+                wanted_content = get_wanted_from_plex_rss(plex_rss_url, versions_from_config, remove_when_collected=bool(data.get('remove_when_collected')), keep_series=bool(data.get('keep_series')))
             elif source_type == 'My Friends Plex RSS Watchlist':
                 plex_rss_url = data.get('url', '')
-                wanted_content = get_wanted_from_friends_plex_rss(plex_rss_url, versions_from_config)
+                wanted_content = get_wanted_from_friends_plex_rss(plex_rss_url, versions_from_config, remove_when_collected=bool(data.get('remove_when_collected')), keep_series=bool(data.get('keep_series')))
             elif source_type == 'Plex Friends Watchlist':
                 from content_checkers.plex_watchlist import get_wanted_from_plex_friends_watchlist
                 wanted_content = get_wanted_from_plex_friends_watchlist(data, versions_from_config)
@@ -590,12 +570,14 @@ class ContentSourceTasks:
                 stats_msg += ")"
                 logging.info(stats_msg)
                 report.log(cache_skipped=cache_skipped)
+                if source_type == 'Overseerr' and items_processed > 0:
+                    self._run_sibling_overseerr_sources_now(source, data)
 
             # ── Plex Collection sync — runs even when all items are cached ────
             # Use config 'type' field for matching — source_type is split on '_' which
             # truncates multi-word types like 'Trakt Lists' to just 'Trakt'
             _source_config_type = data.get('type', source_type)
-            if _source_config_type in ('MDBList', 'Trakt Lists', 'Scrob Lists', 'Adaptive List'):
+            if _source_config_type in ('MDBList', 'Trakt Lists', 'Scrob Lists', 'Floppy Lists', 'Adaptive List'):
                 # Always read live settings — cached source_data may be stale if plex_collection
                 # was enabled after startup without a full restart
                 try:

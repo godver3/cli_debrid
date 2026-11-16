@@ -126,7 +126,7 @@ body.tangerine-theme #tng-connections .tng-empty{text-align:center;padding:3rem;
     font-style: italic;
     min-height: 20px;
 }
-.conn-card-expiry {
+.conn-card-expiry, .conn-card-usage {
     display: flex;
     align-items: flex-start;
     gap: 6px;
@@ -134,7 +134,7 @@ body.tangerine-theme #tng-connections .tng-empty{text-align:center;padding:3rem;
     font-size: 0.72em;
     color: var(--text-muted, #888);
 }
-.conn-card-expiry i {
+.conn-card-expiry i, .conn-card-usage i {
     margin-top: 2px;
 }
 .conn-card-expiry-lines {
@@ -371,6 +371,12 @@ body.tangerine-theme #tng-connections .tng-empty{text-align:center;padding:3rem;
                 </div>
             </div>
             {% endif %}
+            {% if scraper.details and scraper.details.indexer_usage %}
+            <div class="conn-card-usage">
+                <i class="fa-solid fa-gauge"></i>
+                <div class="conn-card-expiry-lines"><span class="conn-card-usage-text">{{ scraper.details.indexer_usage }}</span></div>
+            </div>
+            {% endif %}
             <div class="conn-card-footer" data-ts="">
                 <span class="conn-card-spinner"></span><span>Checking…</span>
             </div>
@@ -502,7 +508,21 @@ body.tangerine-theme #tng-connections .tng-empty{text-align:center;padding:3rem;
         // Set native tooltip so full name shows on hover
         card.title = name;
         updateCardExpiry(card, details);
+        updateCardUsage(card, details);
         return card;
+    }
+
+    // Add/update the Newznab "API n/limit · Grabs n/limit today" line
+    function updateCardUsage(card, details) {
+        if (!details || !details.indexer_usage) return;
+        let usage = card.querySelector('.conn-card-usage');
+        if (!usage) {
+            usage = document.createElement('div');
+            usage.className = 'conn-card-usage';
+            usage.innerHTML = '<i class="fa-solid fa-gauge"></i><div class="conn-card-expiry-lines"><span class="conn-card-usage-text"></span></div>';
+            card.insertBefore(usage, card.querySelector('.conn-card-footer'));
+        }
+        usage.querySelector('.conn-card-usage-text').textContent = details.indexer_usage;
     }
 
     // Add/update a subscription-expiry line on a card, right before the footer

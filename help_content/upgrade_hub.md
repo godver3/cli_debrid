@@ -64,7 +64,7 @@ Persistent configuration for the Upgrade Hub. Changes take effect after clicking
 
 **Automatic Scan**
 
-*   **Automatic Scan toggle:** When enabled, the hub will run a scan automatically every 24 hours. Requires the corresponding task to also be enabled in the Task Manager (Settings → Task Manager → Features tab).
+*   **Automatic Scan toggle:** When enabled, the hub will run a scan automatically every 24 hours. Requires the corresponding task to also be turned on on the Automation page (Library & Upgrades).
 *   **Score Threshold:** Sets a global minimum improvement percentage. Candidates below this threshold are hidden by default in both the Upgrades and Season Packs tabs. This is the saved default; the per-tab sliders in each tab can override it for that session.
 *   **Only Show Recent Items:** When enabled, the Recent Only filter is active by default when the page loads. Items older than the Recent Threshold are hidden unless you toggle the filter off manually.
 *   **Recent Threshold:** The number of days used to define "recent." Candidates with a best-found torrent indexed within this many days are considered recent. Default is 90 days.

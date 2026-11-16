@@ -1452,14 +1452,20 @@ class UsenetTasks:
             logging.error('[NZBPlayback] Cleanup retry task failed: %s', exc, exc_info=True)
 
     def task_repair_broken_nzbs(self, triggered_by: str = 'scheduled'):
-        """Scan cli_mount for broken NZBs and attempt to repair them via re-scrape."""
-        logging.info('[NZBRepair] Starting broken NZB repair task')
+        """Scheduled repair scan: re-check every usenet file, then repair the broken ones.
+
+        Day-to-day repairs don't wait for this: task_nzb_health_check repairs anything the
+        provider reports broken within 5 minutes. This monthly full scan finds old files whose
+        articles have expired since they were last checked. The scan keeps running in the
+        provider after the 5-minute wait; files it marks broken later are picked up by
+        task_nzb_health_check.
+        """
+        logging.info('[NZBRepair] Starting scheduled repair scan')
         try:
-            # Trigger a partial NZB health scan and wait for it to complete
             try:
                 from usenet.repair_engine import trigger_health_scan
-                trigger_health_scan(full=False, wait=True, timeout=300)
-                logging.info('[NZBRepair] Pre-scan complete')
+                trigger_health_scan(full=True, wait=True, timeout=300)
+                logging.info('[NZBRepair] Full health scan finished or still running in the provider')
             except Exception as scan_err:
                 logging.warning(f'[NZBRepair] Pre-scan failed (continuing anyway): {scan_err}')
             from usenet.repair_engine import run_repair

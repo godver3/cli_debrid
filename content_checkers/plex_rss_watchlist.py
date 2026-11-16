@@ -4,7 +4,6 @@ import pickle
 from datetime import datetime, timedelta
 import feedparser
 from typing import List, Dict, Any, Optional, Tuple, Union
-from utilities.settings import get_setting
 from database.database_reading import get_media_item_presence_overall
 import requests
 import xml.etree.ElementTree as ET
@@ -132,7 +131,8 @@ def resolve_imdb_and_type(guids: List[str], title: str, media_type: str = None) 
     return None, media_type
 
 
-def get_wanted_from_plex_rss(rss_url: str, versions: Dict[str, bool], read_only: bool = False, detail: str = 'Plex RSS') -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
+def get_wanted_from_plex_rss(rss_url: str, versions: Dict[str, bool], read_only: bool = False, detail: str = 'Plex RSS',
+                             remove_when_collected: bool = False, keep_series: bool = False) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     """Fetch a Plex RSS watchlist. read_only=True never suppresses collected titles (used by label sync)."""
     all_wanted_items = []
     processed_items = []
@@ -165,8 +165,7 @@ def get_wanted_from_plex_rss(rss_url: str, versions: Dict[str, bool], read_only:
         retained_series_count = 0
 
         # Get removal settings
-        should_remove = get_setting('Debug', 'plex_watchlist_removal', False)
-        keep_series = get_setting('Debug', 'plex_watchlist_keep_series', False)
+        should_remove = bool(remove_when_collected)
 
         if should_remove:
             logging.debug("Plex RSS item removal (if collected) enabled")
@@ -202,7 +201,7 @@ def get_wanted_from_plex_rss(rss_url: str, versions: Dict[str, bool], read_only:
                 # read_only (label sync) lists every title: it must not hide collected ones.
                 if item_state in ("Collected", "Partial") and should_remove and not read_only:
                     from content_checkers.plex_watchlist import should_remove_from_watchlist
-                    suppress, reason = should_remove_from_watchlist(imdb_id, media_type, item_state)
+                    suppress, reason = should_remove_from_watchlist(imdb_id, media_type, item_state, keep_series)
                     if suppress:
                         logging.debug(f"Skipping (simulating removal) '{entry_title}' from RSS: {imdb_id} - {reason}")
                         removed_count += 1
@@ -291,7 +290,8 @@ def _friend_feed_label(rss_url: str) -> str:
     """Non-secret label for a friend's feed: the URL is a credential, so only its tail is shown."""
     return f"Friend RSS ...{rss_url.rstrip('/')[-6:]}"
 
-def get_wanted_from_friends_plex_rss(rss_urls: Union[str, List[str]], versions: Dict[str, bool], read_only: bool = False) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
+def get_wanted_from_friends_plex_rss(rss_urls: Union[str, List[str]], versions: Dict[str, bool], read_only: bool = False,
+                                     remove_when_collected: bool = False, keep_series: bool = False) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     """Get wanted items from one or more friends' Plex RSS feeds."""
     all_wanted_items = []
     
@@ -308,7 +308,8 @@ def get_wanted_from_friends_plex_rss(rss_urls: Union[str, List[str]], versions: 
             continue
             
         try:
-            items = get_wanted_from_plex_rss(rss_url, versions, read_only=read_only, detail=_friend_feed_label(rss_url))
+            items = get_wanted_from_plex_rss(rss_url, versions, read_only=read_only, detail=_friend_feed_label(rss_url),
+                                             remove_when_collected=remove_when_collected, keep_series=keep_series)
             if items and items[0] and items[0][0]:  # Check if we got any valid items
                 all_wanted_items.extend(items)
                 logging.info(f"Successfully processed friend's RSS feed: {rss_url}")

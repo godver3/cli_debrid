@@ -224,6 +224,49 @@ body.tangerine-theme .st-nav-dd-item i {
 body.tangerine-theme .st-nav-dd-item:hover i {
     color: var(--st-accent, #e8601c);
 }
+/* Side menu (Performance Dashboard tabs): opens on hover for mouse users only */
+body.tangerine-theme .st-nav-dd-sub {
+    position: relative;
+}
+body.tangerine-theme .st-nav-dd-sub-arr {
+    display: none;
+    margin-left: auto;
+    font-size: 9px !important;
+}
+body.tangerine-theme .st-nav-dd-flyout {
+    display: none;
+}
+@media (hover: hover) and (pointer: fine) {
+    body.tangerine-theme .st-nav-dd-sub-arr {
+        display: inline-block;
+    }
+    body.tangerine-theme .st-nav-dd-flyout {
+        display: block;
+        position: absolute;
+        top: -6px;
+        left: 100%;
+        min-width: 180px;
+        background: var(--st-surf, #1a1a1a);
+        border: 1px solid var(--st-border, #2d2d2d);
+        border-radius: 8px;
+        box-shadow: 0 8px 24px #00000066;
+        padding: 5px 0;
+        opacity: 0;
+        pointer-events: none;
+        transform: translateX(-4px);
+        transition: opacity .12s, transform .12s;
+        z-index: 301;
+    }
+    body.tangerine-theme .st-nav-dd-sub:hover > .st-nav-dd-flyout {
+        opacity: 1;
+        pointer-events: all;
+        transform: translateX(0);
+    }
+    body.tangerine-theme .st-nav-dd-sub:hover > .st-nav-dd-item {
+        background: var(--st-surf2, #222);
+        color: var(--st-text, #e0e0e0);
+    }
+}
 body.tangerine-theme .st-nav-dd-sep {
     height: 1px;
     background: var(--st-border, #2d2d2d);

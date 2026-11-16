@@ -59,6 +59,9 @@ def _fetch_browse_page(url: str, api_key: str, cats: str, limit: int,
                         offset: int, timeout: int = 30) -> Tuple[List[ET.Element], int]:
     """Fetch one browse page. Returns (items, total)."""
     from routes.api_tracker import api as _api
+    from usenet import indexer_quota
+    if not indexer_quota.allow_url(url, 'api'):
+        return [], 0
     try:
         r = _api.get(f'{url}/api', params={
             'apikey': api_key, 't': 'search', 'q': '',

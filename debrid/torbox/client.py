@@ -144,6 +144,18 @@ class TorboxProvider(DebridProvider):
             normalized['status'] = (info.get('download_state') or 'unknown').lower()
         return normalized
 
+    @staticmethod
+    def _notify_climount(info_hash: Optional[str], torrent_id: Optional[str]) -> None:
+        if not info_hash or not torrent_id:
+            return
+        try:
+            from usenet.climount_client import get_climount_client
+            get_climount_client().sync_debrid_torrent(info_hash, 'Torbox', str(torrent_id))
+        except Exception as e:
+            # cli_mount is optional; provider addition must still succeed when
+            # it is disabled, offline, or too old for targeted sync.
+            logging.debug(f"[Torbox] cli_mount targeted sync unavailable: {e}")
+
     def _find_existing_torrent(self, hash_value: str) -> Optional[Dict[str, Any]]:
         for torrent in get_all_torrents(self.api_key):
             if (torrent.get('hash') or '').lower() == hash_value.lower():
@@ -262,6 +274,7 @@ class TorboxProvider(DebridProvider):
                     self._all_torrent_ids[hash_value] = torrent_id
                     self._cached_torrent_ids[hash_value] = torrent_id if existing.get('cached') or (existing.get('download_state') == 'cached') else self._cached_torrent_ids.get(hash_value)
                     self._cached_torrent_titles[hash_value] = existing.get('name', '')
+                    self._notify_climount(hash_value, torrent_id)
                     return torrent_id
 
             if temp_file_path:
@@ -284,6 +297,7 @@ class TorboxProvider(DebridProvider):
                     _resp = _session.get(_location, timeout=30, allow_redirects=False)
                 if _resolved_magnet:
                     logging.info(f"[Torbox] URL redirected to magnet link, using it directly")
+                    hash_value = self._extract_hash(_resolved_magnet) or hash_value
                     result = make_request('POST', '/torrents/createtorrent', self.api_key, data={'magnet': _resolved_magnet})
                 else:
                     _resp.raise_for_status()
@@ -292,6 +306,7 @@ class TorboxProvider(DebridProvider):
                     if _resp.content.strip().startswith(b'magnet:'):
                         _resolved_magnet = _resp.content.strip().decode('utf-8')
                         logging.info(f"[Torbox] URL body is magnet link, using it directly")
+                        hash_value = self._extract_hash(_resolved_magnet) or hash_value
                         result = make_request('POST', '/torrents/createtorrent', self.api_key, data={'magnet': _resolved_magnet})
                     else:
                         with _tmp.NamedTemporaryFile(suffix='.torrent', delete=False) as _tf:
@@ -344,11 +359,13 @@ class TorboxProvider(DebridProvider):
             for _ in range(30):
                 info = self.get_torrent_info(torrent_id)
                 if info:
+                    sync_hash = hash_value or info.get('hash')
                     if hash_value:
                         self._all_torrent_ids[hash_value] = torrent_id
                         self._cached_torrent_titles[hash_value] = info.get('filename', '')
                         if info.get('status') == 'downloaded':
                             self._cached_torrent_ids[hash_value] = torrent_id
+                    self._notify_climount(sync_hash, torrent_id)
                     return torrent_id
                 time.sleep(1)
 

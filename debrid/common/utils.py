@@ -139,6 +139,52 @@ def is_unwanted_file(filename: str) -> bool:
             return True
     return False
 
+# Site/tracker promo clips shipped next to the real payload, named after the site
+# ("RARBG.com.mp4", "www.YTS.MX.mp4"). Only small files count, so a real video that
+# happens to look like a domain is never dropped.
+_PROMO_STEM_RE = re.compile(
+    r'^(?:www\.)?[a-z0-9][a-z0-9-]{1,30}\.(?:com|org|net|to|mx|am|me|cc|lt|io|se|info|tv|ws|xyz|ag|nz|lol|li|sx|si)$',
+    re.IGNORECASE)
+PROMO_MAX_BYTES = 100 * 1024 * 1024
+# A torrent whose playable video is under 5% of its size, with no video of 1 GiB
+# or more, is really something else (a disc image, BDMV folder, archive...).
+PAYLOAD_MIN_VIDEO_SHARE = 0.05
+PAYLOAD_SHARE_MAX_VIDEO_BYTES = 1024 * 1024 * 1024
+
+
+def is_promo_file(filename: str, size_bytes: Optional[int] = None) -> bool:
+    """True for a small video named after a site, such as RARBG.com.mp4."""
+    name = os.path.basename(str(filename or '').replace("\\", "/"))
+    stem = name.rsplit(".", 1)[0] if "." in name else name
+    if not _PROMO_STEM_RE.match(stem):
+        return False
+    return size_bytes is None or int(size_bytes or 0) < PROMO_MAX_BYTES
+
+
+def drop_junk_torrent_videos(video_files: List[dict], all_files: List[dict]) -> Tuple[List[dict], Optional[str]]:
+    """Drop promo clips and reject torrents whose real payload isn't a playable video.
+
+    video_files: the torrent's parsed video files (dicts with 'path' and 'bytes').
+    all_files: every file in the torrent, video or not, with 'bytes'.
+    Returns (kept video files, reason); kept is empty and reason set when nothing
+    usable is left (godver3/cli_debrid#575: a 3D Blu-ray ISO torrent whose only
+    "video" was a 0 MB RARBG.com.mp4 was collected as the movie).
+    """
+    kept = [f for f in video_files if not is_promo_file(f.get('path', ''), f.get('bytes'))]
+    if video_files and not kept:
+        return [], 'the only video is a site promo clip ' + ', '.join(
+            os.path.basename(f.get('path', '')) for f in video_files[:3])
+    if not kept:
+        return kept, None
+    total = sum(int(f.get('bytes') or 0) for f in all_files or [])
+    video = sum(int(f.get('bytes') or 0) for f in kept)
+    largest = max(int(f.get('bytes') or 0) for f in kept)
+    if total > 0 and video < total * PAYLOAD_MIN_VIDEO_SHARE and largest < PAYLOAD_SHARE_MAX_VIDEO_BYTES:
+        return [], (f'playable video is only {video / 1048576:.0f} MB of a {total / 1048576:.0f} MB torrent '
+                    '(disc image or other non-video payload)')
+    return kept, None
+
+
 def filter_unwanted_video_files(video_files: List[Tuple[str, int]], size_threshold_ratio: float = 0.05) -> List[Tuple[str, int]]:
     """
     Filter a list of (filename, size) tuples to drop samples/trailers.

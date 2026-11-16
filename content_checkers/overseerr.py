@@ -158,7 +158,25 @@ def get_overseerr_headers(api_key: str) -> Dict[str, str]:
     }
 
 def get_url(base_url: str, endpoint: str) -> str:
-    return f"{base_url}{endpoint}"
+    # A saved URL with a trailing slash gives '//api/...': Seerr redirects that for
+    # GET but answers DELETE with 404 "Cannot DELETE //api/...".
+    return f"{(base_url or '').rstrip('/')}{endpoint}"
+
+def _seerr_delete(url: str, headers: Dict[str, str]):
+    """DELETE that returns (status_code, text) instead of raising on 4xx/5xx.
+
+    api.delete raises on error codes, so a 404 (already removed in Seerr) used to
+    escape as an exception and the removal stayed in the retry queue for good.
+    """
+    try:
+        response = api.delete(url, headers=headers, timeout=REQUEST_TIMEOUT)
+        return response.status_code, getattr(response, 'text', '')
+    except api.exceptions.HTTPError as e:
+        resp = getattr(e, 'response', None)
+        if resp is None:
+            raise
+        return resp.status_code, getattr(resp, 'text', '')
+
 
 def get_overseerr_details(overseerr_url: str, overseerr_api_key: str, tmdb_id: int, media_type: str) -> Dict[str, Any]:
     headers = get_overseerr_headers(overseerr_api_key)
@@ -259,12 +277,20 @@ def fetch_overseerr_wanted_content(overseerr_url: str, overseerr_api_key: str, t
     logging.info(f"Found {len(wanted_content)} wanted items from Overseerr")
     return wanted_content
 
-def get_wanted_from_overseerr(versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
+def get_wanted_from_overseerr(versions: Dict[str, bool], source_id: str | None = None) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
+    """Fetch approved requests for one Overseerr source (source_id), tagged with that source's versions.
+
+    Each source has its own server, API key, tags, requester list and versions, so a source's
+    run must only read its own server. Without source_id every enabled Overseerr source is read
+    (old behaviour, kept for callers that don't know which source they are running).
+    """
     content_sources = get_all_settings().get('Content Sources', {})
-    overseerr_sources = [(source_id, data) for source_id, data in content_sources.items() if source_id.startswith('Overseerr') and data.get('enabled', False)]
-    allow_partial = parse_bool(get_setting('Debug', 'allow_partial_overseerr_requests', 'False'))
+    if source_id is not None:
+        data = content_sources.get(source_id)
+        overseerr_sources = [(source_id, data)] if isinstance(data, dict) else []
+    else:
+        overseerr_sources = [(sid, data) for sid, data in content_sources.items() if sid.startswith('Overseerr') and data.get('enabled', False)]
     disable_caching = True  # Hardcoded to True
-    logging.info(f"allow_partial: {allow_partial}")
 
     all_wanted_items = []
     cache = {} if disable_caching else load_overseerr_cache()
@@ -274,8 +300,11 @@ def get_wanted_from_overseerr(versions: Dict[str, bool]) -> List[Tuple[List[Dict
         overseerr_url = source.get('url')
         overseerr_api_key = source.get('api_key')
         display_name = source.get('display_name') or source_id
+        allow_partial = parse_bool(source.get('allow_partial_requests', False))
+        logging.info(f"{display_name}: allow partial requests: {allow_partial}")
         ignore_tags_str = source.get('ignore_tags', '')
         ignore_tags = {tag.strip().lower() for tag in ignore_tags_str.split(',') if tag.strip()} if ignore_tags_str else set()
+        allowed_requesters = source.get('allowed_requesters') or ['__all__']
 
         if not overseerr_url or not overseerr_api_key:
             logging.error(f"Overseerr URL or API key not set for source: {source}. Please configure in settings.")
@@ -287,6 +316,7 @@ def get_wanted_from_overseerr(versions: Dict[str, bool]) -> List[Tuple[List[Dict
             wanted_items = []
             cache_skipped = 0
             ignored_by_tag = 0
+            ignored_by_requester = 0
 
             for item in wanted_content_raw:
                 raw_tags = item.get('tags') or []
@@ -305,6 +335,9 @@ def get_wanted_from_overseerr(versions: Dict[str, bool]) -> List[Tuple[List[Dict
                     # Extract requester information
                     requested_by = item.get('requestedBy', {})
                     requester_display_name = requested_by.get('displayName') or requested_by.get('email') or 'Unknown'
+                    if not _source_allows_requester(allowed_requesters, requester_display_name):
+                        ignored_by_requester += 1
+                        continue
                     request_id = item.get('id')  # Overseerr's request ID
                     tmdb_id = media.get('tmdbId')
 
@@ -352,9 +385,11 @@ def get_wanted_from_overseerr(versions: Dict[str, bool]) -> List[Tuple[List[Dict
                     wanted_items.append(wanted_item)
 
             if ignored_by_tag > 0:
-                logging.info(f"Ignored {ignored_by_tag} items from Overseerr source based on tags.")
+                logging.info(f"{display_name}: ignored {ignored_by_tag} items based on tags.")
+            if ignored_by_requester > 0:
+                logging.info(f"{display_name}: ignored {ignored_by_requester} requests from users not in this source's allowed requesters.")
             all_wanted_items.append((wanted_items, versions))
-            logging.info(f"Retrieved {len(wanted_items)} wanted items from Overseerr source")
+            logging.info(f"{display_name}: retrieved {len(wanted_items)} wanted items")
         except OverseerrAuthError as e:
             logging.error(f"Overseerr auth failure for source '{display_name}': {e}")
             _notify_overseerr_auth_failure(source_id, display_name)
@@ -433,7 +468,7 @@ def get_tmdb_from_imdb(imdb_id: str) -> tuple[int | None, str | None]:
             return None, None
 
         # Search by IMDB ID
-        url = f"{overseerr_url}/api/v1/search?query={imdb_id}"
+        url = get_url(overseerr_url, f"/api/v1/search?query={imdb_id}")
         headers = get_overseerr_headers(api_key)
 
         response = api.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
@@ -529,16 +564,18 @@ def remove_from_overseerr_by_tmdb_id(tmdb_id: int, media_type: str, imdb_id: str
 
         # Step 2: Delete the request, if one exists
         if request_id:
-            url = f"{overseerr_url}/api/v1/request/{request_id}"
-            response = api.delete(url, headers=headers, timeout=REQUEST_TIMEOUT)
+            url = get_url(overseerr_url, f"/api/v1/request/{request_id}")
+            status, error_text = _seerr_delete(url, headers)
 
-            if response.status_code == 204:
+            if status in (200, 204):
                 logging.info(f"Successfully deleted Overseerr request {request_id} for TMDB {tmdb_id}")
                 request_deleted = True
+            elif status == 404:
+                logging.info(f"Overseerr request {request_id} for TMDB {tmdb_id} was already removed")
+                request_deleted = True
             else:
-                error_text = response.text if hasattr(response, 'text') else 'Unknown error'
-                logging.error(f"Failed to delete Overseerr request {request_id}: HTTP {response.status_code} - {error_text}")
-                request_error = f'HTTP {response.status_code}: {error_text}'
+                logging.error(f"Failed to delete Overseerr request {request_id}: HTTP {status} - {error_text}")
+                request_error = f'HTTP {status}: {error_text}'
 
         # Step 3: Delete the media record itself so availability status actually
         # clears (this is the same call Overseerr's own "Remove from Overseerr"
@@ -548,16 +585,18 @@ def remove_from_overseerr_by_tmdb_id(tmdb_id: int, media_type: str, imdb_id: str
         media_error = None
 
         if media_id:
-            media_url = f"{overseerr_url}/api/v1/media/{media_id}"
-            media_response = api.delete(media_url, headers=headers, timeout=REQUEST_TIMEOUT)
+            media_url = get_url(overseerr_url, f"/api/v1/media/{media_id}")
+            status, error_text = _seerr_delete(media_url, headers)
 
-            if media_response.status_code in (200, 204):
+            if status in (200, 204):
                 logging.info(f"Successfully deleted Overseerr media record {media_id} for TMDB {tmdb_id}")
                 media_deleted = True
+            elif status == 404:
+                logging.info(f"Overseerr media record {media_id} for TMDB {tmdb_id} was already removed")
+                media_deleted = True
             else:
-                error_text = media_response.text if hasattr(media_response, 'text') else 'Unknown error'
-                logging.error(f"Failed to delete Overseerr media record {media_id}: HTTP {media_response.status_code} - {error_text}")
-                media_error = f'HTTP {media_response.status_code}: {error_text}'
+                logging.error(f"Failed to delete Overseerr media record {media_id}: HTTP {status} - {error_text}")
+                media_error = f'HTTP {status}: {error_text}'
 
         if request_deleted or media_deleted:
             message_parts = []

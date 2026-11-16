@@ -6,7 +6,7 @@ import os
 import re
 
 from utilities.settings import get_setting
-from utilities.log_context import logs_for_item
+from utilities.log_context import ContextThreadPoolExecutor, logs_for_item
 from queues.scrape_window import in_alternate_scrape_window
 from scraper.scraper import scrape
 from scraper.functions.anime_utils import absolute_episode_for
@@ -580,7 +580,6 @@ class ScrapingQueue:
                 if not processed_successfully_or_moved:
                     # --- Multi-pack check logic ---
                     is_multi_pack = False # Default to false
-
                     if str(item_id_being_processed) == DEBUG_ITEM_ID and not processed_successfully_or_moved:
                         # logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] Passed all preliminary checks. Proceeding to multi-pack logic and scraping attempts.")
                         pass
@@ -937,6 +936,21 @@ class ScrapingQueue:
                                             return True
                                         return False
 
+                                    # Search the whole season once per Newznab indexer up front;
+                                    # each episode's scrape below is then served from that list
+                                    # (scraper/newznab.py season prefetch) instead of costing two
+                                    # API calls per episode per indexer. Episodes the season search
+                                    # didn't return still get their own live query.
+                                    if _newznab_scrapers and len(_batch) >= 2:
+                                        try:
+                                            from scraper.newznab import prefetch_season as _prefetch_season
+                                            with ContextThreadPoolExecutor(max_workers=min(len(_newznab_scrapers), 8)) as _pex:
+                                                list(_pex.map(lambda sc: _prefetch_season(
+                                                    sc[0], sc[1], _curr_imdb, item_to_process.get('title') or '',
+                                                    _curr_season), _newznab_scrapers))
+                                        except Exception as _pf_err:
+                                            logging.warning(f'[NZBBatch] season prefetch failed, scraping episodes individually: {_pf_err}')
+
                                     for _bep in _batch:
                                         try:
                                             _bep_id = f"{_bep.get('title')} S{_curr_season:02d}E{_bep.get('episode_number', 0):02d}"
@@ -1188,6 +1202,10 @@ class ScrapingQueue:
 
                     # If no filtered results from the first attempt (which includes multi->single internal fallback)
                     # AND the item is an episode, try the final fallback: multi-pack with check_pack_wantedness=False
+                    # Runs for airing seasons too: partial multi-episode packs (S05E01-E04,
+                    # anime batches) exist before the season ends. With NZB season packs
+                    # disabled, Newznab answers this from the single-episode query it just
+                    # cached, so it costs no extra indexer calls there.
                     if not filtered_results and item_to_process['type'] == 'episode':
                         logging.info(f"No valid results after initial scraping for {item_identifier}. "
                                      f"Attempting final multi-pack fallback (check_pack_wantedness=False).")

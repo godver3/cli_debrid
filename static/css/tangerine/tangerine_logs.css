@@ -502,6 +502,20 @@
             margin-right: 0 !important;
         }
 
+        /* Share links wrap onto their own lines: on one row the cli_mount link
+           (after Share Both) ended up off the right edge of the screen. */
+        .share-button-group {
+            flex-wrap: wrap;
+            width: 100%;
+        }
+        .share-item {
+            flex-wrap: wrap;
+            max-width: 100%;
+        }
+        .share-result-url {
+            max-width: calc(100vw - 80px);
+        }
+
         /* --- START EDIT: Adjust height when task monitor overlay is visible --- */
         body.has-bottom-overlay .log-container {
             height: calc(100vh - 100px); /* existing offset + overlay */

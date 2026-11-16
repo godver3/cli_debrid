@@ -73,6 +73,19 @@ class RequireLoginTests(_GateTestCase):
         self.assertEqual(resp.status_code, 302)
         self.assertTrue(resp.headers['Location'].endswith('/auth/login'))
 
+    def test_chromium_page_request_redirects_to_login(self):
+        # Chrome/Edge/Brave send signed-exchange with a parameter; werkzeug's
+        # .best picked it over text/html and the page got the JSON 401.
+        accept = ('text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,'
+                  'image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7')
+        resp = self.client.get('/secret', headers={'Accept': accept})
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(resp.headers['Location'].endswith('/auth/login'))
+
+    def test_json_preferring_client_gets_401(self):
+        resp = self.client.get('/secret', headers={'Accept': 'application/json, text/html;q=0.5'})
+        self.assertEqual(resp.status_code, 401)
+
     def test_post_gets_401_even_from_a_browser(self):
         resp = self.client.post('/secret', headers={'Accept': 'text/html'})
         self.assertEqual(resp.status_code, 401)

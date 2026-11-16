@@ -105,6 +105,7 @@ def _get_provider_display(item: dict) -> str:
                 'Torbox': 'Torbox',
                 'Premiumize': 'Premiumize',
                 'DebridLink': 'Debrid-Link',
+                'Highway': 'HighWay',
             }
             return _names.get(name, name)
         except Exception:

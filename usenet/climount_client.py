@@ -16,6 +16,7 @@ import os
 import re
 import threading
 import time
+import urllib.parse
 from typing import Optional, Dict, Any, Tuple
 
 from utilities.settings import get_setting
@@ -216,6 +217,13 @@ class CliMountClient:
                 files={k: (None, v) for k, v in fields},
                 timeout=30,
             )
+            # cli_mount downloads the NZB from the indexer itself: that is a grab
+            # api.get never sees, so count it here.
+            try:
+                from usenet import indexer_quota
+                indexer_quota.record_url(nzb_url, 'grab')
+            except Exception:
+                pass
             if r.status_code == 200:
                 result = r.json()
                 if isinstance(result, list) and result:
@@ -247,7 +255,7 @@ class CliMountClient:
         # Fast path: try direct URL with the original (un-normalised) name
         if original_name:
             try:
-                r = api.get(f'{self.base_url}/api/browse/nzbs/{original_name}',
+                r = api.get(f'{self.base_url}/api/browse/nzbs/{urllib.parse.quote(original_name, safe="")}',
                             headers=self._headers(), timeout=10)
                 if r.status_code == 200:
                     return original_name
@@ -288,7 +296,7 @@ class CliMountClient:
         """Return all video files inside a cli_mount NZB folder."""
         _VIDEO_EXTS = {'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.m4v', '.ts'}
         try:
-            r = api.get(f'{self.base_url}/api/browse/nzbs/{folder_name}',
+            r = api.get(f'{self.base_url}/api/browse/nzbs/{urllib.parse.quote(folder_name, safe="")}',
                         headers=self._headers(), timeout=15)
             if r.status_code != 200:
                 return []
@@ -479,6 +487,37 @@ class CliMountClient:
         except Exception as e:
             logging.debug(f'[cli_mount] register_cli_ids error for {info_hash}: {e}')
             return False
+
+    def sync_debrid_torrent(self, info_hash: str, provider: str, provider_id: str) -> bool:
+        """Ask cli_mount to fetch one newly-created debrid torrent by ID.
+
+        TorBox's bulk list is eventually consistent (documented as cached for
+        up to ten minutes), while the create response and ID-specific endpoint
+        are available immediately. This local callback avoids waiting for the
+        bulk list and costs exactly one provider detail request per new add.
+        """
+        if not self.is_enabled() or not info_hash or not provider or not provider_id:
+            return False
+        try:
+            r = api.post(
+                f'{self.base_url}/api/torrents/{info_hash}/sync',
+                params={'provider': provider, 'providerId': str(provider_id)},
+                headers=self._headers(),
+                timeout=10,
+            )
+            if r.status_code in (200, 204):
+                logging.info(
+                    '[cli_mount] Immediately synced %s torrent %s (%s)',
+                    provider, provider_id, info_hash,
+                )
+                return True
+            logging.debug(
+                '[cli_mount] targeted %s sync returned %s for %s',
+                provider, r.status_code, info_hash,
+            )
+        except Exception as e:
+            logging.debug(f'[cli_mount] targeted debrid sync failed for {info_hash}: {e}')
+        return False
 
     def remove_nzb_exact(self, info_hash: str) -> bool:
         """Remove one exact UUID; never fall back to a release-name match."""

@@ -7,6 +7,7 @@ from .alldebrid import AllDebridProvider
 from .premiumize import PremiumizeProvider
 from .torbox import TorboxProvider
 from .debridlink import DebridLinkProvider
+from .highway import HighwayProvider
 from .common import (
     extract_hash_from_magnet,
     download_and_extract_hash,
@@ -26,6 +27,7 @@ _NAME_MAP = {
     'premiumize':  'Premiumize',
     'debridlink':  'Debrid-Link',
     'debrid-link': 'Debrid-Link',
+    'highway':     'HighWay',
 }
 
 
@@ -43,6 +45,8 @@ def _instantiate_provider(provider_name_raw: str, api_key: Optional[str] = None)
         p = TorboxProvider()
     elif provider_name in ('debridlink', 'debrid-link'):
         p = DebridLinkProvider()
+    elif provider_name == 'highway':
+        p = HighwayProvider()
     else:
         raise ValueError(f"Unknown debrid provider: {provider_name_raw}")
     if api_key:
@@ -131,6 +135,38 @@ def get_provider_by_name(provider_name: Optional[str]) -> Optional[DebridProvide
     return None
 
 
+def provider_for_item(item, default=None) -> Optional[DebridProvider]:
+    """The provider that holds this item's torrent.
+
+    media_items.debrid_provider records which provider in the chain added it; fall
+    back to ``default`` (or the primary) when it is empty or no longer configured.
+    """
+    name = None
+    if isinstance(item, dict):
+        name = item.get('debrid_provider')
+    elif isinstance(item, str):
+        name = item
+    provider = get_provider_by_name(name) if name else None
+    if provider is not None:
+        return provider
+    return default if default is not None else get_debrid_provider()
+
+
+def provider_holding_torrent(torrent_id) -> Optional[DebridProvider]:
+    """The provider in the chain that has this torrent ID, for callers that don't
+    know which provider added it. With a single provider this is just the primary."""
+    providers = get_debrid_providers()
+    if len(providers) <= 1:
+        return providers[0] if providers else None
+    for provider in providers:
+        try:
+            if provider.get_torrent_info(torrent_id):
+                return provider
+        except Exception as e:
+            logging.debug(f"[DEBRID FACTORY] {provider.PROVIDER_NAME} has no torrent {torrent_id}: {e}")
+    return providers[0]
+
+
 def reset_provider() -> None:
     """Reset all provider instances, forcing reinitialization on next use."""
     global _provider_instance, _provider_list
@@ -150,6 +186,8 @@ __all__ = [
     'get_debrid_provider',
     'get_debrid_providers',
     'get_provider_by_name',
+    'provider_for_item',
+    'provider_holding_torrent',
     'get_provider_display_name',
     'reset_provider',
     'DebridProvider',
@@ -160,6 +198,7 @@ __all__ = [
     'PremiumizeProvider',
     'TorboxProvider',
     'DebridLinkProvider',
+    'HighwayProvider',
     'extract_hash_from_magnet',
     'download_and_extract_hash',
     'timed_lru_cache',

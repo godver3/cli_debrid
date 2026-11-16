@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from utilities.settings import load_config
 from queues.config_manager import add_content_source, save_config
 from .models import admin_required
+from utilities import trakt_oauth
 
 trakt_friends_bp = Blueprint('trakt_friends', __name__)
 
@@ -43,10 +44,11 @@ def authorize_friend():
     client_id = request.form.get('client_id', '')
     client_secret = request.form.get('client_secret', '')
     
-    if not client_id or not client_secret:
+    # The secret is optional: Trakt no longer issues one to new (PKCE) apps.
+    if not client_id:
         return jsonify({
             'success': False, 
-            'error': 'Trakt client ID and secret are required'
+            'error': 'Trakt client ID is required'
         }), 400
     
     try:
@@ -55,13 +57,7 @@ def authorize_friend():
             os.makedirs(TRAKT_FRIENDS_DIR)
         
         # Get device code from Trakt API
-        response = requests.post(
-            f"{TRAKT_API_URL}/oauth/device/code",
-            json={
-                'client_id': client_id
-            },
-            timeout=REQUEST_TIMEOUT
-        )
+        response = trakt_oauth.request_device_code(client_id)
         
         if response.status_code != 200:
             error_message = "Error getting device code from Trakt API"
@@ -134,15 +130,8 @@ def check_auth_status(auth_id):
         
         # Check with Trakt API
         logging.info(f"Checking Trakt device token for auth_id: {auth_id}")
-        response = requests.post(
-            f"{TRAKT_API_URL}/oauth/device/token",
-            json={
-                'code': state['device_code'],
-                'client_id': state['client_id'],
-                'client_secret': state['client_secret']
-            },
-            timeout=REQUEST_TIMEOUT
-        )
+        response = trakt_oauth.poll_device_token(state['device_code'], state['client_id'],
+                                                 state.get('client_secret'))
         
         # If successful, update state and return success
         if response.status_code == 200:
@@ -338,16 +327,8 @@ def refresh_token(auth_id):
             return jsonify({'success': False, 'error': 'No refresh token available'}), 400
         
         # Refresh the token
-        response = requests.post(
-            f"{TRAKT_API_URL}/oauth/token",
-            json={
-                'refresh_token': state['refresh_token'],
-                'client_id': state['client_id'],
-                'client_secret': state['client_secret'],
-                'grant_type': 'refresh_token'
-            },
-            timeout=REQUEST_TIMEOUT
-        )
+        response = trakt_oauth.refresh_token(state['refresh_token'], state['client_id'],
+                                             state.get('client_secret'))
         
         if response.status_code == 200:
             token_data = response.json()

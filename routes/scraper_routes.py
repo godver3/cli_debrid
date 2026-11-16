@@ -2057,27 +2057,28 @@ def _build_nzb_title(title, year, imdb_id, version, original_scraped_torrent_tit
 
         # imdb_id must never be the thing dropped to fit _MAX_TITLE — it is the
         # only field cli_debrid uses to re-match this entry later (see
-        # repair_engine.py Strategy 4). Drop content-source, tags, then version
-        # first; only then truncate — and finally drop — the (original) bracket,
-        # which is decorative. This mirrors the episode branch above, which
-        # already protects imdb_part the same way.
+        # repair_engine.py Strategy 4). Drop content-source and tags first, then
+        # truncate the (original) bracket, which is decorative. The version goes
+        # only after that: the in-flight check in torrent_processor reuses a
+        # cli_mount job whose name minus " - (original)" matches, so a 1080p and
+        # a 2160p job named without their version looked like the same job and
+        # the second version was never submitted. Mirrors the episode branch.
         for attempt in [
             _assemble(base, _imdb_str, _tags_part, _version, _cs_part, _orig_part),
             _assemble(base, _imdb_str, _tags_part, _version, _orig_part),
             _assemble(base, _imdb_str, _version, _orig_part),
-            _assemble(base, _imdb_str, _orig_part),
         ]:
             if len(attempt) <= _MAX_TITLE:
                 return attempt
 
         # Truncate (original) to fit — always keep it, just shorter.
         if _orig:
-            fixed_part = _assemble(base, _imdb_str)
-            # " - (" prefix (4 chars) + ")" suffix (1 char) = 5 chars overhead
-            available = _MAX_TITLE - len(fixed_part) - 5
-            if available > 10:
-                truncated_orig = _orig[:available]
-                return f'{fixed_part} - ({truncated_orig})'
+            for fixed_part in (_assemble(base, _imdb_str, _version), _assemble(base, _imdb_str)):
+                # " - (" prefix (4 chars) + ")" suffix (1 char) = 5 chars overhead
+                available = _MAX_TITLE - len(fixed_part) - 5
+                if available > 10:
+                    truncated_orig = _orig[:available]
+                    return f'{fixed_part} - ({truncated_orig})'
 
         # Last resort: no (original), but imdb is still present.
         without_orig = _assemble(base, _imdb_str)

@@ -933,11 +933,11 @@ def get_scrob_lists():
         from content_checkers.scrob import get_scrob_config, _scrob_get
 
         if not get_scrob_config():
-            return jsonify({'success': False, 'error': 'Scrob URL/API key not configured in Additional Settings → Scrob'}), 400
+            return jsonify({'success': False, 'error': 'Scrob URL/API key not configured in Settings → Tracking accounts → Scrob'}), 400
 
         data = _scrob_get('/lists')
         if data is None:
-            return jsonify({'success': False, 'error': 'Failed to reach Scrob. Check the URL/API key in Additional Settings → Scrob.'}), 502
+            return jsonify({'success': False, 'error': 'Failed to reach Scrob. Check the URL/API key in Settings → Tracking accounts → Scrob.'}), 502
 
         lists = [{'id': lst['id'], 'name': lst.get('name', f"List {lst['id']}"), 'item_count': lst.get('item_count', 0)}
                  for lst in data.get('lists', [])]
@@ -1441,8 +1441,6 @@ def index():
         if 'UI Settings' not in config:
             config['UI Settings'] = {}
 
-        if 'Sync Deletions' not in config:
-            config['Sync Deletions'] = {}
         
         # Ensure 'enable_user_system' exists in 'UI Settings'
         if 'enable_user_system' not in config['UI Settings']:
@@ -1920,19 +1918,6 @@ def update_settings():
                  # Or, revert the change in the config object if conversion fails:
                  # config['Staleness Threshold']['staleness_threshold'] = load_config().get('Staleness Threshold', {}).get('staleness_threshold', 7) # Revert to loaded or default
 
-
-        # Update content source check periods (Seems correctly handled by update_nested_dict if types match)
-        # If type conversion is needed (e.g., string to float):
-        if 'Debug' in new_settings and 'content_source_check_period' in new_settings['Debug']:
-            if 'Debug' not in config: config['Debug'] = {} # Ensure Debug section exists
-            if 'content_source_check_period' not in config['Debug']: config['Debug']['content_source_check_period'] = {} # Ensure sub-section exists
-            
-            for source, period_str in new_settings['Debug']['content_source_check_period'].items():
-                 try:
-                     config['Debug']['content_source_check_period'][source] = float(period_str)
-                 except (ValueError, TypeError):
-                      logging.warning(f"Invalid period value '{period_str}' for source '{source}'. Skipping update.")
-                      # Keep existing value or set to a default if needed
 
         # Handle Reverse Parser settings (Seems correctly handled by update_nested_dict)
         # Add validation if necessary

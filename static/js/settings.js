@@ -226,6 +226,8 @@ export function updateSettings() {
         settingsData['Bazarr Integration'][key] = input.type === 'checkbox' ? input.checked : input.value;
     });
 
+    // AI Assistant disabled: its settings section is commented out (settings_tabs/_settings_scripts.html).
+    /*
     // Create AI Assistant section if it doesn't exist
     if (!settingsData['AI Assistant']) {
         settingsData['AI Assistant'] = {};
@@ -247,6 +249,7 @@ export function updateSettings() {
             settingsData['AI Assistant'][parts[1]] = val;
         }
     });
+    */
 
 
     // Handle Plex Smart Collections settings
@@ -541,7 +544,7 @@ export function updateSettings() {
     }
     
     // Update the list of top-level fields to include UI Settings
-    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Debrid Provider', 'Usenet Provider', 'Torrentio', 'Scraping', 'Queue', 'Trakt', 'Scrob', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'TVDB', 'UI Settings', 'Sync Deletions', 'File Management', 'Subtitle Settings', 'Bazarr Integration', 'Overlay Settings', 'Staleness Threshold', 'Custom Post-Processing', 'System Load Regulation', 'Library Manager', 'MDBList', 'Discover Settings', 'AI Assistant', 'Plex Smart Collections', 'Plex Movie Box Sets', 'Plex Reported Issues'];
+    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Debrid Provider', 'Usenet Provider', 'Torrentio', 'Scraping', 'Queue', 'Trakt', 'Scrob', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'TVDB', 'UI Settings', 'File Management', 'Subtitle Settings', 'Bazarr Integration', 'Overlay Settings', 'Staleness Threshold', 'Custom Post-Processing', 'System Load Regulation', 'Library Manager', 'MDBList', 'Floppy', 'Simkl', 'Discover Settings', 'AI Assistant', 'Plex Smart Collections', 'Plex Movie Box Sets', 'Plex Reported Issues'];
     Object.keys(settingsData).forEach(key => {
         if (!topLevelFields.includes(key)) {
             delete settingsData[key];
@@ -725,34 +728,6 @@ export function updateSettings() {
             settingsData['Scraping']['hybrid_mode'] = false;
         }
         
-        // Always set jackett_seeders_only to true
-        settingsData['Scraping']['jackett_seeders_only'] = true;
-        
-        // Always set enable_upgrading_cleanup to true
-        settingsData['Scraping']['enable_upgrading_cleanup'] = true;
-        
-    } else {
-    }
-
-    const jackettSeedersOnly = document.getElementById('scraping-jackett_seeders_only');
-
-    const softMaxSize = document.getElementById('scraping-soft_max_size_gb');
-    
-    if (jackettSeedersOnly) {
-        
-        if (!settingsData['Scraping']) {
-            settingsData['Scraping'] = {};
-        }
-        
-        settingsData['Scraping']['jackett_seeders_only'] = true;
-        
-    } else {
-    }
-
-    if (softMaxSize) {
-
-        settingsData['Scraping']['soft_max_size_gb'] = softMaxSize.checked;
-
     } else {
     }
 
@@ -764,14 +739,6 @@ export function updateSettings() {
     } else {
     }
 
-    const sortByUncachedStatus = document.getElementById('debug-sort_by_uncached_status');
-    
-    if (sortByUncachedStatus) {
-        settingsData['Debug']['sort_by_uncached_status'] = sortByUncachedStatus.checked;
-
-    } else {
-    }
-
     const checkingQueuePeriod = document.getElementById('debug-checking_queue_period');
     
     if (checkingQueuePeriod) {
@@ -779,18 +746,6 @@ export function updateSettings() {
 
     } else {
     }
-
-    // Handle Content Source check periods
-    const contentSourceCheckPeriods = {};
-    document.querySelectorAll('#content-source-check-periods input').forEach(input => {
-        const sourceName = input.id.replace('debug-content-source-', '');
-        const value = input.value.trim();
-        if (value !== '') {
-            contentSourceCheckPeriods[sourceName] = parseFloat(value) || 0.1;
-        }
-    });
-    settingsData['Debug'] = settingsData['Debug'] || {};
-    settingsData['Debug']['content_source_check_period'] = contentSourceCheckPeriods;
 
     // Handle Reverse Parser settings
     const reverseParserSettings = {
@@ -832,14 +787,6 @@ export function updateSettings() {
 
     settingsData['Reverse Parser'] = reverseParserSettings;
 
-
-    const rescrapeMissingFiles = document.getElementById('debug-rescrape_missing_files');
-    
-    if (rescrapeMissingFiles) {
-        settingsData['Debug']['rescrape_missing_files'] = rescrapeMissingFiles.checked;
-
-    } else {
-    }
 
     // Handle Disable Content Source Caching
     const disableContentSourceCaching = document.getElementById('debug-disable_content_source_caching');
@@ -895,16 +842,6 @@ export function updateSettings() {
     }
         
 
-    // Set default sync_deletions if not set
-    if (!settingsData['Sync Deletions']) {
-        settingsData['Sync Deletions'] = {};
-    }
-    
-    if (settingsData['Sync Deletions']['sync_deletions'] === undefined) {
-        settingsData['Sync Deletions']['sync_deletions'] = true;
-    }
-        
-
     const enableReverseOrderScraping = document.getElementById('scraping-enable_reverse_order_scraping');
     
     if (enableReverseOrderScraping) {
@@ -925,14 +862,6 @@ export function updateSettings() {
 
     if (enableSeadexPriority) {
         settingsData['Scraping']['enable_seadex_priority'] = enableSeadexPriority.checked;
-
-    } else {
-    }
-
-    const syncDeletions = document.getElementById('sync deletions-sync_deletions');
-    
-    if (syncDeletions) {
-        settingsData['Sync Deletions']['sync_deletions'] = syncDeletions.checked;
 
     } else {
     }
@@ -993,50 +922,10 @@ export function updateSettings() {
     } else {
     }
 
-    const traktWatchlistRemoval = document.getElementById('scraping-trakt_watchlist_removal');
-    
-    if (traktWatchlistRemoval) {
-        settingsData['Scraping']['trakt_watchlist_removal'] = traktWatchlistRemoval.checked;
-
-    } else {
-    }
-
-    const traktWatchlistKeepSeries = document.getElementById('scraping-trakt_watchlist_keep_series');
-    
-    if (traktWatchlistKeepSeries) {
-        settingsData['Scraping']['trakt_watchlist_keep_series'] = traktWatchlistKeepSeries.checked;
-
-    } else {
-    }
-
     const blacklistDuration = document.getElementById('queue-blacklist_duration');
     
     if (blacklistDuration) {
         settingsData['Queue']['blacklist_duration'] = parseInt(blacklistDuration.value) || 30;
-
-    } else {
-    }
-
-    const plexWatchlistRemoval = document.getElementById('scraping-plex_watchlist_removal');
-    
-    if (plexWatchlistRemoval) {
-        settingsData['Scraping']['plex_watchlist_removal'] = plexWatchlistRemoval.checked;
-
-    } else {
-    }
-
-    const plexWatchlistKeepSeries = document.getElementById('scraping-plex_watchlist_keep_series');
-    
-    if (plexWatchlistKeepSeries) {
-        settingsData['Scraping']['plex_watchlist_keep_series'] = plexWatchlistKeepSeries.checked;
-
-    } else {
-    }
-
-    const allowPartialOverseerrRequests = document.getElementById('scraping-allow_partial_overseerr_requests');
-    
-    if (allowPartialOverseerrRequests) {
-        settingsData['Scraping']['allow_partial_overseerr_requests'] = allowPartialOverseerrRequests.checked;
 
     } else {
     }
@@ -1268,51 +1157,6 @@ export function updateSettings() {
     });
 }
 
-function updateContentSourceCheckPeriods() {
-    const contentSourcesDiv = document.getElementById('content-source-check-periods');
-    if (!contentSourcesDiv) {
-        console.warn("Element with id 'content-source-check-periods' not found. Skipping update.");
-        return;
-    }
-
-    const defaultIntervals = {
-        'Overseerr': 900,
-        'Agregarr': 900,
-        'MDBList': 900,
-        'Collected': 86400,
-        'Trakt Watchlist': 900,
-        'Trakt Lists': 900,
-        'Trakt Collection': 900,
-        'Special Trakt Lists': 900,
-        'Scrob Lists': 900,
-        'Scrob Collection': 900,
-        'Special Scrob Lists': 900,
-        'My Plex Watchlist': 900,
-        'Other Plex Watchlist': 900,
-        'My Plex RSS Watchlist': 900,
-        'My Friends Plex RSS Watchlist': 900,
-        'Plex Friends Watchlist': 900,
-        'Adaptive List': 900
-    };
-
-    const enabledContentSources = Object.keys(settingsData['Content Sources'] || {}).filter(source => settingsData['Content Sources'][source].enabled);
-    
-    contentSourcesDiv.innerHTML = '';
-    enabledContentSources.forEach(source => {
-        const sourceType = source.split('_')[0];
-        const div = document.createElement('div');
-        div.className = 'content-source-check-period';
-        const defaultInterval = defaultIntervals[sourceType] ? Math.floor(defaultIntervals[sourceType] / 60) : '';  // Convert seconds to minutes
-        div.innerHTML = `
-            <label for="debug-content-source-${source}">${source}:</label>
-            <input type="number" id="debug-content-source-${source}" name="Debug.content_source_check_period.${source}" 
-                   value="${(settingsData['Debug'] && settingsData['Debug']['content_source_check_period'] && settingsData['Debug']['content_source_check_period'][source]) || ''}" 
-                   step="0.1" min="0.1" class="settings-input" placeholder="${defaultInterval}">
-        `;
-        contentSourcesDiv.appendChild(div);
-    });
-}
-
 // Function to initialize settings tabs
 function initializeSettingsTabs() {
     const tabButtons = document.querySelectorAll('.settings-tab-button');
@@ -1372,17 +1216,6 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         }
         
-        // Add event listeners for content source check periods
-        const contentSourceCheckPeriods = document.getElementById('content-source-check-periods');
-        if (contentSourceCheckPeriods) {
-            const checkPeriodInputs = contentSourceCheckPeriods.querySelectorAll('input[type="number"]');
-            checkPeriodInputs.forEach(function(input) {
-                input.addEventListener('change', function() {
-                    updateContentSourceCheckPeriod(this);
-                });
-            });
-        }
-        // Removed warning - this code may run on pages that don't have this element
         
         // Hide hybrid mode and jackett seeders only checkboxes
         hideHybridModeCheckboxes();
@@ -1403,25 +1236,11 @@ function hideHybridModeCheckboxes() {
         }
     }
     
-    // Hide jackett_seeders_only checkbox completely
-    const jackettSeedersOnlyCheckbox = document.getElementById('scraping-jackett_seeders_only');
-    if (jackettSeedersOnlyCheckbox) {
-        const jackettSeedersOnlyFormGroup = jackettSeedersOnlyCheckbox.closest('.settings-form-group');
-        if (jackettSeedersOnlyFormGroup) {
-            jackettSeedersOnlyFormGroup.classList.add('jackett-seeders-only-group');
-        }
-    }
-    
-    // Also hide any version-specific hybrid_mode and jackett_seeders_only checkboxes
-    document.querySelectorAll('input[data-hybrid-mode="true"], input[data-jackett-seeders-only="true"]').forEach(function(checkbox) {
+    // Also hide any version-specific hybrid_mode checkboxes
+    document.querySelectorAll('input[data-hybrid-mode="true"]').forEach(function(checkbox) {
         const formGroup = checkbox.closest('.settings-form-group');
         if (formGroup) {
-            if (checkbox.hasAttribute('data-hybrid-mode')) {
-                formGroup.classList.add('hybrid-mode-group');
-            }
-            if (checkbox.hasAttribute('data-jackett-seeders-only')) {
-                formGroup.classList.add('jackett-seeders-only-group');
-            }
+            formGroup.classList.add('hybrid-mode-group');
         }
     });
 }
@@ -1431,26 +1250,17 @@ document.addEventListener('scrapingContentLoaded', hideHybridModeCheckboxes);
 
 // Function to handle debug settings synchronization
 function syncDebugSettings() {
-    // Get the debug settings from the true_debug tab
+    // Get the scraping settings shown on the Advanced (debug) tab
     const ultimateSortOrderSelect = document.getElementById('debug-ultimate_sort_order');
-    const softMaxSizeGbCheckbox = document.getElementById('debug-soft_max_size_gb');
     const stalenessThresholdInput = document.getElementById('debug-staleness_threshold');
     
-    if (ultimateSortOrderSelect && softMaxSizeGbCheckbox) {
+    if (ultimateSortOrderSelect) {
         // Add change event listeners to sync with the original settings
         ultimateSortOrderSelect.addEventListener('change', function() {
             // Find the original setting in the scraping tab (if it exists)
             const originalSelect = document.getElementById('scraping-ultimate_sort_order');
             if (originalSelect) {
                 originalSelect.value = ultimateSortOrderSelect.value;
-            }
-        });
-        
-        softMaxSizeGbCheckbox.addEventListener('change', function() {
-            // Find the original setting in the scraping tab (if it exists)
-            const originalCheckbox = document.getElementById('scraping-soft_max_size_gb');
-            if (originalCheckbox) {
-                originalCheckbox.checked = softMaxSizeGbCheckbox.checked;
             }
         });
     }
@@ -1467,8 +1277,6 @@ function syncDebugSettings() {
     }
 }
 
-// Add event listener for the true_debug tab content loaded event
-document.addEventListener('trueDebugContentLoaded', syncDebugSettings);
 document.addEventListener('DOMContentLoaded', syncDebugSettings);
 
 // Function to save a single setting

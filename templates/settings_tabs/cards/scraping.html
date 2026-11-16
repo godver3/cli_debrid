@@ -1,0 +1,177 @@
+{# Advanced card: only rendered when environment_mode == "full". #}
+<div class="settings-section settings-card">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Scraping</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        <p class="settings-description">Scraping settings that apply to every version. Per-version settings are on the Version Settings page.</p>
+        <div class="settings-subsection">
+            <!-- Debug: environment_mode = {{ environment_mode }} -->
+            {% for key, value in settings_schema.Scraping.items() %}
+                {% if key not in ['versions', 'tab', 'hybrid_mode', 'ultimate_sort_order'] %}
+                    <!-- Debug: Processing key "{{ key }}" -->
+                    {% if environment_mode is not defined or environment_mode == 'full' or key not in ['uncached_content_handling', 'accept_uncached_within_hours'] %}
+                    <div class="settings-form-group" {% if key == 'hybrid_mode' or key == 'ultimate_sort_order' %}style="display: none !important;"{% endif %}>
+                        <label for="scraping-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                        {% if value.type == 'boolean' %}
+                            <input type="checkbox" id="scraping-{{ key }}" name="Scraping.{{ key }}"
+                                   data-section="Scraping" data-key="{{ key }}"
+                                   {% if key == 'hybrid_mode' %}data-hybrid-mode="true"{% endif %}
+                                   {% if settings.get('Scraping', {}).get(key) %}checked{% endif %}>
+                        {% elif value.choices %}
+                            <select id="scraping-{{ key }}" name="Scraping.{{ key }}" class="settings-input"
+                                    data-section="Scraping" data-key="{{ key }}">
+                                {% if key == 'uncached_content_handling' %}
+                                    <option value="None" {% if settings.get('Scraping', {}).get(key) == 'None' and not settings.get('Scraping', {}).get('hybrid_mode', False) %}selected{% endif %}>None</option>
+                                    <option value="Hybrid" {% if settings.get('Scraping', {}).get('hybrid_mode', False) and settings.get('Scraping', {}).get(key) == 'None' %}selected{% endif %}>Hybrid</option>
+                                    <option value="Full" {% if settings.get('Scraping', {}).get(key) == 'Full' %}selected{% endif %}>Full</option>
+                                {% else %}
+                                    {% for choice in value.choices %}
+                                        <option value="{{ choice }}" {% if settings.get('Scraping', {}).get(key) == choice %}selected{% endif %}>{{ choice }}</option>
+                                    {% endfor %}
+                                {% endif %}
+                            </select>
+                            {% if key == 'uncached_content_handling' %}
+                                <p class="settings-description">
+                                    <strong>None:</strong> Only take the best Cached result<br>
+                                    <strong>Hybrid:</strong> Take the first best Cached result, and if no Cached results found, take the best Uncached result<br>
+                                    <strong>Full:</strong> Take the best result, whether it's Cached or Uncached
+                                </p>
+                            {% endif %}
+                        {% elif value.type == 'integer' and key in ['scraper_timeout'] %}
+                            <input type="number" id="scraping-{{ key }}" name="Scraping.{{ key }}"
+                                   value="{% set val = settings.get('Scraping', {}).get(key, value.default) %}{{ val if val != None else '' }}" class="settings-input"
+                                   data-section="Scraping" data-key="{{ key }}"
+                                   min="{{ value.min }}" step="1">
+                            <p class="settings-description">{{ value.description }}</p>
+                        {% elif value.type == 'integer' and key == 'delayed_upgrade_scrape_days' %}
+                            <input type="number" id="scraping-{{ key }}" name="Scraping.{{ key }}"
+                                   value="{% set val = settings.get('Scraping', {}).get(key, value.default) %}{{ val if val != None else '' }}" class="settings-input"
+                                   data-section="Scraping" data-key="{{ key }}"
+                                   min="{{ value.min }}" step="1" placeholder="0">
+                        {% else %}
+                            {% set input_field_type = value.type %}
+                            {% if value.type == 'float' or value.type == 'integer' %}
+                                {% set input_field_type = 'number' %}
+                            {% endif %}
+                            <input type="{{ input_field_type }}" id="scraping-{{ key }}" name="Scraping.{{ key }}"
+                                   value="{% set val = settings.get('Scraping', {}).get(key, value.default) %}{{ val if val != None else '' }}" class="settings-input"
+                                   data-section="Scraping" data-key="{{ key }}"
+                                   {% if value.sensitive %}type="password"{% endif %}
+                                   {% if value.type == 'float' %}{% if value.min is defined %}min="{{ value.min }}"{% endif %} {% if value.max is defined %}max="{{ value.max }}"{% endif %} step="{{ value.step | default('any') }}"{% endif %} {# Use 'any' for float steps #}
+                                   {% if value.type == 'integer' and key not in ['scraper_timeout'] %}{% if value.min is defined %}min="{{ value.min }}"{% endif %} {% if value.max is defined %}max="{{ value.max }}"{% endif %} step="1"{% endif %}>
+                        {% endif %}
+                        {% if value.description %}
+                            {% if value.description is string %}
+                                {% if key != 'uncached_content_handling' and key not in ['scraper_timeout'] %}
+                                    <p class="settings-description">{{ value.description }}</p>
+                                {% endif %}
+                            {% else %}
+                                {% if key != 'uncached_content_handling' %}
+                                    <div class="settings-description">
+                                        {% for item in value.description %}
+                                            {% if loop.first %}
+                                                <p>{{ item }}</p>
+                                                <ul>
+                                            {% elif loop.last %}
+                                                <li>{{ item }}</li>
+                                                </ul>
+                                            {% else %}
+                                                <li>{{ item }}</li>
+                                            {% endif %}
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                            {% endif %}
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                {% endif %}
+            {% endfor %}
+        </div>
+    
+        <div class="settings-subheader"><h5>Scoring and sorting</h5></div>
+
+        <div class="settings-form-group">
+            <label for="debug-ultimate_sort_order" class="settings-title">Ultimate Sort Order:</label>
+            <select id="debug-ultimate_sort_order" name="Scraping.ultimate_sort_order" class="settings-input"
+                    data-section="Scraping" data-key="ultimate_sort_order">
+                <option value="None" {% if settings.get('Scraping', {}).get('ultimate_sort_order') == 'None' or not settings.get('Scraping', {}).get('ultimate_sort_order') %}selected{% endif %}>None</option>
+                <option value="Size: large to small" {% if settings.get('Scraping', {}).get('ultimate_sort_order') == 'Size: large to small' %}selected{% endif %}>Size: large to small</option>
+                <option value="Size: small to large" {% if settings.get('Scraping', {}).get('ultimate_sort_order') == 'Size: small to large' %}selected{% endif %}>Size: small to large</option>
+            </select>
+            <p class="settings-description">Ultimate sort order for scraped results. Recommend leaving off and using existing versioning logic</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="debug-emphasize_number_of_items_over_quality" class="settings-title">Emphasize Number of Items Over Quality:</label>
+            <input type="checkbox" id="debug-emphasize_number_of_items_over_quality" name="Debug.emphasize_number_of_items_over_quality"
+                   data-section="Debug" data-key="emphasize_number_of_items_over_quality"
+                   {% if settings.get('Debug', {}).get('emphasize_number_of_items_over_quality', False) %}checked{% endif %}>
+            <p class="settings-description">Emphasize the number of items over quality when ranking results</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="debug-delayed_scrape_based_on_score" class="settings-title">Delayed Scrape Based On Score:</label>
+            <input type="checkbox" id="debug-delayed_scrape_based_on_score" name="Debug.delayed_scrape_based_on_score"
+                   data-section="Debug" data-key="delayed_scrape_based_on_score"
+                   {% if settings.get('Debug', {}).get('delayed_scrape_based_on_score', false) %}checked{% endif %}>
+            <p class="settings-description">If enabled, only accept results above the minimum scrape score for a limited period before accepting lower scored releases.</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="debug-delayed_scrape_time_limit" class="settings-title">Delayed Scrape Time Limit (Hours):</label>
+            <input type="number" step="any" min="0.1" id="debug-delayed_scrape_time_limit" name="Debug.delayed_scrape_time_limit"
+                   value="{% set val = settings.get('Debug', {}).get('delayed_scrape_time_limit', settings_schema.Debug.delayed_scrape_time_limit.default) %}{{ val if val != None else '' }}" class="settings-input"
+                   data-section="Debug" data-key="delayed_scrape_time_limit">
+            <p class="settings-description">Time limit (in hours) to only accept results above the minimum scrape score before accepting lower scored releases.</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="debug-minimum_scrape_score" class="settings-title">Delayed Scrape Minimum Score:</label>
+            <input type="number" step="any" min="0.0" id="debug-minimum_scrape_score" name="Debug.minimum_scrape_score"
+                   value="{% set val = settings.get('Debug', {}).get('minimum_scrape_score', settings_schema.Debug.minimum_scrape_score.default) %}{{ val if val != None else '' }}" class="settings-input"
+                   data-section="Debug" data-key="minimum_scrape_score">
+            <p class="settings-description">Minimum scrape score to accept results above.</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="debug-scale_final_scores" class="settings-title">Scale Final Scores:</label>
+            <input type="checkbox" id="debug-scale_final_scores" name="Debug.scale_final_scores"
+                   data-section="Debug" data-key="scale_final_scores"
+                   {% if settings.get('Debug', {}).get('scale_final_scores', settings_schema.Debug.scale_final_scores.default) == True %}checked{% endif %}>
+            <p class="settings-description">{{ settings_schema.Debug.scale_final_scores.description }}</p>
+        </div>
+    
+        <div class="settings-subheader"><h5>Strategy</h5></div>
+
+        <div class="settings-form-group">
+            <label for="debug-enable_reverse_order_scraping" class="settings-title">Enable Reverse Order Scraping:</label>
+            <input type="checkbox" id="debug-enable_reverse_order_scraping" name="Debug.enable_reverse_order_scraping"
+                   data-section="Debug" data-key="enable_reverse_order_scraping"
+                   {% if settings.get('Debug', {}).get('enable_reverse_order_scraping', False) %}checked{% endif %}>
+            <p class="settings-description">Enable reverse order scraping</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="debug-use_alternate_scrape_time_strategy" class="settings-title">Enable Alternate Scraping Time Strategy:</label>
+            <input type="checkbox" id="debug-use_alternate_scrape_time_strategy" name="Debug.use_alternate_scrape_time_strategy"
+                   data-section="Debug" data-key="use_alternate_scrape_time_strategy"
+                   {% if settings.get('Debug', {}).get('use_alternate_scrape_time_strategy', false) %}checked{% endif %}>
+            <p class="settings-description">Enable alternate scraping time strategy: Instead of scraping based on queue offsets/airtime/release date, scrape all items with release dates and airtimes within the past 24 hours of the user-identified time each day.</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="debug-alternate_scrape_time_24h-tangerine" class="settings-title">Alternate Scrape Time (24h format):</label>
+            <input type="text" id="debug-alternate_scrape_time_24h-tangerine" name="Debug.alternate_scrape_time_24h"
+                   value="{{ settings.get('Debug', {}).get('alternate_scrape_time_24h', '00:00') if settings.get('Debug', {}).get('alternate_scrape_time_24h') != None else '00:00' }}"
+                   class="settings-input" data-section="Debug" data-key="alternate_scrape_time_24h">
+            <p class="settings-description">24-hour time (HH:MM) to use as the daily scrape time for the alternate scraping strategy. Only used if alternate strategy is enabled.</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="debug-skip_initial_multi_scrape_for_new_content" class="settings-title">Skip Initial Multi-Scrape for New Content:</label>
+            <input type="checkbox" id="debug-skip_initial_multi_scrape_for_new_content" name="Debug.skip_initial_multi_scrape_for_new_content"
+                   data-section="Debug" data-key="skip_initial_multi_scrape_for_new_content"
+                   {% if settings.get('Debug', {}).get('skip_initial_multi_scrape_for_new_content', False) %}checked{% endif %}>
+            <p class="settings-description">Skip the initial multi-provider scrape for new content (released within the past 7 days).</p>
+        </div>
+    </div>
+</div>

@@ -303,6 +303,9 @@ input:checked + .toggle-slider:before { transform: translateX(15px); background:
     gap: 12px;
     margin-bottom: 12px;
 }
+/* Grid items default to min-width:auto, so a long nowrap title widens the
+   column past the viewport on mobile instead of ellipsizing */
+.top-stats > .stats-box { min-width: 0; }
 .recently-added {
     display: grid;
     grid-template-columns: repeat(3, 1fr);

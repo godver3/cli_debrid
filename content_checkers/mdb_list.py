@@ -179,7 +179,7 @@ def fetch_items_from_mdblist_api(source_mode: str, username: str = None, listnam
     """
     api_key = api_key or get_setting('MDBList', 'api_key', '')
     if not api_key:
-        logging.error("MDBList API key is not configured (Settings -> Additional Settings -> MDBList). "
+        logging.error("MDBList API key is not configured (Settings → Tracking accounts → MDBList). "
                       "MDBList sources using an API endpoint cannot be fetched.")
         return []
 

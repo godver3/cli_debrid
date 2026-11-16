@@ -1359,7 +1359,7 @@ def get_overseerr_scan_job_id(overseerr_url, overseerr_api_key, overseerr_instan
         cached_job_id = overseerr_job_id_cache[overseerr_instance_id]
         return cached_job_id
 
-    api_endpoint = f"{overseerr_url}/api/v1/settings/jobs"
+    api_endpoint = f"{(overseerr_url or '').rstrip('/')}/api/v1/settings/jobs"
     headers = {"X-Api-Key": overseerr_api_key, "Accept": "application/json"}
     
     try:
@@ -1435,7 +1435,7 @@ def trigger_overseerr_scan(overseerr_url, overseerr_api_key, overseerr_instance_
             del overseerr_scan_schedulers[overseerr_instance_id]
         return
 
-    api_endpoint = f"{overseerr_url}/api/v1/settings/jobs/{job_id}/run"
+    api_endpoint = f"{(overseerr_url or '').rstrip('/')}/api/v1/settings/jobs/{job_id}/run"
     headers = {"X-Api-Key": overseerr_api_key, "Accept": "application/json"}
 
     try:
