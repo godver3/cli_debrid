@@ -48,6 +48,67 @@ def detect_language_codes(text: str) -> List[str]:
     
     return detected_codes
 
+# PTT only recognises US/UK/AU/NZ/CA as country tags. Metadata names the other
+# national versions of a format "The Traitors (IN)", "(IT)", "(BR)"... and release
+# names spell them "The.Traitors.IN" or "The.Traitors.India". Without these, those
+# shows never turn on country filtering and every other version's releases pass.
+_COUNTRY_NAMES = {
+    'india': 'IN', 'italia': 'IT', 'italy': 'IT', 'brasil': 'BR', 'brazil': 'BR',
+    'mexico': 'MX', 'canada': 'CA', 'australia': 'AU', 'new.zealand': 'NZ',
+    'ireland': 'IE', 'france': 'FR', 'germany': 'DE', 'deutschland': 'DE',
+    'spain': 'ES', 'espana': 'ES', 'netherlands': 'NL', 'nederland': 'NL',
+    'sweden': 'SE', 'sverige': 'SE', 'norway': 'NO', 'norge': 'NO',
+    'denmark': 'DK', 'danmark': 'DK', 'finland': 'FI', 'suomi': 'FI',
+    'poland': 'PL', 'polska': 'PL', 'portugal': 'PT', 'greece': 'GR',
+    'turkey': 'TR', 'turkiye': 'TR', 'japan': 'JP', 'korea': 'KR',
+    'philippines': 'PH', 'south.africa': 'ZA', 'belgium': 'BE', 'israel': 'IL',
+    'srbija': 'RS', 'serbia': 'RS', 'romania': 'RO', 'hungary': 'HU',
+    'czech': 'CZ', 'argentina': 'AR', 'chile': 'CL', 'colombia': 'CO',
+}
+_COUNTRY_CODES = set(_COUNTRY_NAMES.values()) | {'US', 'UK', 'GB'}
+# Languages a release of a non-English national version is tagged with (PTT codes;
+# 'la' is LATiN). An untagged release with none of these is almost always the
+# English original ("The.Traitors.S01E01" for "The Traitors (PL)"). English-speaking
+# countries are left out: their untagged releases can't be told apart.
+_COUNTRY_LANGUAGES = {
+    'IN': {'hi', 'ta', 'te', 'ml', 'kn', 'bn', 'mr', 'pa', 'gu'}, 'IT': {'it'},
+    'BR': {'pt'}, 'PT': {'pt'}, 'MX': {'es', 'la'}, 'AR': {'es', 'la'},
+    'CL': {'es', 'la'}, 'CO': {'es', 'la'}, 'ES': {'es'}, 'FR': {'fr'}, 'DE': {'de'},
+    'NL': {'nl'}, 'BE': {'nl', 'fr'}, 'SE': {'sv'}, 'NO': {'no', 'nb'}, 'DK': {'da'},
+    'FI': {'fi'}, 'PL': {'pl'}, 'GR': {'el'}, 'TR': {'tr'}, 'JP': {'ja'}, 'KR': {'ko'},
+    'IL': {'he'}, 'RS': {'sr'}, 'RO': {'ro'}, 'HU': {'hu'}, 'CZ': {'cs'},
+}
+_TRAILING_COUNTRY_TAG = re.compile(r'\s*\(([A-Za-z]{2})\)\s*$')
+
+
+def title_country_tag(title: str) -> Optional[str]:
+    """'The Traitors (IN)' -> 'IN'. Only a known code in trailing parentheses."""
+    m = _TRAILING_COUNTRY_TAG.search(title or '')
+    if not m:
+        return None
+    code = m.group(1).upper()
+    code = 'UK' if code == 'GB' else code
+    return code if code in _COUNTRY_CODES else None
+
+
+def release_country_suffix(normalized_parsed_title: str, normalized_base_title: str) -> Optional[str]:
+    """Country a release names right after the show's base title:
+    'the.traitors.india' / 'the.traitors.in' against base 'the.traitors' -> 'IN'.
+    Only the exact words following the base count, so an unrelated title that
+    happens to contain 'in' is not read as India."""
+    if not normalized_parsed_title or not normalized_base_title:
+        return None
+    prefix = normalized_base_title + '.'
+    if not normalized_parsed_title.startswith(prefix):
+        return None
+    rest = normalized_parsed_title[len(prefix):].strip('.')
+    if rest in _COUNTRY_NAMES:
+        return _COUNTRY_NAMES[rest]
+    code = rest.upper()
+    code = 'UK' if code == 'GB' else code
+    return code if code in _COUNTRY_CODES else None
+
+
 def extract_year_from_title(title: str) -> Optional[int]:
     """
     Simple year extraction from title when PTT fails to parse it.
@@ -217,6 +278,12 @@ def filter_results(
     
     # Pre-normalize query title and aliases
     normalized_query_title = normalize_title(title).lower()
+    # "The Traitors (IN)": the country tag PTT can't see, and the title without it,
+    # which release names follow with ".IN" or ".India".
+    query_country_tag = title_country_tag(title)
+    normalized_base_title = (
+        normalize_title(_TRAILING_COUNTRY_TAG.sub('', title)).lower() if query_country_tag else None
+    )
     normalized_aliases = [normalize_title(alias).lower() for alias in (matching_aliases or [])]
     normalized_translated_title = normalize_title(translated_title).lower() if translated_title else None
     
@@ -362,6 +429,11 @@ def filter_results(
                 parsed_title_str = title_before_markers(original_title)
             # logging.debug(f"  - Parsed info title: '{parsed_title_str}', parsed_info keys: {list(parsed_info.keys()) if parsed_info else 'None'}")
             normalized_parsed_title = normalize_title(parsed_title_str).lower() if parsed_title_str else None
+            if normalized_base_title and release_country_suffix(
+                    normalized_parsed_title, normalized_base_title) == query_country_tag:
+                # "The.Traitors.Srbija" is "The Traitors (RS)" spelled out; without this
+                # it scores 0.6 against the "(RS)" title and only passes via an alias.
+                normalized_parsed_title = normalized_query_title
             exact_main_title_match = (
                 bool(normalized_parsed_title)
                 and _same_exact_title(normalized_parsed_title, normalized_query_title)
@@ -677,6 +749,11 @@ def filter_results(
                     codes = detect_language_codes(check_title)
                     detected_codes_in_original.extend(codes)
             
+            # A tag PTT doesn't know ("The Traitors (IN)") comes from the show's own
+            # title only: aliases span every country and would pick a wrong one.
+            if query_country_tag:
+                detected_codes_in_original.insert(0, query_country_tag)
+
             # Remove duplicates while preserving order
             detected_codes_in_original = list(dict.fromkeys(detected_codes_in_original))
             
@@ -1001,7 +1078,9 @@ def filter_results(
                 result_language_code = None
                 if result_country:
                     result_language_code = country_code_mapping.get(result_country.lower(), result_country.upper())
-                
+                elif normalized_base_title:
+                    result_language_code = release_country_suffix(normalized_parsed_title, normalized_base_title)
+
                 if result_language_code:
                     # Result has language codes - check if they match expected
                     if expected_language_code != result_language_code:
@@ -1011,6 +1090,15 @@ def filter_results(
                         continue
                     else:
                         logging.info(f"Language code match for '{original_title}': {result_language_code} matches expected {expected_language_code}")
+                elif (query_country_tag and expected_language_code == query_country_tag
+                        and query_country_tag in _COUNTRY_LANGUAGES
+                        and not set(parsed_info.get('languages') or []) & _COUNTRY_LANGUAGES[query_country_tag]):
+                    # "The Traitors (PL)": an untagged English release is the original show.
+                    result['filter_reason'] = (f"Country version mismatch: expected {expected_language_code} "
+                                               f"(country tag or {'/'.join(sorted(_COUNTRY_LANGUAGES[query_country_tag]))} audio), found neither")
+                    logging.info(f"Rejected: untagged release '{original_title}' for {expected_language_code} version "
+                                 f"has no {expected_language_code} country or language tag (Size: {result['size']:.2f}GB)")
+                    continue
                 else:
                     # Result has no language codes but original does - apply significant ranking penalty
                     result['language_code_missing_penalty'] = -500
