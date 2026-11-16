@@ -243,12 +243,20 @@ class MaintenanceTasks:
         try:
             # Step 1: Original reconciliation for 'Checking' items based on filled_by_file
             reconciliation_logger.info("Starting reconciliation for 'Checking' items based on shared file paths...")
+            # Only rows of the same title, type and version (ignoring '*') count as sharing a
+            # file. Matching on the filename alone deleted a movie's other version (1080p and
+            # 2160p rows whose files have the same name) and marked unrelated titles with a
+            # generic filename Collected.
             cursor.execute("""
                 SELECT
                     c.id as checking_id, c.title as checking_title, c.type as checking_type, c.filled_by_file,
                     m.id as matching_id, m.title as matching_title, m.state as matching_state, m.type as matching_type
                 FROM media_items c
                 JOIN media_items m ON c.filled_by_file = m.filled_by_file AND c.id != m.id
+                  AND c.type = m.type
+                  AND ((c.imdb_id IS NOT NULL AND c.imdb_id != '' AND c.imdb_id = m.imdb_id)
+                       OR (c.tmdb_id IS NOT NULL AND c.tmdb_id != '' AND c.tmdb_id = m.tmdb_id))
+                  AND REPLACE(COALESCE(c.version, ''), '*', '') = REPLACE(COALESCE(m.version, ''), '*', '')
                 WHERE c.state = 'Checking'
                   AND c.filled_by_file IS NOT NULL
                   AND m.state != 'Checking'
@@ -279,27 +287,29 @@ class MaintenanceTasks:
             if items_to_delete_filepath:
                 delete_ids_filepath = list(items_to_delete_filepath - set(items_to_update))
                 if delete_ids_filepath:
-                    # Only delete items that are true duplicates (same imdb_id+season+episode).
+                    # Only delete items that are true duplicates (same imdb_id+season+episode+version).
                     # Items that share filled_by_file but are different episodes (season pack coalescing)
                     # should be marked Collected, not deleted.
                     rows = cursor.execute(
-                        f"SELECT id, imdb_id, season_number, episode_number FROM media_items "
+                        f"SELECT id, imdb_id, season_number, episode_number, "
+                        f"REPLACE(COALESCE(version, ''), '*', '') AS bare_version FROM media_items "
                         f"WHERE id IN ({','.join(['?']*len(delete_ids_filepath))})",
                         delete_ids_filepath
                     ).fetchall()
-                    # Build set of (imdb_id, season, episode) for already-updating items
+                    # Build set of (imdb_id, season, episode, version) for already-updating items
                     updating_eps = set()
                     if items_to_update:
                         for _ur in cursor.execute(
-                            f"SELECT imdb_id, season_number, episode_number FROM media_items "
+                            f"SELECT imdb_id, season_number, episode_number, "
+                            f"REPLACE(COALESCE(version, ''), '*', '') AS bare_version FROM media_items "
                             f"WHERE id IN ({','.join(['?']*len(items_to_update))})",
                             items_to_update
                         ).fetchall():
-                            updating_eps.add((_ur['imdb_id'], _ur['season_number'], _ur['episode_number']))
+                            updating_eps.add((_ur['imdb_id'], _ur['season_number'], _ur['episode_number'], _ur['bare_version']))
                     true_dupes = []
                     collect_instead = []
                     for r in rows:
-                        key = (r['imdb_id'], r['season_number'], r['episode_number'])
+                        key = (r['imdb_id'], r['season_number'], r['episode_number'], r['bare_version'])
                         if key in updating_eps:
                             true_dupes.append(r['id'])
                         else:
