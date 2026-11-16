@@ -26,7 +26,7 @@ def get_floppy_config() -> Optional[Dict[str, str]]:
     base_url = (get_setting('Floppy', 'url', '') or '').strip().rstrip('/')
     api_key = (get_setting('Floppy', 'api_key', '') or '').strip()
     if not base_url or not api_key:
-        logging.warning("Floppy is not configured (Additional Settings → Tracking accounts → Floppy).")
+        logging.warning("Floppy is not configured (Settings → Tracking accounts → Floppy).")
         return None
     return {'base_url': base_url, 'api_key': api_key}
 

@@ -181,7 +181,7 @@ _SPECS = [
     TaskSpec('task_sync_plex_labels', 'Sync Plex labels', 'media_server', 30 * 60, default=False),
     TaskSpec('task_process_plex_reported_issues', 'Replace items reported in Plex', 'media_server', 30,
              setting=('Plex Reported Issues', 'enabled'),
-             controlled_by='Settings → Additional → Plex Reported Issues'),
+             controlled_by='Settings → Media Server → Plex Reported Issues'),
     TaskSpec('task_plex_smart_collection_posters', 'Smart collection posters', 'media_server', DAY, default=_plex_mode),
     TaskSpec('task_plex_movie_boxsets', 'Movie box sets', 'media_server', DAY, default=_plex_mode),
     TaskSpec('task_overlay_sync', 'Poster overlays', 'media_server', HOUR, default=_overlays,

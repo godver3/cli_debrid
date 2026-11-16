@@ -217,7 +217,7 @@ def _get(path: str, token: str, params=None) -> Optional[Any]:
         r = api.get(f'{API}{path}', params=dict(_common_params(client_id), **(params or {})),
                     headers=_headers(token), timeout=REQUEST_TIMEOUT)
         if r.status_code == 401:
-            logging.error("Simkl rejected the sign-in (401); sign in again under Additional Settings")
+            logging.error("Simkl rejected the sign-in (401); sign in again under Settings → Tracking accounts → Simkl")
             return None
         r.raise_for_status()
         return r.json() if r.content else {}
@@ -263,7 +263,7 @@ def get_wanted_from_simkl_watchlist(source_config: Dict[str, Any], versions: Dic
                                     unblacklist: bool = False) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     token = _access_token()
     if not token:
-        logging.warning("Simkl Watchlist: not signed in (Additional Settings → Tracking accounts → Simkl)")
+        logging.warning("Simkl Watchlist: not signed in (Settings → Tracking accounts → Simkl)")
         return []
     statuses = source_config.get('simkl_statuses') or ['Plan to Watch']
     if isinstance(statuses, str):
