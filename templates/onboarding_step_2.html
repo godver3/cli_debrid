@@ -993,7 +993,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const mountTool = document.getElementById('mount_tool');
     const mountPath = document.getElementById('original_files_path');
     const MOUNT_HINTS = {
-        climount: ['The folder you mapped to /mnt in the cli_mount container, plus /__all__. Debrid and usenet files both show up there.', '/mnt/climount/__all__'],
+        climount: ['cli_mount\'s mount path as cli_debrid sees it, plus /__all__. Debrid and usenet files both show up there.', '/mnt/cli_mount/__all__'],
         decypharr: ['Decypharr\'s mount folder for your debrid service, ending in /__all__.', '/mnt/decypharr/__all__'],
         zurg: ['Your rclone mount of Zurg, ending in /__all__.', '/mnt/zurg/__all__'],
         nzbdav: ['Your rclone mount of NzbDAV\'s WebDAV share.', '/mnt/nzbdav'],

@@ -124,13 +124,25 @@ New to cli_debrid? Start with the **[Getting Started guide](https://godver3.gith
 
 ### Quick Start (Docker)
 
+The easiest setup is cli_debrid and **[cli_mount](https://github.com/mash2k3/decypharr/tree/dev)** together in one compose file. cli_mount mounts your debrid and Usenet files, and cli_debrid finds it on its own during onboarding.
+
 ```bash
+# Linux with Docker Engine. Create the shared folders once:
+sudo mkdir -p /mnt/cli_mount /mnt/symlinks
+sudo chown 1000:1000 /mnt/cli_mount
+
 mkdir -p ${HOME}/cli_debrid && cd ${HOME}/cli_debrid
-curl -O https://raw.githubusercontent.com/godver3/cli_debrid/main/docker-compose.yml
+curl -o docker-compose.yml https://raw.githubusercontent.com/godver3/cli_debrid/main/docker-compose.cli_mount.yml
 docker compose up -d
 ```
 
-Then open `http://your-server-ip:5000` and follow the onboarding wizard.
+Then:
+
+1. Open cli_mount at `http://your-server-ip:8282` and add your debrid account and/or Usenet server. When the setup wizard asks, set the **Download Folder** to `/app/downloads`, the **Mount Path** to `/mnt/cli_mount` and the **Cache Directory** to `/app/cache`.
+2. Open cli_debrid at `http://your-server-ip:5000` and follow the onboarding wizard. Choose **cli_mount** as the mount tool, with the mount path `/mnt/cli_mount/__all__`. If you use Usenet, click **Detect** next to the mount URL; it finds `http://cli_mount:8282`. After onboarding, **Settings → Required → Usenet Mount → Detect** also fills in cli_mount's data path (`/climount_data`), which turns on backups of cli_mount's databases.
+3. Give your media server the same folders at the same paths: `/mnt/cli_mount` (with `:rslave` if it runs in Docker) and, for Symlink mode, `/mnt/symlinks`.
+
+The [Docker guide](https://godver3.github.io/cli_docs/installation/docker/) explains each line and covers Plex in the same stack. Already have a mount, or using Zurg or Decypharr? Use the plain [docker-compose.yml](https://raw.githubusercontent.com/godver3/cli_debrid/main/docker-compose.yml) instead.
 
 cli_debrid is built for both AMD64 and ARM64:
 
