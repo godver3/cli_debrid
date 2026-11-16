@@ -996,7 +996,7 @@ def get_and_add_wanted_content(source_id):
     wanted_content = []
     try: # Add try block for source fetching
         if source_type == 'Overseerr':
-            wanted_content = get_wanted_from_overseerr(versions_from_config)
+            wanted_content = get_wanted_from_overseerr(versions_from_config, source_id=source_id)
         elif source_type == 'My Plex Watchlist':
             wanted_content = get_wanted_from_plex_watchlist(versions_from_config, remove_when_collected=bool(source_data.get('remove_when_collected')), keep_series=bool(source_data.get('keep_series')))
         elif source_type == 'My Plex RSS Watchlist':

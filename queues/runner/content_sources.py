@@ -176,7 +176,7 @@ class ContentSourceTasks:
             wanted_content = []
             # Pass the original versions_from_config to fetchers, assuming they expect list/dict as per config
             if source_type == 'Overseerr':
-                wanted_content = get_wanted_from_overseerr(versions_from_config)
+                wanted_content = get_wanted_from_overseerr(versions_from_config, source_id=source)
             elif source_type == 'MDBList':
                 wanted_content = get_wanted_from_mdblist_source(data, versions_from_config)
             elif source_type == 'Trakt Watchlist':

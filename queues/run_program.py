@@ -2477,7 +2477,7 @@ def process_overseerr_webhook(data):
             source_type = 'Overseerr'
             matched_sources = []
             for s, d in content_sources.items():
-                if not s.startswith('Overseerr'):
+                if not s.startswith('Overseerr') or not d.get('enabled', False):
                     continue
                 allowed = d.get('allowed_requesters', ['__all__'])
                 if not allowed:
