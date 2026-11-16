@@ -480,7 +480,7 @@
             <ol class="settings-description" style="margin-top:8px;line-height:1.6;">
                 <li>Run cli_mount with its rclone mount; configure your usenet provider + indexers in cli_mount.</li>
                 <li>Fill below: cli_mount URL (host:8888 — not localhost, conflicts with Phalanx DB), API Token (if auth enabled), Download Folder (leave empty for cli_mount's default).</li>
-                <li>Set the cli_mount Data Path (bind cli_mount's appdata to <code>/cli_mount_data</code>) if you want backup/restore/cleanup tools.</li>
+                <li>Set the cli_mount Data Path (bind cli_mount's appdata to <code>/climount_data</code>) if you want backup/restore/cleanup tools.</li>
                 <li>Toggle <em>Enable Usenet</em> above.</li>
             </ol>
         </details>
@@ -516,9 +516,9 @@
             <input type="text" id="usenet_provider-data_path" name="Usenet Provider.data_path"
                    value="{{ settings.get('Usenet Provider', {}).get('data_path', '/climount_data') }}"
                    class="settings-input" data-section="Usenet Provider" data-key="data_path"
-                   placeholder="/cli_mount_data">
+                   placeholder="/climount_data">
             <div class="mount-suggest" data-for="usenet_provider-data_path"></div>
-            <p class="settings-description">Path to cli_mount's data directory inside the container. Add <code>- /path/to/cli_mount/appdata:/cli_mount_data</code> to your docker-compose volumes, then set this to <code>/cli_mount_data</code>. Required for cli_mount DB backup, restore, and cleanup tools — and lets the in-app provider migration (<strong>Tools → Usenet</strong>) read cli_mount's stored <code>.nzb</code> files from <code>&lt;data_path&gt;/usenet/nzbs</code>.</p>
+            <p class="settings-description">Path to cli_mount's data directory inside the container. Add <code>- /path/to/cli_mount/appdata:/climount_data</code> to your docker-compose volumes, then set this to <code>/climount_data</code> (<strong>Detect</strong> under Provider fills it in). Required for cli_mount DB backup, restore, and cleanup tools — and lets the in-app provider migration (<strong>Tools → Usenet</strong>) read cli_mount's stored <code>.nzb</code> files from <code>&lt;data_path&gt;/usenet/nzbs</code>.</p>
         </div>
         <div class="settings-form-group" data-provider-only="nzbdav,zurg">
             <label for="usenet_provider-mounted_file_location" class="settings-title"><span data-provider-only="nzbdav">NzbDAV Mount Path</span><span data-provider-only="zurg">Zurg Mount Path</span>:</label>

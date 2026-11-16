@@ -277,9 +277,19 @@ def fetch_overseerr_wanted_content(overseerr_url: str, overseerr_api_key: str, t
     logging.info(f"Found {len(wanted_content)} wanted items from Overseerr")
     return wanted_content
 
-def get_wanted_from_overseerr(versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
+def get_wanted_from_overseerr(versions: Dict[str, bool], source_id: str | None = None) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
+    """Fetch approved requests for one Overseerr source (source_id), tagged with that source's versions.
+
+    Each source has its own server, API key, tags, requester list and versions, so a source's
+    run must only read its own server. Without source_id every enabled Overseerr source is read
+    (old behaviour, kept for callers that don't know which source they are running).
+    """
     content_sources = get_all_settings().get('Content Sources', {})
-    overseerr_sources = [(source_id, data) for source_id, data in content_sources.items() if source_id.startswith('Overseerr') and data.get('enabled', False)]
+    if source_id is not None:
+        data = content_sources.get(source_id)
+        overseerr_sources = [(source_id, data)] if isinstance(data, dict) else []
+    else:
+        overseerr_sources = [(sid, data) for sid, data in content_sources.items() if sid.startswith('Overseerr') and data.get('enabled', False)]
     disable_caching = True  # Hardcoded to True
 
     all_wanted_items = []
@@ -294,6 +304,7 @@ def get_wanted_from_overseerr(versions: Dict[str, bool]) -> List[Tuple[List[Dict
         logging.info(f"{display_name}: allow partial requests: {allow_partial}")
         ignore_tags_str = source.get('ignore_tags', '')
         ignore_tags = {tag.strip().lower() for tag in ignore_tags_str.split(',') if tag.strip()} if ignore_tags_str else set()
+        allowed_requesters = source.get('allowed_requesters') or ['__all__']
 
         if not overseerr_url or not overseerr_api_key:
             logging.error(f"Overseerr URL or API key not set for source: {source}. Please configure in settings.")
@@ -305,6 +316,7 @@ def get_wanted_from_overseerr(versions: Dict[str, bool]) -> List[Tuple[List[Dict
             wanted_items = []
             cache_skipped = 0
             ignored_by_tag = 0
+            ignored_by_requester = 0
 
             for item in wanted_content_raw:
                 raw_tags = item.get('tags') or []
@@ -323,6 +335,9 @@ def get_wanted_from_overseerr(versions: Dict[str, bool]) -> List[Tuple[List[Dict
                     # Extract requester information
                     requested_by = item.get('requestedBy', {})
                     requester_display_name = requested_by.get('displayName') or requested_by.get('email') or 'Unknown'
+                    if not _source_allows_requester(allowed_requesters, requester_display_name):
+                        ignored_by_requester += 1
+                        continue
                     request_id = item.get('id')  # Overseerr's request ID
                     tmdb_id = media.get('tmdbId')
 
@@ -370,9 +385,11 @@ def get_wanted_from_overseerr(versions: Dict[str, bool]) -> List[Tuple[List[Dict
                     wanted_items.append(wanted_item)
 
             if ignored_by_tag > 0:
-                logging.info(f"Ignored {ignored_by_tag} items from Overseerr source based on tags.")
+                logging.info(f"{display_name}: ignored {ignored_by_tag} items based on tags.")
+            if ignored_by_requester > 0:
+                logging.info(f"{display_name}: ignored {ignored_by_requester} requests from users not in this source's allowed requesters.")
             all_wanted_items.append((wanted_items, versions))
-            logging.info(f"Retrieved {len(wanted_items)} wanted items from Overseerr source")
+            logging.info(f"{display_name}: retrieved {len(wanted_items)} wanted items")
         except OverseerrAuthError as e:
             logging.error(f"Overseerr auth failure for source '{display_name}': {e}")
             _notify_overseerr_auth_failure(source_id, display_name)

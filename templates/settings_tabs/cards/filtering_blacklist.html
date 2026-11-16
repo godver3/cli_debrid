@@ -9,7 +9,9 @@
         </div>
     </div>
     <div class="settings-section-content">
-        {% for key in ['filename_filter_out_list', 'sanitizer_replacement_character'] %}
+        {# sanitizer_replacement_character lives in Library & Files → File System only: a second
+           input with the same name was saved after this one and silently undid edits made here. #}
+        {% for key in ['filename_filter_out_list'] %}
             {% set value = settings_schema.Debug.get(key) %}
             {% if value %}
             <div class="settings-form-group">

@@ -949,7 +949,7 @@ class MaintenanceTasks:
         """Scheduled nightly scan for better-quality releases via Zilean."""
         try:
             if 'task_upgrade_hub_scan' not in self.enabled_tasks:
-                logging.debug("[UPGRADE_HUB] Scheduled scan skipped — task disabled in Task Manager")
+                logging.debug("[UPGRADE_HUB] Scheduled scan skipped — task disabled on the Automation page")
                 return
             from database.zilean_upgrade import scan_for_upgrades, get_scan_status
             from utilities.settings import get_setting
@@ -979,7 +979,7 @@ class MaintenanceTasks:
         """Auto-queue upgrade candidates found in the most recent scan."""
         try:
             if 'task_upgrade_hub_auto_queue' not in self.enabled_tasks:
-                logging.debug("[UPGRADE_HUB] Auto-queue skipped — task disabled in Task Manager")
+                logging.debug("[UPGRADE_HUB] Auto-queue skipped — task disabled on the Automation page")
                 return
             from utilities.settings import get_setting
             from database.zilean_upgrade import (
