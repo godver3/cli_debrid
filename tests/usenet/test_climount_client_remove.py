@@ -57,7 +57,16 @@ def _load(status_map, connection_error_urls=frozenset()):
             raise _FakeHTTPError(status)
         return _FakeResponse(status)
 
-    rta.api = types.SimpleNamespace(delete=fake_delete, get=None, post=None)
+    def fake_post(url, **kwargs):
+        calls.append((url, kwargs))
+        if url in connection_error_urls:
+            raise ConnectionError('connection refused')
+        status = status_map.get(url, 200)
+        if status >= 400:
+            raise _FakeHTTPError(status)
+        return _FakeResponse(status)
+
+    rta.api = types.SimpleNamespace(delete=fake_delete, get=None, post=fake_post)
     sys.modules['routes.api_tracker'] = rta
 
     path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
@@ -66,6 +75,27 @@ def _load(status_map, connection_error_urls=frozenset()):
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
     return m, calls
+
+
+class TestTargetedDebridSync(unittest.TestCase):
+    def test_posts_provider_id_once(self):
+        url = 'http://x:8383/api/torrents/deadbeef/sync'
+        m, calls = _load(status_map={url: 200})
+        client = m.CliMountClient()
+
+        self.assertTrue(client.sync_debrid_torrent('deadbeef', 'Torbox', '147236436'))
+        self.assertEqual([call[0] for call in calls], [url])
+        self.assertEqual(calls[0][1]['params'], {
+            'provider': 'Torbox',
+            'providerId': '147236436',
+        })
+
+    def test_failure_does_not_break_provider_add(self):
+        url = 'http://x:8383/api/torrents/deadbeef/sync'
+        m, _ = _load(status_map={url: 500})
+        client = m.CliMountClient()
+
+        self.assertFalse(client.sync_debrid_torrent('deadbeef', 'Torbox', '147236436'))
 
 
 class TestRemoveNzbExact(unittest.TestCase):
