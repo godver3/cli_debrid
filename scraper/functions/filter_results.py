@@ -172,6 +172,25 @@ def _same_exact_title(left, right):
     return bool(left_key) and len(left_key) <= 5 and left_key == right_key
 
 
+_YEAR_TOKEN = re.compile(r'(?:19|20)\d\d')
+
+
+def _title_numbers(normalized):
+    return ''.join(n for n in re.findall(r'\d+', normalized or '') if not _YEAR_TOKEN.fullmatch(n))
+
+
+def _drops_title_number(parsed_title, target_title):
+    """True when exactly one of the two titles carries a number (years aside):
+    'nashville' against '9-1-1.nashville'. Fuzzy scores barely notice a short
+    number — token_set_ratio rates 'nashville' 1.0 against the alias '911 Nashville'
+    and the squashed acronym check rates it 0.86 — so Nashville (2012) season packs
+    passed for 9-1-1: Nashville. The number is what tells those shows apart; it
+    can be spelled differently ('911' / '9-1-1') but not be missing."""
+    if not parsed_title or not target_title:
+        return False
+    return bool(_title_numbers(parsed_title)) != bool(_title_numbers(target_title))
+
+
 def _swaps_a_title_word(parsed_title, target_title):
     """True when parsed_title trades one of target_title's words for a different
     word: 'american.woman' against 'american.dad'. A shared opening word carries
@@ -564,6 +583,13 @@ def filter_results(
                 pass
 
 
+            # A release title missing the show's number (or adding one) is another show:
+            # 'Nashville' is not '9-1-1: Nashville'. Anime is left out because PTT can
+            # read a trailing title number as the episode ('Mob Psycho 100 - 05').
+            check_title_numbers = not is_anime
+            if check_title_numbers and _drops_title_number(normalized_parsed_title, normalized_query_title):
+                main_title_sim = 0.0
+
             # --- Alias Similarities ---
             alias_similarities = []
             if normalized_aliases:
@@ -607,6 +633,8 @@ def filter_results(
                         alias_original_sim = alias_sim
                         alias_sim *= alias_penalty_factor
 
+                    if check_title_numbers and _drops_title_number(normalized_parsed_title, alias):
+                        alias_sim = 0.0
                     alias_similarities.append(alias_sim)
 
             best_alias_sim = max(alias_similarities) if alias_similarities else 0.0
@@ -646,6 +674,9 @@ def filter_results(
                     trans_penalty_factor = max(0.3, trans_ratio)  # Minimum 30% of original similarity
                     trans_original_sim = translated_title_sim
                     translated_title_sim *= trans_penalty_factor
+
+            if check_title_numbers and _drops_title_number(normalized_parsed_title, normalized_translated_title):
+                translated_title_sim = 0.0
 
             # --- Parenthesized Alternative Title Similarity ---
             # Handles Spanish-style releases: "El renacido (The Revenant) 2015 SPANISH"
@@ -858,6 +889,8 @@ def filter_results(
                             api_alias_original_sim = final_alias_sim
                             final_alias_sim *= content_penalty
 
+                    if check_title_numbers and _drops_title_number(normalized_parsed_title, normalized_api_alias):
+                        final_alias_sim = 0.0
                     item_alias_similarities.append(final_alias_sim)
 
                     # Store debug info for troublesome titles
