@@ -19,6 +19,25 @@ def get_default_version() -> str:
     """
     return get_setting('Reverse Parser', 'default_version', 'unknown')
 
+def resolve_scraping_version(version) -> str:
+    """A configured scraping version name for `version`, without '*' markers.
+
+    Rows cli_debrid did not scrape itself carry '<default>**', and the seeded
+    Reverse Parser default is '', so stripping the markers can leave '' (or a
+    version that was since deleted). Scraping with that ran with no filters at
+    all (godver3/cli_debrid#576). Falls back to the Reverse Parser default when it
+    is a configured version, else the first configured version.
+    """
+    name = str(version or '').replace('*', '').strip()
+    versions = get_setting('Scraping', 'versions', {}) or {}
+    if not isinstance(versions, dict) or not versions or name in versions:
+        return name
+    default = str(get_default_version() or '').replace('*', '').strip()
+    fallback = default if default in versions else next(iter(versions))
+    logging.warning(f"Version '{name}' is not a configured scraping version; using '{fallback}'.")
+    return fallback
+
+
 def get_version_order() -> list:
     """
     Retrieves the version order from the configuration.
@@ -312,6 +331,10 @@ def parse_filename_for_version(filename: str, is_nzb: bool = False) -> str:
     """
     scraping_versions_config = get_setting('Scraping', 'versions', {})
     default_rp_version = get_default_version()
+    if (not str(default_rp_version or '').strip() and isinstance(scraping_versions_config, dict)
+            and scraping_versions_config):
+        # Seeded default is '': unmatched files would get a bare '**' version (#576).
+        default_rp_version = next(iter(scraping_versions_config))
     
     excluded_generic_versions = []
 

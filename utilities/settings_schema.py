@@ -250,11 +250,6 @@ SETTINGS_SCHEMA = {
             "description": "Defines the customizable order of organizational folders for symlinks. Use a comma-separated list containing 'type', 'version', and 'resolution' in your desired order (e.g., 'version,type,resolution'). The individual 'Organize by X' toggles still control if a specific folder component is included in the path.",
             "default": "type,version,resolution"
         },
-        "process_non_checking_items": {
-            "type": "boolean",
-            "description": "Process files in rclone webhook even if they don't match any items in the checking state",
-            "default": False
-        },
         "scan_mount_for_external_adds": {
             "type": "boolean",
             "description": "Periodically scan the original files path for content added outside cli_debrid (e.g. via DMM or the debrid provider's own UI) and import it - symlink it and trigger a media server scan. Use this when your mount provider has no library-update webhook (Decypharr, plain rclone); zurg users already get this via its on_library_update hook. The first run records existing mount content as a baseline without importing it.",
@@ -285,7 +280,7 @@ SETTINGS_SCHEMA = {
             "type": "string",
             "description": "Debrid service provider. AllDebrid note: AllDebrid can't report whether a release is cached without adding it to your account, and it has suspended accounts that add many releases without downloading them. cli_debrid limits AllDebrid cache checks to 150 per hour and 10 per item and removes the ones it doesn't use; items over the limit wait in Adding. When another provider is also set up, AllDebrid is only checked if the providers ranked above it don't have the release cached.",
             "default": "RealDebrid",
-            "choices": ["RealDebrid", "AllDebrid", "Premiumize", "Torbox", "DebridLink"]
+            "choices": ["RealDebrid", "AllDebrid", "Premiumize", "Torbox", "DebridLink", "HighWay"]
         },
         "api_key": {
             "type": "string",
@@ -323,7 +318,7 @@ SETTINGS_SCHEMA = {
         },
         "url": {
             "type": "string",
-            "description": "cli_mount URL — must not conflict with Phalanx DB (port 8888). Use the actual cli_mount host/port (e.g. http://192.168.1.x:8888 or http://climount:8888)",
+            "description": "Mount URL: where cli_debrid reaches the usenet mount (cli_mount, NzbDAV or Zurg). Settings → Required → Usenet Mount → Detect looks for it. For cli_mount use its host or container name and port, e.g. http://cli_mount:8282, not localhost:8888 (that is cli_debrid's own Phalanx DB).",
             "default": ""
         },
         "api_token": {
@@ -444,7 +439,7 @@ SETTINGS_SCHEMA = {
         },
         "client_secret": {
             "type": "string",
-            "description": "Trakt client secret",
+            "description": "Trakt client secret (optional; new Trakt apps don't get one)",
             "default": "",
             "sensitive": True
         }
@@ -474,20 +469,40 @@ SETTINGS_SCHEMA = {
             "sensitive": True
         }
     },
+    "Floppy": {
+        "tab": "Additional Settings",
+        "url": {
+            "type": "string",
+            "description": "Base URL of your self-hosted Floppy instance, e.g. http://192.168.1.24:8000",
+            "default": ""
+        },
+        "api_key": {
+            "type": "string",
+            "description": "Your Floppy API token (Floppy → Settings → Integrations / API). Sent as the X-API-Key header. Shared by every Floppy content source.",
+            "default": "",
+            "sensitive": True
+        }
+    },
+    "Simkl": {
+        "tab": "Additional Settings",
+        "client_id": {
+            "type": "string",
+            "description": "Client ID of your Simkl app. Create one at simkl.com/settings/developer (Auth V2, type 'TV, devices & command line'), then click Sign in to Simkl below.",
+            "default": ""
+        },
+        "client_secret": {
+            "type": "string",
+            "description": "Only for apps registered as 'Server apps & services'. Leave blank for 'TV, devices & command line' apps.",
+            "default": "",
+            "sensitive": True
+        }
+    },
     "Staleness Threshold": {
         "tab": "Additional Settings",
         "staleness_threshold": {
             "type": "integer",
             "description": "Staleness threshold for metadata (in days)",
             "default": 7
-        }
-    },
-    "Sync Deletions": {
-        "tab": "Additional Settings",
-        "sync_deletions": {
-            "type": "boolean",
-            "description": "[DEPRECATED - Defaults to true] Sync deletions from the Database to Plex",
-            "default": False
         }
     },
     "Queue": {
@@ -609,21 +624,9 @@ SETTINGS_SCHEMA = {
             "default": 0.0
             # Consider adding min/max if score range is known, otherwise leave open.
         },
-        "upgrade_similarity_threshold": {
-            "type": "float",
-            "description": "Threshold for title similarity when upgrading (0.0 to 1.0). Higher values mean titles must be more different to be considered an upgrade. Default 0.95 means 95% similar.",
-            "default": 0.95,
-            "min": 0.0,
-            "max": 1.0
-        },
         "hybrid_mode": {
             "type": "boolean",
             "description": "Enable hybrid mode to add best uncached result if no cached results found in 'None' mode",
-            "default": False
-        },
-        "jackett_seeders_only": {
-            "type": "boolean",
-            "description": "Return only results with seeders in Jackett",
             "default": False
         },
         "ultimate_sort_order": {
@@ -631,11 +634,6 @@ SETTINGS_SCHEMA = {
             "description": "Ultimate sort order for scraped results. Recommend leaving off and using existing versioning logic",
             "default": "None",
             "choices": ["None", "Size: large to small", "Size: small to large"]
-        },
-        "soft_max_size_gb": {
-            "type": "boolean",
-            "description": "If enabled, apply the assigned max size to the scraped results, but if no results are returned accept the smallest result available",
-            "default": False
         },
         "enable_upgrading": {
             "type": "boolean",
@@ -658,7 +656,7 @@ SETTINGS_SCHEMA = {
         "enable_upgrading_cleanup": {
             "type": "boolean",
             "description": "Enable cleanup of original items after successful upgrade (removes original item from Debrid Provider)",
-            "default": False
+            "default": True
         },
         "disable_adult": {
             "type": "boolean",
@@ -756,12 +754,12 @@ SETTINGS_SCHEMA = {
                 "foreign_language_penalty": {
                     "type": "number",
                     "default": 30,
-                    "description": "Penalty for a release whose name is tagged with an audio language other than the version's language code (e.g. GERMAN for an 'en' version), multiplied by Language Weight. Subtitle tags (SWESUB, VOSTFR, NORDiC) don't count; MULTi, Dual Audio and DL (dual-language) releases are exempt. For a title whose original language isn't the version's (e.g. a Korean show on an 'en' version), releases tagged DUAL or with the version's language get a small tiebreaker bonus instead (this amount × Language Weight, at most 50; half for a bare MULTi/DL). Untagged releases are never penalized. 0 disables both."
+                    "description": "Penalty for a release whose name is tagged with an audio language other than the version's language code (e.g. GERMAN for an 'en' version), multiplied by Language Weight. Subtitle tags (SWESUB, VOSTFR, NORDiC) don't count; MULTi, Dual Audio and DL (dual-language) releases are exempt. For a title whose original language isn't the version's (e.g. a Korean show on an 'en' version), releases tagged DUAL or with the version's language get a small tiebreaker bonus instead (this amount × Language Weight, at most 50; half for a bare MULTi/DL). Untagged releases are never penalized. 0 disables both. A cached release is still taken before any uncached one whatever its score, so the penalty alone can't keep out a tagged release that is the only cached match (e.g. a freshly aired episode whose only cached copy is a foreign dub). To drop tagged releases instead, set a large penalty (e.g. 1000) together with a Minimum Scrape Score above 0 (Settings → Scraping; the Delayed Scrape Minimum Score only applies with delayed scrape)."
                 },
                 "audio_description_penalty": {
                     "type": "number",
                     "default": 10000,
-                    "description": "Penalty for an audio-description release (e.g. 'with Audio Description'), whose audio is narrated for blind viewers. The default 10000 ranks one below every other release, so it is only picked when nothing else is available; with a Minimum Scrape Score set, it falls below that and is dropped instead. Use a negative number to prefer them instead, or 0 to treat them like any other release."
+                    "description": "Penalty for an audio-description release (e.g. 'with Audio Description'), whose audio is narrated for blind viewers. The default 10000 ranks one below every other release, so it is only picked when nothing else is available; with a Minimum Scrape Score set (Settings → Scraping), it falls below that and is dropped instead. Use a negative number to prefer them instead, or 0 to treat them like any other release."
                 },
                 "wake_count": {
                     "type": "integer",
@@ -871,33 +869,15 @@ SETTINGS_SCHEMA = {
             "description": "Allow the use of symlinks on Windows. WARNING: Creating symlinks on Windows requires administrator privileges or Developer Mode to be enabled.",
             "default": False
         },
-        "sort_by_uncached_status": {
-            "type": "boolean",
-            "description": "Sort results by uncached status over cached status",
-            "default": False
-        },
         "enable_plex_removal_caching": {
             "type": "boolean",
             "description": "Enable caching of Plex removal operations before executing them",
             "default": True
         },
-        "content_source_check_period": {
-            "type": "dict",
-            "description": "Override Content Source checking period (in minutes) - note that a minimum of 5 minutes is recommended",
-            "default": {},
-            "schema": {
-                "*": {"type": "integer", "min": 1}
-            }
-        },
         "checking_queue_period": {
             "type": "integer",
             "description": "Checking queue max period (in seconds) before moving items back to Wanted queue",
             "default": 3600
-        },
-        "rescrape_missing_files": {
-            "type": "boolean",
-            "description": "[DEPRECATED - Handled through library maintenance task] Rescrape items that are missing their associated file (i.e. if Plex Library cleanup is enabled)",
-            "default": False
         },
         "enable_reverse_order_scraping": {
             "type": "boolean",
@@ -907,26 +887,6 @@ SETTINGS_SCHEMA = {
         "disable_not_wanted_check": {
             "type": "boolean",
             "description": "Disable the not wanted check for items in the queue",
-            "default": False
-        },
-        "plex_watchlist_removal": {
-            "type": "boolean",
-            "description": "Remove items from the Plex Watchlist once they have been collected. Movies are removed when every wanted version is collected; shows only once the series has ended (a running show stays on the watchlist so new episodes keep being added). Removes from My Plex Watchlist and Other Plex Watchlist; for the Plex RSS sources, which are read-only, collected items are skipped instead of removed.",
-            "default": False
-        },
-        "plex_watchlist_keep_series": {
-            "type": "boolean",
-            "description": "Never remove or skip series, even ended ones, when they have been collected; only movies are removed. Applies to the Plex Watchlist and Plex RSS sources.",
-            "default": False
-        },
-        "trakt_watchlist_removal": {
-            "type": "boolean",
-            "description": "Remove items from Trakt Watchlist when they have been collected",
-            "default": False
-        },
-        "trakt_watchlist_keep_series": {
-            "type": "boolean",
-            "description": "Keep series in Trakt Watchlist when they have been collected, only delete movies",
             "default": False
         },
         "symlink_movie_template": {
@@ -945,11 +905,6 @@ SETTINGS_SCHEMA = {
                 "Example: {title} ({year})/Season {season_number:02d}/{title} ({year}) - S{season_number:02d}E{episode_number:02d} - {episode_title} - {imdb_id} - {version} - ({original_filename})",
             ],
             "default": "{title} ({year})/Season {season_number:02d}/{title} ({year}) - S{season_number:02d}E{episode_number:02d} - {episode_title} - {imdb_id} - {version} - ({original_filename})"
-        },
-        "allow_partial_overseerr_requests": {
-            "type": "boolean",
-            "description": "Allow partial show requests from Overseerr",
-            "default": False
         },
         "timezone_override": {
             "type": "string",
@@ -1014,16 +969,6 @@ SETTINGS_SCHEMA = {
         "do_not_add_plex_watch_history_items_to_queue": {
             "type": "boolean",
             "description": "Do not add Plex watch history items to queue",
-            "default": False
-        },
-        "enable_crash_test": {
-            "type": "boolean",
-            "description": "Enable crash test",
-            "default": False
-        },
-        "enable_library_maintenance_task": {
-            "type": "boolean",
-            "description": "Enable library maintenance task to run periodically. This is a destructive process and should be used with caution",
             "default": False
         },
         "enable_detailed_notification_information": {
@@ -1234,6 +1179,22 @@ SETTINGS_SCHEMA = {
                     "type": "boolean",
                     "default": False,
                     "description": "Optional: whether this Newznab subscription auto-renews."
+                },
+                "api_limit_per_day": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Optional: API hits (searches) this indexer allows per day. Leave blank for no limit. When reached, cli_debrid stops searching this indexer until the limit resets. Set it a little under your real limit if other apps use the same API key."
+                },
+                "grab_limit_per_day": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Optional: NZB downloads (grabs) this indexer allows per day. Leave blank for no limit. When reached, its results are kept and tried again after the limit resets."
+                },
+                "limit_reset": {
+                    "type": "string",
+                    "default": "midnight_local",
+                    "choices": ["midnight_local", "midnight_utc", "rolling_24h"],
+                    "description": "When the daily limits start over: midnight in this server's time zone, midnight UTC, or a rolling 24 hours (the safest if you don't know what your indexer uses). Only used when a limit is set."
                 }
             }
         }
@@ -1248,7 +1209,7 @@ SETTINGS_SCHEMA = {
                 "enabled": {"type": "boolean", "default": False},
                 "source_mode": {
                     "type": "string",
-                    "description": "How this source fetches its items. 'json_url' appends /json to a public MDBList (or compatible) list URL and needs no API key. The 'api_*' modes call the MDBList API directly and require an MDBList API key (Additional Settings -> MDBList).",
+                    "description": "How this source fetches its items. 'json_url' appends /json to a public MDBList (or compatible) list URL and needs no API key. The 'api_*' modes call the MDBList API directly and require an MDBList API key (Settings -> Tracking accounts -> MDBList).",
                     "default": "json_url",
                     "choices": ["json_url", "api_watchlist", "api_user_list", "api_list_id"]
                 },
@@ -1495,6 +1456,8 @@ SETTINGS_SCHEMA = {
                 "versions": {"type": "dict", "default": {"Default": True}},
                 "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
                 "display_name": {"type": "string", "default": "Trakt Watchlist"},
+                "remove_when_collected": {"type": "boolean", "default": False, "description": "Remove items from this Trakt watchlist once they have been collected."},
+                "keep_series": {"type": "boolean", "default": False, "description": "Keep series on this Trakt watchlist when collected; only movies are removed."},
                 "allow_specials": {
                     "type": "boolean",
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
@@ -1807,7 +1770,7 @@ SETTINGS_SCHEMA = {
                 "enabled": {"type": "boolean", "default": False},
                 "scrob_list_ids": {
                     "type": "string",
-                    "description": "Comma-separated Scrob list IDs (numeric, from Settings → Connections → API Key page or the list's URL in the Scrob UI), e.g. '2,7'. Requires Scrob URL/API Key to be configured under Additional Settings → Scrob.",
+                    "description": "Comma-separated Scrob list IDs (numeric, from Settings → Connections → API Key page or the list's URL in the Scrob UI), e.g. '2,7'. Requires Scrob URL/API Key to be configured under Settings → Tracking accounts → Scrob.",
                     "default": ""
                 },
                 "versions": {"type": "dict", "default": {"Default": True}},
@@ -1958,6 +1921,338 @@ SETTINGS_SCHEMA = {
                     }
                 }
             },
+            "Floppy Watchlist": {
+                "enabled": {"type": "boolean", "default": False},
+                "floppy_statuses": {
+                    "type": "list",
+                    "description": "Which Floppy statuses to add. Planning is Floppy's watchlist. Requires the Floppy URL/API key under Settings → Tracking accounts.",
+                    "default": ["Planning"],
+                    "choices": ["Planning", "In progress", "Paused", "Completed", "Dropped"]
+                },
+                "versions": {"type": "dict", "default": {"Default": True}},
+                "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
+                "display_name": {"type": "string", "default": "Floppy Watchlist"},
+                "allow_specials": {
+                    "type": "boolean",
+                    "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
+                    "default": False
+                },
+                "unblacklist_on_source_run": {
+                    "type": "boolean",
+                    "description": "When enabled, items in Blacklisted state (not ghostlisted) will be unblacklisted and re-queued as Wanted when this source runs.",
+                    "default": False
+                },
+                "custom_symlink_subfolder": {
+                    "type": "string",
+                    "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
+                    "default": ""
+                },
+                "tags": {
+                    "type": "list",
+                    "description": "Plex mode only: Tags to embed in NZB filenames for items from this source. Requires NZB file naming to be enabled. Format: {tags-Tag1,Tag2} inserted between {imdb-...} and version.",
+                    "default": []
+                },
+                "tags_exclusive": {
+                    "type": "boolean",
+                    "description": "NzbDAV only: when enabled, items from this source are routed ONLY to the tag category (and not to resolution/type categories). Requires tags to be set.",
+                    "default": False
+                },
+                "cutoff_date": {
+                    "type": "string",
+                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
+                    "default": ""
+                },
+                "exclude_genres": {
+                    "type": "list",
+                    "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
+                    "default": []
+                },
+                "list_length_limit": {
+                    "type": "integer",
+                    "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
+                    "default": 0
+                },
+                "seasons_per_show": {
+                    "type": "integer",
+                    "description": "Limit the number of seasons grabbed per TV show from this source. Set to 0 for all seasons.",
+                    "default": 0
+                },
+                "season_grab_order": {
+                    "type": "string",
+                    "description": "Which seasons to grab when seasons_per_show is limited: first seasons, latest seasons, or most recently aired.",
+                    "default": "first",
+                    "choices": ["first", "latest", "recent"]
+                },
+                "plex_labels": {
+                    "type": "dict",
+                    "description": "Configure Plex labels to be automatically applied to items from this source",
+                    "default": {},
+                    "schema": {
+                        "enabled": {
+                            "type": "boolean",
+                            "description": "Enable automatic Plex label application for this source",
+                            "default": False
+                        },
+                        "label_mode": {
+                            "type": "string",
+                            "description": "Label mode: 'list_name' uses the source name automatically, 'fixed' uses a static label you specify",
+                            "default": "list_name",
+                            "choices": ["list_name", "fixed"]
+                        },
+                        "fixed_label": {
+                            "type": "string",
+                            "description": "Fixed label(s) to apply (only used when label_mode is 'fixed'). Supports comma-separated values for multiple labels (e.g., 'ufc,ppv')",
+                            "default": ""
+                        }
+                    }
+                }
+            },
+            "Floppy Lists": {
+                "enabled": {"type": "boolean", "default": False},
+                "floppy_list_ids": {
+                    "type": "string",
+                    "description": "Comma-separated Floppy list IDs (the number in the list's URL, e.g. /lists/3), e.g. '3,7'. Requires the Floppy URL/API key under Settings → Tracking accounts.",
+                    "default": ""
+                },
+                "versions": {"type": "dict", "default": {"Default": True}},
+                "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
+                "display_name": {"type": "string", "default": "Floppy Lists"},
+                "allow_specials": {
+                    "type": "boolean",
+                    "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
+                    "default": False
+                },
+                "unblacklist_on_source_run": {
+                    "type": "boolean",
+                    "description": "When enabled, items in Blacklisted state (not ghostlisted) will be unblacklisted and re-queued as Wanted when this source runs.",
+                    "default": False
+                },
+                "custom_symlink_subfolder": {
+                    "type": "string",
+                    "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
+                    "default": ""
+                },
+                "tags": {
+                    "type": "list",
+                    "description": "Plex mode only: Tags to embed in NZB filenames for items from this source. Requires NZB file naming to be enabled. Format: {tags-Tag1,Tag2} inserted between {imdb-...} and version.",
+                    "default": []
+                },
+                "tags_exclusive": {
+                    "type": "boolean",
+                    "description": "NzbDAV only: when enabled, items from this source are routed ONLY to the tag category (and not to resolution/type categories). Requires tags to be set.",
+                    "default": False
+                },
+                "cutoff_date": {
+                    "type": "string",
+                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
+                    "default": ""
+                },
+                "exclude_genres": {
+                    "type": "list",
+                    "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
+                    "default": []
+                },
+                "list_length_limit": {
+                    "type": "integer",
+                    "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
+                    "default": 0
+                },
+                "seasons_per_show": {
+                    "type": "integer",
+                    "description": "Limit the number of seasons grabbed per TV show from this source. Set to 0 for all seasons.",
+                    "default": 0
+                },
+                "season_grab_order": {
+                    "type": "string",
+                    "description": "Which seasons to grab when seasons_per_show is limited: first seasons, latest seasons, or most recently aired.",
+                    "default": "first",
+                    "choices": ["first", "latest", "recent"]
+                },
+                "plex_labels": {
+                    "type": "dict",
+                    "description": "Configure Plex labels to be automatically applied to items from this source",
+                    "default": {},
+                    "schema": {
+                        "enabled": {
+                            "type": "boolean",
+                            "description": "Enable automatic Plex label application for this source",
+                            "default": False
+                        },
+                        "label_mode": {
+                            "type": "string",
+                            "description": "Label mode: 'list_name' uses the source name automatically, 'fixed' uses a static label you specify",
+                            "default": "list_name",
+                            "choices": ["list_name", "fixed"]
+                        },
+                        "fixed_label": {
+                            "type": "string",
+                            "description": "Fixed label(s) to apply (only used when label_mode is 'fixed'). Supports comma-separated values for multiple labels (e.g., 'ufc,ppv')",
+                            "default": ""
+                        }
+                    }
+                },
+                "plex_collection": {
+                    "type": "dict",
+                    "description": "Configure a Plex collection that mirrors this source list order",
+                    "default": {},
+                    "schema": {
+                        "enabled": {
+                            "type": "boolean",
+                            "description": "Enable automatic Plex collection management for this source",
+                            "default": False
+                        },
+                        "collection_name": {
+                            "type": "string",
+                            "description": "Collection name. Defaults to the source display name. For mixed (Movies+Shows) lists, ' Movies' and ' Shows' suffixes are added automatically unless overridden below.",
+                            "default": ""
+                        },
+                        "collection_name_movies": {
+                            "type": "string",
+                            "description": "Override collection name for movies in a mixed list. Leave empty to use auto-suffix.",
+                            "default": ""
+                        },
+                        "collection_name_shows": {
+                            "type": "string",
+                            "description": "Override collection name for shows in a mixed list. Leave empty to use auto-suffix.",
+                            "default": ""
+                        },
+                        "sort_prefix": {
+                            "type": "string",
+                            "description": "Prefix added to the sort title so the collection sorts to the top in Plex (e.g. '!' gives '!My List'). Leave empty to use the collection name as-is.",
+                            "default": "!!!!"
+                        },
+                        "sort_by": {
+                            "type": "string",
+                            "description": "Sort order for items in the Plex collection. Scrob has no server-side sort/rank API, so ordering follows Scrob's own list display order (added_at ascending).",
+                            "default": "default",
+                            "choices": ["default", "added", "title", "released", "runtime",
+                                        "popularity", "random", "imdb_rating", "tmdb_rating"]
+                        },
+                        "sort_how": {
+                            "type": "string",
+                            "description": "Sort direction: asc = ascending, desc = descending.",
+                            "default": "asc",
+                            "choices": ["asc", "desc"]
+                        },
+                        "poster_design": {
+                            "type": "integer",
+                            "description": "Collection poster design (0 = Plex default, 1-8 = custom designs).",
+                            "default": 0
+                        },
+                        "poster_accent": {
+                            "type": "string",
+                            "description": "Accent color for the poster (hex, e.g. #E6A800).",
+                            "default": "#E6A800"
+                        },
+                        "poster_eyebrow": {
+                            "type": "string",
+                            "description": "Optional eyebrow text shown above the collection title on the poster. Leave blank to hide.",
+                            "default": ""
+                        },
+                        "poster_icon": {
+                            "type": "string",
+                            "description": "Icon path for the poster (relative to overlay assets logos folder). Leave blank to use source default.",
+                            "default": ""
+                        },
+                        "libraries": {
+                            "type": "list",
+                            "description": "Plex library section keys to sync this collection into. Leave empty to use the first library of each type.",
+                            "default": []
+                        }
+                    }
+                }
+            },
+            "Simkl Watchlist": {
+                "enabled": {"type": "boolean", "default": False},
+                "simkl_statuses": {
+                    "type": "list",
+                    "description": "Which Simkl lists to add. Plan to Watch is Simkl's watchlist; Watching and On Hold only apply to shows and anime. Requires Simkl sign-in under Settings → Tracking accounts.",
+                    "default": ["Plan to Watch"],
+                    "choices": ["Plan to Watch", "Watching", "On Hold", "Completed", "Dropped"]
+                },
+                "include_anime": {
+                    "type": "boolean",
+                    "description": "Also add anime from your Simkl anime list (Simkl keeps anime separate from shows).",
+                    "default": True
+                },
+                "versions": {"type": "dict", "default": {"Default": True}},
+                "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
+                "display_name": {"type": "string", "default": "Simkl Watchlist"},
+                "allow_specials": {
+                    "type": "boolean",
+                    "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
+                    "default": False
+                },
+                "unblacklist_on_source_run": {
+                    "type": "boolean",
+                    "description": "When enabled, items in Blacklisted state (not ghostlisted) will be unblacklisted and re-queued as Wanted when this source runs.",
+                    "default": False
+                },
+                "custom_symlink_subfolder": {
+                    "type": "string",
+                    "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
+                    "default": ""
+                },
+                "tags": {
+                    "type": "list",
+                    "description": "Plex mode only: Tags to embed in NZB filenames for items from this source. Requires NZB file naming to be enabled. Format: {tags-Tag1,Tag2} inserted between {imdb-...} and version.",
+                    "default": []
+                },
+                "tags_exclusive": {
+                    "type": "boolean",
+                    "description": "NzbDAV only: when enabled, items from this source are routed ONLY to the tag category (and not to resolution/type categories). Requires tags to be set.",
+                    "default": False
+                },
+                "cutoff_date": {
+                    "type": "string",
+                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
+                    "default": ""
+                },
+                "exclude_genres": {
+                    "type": "list",
+                    "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
+                    "default": []
+                },
+                "list_length_limit": {
+                    "type": "integer",
+                    "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
+                    "default": 0
+                },
+                "seasons_per_show": {
+                    "type": "integer",
+                    "description": "Limit the number of seasons grabbed per TV show from this source. Set to 0 for all seasons.",
+                    "default": 0
+                },
+                "season_grab_order": {
+                    "type": "string",
+                    "description": "Which seasons to grab when seasons_per_show is limited: first seasons, latest seasons, or most recently aired.",
+                    "default": "first",
+                    "choices": ["first", "latest", "recent"]
+                },
+                "plex_labels": {
+                    "type": "dict",
+                    "description": "Configure Plex labels to be automatically applied to items from this source",
+                    "default": {},
+                    "schema": {
+                        "enabled": {
+                            "type": "boolean",
+                            "description": "Enable automatic Plex label application for this source",
+                            "default": False
+                        },
+                        "label_mode": {
+                            "type": "string",
+                            "description": "Label mode: 'list_name' uses the source name automatically, 'fixed' uses a static label you specify",
+                            "default": "list_name",
+                            "choices": ["list_name", "fixed"]
+                        },
+                        "fixed_label": {
+                            "type": "string",
+                            "description": "Fixed label(s) to apply (only used when label_mode is 'fixed'). Supports comma-separated values for multiple labels (e.g., 'ufc,ppv')",
+                            "default": ""
+                        }
+                    }
+                }
+            },
             "Scrob Collection": {
                 "enabled": {"type": "boolean", "default": False},
                 "versions": {"type": "dict", "default": {"Default": True}},
@@ -2045,6 +2340,7 @@ SETTINGS_SCHEMA = {
                 "versions": {"type": "dict", "default": {"Default": True}},
                 "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
                 "display_name": {"type": "string", "default": "Overseerr"},
+                "allow_partial_requests": {"type": "boolean", "default": False, "description": "Only add the seasons that were requested in Seerr instead of the whole show."},
                 "allow_specials": {
                     "type": "boolean",
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
@@ -2215,6 +2511,8 @@ SETTINGS_SCHEMA = {
                 "versions": {"type": "dict", "default": {"Default": True}},
                 "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
                 "display_name": {"type": "string", "default": "My Plex Watchlist"},
+                "remove_when_collected": {"type": "boolean", "default": False, "description": "Remove items from this watchlist once they have been collected. Movies are removed when every wanted version is collected; shows only once the series has ended (a running show stays so new episodes keep being added)."},
+                "keep_series": {"type": "boolean", "default": False, "description": "Never remove series from this watchlist, even ended ones; only movies are removed."},
                 "allow_specials": {
                     "type": "boolean",
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
@@ -2297,6 +2595,8 @@ SETTINGS_SCHEMA = {
                 "versions": {"type": "dict", "default": {"Default": True}},
                 "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
                 "display_name": {"type": "string", "default": "Other Plex Watchlist"},
+                "remove_when_collected": {"type": "boolean", "default": False, "description": "Remove items from this watchlist once they have been collected. Movies are removed when every wanted version is collected; shows only once the series has ended (a running show stays so new episodes keep being added)."},
+                "keep_series": {"type": "boolean", "default": False, "description": "Never remove series from this watchlist, even ended ones; only movies are removed."},
                 "allow_specials": {
                     "type": "boolean",
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
@@ -2378,6 +2678,8 @@ SETTINGS_SCHEMA = {
                 "versions": {"type": "dict", "default": {"Default": True}},
                 "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
                 "display_name": {"type": "string", "default": "My Plex RSS Watchlist"},
+                "remove_when_collected": {"type": "boolean", "default": False, "description": "RSS feeds are read-only, so collected items are skipped on later runs instead of removed. Movies are skipped when every wanted version is collected; shows only once the series has ended."},
+                "keep_series": {"type": "boolean", "default": False, "description": "Never skip series, even ended ones; only movies are skipped."},
                 "allow_specials": {
                     "type": "boolean",
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
@@ -2459,6 +2761,8 @@ SETTINGS_SCHEMA = {
                 "versions": {"type": "dict", "default": {"Default": True}},
                 "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
                 "display_name": {"type": "string", "default": "My Friends Plex RSS Watchlist"},
+                "remove_when_collected": {"type": "boolean", "default": False, "description": "RSS feeds are read-only, so collected items are skipped on later runs instead of removed. Movies are skipped when every wanted version is collected; shows only once the series has ended."},
+                "keep_series": {"type": "boolean", "default": False, "description": "Never skip series, even ended ones; only movies are skipped."},
                 "allow_specials": {
                     "type": "boolean",
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
@@ -3248,11 +3552,6 @@ SETTINGS_SCHEMA = {
             "description": "Comma-separated list of language codes (e.g., eng,zho,spa). Uses ISO-639-3 codes.",
             "default": "eng,zho"
         },
-        "include_ai_translated_subtitles": {
-            "type": "boolean",
-            "description": "Include AI translated subtitles in search results. These may have lower quality but provide broader language coverage.",
-            "default": True
-        },
         "subtitle_providers": {
             "type": "list",
             "description": "Select subtitle providers to use",
@@ -3397,11 +3696,6 @@ SETTINGS_SCHEMA = {
             "description": "Version number to report to Bazarr. Change only if Bazarr requires a specific version.",
             "default": "5.14.0.9383"
         },
-        "delete_subtitles_on_removal": {
-            "type": "boolean",
-            "description": "When deleting media, also delete any subtitle files (.srt, .ass, .sub, etc.) left in the symlink folder by Bazarr. Disable this to keep subtitle files after deletion.",
-            "default": True
-        }
     },
     "AI Assistant": {
         "tab": "Additional Settings",

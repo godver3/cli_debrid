@@ -1,0 +1,10 @@
+{% from 'settings_tabs/_page.html' import page_open, page_close %}
+{{ page_open('Library & Files', 'How the library page behaves, where files and symlinks go, and what runs after a download.') }}
+{% set section = 'Library Manager' %}{% set section_data = settings_schema['Library Manager'] %}
+{% include 'settings_tabs/cards/library_manager.html' %}
+{% include 'settings_tabs/cards/symlinks.html' %}
+{% include 'settings_tabs/cards/post_processing.html' %}
+{% if environment_mode == 'full' %}
+{% include 'settings_tabs/cards/file_system.html' %}
+{% endif %}
+{{ page_close() }}

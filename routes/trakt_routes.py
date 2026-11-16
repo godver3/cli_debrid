@@ -1,6 +1,6 @@
 from flask import jsonify, Blueprint
 from utilities.settings import get_setting
-from trakt.core import get_device_code, get_device_token
+from utilities.trakt_oauth import request_device_code, poll_device_token
 import json
 import os
 import traceback
@@ -22,11 +22,15 @@ def trakt_auth():
         client_id = get_setting('Trakt', 'client_id')
         client_secret = get_setting('Trakt', 'client_secret')
         
-        if not client_id or not client_secret:
-            return jsonify({'error': 'Trakt client ID or secret not set. Please configure in settings.'}), 400
-              
-        device_code_response = get_device_code(client_id, client_secret)
-        
+        # The secret is optional: Trakt no longer issues one to new (PKCE) apps.
+        if not client_id:
+            return jsonify({'error': 'Trakt client ID not set. Please configure in settings.'}), 400
+
+        response = request_device_code(client_id)
+        if response.status_code != 200:
+            return jsonify({'error': f'Trakt returned HTTP {response.status_code}: {response.text[:200]}'}), 502
+        device_code_response = response.json()
+
         # Store the device code response in the Trakt config file
         update_trakt_config('device_code_response', device_code_response)
         
@@ -54,14 +58,14 @@ def trakt_auth_status():
         client_secret = get_setting('Trakt', 'client_secret')
         device_code = device_code_response['device_code']
         
-        response = get_device_token(device_code, client_id, client_secret)
+        response = poll_device_token(device_code, client_id, client_secret)
         
         if response.status_code == 200:
             token_data = response.json()
             
             # Store the new tokens
             update_trakt_config('CLIENT_ID', client_id)
-            update_trakt_config('CLIENT_SECRET', client_secret)
+            update_trakt_config('CLIENT_SECRET', client_secret or '')
             update_trakt_config('OAUTH_TOKEN', token_data['access_token'])
             update_trakt_config('OAUTH_REFRESH', token_data['refresh_token'])
             

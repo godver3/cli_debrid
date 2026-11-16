@@ -779,6 +779,12 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             version = version.strip('*')
 
         version_settings = scraping_versions.get(version, {})
+        if not version_settings and scraping_versions:
+            # '' (a rescraped '**' row) or a deleted version: use a configured version's
+            # filters instead of scraping unfiltered (#576).
+            from utilities.reverse_parser import resolve_scraping_version
+            version = resolve_scraping_version(version)
+            version_settings = scraping_versions.get(version, {})
         if not version_settings: # Use default settings if version not found
             logging.info(f"Version '{version}' not found, using default settings.")
             # Define default version settings here if needed, or rely on _do_scrape defaults

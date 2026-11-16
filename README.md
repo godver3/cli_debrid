@@ -2,9 +2,12 @@
 
 cli_debrid is a successor to, and pays homage to, plex_debrid. It watches your lists, finds the best release for everything on them, gets it through your debrid service or Usenet, and keeps your Plex or Jellyfin library organised and upgraded, with no files downloaded to your server.
 
-It works with **Real-Debrid, AllDebrid, TorBox, Premiumize and Debrid-Link**, and with **Usenet (NZB)** through cli_mount, NzbDAV or Zurg, for **Plex, Jellyfin and Emby**.
+It works with **Real-Debrid, AllDebrid, TorBox, Premiumize, Debrid-Link and HighWay**, and with **Usenet (NZB)** through cli_mount, NzbDAV or Zurg, for **Plex, Jellyfin and Emby**.
 
 **📖 [Getting Started](https://godver3.github.io/cli_docs/getting-started/)** · [Documentation](https://godver3.github.io/cli_docs/) · [Discord](https://discord.gg/ynqnXGJ4hU)
+
+> [!IMPORTANT]
+> **The `dev` branch is recommended.** Run the `godver3/cli_debrid:dev` image (the compose files below already do). It gets new features and fixes first; `main` is updated less often. See [dev vs main](#dev-vs-main).
 
 ## How can you support the project?
 
@@ -68,7 +71,7 @@ Content sources ──> Scrapers ──> Debrid / Usenet ──> Mount ──> L
 ## Key Features
 
 ### Getting content
-- **Debrid providers:** Real-Debrid, AllDebrid, Premiumize, TorBox and Debrid-Link.
+- **Debrid providers:** Real-Debrid, AllDebrid, Premiumize, TorBox, Debrid-Link and HighWay.
 - **Usenet:** NZBs from your Newznab indexers, streamed through [cli_mount](https://github.com/mash2k3/decypharr/tree/dev), NzbDAV or Zurg, with no download step. Usenet can be used alone or next to a debrid service.
 - **Scrapers:** Torrentio, Jackett, Prowlarr, Zilean, Nyaa, MediaFusion, AIOStreams and Newznab, with SeaDex for best-release anime picks.
 - **Content sources:** MDBList, Trakt (watchlists, lists, collection, friends), Plex (your watchlist, other users' and friends' watchlists, RSS), Seerr/Overseerr, Agregarr, Scrob, Adaptive Lists and your existing collection.
@@ -124,18 +127,30 @@ New to cli_debrid? Start with the **[Getting Started guide](https://godver3.gith
 
 ### Quick Start (Docker)
 
+The easiest setup is cli_debrid and **[cli_mount](https://github.com/mash2k3/decypharr/tree/dev)** together in one compose file. cli_mount mounts your debrid and Usenet files, and cli_debrid finds it on its own during onboarding.
+
 ```bash
+# Linux with Docker Engine. Create the shared folders once:
+sudo mkdir -p /mnt/cli_mount /mnt/symlinks
+sudo chown 1000:1000 /mnt/cli_mount
+
 mkdir -p ${HOME}/cli_debrid && cd ${HOME}/cli_debrid
-curl -O https://raw.githubusercontent.com/godver3/cli_debrid/main/docker-compose.yml
+curl -o docker-compose.yml https://raw.githubusercontent.com/godver3/cli_debrid/dev/docker-compose.cli_mount.yml
 docker compose up -d
 ```
 
-Then open `http://your-server-ip:5000` and follow the onboarding wizard.
+Then:
 
-cli_debrid is built for both AMD64 and ARM64:
+1. Open cli_mount at `http://your-server-ip:8282` and add your debrid account and/or Usenet server. When the setup wizard asks, set the **Download Folder** to `/app/downloads`, the **Mount Path** to `/mnt/cli_mount` and the **Cache Directory** to `/app/cache`.
+2. Open cli_debrid at `http://your-server-ip:5000` and follow the onboarding wizard. Choose **cli_mount** as the mount tool, with the mount path `/mnt/cli_mount/__all__`. If you use Usenet, click **Detect** next to the mount URL; it finds `http://cli_mount:8282`. After onboarding, **Settings → Required → Usenet Mount → Detect** also fills in cli_mount's data path (`/climount_data`), which turns on backups of cli_mount's databases.
+3. Give your media server the same folders at the same paths: `/mnt/cli_mount` (with `:rslave` if it runs in Docker) and, for Symlink mode, `/mnt/symlinks`.
 
-- **Stable**: `godver3/cli_debrid:main` / `godver3/cli_debrid:main-arm64`
-- **Dev**: `godver3/cli_debrid:dev` / `godver3/cli_debrid:dev-arm64`
+The [Docker guide](https://godver3.github.io/cli_docs/installation/docker/) explains each line and covers Plex in the same stack. Already have a mount, or using Zurg or Decypharr? Use the plain [docker-compose.yml](https://raw.githubusercontent.com/godver3/cli_debrid/dev/docker-compose.yml) instead.
+
+Each image tag works on both AMD64 and ARM64:
+
+- **Dev (recommended)**: `godver3/cli_debrid:dev` (also `:latest`)
+- **Main**: `godver3/cli_debrid:main`
 
 You'll also need a mount for your debrid and/or Usenet files. cli_debrid works best with **[cli_mount](https://github.com/mash2k3/decypharr/tree/dev)**, mash2k3's fork of Decypharr built alongside cli_debrid. It handles debrid and Usenet in one container and talks to cli_debrid directly for repairs and imports.
 
@@ -152,17 +167,15 @@ You'll also need a mount for your debrid and/or Usenet files. cli_debrid works b
 - **Installing:** [Docker](https://godver3.github.io/cli_docs/installation/docker/), [Unraid](https://godver3.github.io/cli_docs/installation/unraid/), [Portainer/Dockge](https://godver3.github.io/cli_docs/installation/portainer-dockge/), [Proxmox](https://godver3.github.io/cli_docs/installation/proxmox/), [TrueNAS](https://godver3.github.io/cli_docs/installation/truenas/), [Ubuntu](https://godver3.github.io/cli_docs/installation/ubuntu/), [Windows](https://godver3.github.io/cli_docs/installation/windows/), [Updating](https://godver3.github.io/cli_docs/installation/updating/)
 - **Configuring:** [Required](https://godver3.github.io/cli_docs/configuration/required/), [Content Sources](https://godver3.github.io/cli_docs/configuration/content-sources/), [Scrapers](https://godver3.github.io/cli_docs/configuration/scrapers/), [Versions](https://godver3.github.io/cli_docs/configuration/versions/), [Users](https://godver3.github.io/cli_docs/configuration/manage-users/), [Notifications](https://godver3.github.io/cli_docs/configuration/notifications/)
 - **Scrapers:** [Torrentio](https://godver3.github.io/cli_docs/scrapers/torrentio/), [Jackett](https://godver3.github.io/cli_docs/scrapers/jackett/), [Prowlarr](https://godver3.github.io/cli_docs/scrapers/prowlarr/), [Zilean](https://godver3.github.io/cli_docs/scrapers/zilean/), [Nyaa](https://godver3.github.io/cli_docs/scrapers/nyaa/), [MediaFusion](https://godver3.github.io/cli_docs/scrapers/mediafusion/), [AIOStreams](https://godver3.github.io/cli_docs/scrapers/aiostreams/), [Newznab](https://godver3.github.io/cli_docs/scrapers/newznab/)
-- **Integrations:** [cli_mount](https://godver3.github.io/cli_docs/integrations/cli_mount/), [Decypharr](https://godver3.github.io/cli_docs/integrations/decypharr/), [Zurg](https://godver3.github.io/cli_docs/integrations/zurg/), [Plex](https://godver3.github.io/cli_docs/integrations/plex/), [Jellyfin](https://godver3.github.io/cli_docs/integrations/jellyfin/), [Seerr](https://godver3.github.io/cli_docs/integrations/seerr/), [OpenClaw](https://godver3.github.io/cli_docs/integrations/openclaw/)
-- **Features:** [Library](https://godver3.github.io/cli_docs/features/library/), [Queues](https://godver3.github.io/cli_docs/features/queues/), [Upgrade Hub](https://godver3.github.io/cli_docs/features/upgrade-hub/), [Discover](https://godver3.github.io/cli_docs/features/discover/), [Overlays](https://godver3.github.io/cli_docs/features/overlays/), [Plex Collections](https://godver3.github.io/cli_docs/features/plex-collections/), [Debrid Manager](https://godver3.github.io/cli_docs/features/debrid-manager/), [Scraper Tester](https://godver3.github.io/cli_docs/features/scraper-tester/), [Task Manager](https://godver3.github.io/cli_docs/features/task-manager/), [AI Butler](https://godver3.github.io/cli_docs/features/ai-butler/)
-- **Troubleshooting:** [FAQ](https://godver3.github.io/cli_docs/faq/), [Debug Functions](https://godver3.github.io/cli_docs/features/debug-functions/)
+- **Integrations:** [cli_mount](https://godver3.github.io/cli_docs/integrations/cli_mount/), [Decypharr](https://godver3.github.io/cli_docs/integrations/decypharr/), [Zurg](https://godver3.github.io/cli_docs/integrations/zurg/), [Plex](https://godver3.github.io/cli_docs/integrations/plex/), [Jellyfin](https://godver3.github.io/cli_docs/integrations/jellyfin/), [Seerr](https://godver3.github.io/cli_docs/integrations/seerr/)
+- **Features:** [Library](https://godver3.github.io/cli_docs/features/library/), [Queues](https://godver3.github.io/cli_docs/features/queues/), [Upgrade Hub](https://godver3.github.io/cli_docs/features/upgrade-hub/), [Discover](https://godver3.github.io/cli_docs/features/discover/), [Overlays](https://godver3.github.io/cli_docs/features/overlays/), [Plex Collections](https://godver3.github.io/cli_docs/features/plex-collections/), [Debrid Manager](https://godver3.github.io/cli_docs/features/debrid-manager/), [Scraper Tester](https://godver3.github.io/cli_docs/features/scraper-tester/), [Automation](https://godver3.github.io/cli_docs/features/automation/), [Tools](https://godver3.github.io/cli_docs/features/tools/), [Maintenance](https://godver3.github.io/cli_docs/features/maintenance/)
+- **Troubleshooting:** [FAQ](https://godver3.github.io/cli_docs/faq/)
 
 ### dev vs main
 
-**main** is the stable release
+**dev is recommended.** It gets new features and fixes first, and every new version is built and published from it.
 
-**dev** gets new features and fixes first. It is a good choice if you want the latest changes and don't mind reporting the occasional issue.
-
-Development works in cycles, with dev merged into main at the end of each one.
+**main** is a snapshot of dev that's updated less often, at the end of each development cycle. Use it only if you'd rather update rarely.
 
 ## Philosophy
 

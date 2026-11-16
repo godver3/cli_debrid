@@ -1,0 +1,24 @@
+{# Settings card; rendered from a settings page in templates/settings_tabs/page_*.html #}
+<!-- Phalanx DB Settings Section -->
+<div class="settings-section settings-card">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Phalanx DB Settings</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        <div class="settings-form-group">
+            <label for="phalanx-enable_phalanx_db" class="settings-title">Enable Phalanx DB:</label>
+            <input type="checkbox" id="phalanx-enable_phalanx_db" name="UI Settings.enable_phalanx_db"
+                   data-section="UI Settings" data-key="enable_phalanx_db"
+                   {% if settings.get('UI Settings', {}).get('enable_phalanx_db') %}checked{% endif %}>
+            <p class="settings-description">Enable the Phalanx database feature. This is a shared database that tracks cache status by hash.</p>
+            <p class="settings-info-text" style="margin-top: 10px;">
+                <i class="fas fa-info-circle"></i> Enabling or disabling the Phalanx DB requires a program restart for the changes to take full effect and for the Phalanx DB service to start/stop accordingly.
+            </p>
+        </div>
+    </div>
+</div>

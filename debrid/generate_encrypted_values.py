@@ -14,6 +14,11 @@ def generate_encrypted_values():
             'bulk_cache': False,    # no batch endpoint
             'supports_uncached': True
         },
+        'HighwayProvider': {
+            'direct_cache': True,   # ?check= never adds anything
+            'bulk_cache': True,     # up to 100 hashes per request
+            'supports_uncached': True
+        },
     }
     
     for provider_name, capabilities in providers.items():

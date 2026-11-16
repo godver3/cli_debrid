@@ -4,7 +4,7 @@ from plexapi.server import PlexServer
 from plexapi.exceptions import Unauthorized, NotFound
 import requests
 from urllib.parse import urlparse
-from trakt.core import get_device_code
+from utilities.trakt_oauth import request_device_code
 from utilities.jellyfin_auth import jellyfin_auth_headers
 from routes.models import admin_required
 
@@ -172,6 +172,31 @@ def validate_debrid_api_key(api_key, provider="RealDebrid"):
         except requests.exceptions.RequestException as e:
             return False, f"Error validating Torbox API key: {str(e)}"
 
+    elif provider == "HighWay":
+        try:
+            response = requests.get(
+                "https://cloud.high-way.me/center-api/transfers.php",
+                params={'stats': '1'},
+                headers={'Authorization': f'Bearer {api_key}'},
+                timeout=10
+            )
+            if response.status_code == 200:
+                try:
+                    if response.json().get('user_id'):
+                        return True, "HighWay API token is valid"
+                    return False, "Invalid HighWay API response"
+                except ValueError:
+                    return False, "Invalid HighWay API response format"
+            elif response.status_code == 401:
+                return False, "Invalid HighWay API token"
+            elif response.status_code == 403:
+                return False, "Access denied - the HighWay token needs the torrent scopes"
+            else:
+                return False, f"HighWay API error (HTTP {response.status_code})"
+        except requests.exceptions.Timeout:
+            return False, "Timeout while validating HighWay API token"
+        except requests.exceptions.RequestException as e:
+            return False, f"Error validating HighWay API token: {str(e)}"
     elif provider == "DebridLink":
         try:
             response = requests.get(
@@ -201,21 +226,30 @@ def validate_debrid_api_key(api_key, provider="RealDebrid"):
     return False, f"Unsupported debrid provider: {provider}"
 
 def validate_trakt_credentials(client_id, client_secret):
-    """Validate Trakt credentials format and basic authentication."""
-    if not client_id or not client_secret:
-        return False, "Both Client ID and Client Secret are required"
+    """Validate Trakt credentials format and basic authentication.
+
+    The secret is optional: Trakt no longer issues one to new (PKCE) apps.
+    """
+    if not client_id:
+        return False, "A Trakt Client ID is required"
     
     # Validate basic sanity (Trakt has changed key lengths over time, so we
     # avoid hardcoding an exact character count and only guard against
     # obviously-wrong input, e.g. empty/placeholder text pasted by mistake).
     if len(client_id.strip()) < 10:
         return False, "Invalid Trakt Client ID format (too short)"
-    if len(client_secret.strip()) < 10:
+    if client_secret and len(client_secret.strip()) < 10:
         return False, "Invalid Trakt Client Secret format (too short)"
     
     try:
-        # Try to get a device code - this validates both client ID and secret
-        device_code_response = get_device_code(client_id, client_secret)
+        # Requesting a device code validates the client ID. Trakt has no
+        # check for the secret short of a full sign-in.
+        response = request_device_code(client_id)
+        if response.status_code == 401:
+            return False, "Invalid Trakt Client ID"
+        if response.status_code != 200:
+            return False, f"Trakt returned HTTP {response.status_code}"
+        device_code_response = response.json()
         
         # Add debug logging
         print(f"Trakt API Response: {device_code_response}")
@@ -475,7 +509,7 @@ def validate_onboarding_settings():
     if trakt_client_id or trakt_client_secret:
         add('Trakt Configuration', *validate_trakt_credentials(trakt_client_id, trakt_client_secret),
             blocking=not tvdb_key)
-    if not tvdb_key and not (trakt_client_id and trakt_client_secret):
+    if not tvdb_key and not trakt_client_id:
         add('Metadata', False, 'Add a TVDB API key (recommended) or Trakt credentials. '
             'cli_debrid needs one of them to look up shows and movies')
     if tmdb_key:
@@ -486,3 +520,26 @@ def validate_onboarding_settings():
 
     all_valid = all(c['valid'] or c['warning'] for c in checks)
     return jsonify({'valid': all_valid, 'checks': checks})
+
+
+@settings_validation_bp.route('/test-debrid-key', methods=['POST'])
+@admin_required
+def test_debrid_key():
+    """Check one debrid provider + API key (the per-row Test button in Settings)."""
+    data = request.get_json(silent=True) or {}
+    provider = (data.get('provider') or '').strip()
+    api_key = (data.get('api_key') or '').strip()
+    if not provider or not api_key:
+        return jsonify({'success': False, 'message': 'Pick a provider and enter its API key.'})
+    ok, message = validate_debrid_api_key(api_key, provider)
+    return jsonify({'success': bool(ok), 'message': message})
+
+
+@settings_validation_bp.route('/usenet-mount-detect', methods=['POST'])
+@admin_required
+def usenet_mount_detect():
+    """Look for the usenet mount's URL and paths (Settings → Usenet Mount → Detect)."""
+    from usenet.mount_detect import detect
+    data = request.get_json(silent=True) or {}
+    found = detect(data.get('provider') or 'climount', data.get('url') or '', data.get('token') or '')
+    return jsonify({'success': True, **found})

@@ -613,7 +613,12 @@ class AddingQueue:
                     results, item_identifier, accept_uncached, item=item
                 )
 
-                if not torrent_info and not magnet and get_setting('Scraping', 'hybrid_mode', True): # Check hybrid setting explicitly
+                # Hybrid's second pass re-runs the same list with uncached allowed. An NZB
+                # result has no cached/uncached distinction, so after an NZB attempt that
+                # pass would only re-submit (and re-download) the same NZB this tick; the
+                # NZB path already tries one result per tick and the next one on the next.
+                if (not torrent_info and not magnet and not _nzb_attempt_made
+                        and get_setting('Scraping', 'hybrid_mode', True)): # Check hybrid setting explicitly
                     logging.info(f"No cached results found, trying uncached results (Hybrid Mode)")
                     accept_uncached = True # Now accept uncached
                     # Call again, getting all three return values
@@ -831,6 +836,13 @@ class AddingQueue:
                      if parsed_info:
                          parsed_torrent_files.append(parsed_info)
                 logging.info(f"Parsed {len(parsed_torrent_files)} valid video files from torrent.")
+
+                # Site promo clips (RARBG.com.mp4) and torrents whose payload isn't a
+                # playable video (3D Blu-ray ISO + promo clip) are not the item (#575).
+                from debrid.common import drop_junk_torrent_videos
+                parsed_torrent_files, _junk_reason = drop_junk_torrent_videos(parsed_torrent_files, raw_files)
+                if _junk_reason:
+                    logging.warning(f"Rejecting torrent for {item_identifier}: {_junk_reason}")
 
                 if not parsed_torrent_files:
                     logging.error(f"No valid video files found in torrent after parsing/filtering for {item_identifier}")

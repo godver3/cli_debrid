@@ -1,0 +1,36 @@
+{# Advanced card: only rendered when environment_mode == "full". #}
+<div class="settings-section settings-card">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Performance & Monitoring</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        <div class="settings-form-group">
+            <label for="debug-staleness_threshold" class="settings-title">Staleness Threshold (Days):</label>
+            <input type="number" id="debug-staleness_threshold" name="Staleness Threshold.staleness_threshold"
+                   value="{{ settings.get('Staleness Threshold', {}).get('staleness_threshold', 7) }}" class="settings-input"
+                   data-section="Staleness Threshold" data-key="staleness_threshold">
+            <p class="settings-description">Staleness threshold for metadata (in days)</p>
+        </div>
+        <div class="settings-subheader"><h5>System Load Regulation</h5></div>
+        <p class="settings-description">Slows the queues down when CPU or RAM use is high. Only used while the Automation task <b>Slow down under high system load</b> is on (on by default in limited environments).</p>
+        {% for key, value in settings_schema['System Load Regulation'].items() %}
+            {% if key != 'tab' %}
+            <div class="settings-form-group">
+                <label for="additional-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                <input type="number" id="additional-{{ key }}" name="System Load Regulation.{{ key }}"
+                       value="{% set val = settings.get('System Load Regulation', {}).get(key, value.default) %}{{ val if val != None else '' }}" class="settings-input"
+                       data-section="System Load Regulation" data-key="{{ key }}"
+                       {% if value.min is defined %}min="{{ value.min }}"{% endif %}
+                       {% if value.max is defined %}max="{{ value.max }}"{% endif %}
+                       step="{{ 'any' if value.type == 'float' else '1' }}">
+                {% if value.description %}<p class="settings-description">{{ value.description }}</p>{% endif %}
+            </div>
+            {% endif %}
+        {% endfor %}
+    </div>
+</div>

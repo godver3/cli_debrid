@@ -56,7 +56,7 @@ GENRE_CHOICES = [
 def get_scrob_config() -> Optional[Dict[str, str]]:
     """Reads the shared Scrob connection settings (base URL + API key).
 
-    Configured once under Additional Settings, alongside Trakt — every Scrob
+    Configured once under Settings → Tracking accounts, alongside Trakt — every Scrob
     content source (Lists/Collection/Special) reuses this same connection
     instead of duplicating URL/key fields per source.
     """
@@ -135,7 +135,7 @@ def _login_and_get_session_token() -> Optional[str]:
             _save_cached_session_token(token)
             logging.info("Scrob login succeeded — session token cached.")
             return token
-        logging.error("Scrob login failed — no session token returned (check username/password in Additional Settings → Scrob).")
+        logging.error("Scrob login failed — no session token returned (check username/password in Settings → Tracking accounts → Scrob).")
         return None
     except api.exceptions.RequestException as e:
         logging.error(f"Error logging in to Scrob: {e}")

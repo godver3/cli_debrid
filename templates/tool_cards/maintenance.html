@@ -1,0 +1,313 @@
+{# Cards moved from the old Debug page; data-cat picks the tab. #}
+<div data-cat="backups" class="debug_item">
+            <h3>Restore Database from Backup</h3>
+            <p class="description">Restore the media_items.db database from a previous backup. ⚠️ This requires an application restart and will interrupt all active operations (~60 seconds downtime).</p>
+            <div style="margin-bottom: 15px;">
+                <button type="button" class="btn" onclick="loadBackupsList()">Load Available Backups</button>
+            </div>
+            <div class="form-group" style="margin: 15px 0;">
+                <label>
+                    <input type="checkbox" id="backupBeforeRestore" checked>
+                    Backup current database before restore (Safety backup will be created as media_items_pre_restore_TIMESTAMP.db)
+                </label>
+            </div>
+            <div id="restoreResults" style="margin-top: 15px;"></div>
+        </div>
+<div data-cat="backups" class="debug_item">
+            <h3>Clean Up Old Database Files</h3>
+            <p class="description">Scan and remove old database files, manual copies, and corrupted backups from both the backups folder and db_content directory. This helps free up disk space.</p>
+            <div style="margin-bottom: 15px;">
+                <button type="button" class="btn" onclick="scanOldDatabases()">Scan for Old Databases</button>
+            </div>
+            <div id="cleanupResults" style="margin-top: 15px;"></div>
+        </div>
+<div data-cat="backups" class="debug_item" id="dcy-backup-section" style="display:none">
+            <h3>Backup cli_mount Databases</h3>
+            <p class="description">Back up cli_mount's <code>entries.db</code> and <code>items.db</code> to <code>{data_path}/db/backups/</code>. Uses the same tiered retention as CLI backups (4 copies per file). Also runs automatically with the daily CLI database backup task.</p>
+            <button type="button" class="btn" id="dcy-backup-now-btn" onclick="dcyBackupNow()">Backup Now</button>
+            <div id="dcy-backup-result" style="margin-top:8px"></div>
+        </div>
+<div data-cat="backups" class="debug_item" id="dcy-restore-section" style="display:none">
+            <h3>Restore cli_mount Database from Backup</h3>
+            <p class="description">Restore <code>entries.db</code> or <code>items.db</code> from a backup. <strong>Stop cli_mount before restoring</strong>, then start it again after. No container restart needed.</p>
+            <div style="margin-bottom:10px">
+                <button type="button" class="btn" onclick="dcyLoadBackupsList()">Load Available Backups</button>
+            </div>
+            <div class="form-group" style="margin:10px 0">
+                <label>
+                    <input type="checkbox" id="dcyBackupBeforeRestore" checked>
+                    Create safety backup before restore
+                </label>
+            </div>
+            <div id="dcyRestoreResults" style="margin-top:10px"></div>
+        </div>
+<div data-cat="backups" class="debug_item" id="dcy-cleanup-db-section" style="display:none">
+            <h3>Clean Up Old cli_mount Backup Files</h3>
+            <p class="description">Scan and remove old cli_mount database backups to free up disk space.</p>
+            <div style="margin-bottom:10px">
+                <button type="button" class="btn" onclick="dcyScanOldDatabases()">Scan for Old Backups</button>
+            </div>
+            <div id="dcyCleanupResults" style="margin-top:10px"></div>
+        </div>
+<div data-cat="cleanup" class="debug_item">
+            <h3>Remove Duplicate Database Items</h3>
+            <p class="description">Find and remove duplicate database items based on the filled_by_file field. This will identify items with the same filename and remove the duplicates, keeping only one entry per unique file.</p>
+            <form id="remove-duplicates-form" action="/debug/api/remove_duplicate_items" method="POST">
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="dry_run_duplicates" name="dry_run" checked>
+                        Dry Run (Preview duplicates without deleting)
+                    </label>
+                </div>
+                {% if nas_paths %}
+                <div class="form-group" style="margin-top: 10px;">
+                    <label for="remove_dup_nas_filter">NAS / Network Filter:</label>
+                    <select id="remove_dup_nas_filter" name="nas_filter" style="width: 100%; padding: 8px; margin-top: 5px; background: #2a2a2a; color: #e0e0e0; border: 1px solid #444; border-radius: 4px;">
+                        <option value="all">All items (no NAS filter)</option>
+                        <option value="exclude_nas">Exclude NAS items</option>
+                        <option value="only_nas">Only NAS items</option>
+                    </select>
+                </div>
+                {% endif %}
+                <button type="submit">Find and Remove Duplicates</button>
+                <div id="remove-duplicates-results" class="results-area" style="margin-top: 15px;"></div>
+            </form>
+        </div>
+<div data-cat="cleanup" class="debug_item">
+            <h3>Manage Duplicate Versions</h3>
+            <p class="description">Clean up duplicate versions based on quality, state, or version field matching. Handles failed upgrades, blacklist bugs, and multiple collected versions.</p>
+            <form id="cleanup-upgrades-form">
+                <div class="form-group">
+                    <label for="upgrades_media_type">Media Type:</label>
+                    <select id="upgrades_media_type" name="media_type">
+                        <option value="movie" selected>Movies</option>
+                        <option value="show">Shows</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="upgrades_dry_run" name="dry_run" checked>
+                        Dry Run (Preview what will be deleted without actually deleting)
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label for="keep_action">Keep Action:</label>
+                    <select id="keep_action" name="keep_action" style="width: 100%; padding: 8px; margin-top: 5px; background: #2a2a2a; color: #e0e0e0; border: 1px solid #444; border-radius: 4px;">
+                        <option value="keep_collected" selected>Keep collected, delete blacklisted (for failed upgrades)</option>
+                        <option value="keep_blacklisted">Keep blacklisted, delete collected (for blacklist bug)</option>
+                        <option value="keep_collected_delete_ghostlisted">Keep collected, delete ghostlisted</option>
+                        <option value="keep_ghostlisted_delete_collected">Keep ghostlisted, delete collected</option>
+                        <option value="keep_best_quality">Keep best quality, delete rest (for multiple collected)</option>
+                        <option value="keep_collected_delete_stale">Keep collected, delete all other states (Wanted/Scraping/Adding/Checking)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="version_match">Version Match:</label>
+                    <select id="version_match" name="version_match" style="width: 100%; padding: 8px; margin-top: 5px; background: #2a2a2a; color: #e0e0e0; border: 1px solid #444; border-radius: 4px;">
+                        <option value="all" selected>Delete all versions (any version)</option>
+                        <option value="same">Delete only versions with same version field</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="exclude_patterns">Exclude from deletion (optional):</label>
+                    <input type="text" id="exclude_patterns" name="exclude_patterns"
+                           placeholder="e.g., REMUX, IMAX, Director's Cut, FraMeSToR"
+                           style="width: 100%; padding: 8px; margin-top: 5px; background: #2a2a2a; color: #e0e0e0; border: 1px solid #444; border-radius: 4px;">
+                    <small style="color: #888; font-size: 0.85em; display: block; margin-top: 5px;">
+                        Enter comma or pipe-separated patterns. Items with filenames containing any of these patterns will be protected from deletion.
+                    </small>
+                </div>
+                {% if nas_paths %}
+                <div class="form-group">
+                    <label for="upgrades_nas_filter">NAS / Network Filter:</label>
+                    <select id="upgrades_nas_filter" name="nas_filter" style="width: 100%; padding: 8px; margin-top: 5px; background: #2a2a2a; color: #e0e0e0; border: 1px solid #444; border-radius: 4px;">
+                        <option value="all">All items (no NAS filter)</option>
+                        <option value="exclude_nas">Exclude NAS items</option>
+                        <option value="only_nas">Only NAS items</option>
+                    </select>
+                </div>
+                {% endif %}
+                <button type="submit">Run Cleanup</button>
+                <button type="button" id="view-upgrades-results-btn" style="display: none; margin-top: 10px;">View Last Results</button>
+                <div id="upgrades-progress" style="display: none; margin-top: 15px;">
+                    <div class="progress-message">
+                        <span class="operation-spinner"></span>
+                        <span id="upgrades-progress-message">Scanning for failed upgrades...</span>
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <div style="background: #2a2a2a; border-radius: 4px; overflow: hidden; margin-bottom: 8px;">
+                            <div id="upgrades-progress-bar" style="background: #4ecdc4; height: 6px; width: 0%; transition: width 0.3s;"></div>
+                        </div>
+                        <div id="upgrades-elapsed-time" style="color: #95a5a6; font-size: 12px;">Elapsed: 0s</div>
+                    </div>
+                </div>
+            </form>
+        </div>
+<div data-cat="cleanup" class="debug_item">
+            <h3>Fix Episode Numbers</h3>
+            <p class="description">Fix incorrect episode numbers in database by parsing from filenames. Detects bug-created duplicates (same torrent, wrong episode) and can remove them. Uses filled_by_file, location_basename, or location_on_disk to extract filenames.</p>
+            <form id="fix-episode-numbers-form">
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="episode_dry_run" name="dry_run" checked>
+                        Dry Run (Preview changes without saving)
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="show_duplicates" name="show_duplicates">
+                        Show Duplicate Episodes (same show/season/episode with multiple entries)
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="remove_duplicates" name="remove_duplicates">
+                        Remove Bug-Created Duplicates (same torrent ID, wrong episode numbers)
+                    </label>
+                </div>
+                <button type="submit">Fix Episode Numbers</button>
+                <button type="button" id="view-episode-results-btn" style="display: none; margin-top: 10px;">View Last Results</button>
+                <div id="episode-fix-progress" style="display: none; margin-top: 15px;">
+                    <div class="progress-message">
+                        <span class="operation-spinner"></span>
+                        <span id="episode-progress-message">Processing episodes...</span>
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <div style="background: #2a2a2a; border-radius: 4px; overflow: hidden; margin-bottom: 8px;">
+                            <div id="episode-progress-bar" style="background: #4ecdc4; height: 6px; width: 100%; transition: width 0.3s;"></div>
+                        </div>
+                        <div id="episode-elapsed-time" style="color: #95a5a6; font-size: 12px;">Elapsed: 0s</div>
+                    </div>
+                </div>
+            </form>
+        </div>
+<div data-cat="cleanup" class="debug_item" style="grid-row: span 2;">
+            <h3>Manage Cache Files</h3>
+            <form id="manage-cache-files-form">
+                <div id="cache_files_container" class="cache-files-container">
+                    <h4>Select Cache Files:</h4>
+                    <div class="select-all-container">
+                        <button type="button" id="select_all_cache_btn">Select All</button>
+                        <button type="button" id="unselect_all_cache_btn">Unselect All</button>
+                    </div>
+                    <div id="cache_files_list">
+                        {% if cache_files %}
+                            {% for filename, display_label in cache_files %}
+                                <div class="cache-file-item">
+                                    <input type="checkbox" name="selected_files" value="{{ filename }}" id="cache_file_{{ loop.index }}">
+                                    <label for="cache_file_{{ loop.index }}">{{ display_label }}</label>
+                                </div>
+                            {% endfor %}
+                        {% else %}
+                            <p>No content source cache files found.</p>
+                        {% endif %}
+
+                        {% if other_cache_files %}
+                        <hr style="border-color: #444; margin: 12px 0;">
+                        <p style="font-size: 0.85em; color: #aaa; margin-bottom: 8px;">Other Cache Files:</p>
+                        {% for item in other_cache_files %}
+                            <div class="cache-file-item" {% if not item.exists %}style="opacity: 0.5;"{% endif %}>
+                                <input type="checkbox" name="selected_files" value="{{ item.filename }}"
+                                       id="other_cache_{{ loop.index }}" {% if not item.exists %}disabled{% endif %}>
+                                <label for="other_cache_{{ loop.index }}" title="{{ item.description }}">
+                                    {{ item.label }}{% if not item.exists %} <em style="color:#888;">(not found)</em>{% endif %}
+                                </label>
+                            </div>
+                        {% endfor %}
+                        {% endif %}
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-danger">Delete Selected Cache Files</button>
+            </form>
+        </div>
+<div data-cat="cleanup" class="debug_item" id="climount-cleanup-card">
+            <h3>cli_mount DB Cleanup</h3>
+            <p class="description">Remove entries for a specific debrid provider from cli_mount's <code>entries.db</code> and <code>items.db</code> using infohash matching. Mixed folders (containing files from multiple providers) are rebuilt with only non-provider files kept.</p>
+            <div style="background:#2a1a00;border:1px solid #ff6b35;border-radius:4px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#ffaa66;">
+                &#9888; <strong>Stop cli_mount before running a live cleanup.</strong> Dry run is safe to run anytime.
+            </div>
+            <div class="form-group" style="margin-bottom:10px">
+                <label for="dcy-provider">Debrid Provider:</label>
+                <select id="dcy-provider" style="min-width:180px">
+                    <option value="">Loading...</option>
+                </select>
+                <button type="button" onclick="dcyLoadProviders()" style="margin-left:6px;padding:4px 10px;font-size:12px">&#8635; Refresh</button>
+            </div>
+            <div class="form-group" style="margin-bottom:10px">
+                <label for="dcy-db-path">DB Path:</label>
+                <input type="text" id="dcy-db-path" placeholder="/cli_mount_data/db" style="width:300px;font-family:monospace;font-size:12px">
+                <span style="font-size:11px;color:#888;margin-left:6px">path to cli_mount's db/ folder inside container</span>
+            </div>
+            <div class="form-group" style="margin-bottom:12px">
+                <label>
+                    <input type="checkbox" id="dcy-dry-run" checked>
+                    <strong>Dry Run</strong> <span style="font-size:12px;color:#888">(scan only, no changes)</span>
+                </label>
+            </div>
+            <button type="button" id="dcy-run-btn" onclick="dcyRunCleanup()">Run Cleanup</button>
+            <div id="dcy-status" style="margin-top:10px;padding:8px;background:#1a1a1a;border-radius:4px;display:none;font-size:12px;font-family:monospace;white-space:pre-wrap;max-height:120px;overflow-y:auto"></div>
+        </div>
+<div data-cat="cleanup" class="debug_item" id="backfill-nzb-names-card">
+            <h3>Backfill NZB File Names</h3>
+            <p class="description">Rename collected NZB items in the database and cli_mount to the structured NZB naming format (<code>Title (Year) - {imdb-...} - Version - (Original.Release.Name)</code>). Requires NZB file naming to be enabled in settings.</p>
+            <div class="form-group" style="margin-bottom:10px">
+                <label>
+                    <input type="checkbox" id="backfill-nzb-dry-run">
+                    <strong>Dry Run</strong> <span style="font-size:12px;color:#888">(preview only, no changes)</span>
+                </label>
+            </div>
+            <div class="form-group" style="margin-bottom:10px">
+                <label>
+                    <input type="checkbox" id="backfill-nzb-force">
+                    <strong>Force</strong> <span style="font-size:12px;color:#888">(re-process even if already named)</span>
+                </label>
+            </div>
+            <button type="button" id="backfill-nzb-run-btn" onclick="backfillNzbNamesRun()">Run Backfill</button>
+            <div id="backfill-nzb-status" style="margin-top:10px;padding:8px;background:#1a1a1a;border-radius:4px;display:none;font-size:12px;font-family:monospace;white-space:pre-wrap;max-height:120px;overflow-y:auto"></div>
+        </div>
+<div data-cat="cleanup" class="debug_item">
+            <h3>Cleanup My Plex Watchlist and Other Plex Watchlists</h3>
+            <p class="description">Removes all Collected items from My Plex Watchlist and all configured Other Plex Watchlists. If an item appears in multiple watchlists it will be removed from all of them.</p>
+            <button type="button" id="cleanup-watchlist-btn" onclick="runWatchlistCleanup()">Run</button>
+            <div id="cleanup-watchlist-result" style="margin-top:8px;"></div>
+        </div>
+<div data-cat="cleanup" class="debug_item">
+            <h3>Reset Battery Show Status Cache</h3>
+            <p class="description">Forces all shows in the battery DB to be re-fetched from TVDB/Trakt on the next run. Use this to fix incorrect show statuses (e.g. "Ended" instead of "Canceled"). After running this, run "Update show status (ended/airing)" on the Automation page.</p>
+            <button type="button" class="btn" id="reset-battery-show-cache-btn">Reset Show Cache</button>
+            <p id="reset-battery-show-cache-result" style="margin-top:8px;"></p>
+        </div>
+<div data-cat="danger" class="debug_item">
+            <h3>Bulk Delete from Database</h3>
+            <form action="{{ url_for('debug.bulk_delete_by_imdb') }}" method="POST" id="bulk-delete-form">
+                <div class="form-group">
+                    <label for="imdb_id">IMDB or TMDB ID:</label>
+                    <input type="text" id="imdb_id" name="imdb_id" placeholder="e.g. tt1234567 or 98080" required>
+                </div>
+                <button type="submit">Delete</button>
+            </form>
+        </div>
+<div data-cat="danger" class="debug_item">
+            <h3>Delete Battery Database Files</h3>
+            <p class="description">Deletes the cli_battery.db, cli_battery.db-shm, and cli_battery.db-wal files from the db_content directory.</p>
+            <form id="delete-battery-db-form" action="{{ url_for('debug.delete_battery_db_files') }}" method="POST">
+                <button type="submit" class="btn btn-danger">Delete Battery DB Files</button>
+            </form>
+        </div>
+<div data-cat="danger" class="debug_item">
+            <h3>Delete Database</h3>
+            <p class="description">This will delete the database and all cache files (*.cache*.pkl) from the db_content directory.</p>
+            <form action="{{ url_for('debug.delete_database') }}" method="POST" id="delete-database-form">
+                <div class="form-group">
+                    <label for="confirm_delete">Type DELETE to confirm:</label>
+                    <input type="text" id="confirm_delete" name="confirm_delete" placeholder="DELETE" required>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="retain_blacklist" name="retain_blacklist">
+                        Retain blacklisted items
+                    </label>
+                </div>
+                <button type="submit" class="btn">Delete Database</button>
+            </form>
+        </div>

@@ -26,6 +26,20 @@ def _get_int_setting(section: str, key: str, default: int) -> int:
 DEFAULT_WAKE_LIMIT = 24  # settings_schema Queue.wake_limit default
 NEVER_SLEEP = -1
 
+# Back off between wakes: the configured sleep for the first few wakes, then
+# doubling every WAKES_PER_STEP wakes up to MAX_BACKOFF_FACTOR x. Every wake
+# re-runs a full scrape (one search per indexer and scraper), so a release that
+# hasn't been posted after a few tries is checked less often instead of every
+# 30 minutes until the wake limit.
+WAKES_PER_STEP = 4
+MAX_BACKOFF_FACTOR = 4
+
+
+def sleep_for_wake(base: timedelta, wake_count: int) -> timedelta:
+    """How long an item that has woken `wake_count` times sleeps before the next wake."""
+    steps = max(0, int(wake_count or 0)) // WAKES_PER_STEP
+    return base * min(2 ** steps, MAX_BACKOFF_FACTOR)
+
 
 def get_global_wake_limit() -> int:
     return _get_int_setting("Queue", "wake_limit", default=DEFAULT_WAKE_LIMIT)
@@ -142,13 +156,14 @@ class SleepingQueue:
                 items_to_blacklist.append(item)
                 continue
 
-            time_asleep = current_time - self.sleeping_queue_times[item_id]
-            # Fetch current wake count from DB
-            from database import get_wake_count
-            wake_count = get_wake_count(item_id) 
-            logging.debug(f"Item {item_identifier} has been asleep for {time_asleep}. Current wake count: {wake_count}/{wake_limit}")
+            time_asleep = current_time - self.sleeping_queue_times.setdefault(item_id, current_time)
+            # update()/add_item() already loaded wake_count from the DB row.
+            wake_count = item.get('wake_count') or 0
+            item_sleep = sleep_for_wake(sleep_duration, wake_count)
+            logging.debug(f"Item {item_identifier} has been asleep for {time_asleep} of {item_sleep}. "
+                          f"Current wake count: {wake_count}/{wake_limit}")
 
-            if time_asleep >= sleep_duration:
+            if time_asleep >= item_sleep:
                 if wake_count < wake_limit:
                     items_to_wake.append(item)
                 else:

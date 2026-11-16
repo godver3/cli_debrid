@@ -20,7 +20,7 @@ from tests._isolation import isolated_modules
 
 
 @isolated_modules
-def _load(get_responses, delete_responses):
+def _load(get_responses, delete_responses, raise_on_error=False):
     """Load content_checkers/overseerr.py fresh with a stubbed `api` module.
 
     get_responses: dict endpoint-suffix -> response dict (for api.get(...).json())
@@ -58,15 +58,24 @@ def _load(get_responses, delete_responses):
                 return FakeResponse(200, payload)
         return FakeResponse(404, {})
 
+    class FakeHTTPError(FakeRequestException):
+        def __init__(self, response):
+            super().__init__(f'{response.status_code} Client Error')
+            self.response = response
+
     def fake_delete(url, headers=None, timeout=None):
         status, text = delete_responses.get(url, (404, 'not found'))
-        return FakeResponse(status, text=text)
+        response = FakeResponse(status, text=text)
+        if raise_on_error and status >= 400:
+            # routes.api_tracker.api.delete raises like raise_for_status()
+            raise FakeHTTPError(response)
+        return response
 
     rta = types.ModuleType('routes.api_tracker')
     rta.api = types.SimpleNamespace(
         get=fake_get,
         delete=fake_delete,
-        exceptions=types.SimpleNamespace(RequestException=FakeRequestException),
+        exceptions=types.SimpleNamespace(RequestException=FakeRequestException, HTTPError=FakeHTTPError),
     )
     sys.modules['routes.api_tracker'] = rta
 
@@ -163,6 +172,40 @@ class TestOverseerrRemoval(unittest.TestCase):
         result = m.remove_from_overseerr_by_tmdb_id(
             tmdb_id=123, media_type='show', overseerr_url='http://ov', api_key='k')
         self.assertFalse(result['success'])
+
+    def test_trailing_slash_url_does_not_produce_double_slash(self):
+        # Seerr answers DELETE //api/v1/media/<id> with 404 "Cannot DELETE".
+        m = _load(
+            get_responses={'/movie/74016': MEDIA_NO_REQUESTS},
+            delete_responses={'http://ov/api/v1/media/555': (204, '')},
+            raise_on_error=True,
+        )
+        result = m.remove_from_overseerr_by_tmdb_id(
+            tmdb_id=74016, media_type='movie', overseerr_url='http://ov/', api_key='k')
+        self.assertTrue(result['success'], result)
+
+    def test_media_already_removed_counts_as_done(self):
+        # The real api.delete raises on 404; that used to escape and keep the
+        # removal in the retry queue forever.
+        m = _load(
+            get_responses={'/movie/74016': MEDIA_NO_REQUESTS},
+            delete_responses={'http://ov/api/v1/media/555': (404, '{"message":"Media not found"}')},
+            raise_on_error=True,
+        )
+        result = m.remove_from_overseerr_by_tmdb_id(
+            tmdb_id=74016, media_type='movie', overseerr_url='http://ov', api_key='k')
+        self.assertTrue(result['success'], result)
+
+    def test_server_error_still_fails_when_raised(self):
+        m = _load(
+            get_responses={'/movie/74016': MEDIA_NO_REQUESTS},
+            delete_responses={'http://ov/api/v1/media/555': (500, 'boom')},
+            raise_on_error=True,
+        )
+        result = m.remove_from_overseerr_by_tmdb_id(
+            tmdb_id=74016, media_type='movie', overseerr_url='http://ov', api_key='k')
+        self.assertFalse(result['success'])
+        self.assertIn('500', result['message'])
 
 
 if __name__ == '__main__':

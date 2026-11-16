@@ -14,7 +14,7 @@ _add_collected_lock = threading.Lock()
 import os
 from datetime import datetime, timedelta
 import json
-from .database_writing import add_to_collected_notifications, RESET_COLLECTION_STATE_SQL
+from .database_writing import add_to_collected_notifications
 from utilities.reverse_parser import parser_approximation
 from typing import Dict, Any, List
 from utilities.post_processing import handle_state_change
@@ -651,7 +651,7 @@ def _add_collected_items_impl(media_items_batch, recent=False, backfill=False, d
                                 }
 
                                 if upgrade_item['filled_by_file'] != upgrade_item['upgrading_from']:
-                                    if get_setting("Scraping", "enable_upgrading_cleanup", default=False):
+                                    if get_setting("Scraping", "enable_upgrading_cleanup", default=True):
                                         conn.execute('''
                                             UPDATE media_items
                                             SET upgraded = 1
@@ -1213,65 +1213,11 @@ def _add_collected_items_impl(media_items_batch, recent=False, backfill=False, d
                 if is_expected_on_disk and not is_present_on_disk:
                     file_to_log = location_base or filled_by
                     # This item's file is considered missing
-                    if get_setting("Debug", "rescrape_missing_files", default=False):
-                        try:
-                            # Check if another version of this item already exists in 'Collected' state
-                            current_version = item['version'].strip('*') if item.get('version') else ''
-                            
-                            # Build query based on item type to find other collected versions
-                            if item['type'] == 'movie':
-                                matching_cursor = conn.execute('''
-                                    SELECT id, version FROM media_items 
-                                    WHERE (imdb_id = ? OR (tmdb_id IS NOT NULL AND tmdb_id = ?)) AND type = 'movie' AND state = 'Collected' AND id != ?
-                                ''', (item['imdb_id'], item['tmdb_id'], item['id']))
-                            else: # episode
-                                matching_cursor = conn.execute('''
-                                    SELECT id, version FROM media_items 
-                                    WHERE (imdb_id = ? OR (tmdb_id IS NOT NULL AND tmdb_id = ?)) AND type = 'episode' AND season_number = ? AND episode_number = ? AND state = 'Collected' AND id != ?
-                                ''', (item['imdb_id'], item['tmdb_id'], item['season_number'], item['episode_number'], item['id']))
-                            
-                            matching_items = matching_cursor.fetchall()
-                            matching_cursor.close()
-                            
-                            matching_version_exists = any(
-                                (m['version'].strip('*') if m.get('version') else '') == current_version 
-                                for m in matching_items
-                            )
-                            
-                            if matching_version_exists:
-                                logging.info(f"[Missing File Cleanup] Deleting item {item_identifier} (ID: {item['id']}, File: {file_to_log}) as another collected version ('{current_version}') exists.")
-                                conn.execute('DELETE FROM media_items WHERE id = ?', (item['id'],))
-                            else:
-                                # GHOSTLIST CHECK: Don't move ghostlisted/blacklisted items to Wanted
-                                is_ghostlisted = item.get('ghostlisted') == 1
-                                is_blacklisted = item.get('state') == 'Blacklisted'
-
-                                if is_ghostlisted or is_blacklisted:
-                                    logging.info(f"⛔ [Missing File Cleanup] File missing for {'ghostlisted' if is_ghostlisted else 'blacklisted'} item {item_identifier} (ID: {item['id']}, File: {file_to_log}). Deleting item instead of moving to Wanted.")
-                                    conn.execute('DELETE FROM media_items WHERE id = ?', (item['id'],))
-                                else:
-                                    logging.info(f"[Missing File Cleanup] File missing for {item_identifier} (ID: {item['id']}, File: {file_to_log}). No other matching version found. Moving to 'Wanted'.")
-                                    conn.execute(f'''
-                                        UPDATE media_items
-                                        SET state = 'Wanted',
-                                            filled_by_file = NULL,
-                                            filled_by_title = NULL,
-                                            filled_by_magnet = NULL,
-                                            filled_by_torrent_id = NULL,
-                                            {RESET_COLLECTION_STATE_SQL},
-                                            last_updated = ?,
-                                            version = TRIM(version, '*')
-                                        WHERE id = ?
-                                    ''', (datetime.now(), item['id']))
-                        except Exception as e:
-                            # conn.rollback() # Rollback for THIS item was removed, transaction handles overall
-                            logging.error(f"Error handling missing file for item {item_identifier} (ID: {item['id']}): {str(e)}", exc_info=True)
-                    else: # rescrape_missing_files is False
-                        logging.info(f"[Missing File Cleanup] File missing for {item_identifier} (ID: {item['id']}, File: {file_to_log}). 'rescrape_missing_files' is False. Deleting item.")
-                        conn.execute('''
-                            DELETE FROM media_items
-                            WHERE id = ?
-                        ''', (item['id'],))
+                    logging.info(f"[Missing File Cleanup] File missing for {item_identifier} (ID: {item['id']}, File: {file_to_log}). Deleting item.")
+                    conn.execute('''
+                        DELETE FROM media_items
+                        WHERE id = ?
+                    ''', (item['id'],))
             cursor.close()
             # logging.info(f"Finished post-loop cleanup in {time.time() - start_cleanup_time:.4f} seconds.")
 

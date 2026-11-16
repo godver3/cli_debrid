@@ -555,7 +555,7 @@ async function checkAndShowPhalanxDisclaimer() {
                     showPopup({
                         type: POPUP_TYPES.INFO,
                         title: 'Phalanx DB Disabled',
-                        message: 'Phalanx_DB has been disabled. You can re-enable it from the Settings Menu/Additional Settings/UI Settings',
+                        message: 'Phalanx_DB has been disabled. You can re-enable it from Settings → Performance & Logging → Phalanx DB',
                         autoClose: 5000
                     });
                 }

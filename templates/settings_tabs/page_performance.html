@@ -1,0 +1,8 @@
+{% from 'settings_tabs/_page.html' import page_open, page_close %}
+{{ page_open('Performance & Logging', 'Logging, load regulation, caches and Phalanx DB. Change these only when troubleshooting.') }}
+{% if environment_mode == 'full' %}
+{% include 'settings_tabs/cards/system_logging.html' %}
+{% include 'settings_tabs/cards/performance_monitoring.html' %}
+{% endif %}
+{% include 'settings_tabs/cards/phalanx.html' %}
+{{ page_close() }}

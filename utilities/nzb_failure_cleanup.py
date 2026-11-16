@@ -31,7 +31,8 @@ def _resolve_segment_id(
         return seg_id
 
     nzb_url = item.get('filled_by_magnet', '') or ''
-    if nzb_url:
+    from usenet import indexer_quota
+    if nzb_url and indexer_quota.allow_url(nzb_url, 'grab'):
         try:
             from routes.api_tracker import api as _api
             from database.not_wanted_magnets import extract_nzb_segment_id

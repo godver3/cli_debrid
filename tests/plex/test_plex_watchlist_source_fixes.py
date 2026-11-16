@@ -48,7 +48,6 @@ class TestPlexRss(unittest.TestCase):
         api.tmdb_to_imdb.side_effect = lambda tmdb_id, media_type: ((tmdb_map or {}).get(tmdb_id), 'test')
         with mock.patch.object(rss.requests, 'get', return_value=_Resp(content)), \
              mock.patch('cli_battery.app.direct_api.DirectAPI', return_value=api), \
-             mock.patch.object(rss, 'get_setting', return_value=False), \
              mock.patch.object(rss, 'get_media_item_presence_overall', return_value='Missing'), \
              mock.patch.object(rss.logging, 'warning') as warn:
             result = rss.get_wanted_from_plex_rss('https://rss.plex.tv/x', {'Default': True})

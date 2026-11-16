@@ -13,9 +13,6 @@ import uuid
 import ntplib
 from utilities.log_redaction import RedactingFormatter
 from utilities.settings import get_setting
-from debrid import ProviderUnavailableError
-import asyncio
-from debrid import get_debrid_provider
 
 
 class MaintenanceTasks:
@@ -38,17 +35,6 @@ class MaintenanceTasks:
     def task_reset_trakt_auth(self):
         from utilities.trakt_auth_cleanup import reset_trakt_auth
         reset_trakt_auth()
-
-    def task_debug_log(self):
-        current_time = time.time()
-        debug_info = []
-        for task, interval in self.task_intervals.items():
-            time_until_next_run = interval - (current_time - self.last_run_times[task])
-            minutes, seconds = divmod(int(time_until_next_run), 60)
-            hours, minutes = divmod(minutes, 60)
-            debug_info.append(f"{task}: {hours:02d}:{minutes:02d}:{seconds:02d}")
-
-        logging.info("Time until next task run:\n" + "\n".join(debug_info))
 
     def task_send_notifications(self):
         db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content/')
@@ -257,12 +243,20 @@ class MaintenanceTasks:
         try:
             # Step 1: Original reconciliation for 'Checking' items based on filled_by_file
             reconciliation_logger.info("Starting reconciliation for 'Checking' items based on shared file paths...")
+            # Only rows of the same title, type and version (ignoring '*') count as sharing a
+            # file. Matching on the filename alone deleted a movie's other version (1080p and
+            # 2160p rows whose files have the same name) and marked unrelated titles with a
+            # generic filename Collected.
             cursor.execute("""
                 SELECT
                     c.id as checking_id, c.title as checking_title, c.type as checking_type, c.filled_by_file,
                     m.id as matching_id, m.title as matching_title, m.state as matching_state, m.type as matching_type
                 FROM media_items c
                 JOIN media_items m ON c.filled_by_file = m.filled_by_file AND c.id != m.id
+                  AND c.type = m.type
+                  AND ((c.imdb_id IS NOT NULL AND c.imdb_id != '' AND c.imdb_id = m.imdb_id)
+                       OR (c.tmdb_id IS NOT NULL AND c.tmdb_id != '' AND c.tmdb_id = m.tmdb_id))
+                  AND REPLACE(COALESCE(c.version, ''), '*', '') = REPLACE(COALESCE(m.version, ''), '*', '')
                 WHERE c.state = 'Checking'
                   AND c.filled_by_file IS NOT NULL
                   AND m.state != 'Checking'
@@ -293,27 +287,29 @@ class MaintenanceTasks:
             if items_to_delete_filepath:
                 delete_ids_filepath = list(items_to_delete_filepath - set(items_to_update))
                 if delete_ids_filepath:
-                    # Only delete items that are true duplicates (same imdb_id+season+episode).
+                    # Only delete items that are true duplicates (same imdb_id+season+episode+version).
                     # Items that share filled_by_file but are different episodes (season pack coalescing)
                     # should be marked Collected, not deleted.
                     rows = cursor.execute(
-                        f"SELECT id, imdb_id, season_number, episode_number FROM media_items "
+                        f"SELECT id, imdb_id, season_number, episode_number, "
+                        f"REPLACE(COALESCE(version, ''), '*', '') AS bare_version FROM media_items "
                         f"WHERE id IN ({','.join(['?']*len(delete_ids_filepath))})",
                         delete_ids_filepath
                     ).fetchall()
-                    # Build set of (imdb_id, season, episode) for already-updating items
+                    # Build set of (imdb_id, season, episode, version) for already-updating items
                     updating_eps = set()
                     if items_to_update:
                         for _ur in cursor.execute(
-                            f"SELECT imdb_id, season_number, episode_number FROM media_items "
+                            f"SELECT imdb_id, season_number, episode_number, "
+                            f"REPLACE(COALESCE(version, ''), '*', '') AS bare_version FROM media_items "
                             f"WHERE id IN ({','.join(['?']*len(items_to_update))})",
                             items_to_update
                         ).fetchall():
-                            updating_eps.add((_ur['imdb_id'], _ur['season_number'], _ur['episode_number']))
+                            updating_eps.add((_ur['imdb_id'], _ur['season_number'], _ur['episode_number'], _ur['bare_version']))
                     true_dupes = []
                     collect_instead = []
                     for r in rows:
-                        key = (r['imdb_id'], r['season_number'], r['episode_number'])
+                        key = (r['imdb_id'], r['season_number'], r['episode_number'], r['bare_version'])
                         if key in updating_eps:
                             true_dupes.append(r['id'])
                         else:
@@ -940,36 +936,20 @@ class MaintenanceTasks:
 
     # Modified task for library size cache refresh (now fully synchronous structure)
     def task_refresh_library_size_cache(self):
-        """Scheduled task to refresh the Debrid library size cache."""
-        logging.info("Initiating scheduled library size cache refresh task.")
+        """Scheduled task to refresh the debrid library size cache (every provider)."""
         try:
-            provider = get_debrid_provider()
-            # Use provider capability or method presence instead of concrete type
-            if hasattr(provider, 'get_total_library_size'):
-                logging.info("Background task: Refreshing library size cache via Debrid provider...")
-                # The provider's get_total_library_size is async, so we run it in a new event loop.
-                # This call is expected to fetch the size and update the cache file itself.
-                calculated_size = asyncio.run(provider.get_total_library_size())
-                if calculated_size is not None and not str(calculated_size).startswith("Error"):
-                    logging.info(f"Background task: Library size cache refresh successful. Provider reported size: {calculated_size}")
-                else:
-                    logging.warning(f"Background task: Library size cache refresh via provider failed or returned error. Result: {calculated_size}")
-            else:
-                logging.info("Background task: Library size cache refresh skipped (provider does not implement total size API or not configured).")
-        except ProviderUnavailableError:
-            logging.warning("Background task: Debrid provider unavailable during library size cache refresh.")
-        except RuntimeError as e_runtime:
-            # This might happen if asyncio.run() is called from an already running loop,
-            # though less likely with BackgroundScheduler's default thread-based execution.
-             logging.error(f"Background task: Runtime error during library size cache refresh: {e_runtime}", exc_info=True)
+            from database.statistics import refresh_debrid_library_size
+            size = refresh_debrid_library_size()
+            if size is None:
+                logging.info("Library size cache not refreshed (no debrid provider, or one didn't answer).")
         except Exception as e:
-            logging.error(f"Background task: General error during library size cache refresh: {e}", exc_info=True)
+            logging.error(f"Background task: error during library size cache refresh: {e}", exc_info=True)
 
     def task_upgrade_hub_scan(self):
         """Scheduled nightly scan for better-quality releases via Zilean."""
         try:
             if 'task_upgrade_hub_scan' not in self.enabled_tasks:
-                logging.debug("[UPGRADE_HUB] Scheduled scan skipped — task disabled in Task Manager")
+                logging.debug("[UPGRADE_HUB] Scheduled scan skipped — task disabled on the Automation page")
                 return
             from database.zilean_upgrade import scan_for_upgrades, get_scan_status
             from utilities.settings import get_setting
@@ -999,7 +979,7 @@ class MaintenanceTasks:
         """Auto-queue upgrade candidates found in the most recent scan."""
         try:
             if 'task_upgrade_hub_auto_queue' not in self.enabled_tasks:
-                logging.debug("[UPGRADE_HUB] Auto-queue skipped — task disabled in Task Manager")
+                logging.debug("[UPGRADE_HUB] Auto-queue skipped — task disabled on the Automation page")
                 return
             from utilities.settings import get_setting
             from database.zilean_upgrade import (
