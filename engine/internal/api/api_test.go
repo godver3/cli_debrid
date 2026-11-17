@@ -322,3 +322,61 @@ func TestHealthForRepair(t *testing.T) {
 		t.Fatalf("unknown job: %d", code)
 	}
 }
+
+func TestReplacementVerifyAndAck(t *testing.T) {
+	h := newHarness(t)
+	var pack, single jobOut
+	h.do("POST", "/jobs?name=Show.S01", nzbXML(h.s, "rp",
+		file{Name: "Show.S01E01.mkv", Data: random(20, 300_000)},
+		file{Name: "Show.S01E02.mkv", Data: random(21, 300_000)}), &pack)
+	h.do("POST", "/jobs?name=Film", nzbXML(h.s, "rs", file{Name: "Film.mkv", Data: random(22, 300_000)}), &single)
+
+	var v map[string]string
+	if code := h.do("POST", "/replacements/verify", []byte(`{"cli_debrid_id":5,"info_hash":"no-such-job"}`), &v); code != 200 || v["status"] != "unknown" {
+		t.Fatalf("unknown job: %d %v", code, v)
+	}
+	h.waitDone(pack.ID)
+	h.waitDone(single.ID)
+	h.do("PATCH", "/jobs/"+pack.ID, []byte(`{"cli_ids":{"Show.S01E01.mkv":101,"Show.S01E02.mkv":102}}`), nil)
+
+	h.do("POST", "/replacements/verify", []byte(`{"cli_debrid_id":102,"info_hash":"`+pack.ID+`"}`), &v)
+	if v["status"] != "healthy" || v["file_name"] != "Show.S01E02.mkv" || v["entry_name"] != "Show.S01" {
+		t.Fatalf("verify healthy: %v", v)
+	}
+	// Single-media job with no registration yet: its only file is the target.
+	h.s.Remove("rs0.3@test")
+	h.do("POST", "/replacements/verify", []byte(`{"cli_debrid_id":7,"info_hash":"`+single.ID+`"}`), &v)
+	if v["status"] != "broken" || v["reason"] != "usenet_segment_missing" || v["file_name"] != "Film.mkv" {
+		t.Fatalf("verify broken: %v", v)
+	}
+	if code := h.do("POST", "/replacements/verify", []byte(`{"info_hash":"x"}`), &v); code != 400 || v["code"] != "invalid_request" {
+		t.Fatalf("invalid verify: %d %v", code, v)
+	}
+
+	// Ack one episode of the pack: only that file goes.
+	ack := func(file string, id int) (int, map[string]any) {
+		var out map[string]any
+		body := fmt.Sprintf(`{"entry_name":"Show.S01","file_name":%q,"info_hash":%q,"cli_debrid_id":%d,"reason":"playback_failed"}`, file, pack.ID, id)
+		return h.do("POST", "/replacements/ack", []byte(body), &out), out
+	}
+	if code, out := ack("Show.S01E01.mkv", 999); code != 409 || out["code"] != "stale_target" {
+		t.Fatalf("stale registration: %d %v", code, out)
+	}
+	if code, out := ack("Show.S01E01.mkv", 101); code != 200 || out["status"] != "removed" || out["entry_deleted"] != false {
+		t.Fatalf("ack E01: %d %v", code, out)
+	}
+	var j jobOut
+	h.do("GET", "/jobs/"+pack.ID, nil, &j)
+	if len(j.Entries) != 1 || j.Entries[0].Name != "Show.S01E02.mkv" {
+		t.Fatalf("pack after ack: %+v", j.Entries)
+	}
+	if _, out := ack("Show.S01E01.mkv", 101); out["status"] != "already_removed" {
+		t.Fatalf("repeat ack: %v", out)
+	}
+	if code, out := ack("Show.S01E02.mkv", 102); code != 200 || out["entry_deleted"] != true {
+		t.Fatalf("ack last file: %d %v", code, out)
+	}
+	if code := h.do("GET", "/jobs/"+pack.ID, nil, nil); code != 404 {
+		t.Fatalf("emptied job still there: %d", code)
+	}
+}

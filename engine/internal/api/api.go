@@ -13,6 +13,9 @@
 //	POST   /health/run?full=&ignore_last_checked=   check all ready jobs
 //	GET    /health/run             current/last run; POST /health/stop stops it
 //	GET|POST|DELETE /jobs/{id}/health   record / check now (?full=) / clear
+//	POST   /replacements/verify    {cli_debrid_id, info_hash}: is the replacement playable?
+//	POST   /replacements/ack       {entry_name, file_name, info_hash, cli_debrid_id, reason}:
+//	                               remove one old broken file (cli_mount-compatible shapes)
 package api
 
 import (
@@ -51,6 +54,8 @@ func Handler(e *engine.Engine) http.Handler {
 	mux.HandleFunc("GET /jobs/{id}/health", a.healthGet)
 	mux.HandleFunc("POST /jobs/{id}/health", a.healthCheck)
 	mux.HandleFunc("DELETE /jobs/{id}/health", a.healthClear)
+	mux.HandleFunc("POST /replacements/verify", a.verify)
+	mux.HandleFunc("POST /replacements/ack", a.ack)
 	return a.auth(mux)
 }
 
@@ -356,4 +361,48 @@ func (a *api) healthClear(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func replacementErr(w http.ResponseWriter, err error) {
+	var re *engine.ReplacementError
+	if errors.As(err, &re) {
+		code := http.StatusConflict
+		if re.Code == "invalid_request" || re.Code == "unsupported_media" {
+			code = http.StatusBadRequest
+		}
+		writeJSON(w, code, map[string]string{"code": re.Code, "message": re.Message})
+		return
+	}
+	writeJSON(w, http.StatusInternalServerError, map[string]string{"code": "failed", "message": err.Error()})
+}
+
+func (a *api) verify(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		CliDebridID int    `json:"cli_debrid_id"`
+		InfoHash    string `json:"info_hash"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"code": "invalid_request", "message": "invalid JSON body"})
+		return
+	}
+	res, err := a.e.VerifyReplacement(r.Context(), req.CliDebridID, req.InfoHash)
+	if err != nil {
+		replacementErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func (a *api) ack(w http.ResponseWriter, r *http.Request) {
+	var req engine.AckRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"code": "invalid_request", "message": "invalid JSON body"})
+		return
+	}
+	res, err := a.e.AckReplacement(req)
+	if err != nil {
+		replacementErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }

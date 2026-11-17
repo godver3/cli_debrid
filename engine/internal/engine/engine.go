@@ -352,11 +352,24 @@ func (e *Engine) rebuildTree() {
 		if err != nil || res == nil {
 			continue
 		}
+		entries := uniqueEntries(res.Entries)
+		if len(j.Hidden) > 0 {
+			visible := entries[:0:0]
+			for _, en := range entries {
+				if !contains(j.Hidden, en.Name) {
+					visible = append(visible, en)
+				}
+			}
+			entries = visible
+		}
+		if len(entries) == 0 {
+			continue
+		}
 		name := j.Name
 		for n := 2; all[name] != nil; n++ {
 			name = fmt.Sprintf("%s (%d)", j.Name, n)
 		}
-		all[name] = &Folder{JobID: j.ID, Name: name, Entries: uniqueEntries(res.Entries), ModTime: j.CreatedAt}
+		all[name] = &Folder{JobID: j.ID, Name: name, Entries: entries, ModTime: j.CreatedAt}
 	}
 	e.treeMu.Lock()
 	e.tree = map[string]map[string]*Folder{AllFolder: all, NZBFolder: all}

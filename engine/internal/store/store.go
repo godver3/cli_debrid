@@ -46,6 +46,9 @@ type Job struct {
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`
 	Health    *Health        `json:"health,omitempty"`
+	// Hidden lists entry names removed by repair cleanup: the rest of the
+	// job (other episodes of a pack) stays visible.
+	Hidden []string `json:"hidden,omitempty"`
 }
 
 // Health is the latest health record of a job, for cli_debrid's repair.
