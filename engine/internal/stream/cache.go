@@ -12,6 +12,7 @@ import (
 // Cache is an in-memory LRU of decoded segments, bounded by bytes, that
 // also collapses concurrent fetches of the same segment into one request.
 type Cache struct {
+	disk     Tier // optional second tier, checked before the network
 	mu       sync.Mutex
 	max      int64
 	used     int64
@@ -31,6 +32,19 @@ type call struct {
 	err     error
 	prio    nntp.Priority
 	started atomic.Bool // the fetch holds a connection (left the queue)
+}
+
+// Tier is a slower cache behind memory (the disk cache).
+type Tier interface {
+	Get(key string) ([]byte, bool)
+	Put(key string, data []byte)
+}
+
+// WithDisk adds a second tier: memory misses check it before fetching, and
+// fetched segments are handed to it.
+func (c *Cache) WithDisk(t Tier) *Cache {
+	c.disk = t
+	return c
 }
 
 // NewCache keeps up to maxBytes of decoded segment data.
@@ -82,7 +96,17 @@ func (c *Cache) DoCtx(ctx context.Context, key string, prio nntp.Priority,
 	c.inflight[key] = cl // a live call replaces a prefetch one for later joiners
 	c.mu.Unlock()
 
-	cl.data, cl.err = fetch(nntp.WithAcquireHook(ctx, func() { cl.started.Store(true) }))
+	if c.disk != nil {
+		if d, ok := c.disk.Get(key); ok {
+			cl.data = d
+		}
+	}
+	if cl.data == nil {
+		cl.data, cl.err = fetch(nntp.WithAcquireHook(ctx, func() { cl.started.Store(true) }))
+		if cl.err == nil && c.disk != nil {
+			c.disk.Put(key, cl.data)
+		}
+	}
 	close(cl.done)
 
 	c.mu.Lock()
