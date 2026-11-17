@@ -10,6 +10,8 @@ Not supported by the engine (capabilities left out): debrid torrent sync,
 sidecar uploads (the mount is read-only) and log sharing.
 """
 
+import collections
+import gzip
 import logging
 import os
 import re
@@ -21,11 +23,31 @@ import requests
 from utilities.settings import get_setting
 from usenet.base import (
     UnsupportedFeaturesMixin, RENAME, TAGS, CLI_IDS, EXACT_REMOVE, QUEUE,
-    REPAIR_API, STATS, SYNC_FEED,
+    REPAIR_API, STATS, SYNC_FEED, LOGS,
 )
 
 _VIDEO_EXTS = {'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.m4v', '.ts'}
 _LOG = '[builtin]'
+
+# Engine log lines are Go slog text: time=... level=INFO msg="..." key=value
+_SLOG_RE = re.compile(r'^time=(\S+) level=(\S+) msg=("(?:[^"\\]|\\.)*"|\S+)\s*(.*)$')
+
+
+def engine_log_path() -> str:
+    return os.path.join(os.environ.get('USER_LOGS', '/user/logs'), 'mount_engine.log')
+
+
+def format_engine_log_line(line: str) -> str:
+    """slog text -> cli_mount's "date time | LEVEL | [mount] message" so the
+    Logs page's cli_mount tab renders, colours and filters it unchanged."""
+    m = _SLOG_RE.match(line)
+    if not m:
+        return line
+    ts, level, msg, rest = m.groups()
+    if msg.startswith('"'):
+        msg = msg[1:-1].replace('\\"', '"')
+    ts = ts.replace('T', ' ', 1)[:23]
+    return f'{ts} | {level.upper()} | [mount] {msg}' + (f' {rest}' if rest else '')
 
 
 def _state(status: str) -> str:
@@ -41,7 +63,7 @@ def _folder(job: dict) -> str:
 
 class BuiltinClient(UnsupportedFeaturesMixin):
     PROVIDER_NAME = "Built-in mount (Usenet)"
-    CAPABILITIES = frozenset({RENAME, TAGS, CLI_IDS, EXACT_REMOVE, QUEUE, REPAIR_API, STATS, SYNC_FEED})
+    CAPABILITIES = frozenset({RENAME, TAGS, CLI_IDS, EXACT_REMOVE, QUEUE, REPAIR_API, STATS, SYNC_FEED, LOGS})
 
     def __init__(self):
         up = get_setting('Usenet Provider') or {}
@@ -457,6 +479,47 @@ class BuiltinClient(UnsupportedFeaturesMixin):
             return 0, {}, str(exc)
 
     # ---- stats / sync feed ---------------------------------------------------
+
+    # ---- logs (capability LOGS) -------------------------------------------
+
+    def fetch_logs(self, lines: int = 1000, level: str = 'all') -> dict:
+        """The engine's recent log lines (its supervisord log file, in this
+        container), in the shape the Logs page's mount tab expects."""
+        lines = max(1, min(int(lines or 1000), 10000))
+        want = '' if level in ('', 'all') else level.upper()
+        if want == 'WARNING':
+            want = 'WARN'
+        tail = collections.deque(maxlen=lines)
+        try:
+            with open(engine_log_path(), encoding='utf-8', errors='replace') as f:
+                for raw in f:
+                    raw = raw.rstrip('\n')
+                    if not raw:
+                        continue
+                    line = format_engine_log_line(raw)
+                    if want and f'| {want} |' not in line:
+                        continue
+                    tail.append(line)
+        except FileNotFoundError:
+            pass
+        return {'lines': list(tail), 'total': len(tail)}
+
+    def share_logs(self) -> str:
+        """Upload the engine log (and its rotated copies) like cli_debrid's own
+        Share Logs; returns the URL. Raises on failure."""
+        path = engine_log_path()
+        parts = []
+        for p in [f'{path}.{i}' for i in range(5, 0, -1)] + [path]:  # oldest first
+            if os.path.exists(p):
+                with open(p, 'rb') as f:
+                    parts.append(f.read())
+        if not parts:
+            raise Exception('the mount engine has not written a log yet')
+        from routes.log_viewer_routes import upload_to_paste_cnet
+        url = upload_to_paste_cnet(gzip.compress(b''.join(parts)))
+        if not url:
+            raise Exception('upload failed')
+        return url
 
     def get_debug_stats(self, timeout: int = 10) -> Optional[dict]:
         """The engine's stats in the /debug/stats shape the stats page reads."""

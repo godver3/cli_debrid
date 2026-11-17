@@ -81,6 +81,7 @@ func run(cfgPath string, noMount bool) error {
 		if err := os.MkdirAll(cfg.MountPath, 0o755); err != nil {
 			return err
 		}
+		mount.ClearStale(cfg.MountPath, log)
 		fsrv, err := mount.Mount(e, cfg.MountPath, mount.Options{AllowOther: cfg.AllowOther, UID: cfg.UID, GID: cfg.GID, Umask: cfg.Umask}, log)
 		if err != nil {
 			return fmt.Errorf("mount %s: %w", cfg.MountPath, err)
@@ -88,7 +89,13 @@ func run(cfgPath string, noMount bool) error {
 		log.Info("mounted", "path", cfg.MountPath)
 		defer func() {
 			if err := fsrv.Unmount(); err != nil {
-				log.Warn("unmount", "err", err)
+				// Busy (Plex has a file open): detach it anyway, or the
+				// next start stacks a new mount on a dead one.
+				if lerr := mount.LazyUnmount(cfg.MountPath); lerr != nil {
+					log.Warn("unmount", "err", err, "lazy", lerr)
+				} else {
+					log.Info("unmounted lazily (files were still open)")
+				}
 			}
 		}()
 	}

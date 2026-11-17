@@ -32,8 +32,9 @@ upload_tasks = {}
 def logs():
     # No server-rendered lines: on load the page clears #log-entries and fills
     # it from /api/logs/stream, so rendering 1000 lines here was thrown away.
-    climount_available = _get_active_climount_client() is not None
-    return render_template('logs.html', logs=[], climount_available=climount_available)
+    client = _get_active_climount_client()
+    label = 'Mount' if getattr(client, 'PROVIDER_NAME', '').startswith('Built-in') else 'cli_mount'
+    return render_template('logs.html', logs=[], climount_available=client is not None, mount_log_label=label)
 
 @logs_bp.route('/api/logs')
 @admin_required

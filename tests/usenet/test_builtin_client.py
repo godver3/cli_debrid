@@ -84,7 +84,6 @@ class BuiltinClientTests(unittest.TestCase):
             self.assertTrue(callable(getattr(self.c, name, None)), name)
         self.assertTrue(base.supports(self.c, base.REPAIR_API))
         self.assertFalse(base.supports(self.c, base.SIDECAR))
-        self.assertFalse(base.supports(self.c, base.LOGS))
         self.assertEqual(self.c.base_url, 'http://127.0.0.1:8283')
 
     def test_submit_and_status_shapes(self):
@@ -155,6 +154,25 @@ class BuiltinClientTests(unittest.TestCase):
             self.assertNotIn('Authorization', self.c._headers())
             self.assertEqual(self.c._headers()['Authorization'], 'Bearer gen1')
             self.assertEqual(self.c._headers()['Authorization'], 'Bearer gen2')
+
+    def test_engine_log_in_cli_mount_format(self):
+        import tempfile
+        from usenet import builtin_client as bc
+        self.assertEqual(bc.format_engine_log_line(
+            'time=2026-11-17T09:46:37.927-06:00 level=WARN msg="import failed" job=abc err="job: x \\"y\\""'),
+            '2026-11-17 09:46:37.927 | WARN | [mount] import failed job=abc err="job: x \\"y\\""')
+        self.assertEqual(bc.format_engine_log_line('panic: boom'), 'panic: boom', 'non-slog lines pass through')
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, 'mount_engine.log'), 'w') as f:
+                f.write('time=2026-11-17T09:00:00Z level=INFO msg=mounted path=/mnt/clid\n\n'
+                        'time=2026-11-17T09:00:01Z level=WARN msg="slow"\n')
+            with mock.patch.dict(os.environ, {'USER_LOGS': d}):
+                self.assertEqual(self.c.fetch_logs()['total'], 2)
+                self.assertEqual(self.c.fetch_logs(level='warning')['lines'], ['2026-11-17 09:00:01Z | WARN | [mount] slow'])
+                self.assertEqual(self.c.fetch_logs(lines=1)['lines'][0].split(' | ')[1], 'WARN')
+        with mock.patch.dict(os.environ, {'USER_LOGS': '/nonexistent'}):
+            self.assertEqual(self.c.fetch_logs(), {'lines': [], 'total': 0})
+        self.assertTrue(base.supports(self.c, base.LOGS))
 
     def test_unreachable_engine(self):
         with mock.patch('usenet.builtin_client.requests.request', side_effect=ConnectionError('refused')):

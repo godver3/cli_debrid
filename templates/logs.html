@@ -16,6 +16,7 @@
     }
 })();
 </script>
+<script>window.MOUNT_LOG_LABEL = {{ (mount_log_label or "cli_mount") | tojson }};</script>
 {% endblock %}
 {% block title %}Logs{% endblock %}
 
@@ -24,7 +25,7 @@
     {% if climount_available %}
     <div class="log-source-tabs">
         <button type="button" class="log-source-tab active" data-source="clidebrid">cli_debrid</button>
-        <button type="button" class="log-source-tab" data-source="climount">cli_mount</button>
+        <button type="button" class="log-source-tab" data-source="climount">{{ mount_log_label }}</button>
     </div>
     {% endif %}
     <div class="log-controls">
@@ -59,11 +60,11 @@
             </div>
             {% if climount_available %}
             <div class="share-item">
-                <button id="share-climount-logs-btn" title="Share cli_mount logs via paste.c-net.org">
-                    Share cli_mount Logs
+                <button id="share-climount-logs-btn" title="Share {{ mount_log_label }} logs via paste.c-net.org">
+                    Share {{ mount_log_label }} Logs
                     <div class="share-progress" style="width: 0%"></div>
                 </button>
-                <a id="share-url-climount" class="share-result-url" href="#" target="_blank" title="Click to open shared cli_mount logs"></a>
+                <a id="share-url-climount" class="share-result-url" href="#" target="_blank" title="Click to open shared {{ mount_log_label }} logs"></a>
                 <button id="copy-url-climount-btn" class="copy-url-btn" title="Copy URL to clipboard" data-target="share-url-climount">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
@@ -71,7 +72,7 @@
                 </button>
             </div>
             <div class="share-item">
-                <button id="share-both-logs-btn" title="Share both cli_debrid and cli_mount logs">
+                <button id="share-both-logs-btn" title="Share both cli_debrid and {{ mount_log_label }} logs">
                     Share Both
                     <div class="share-progress" style="width: 0%"></div>
                 </button>

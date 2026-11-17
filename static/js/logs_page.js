@@ -567,7 +567,7 @@ function fetchClimountLogs() {
 
         const lastPolled = document.getElementById('climount-last-polled');
         if (lastPolled) {
-            lastPolled.textContent = `cli_mount polled ${new Date().toLocaleTimeString()}`;
+            lastPolled.textContent = `${window.MOUNT_LOG_LABEL || 'cli_mount'} polled ${new Date().toLocaleTimeString()}`;
             lastPolled.style.display = 'inline';
         }
 
@@ -598,7 +598,7 @@ function fetchClimountLogs() {
 
         logEntries.innerHTML = '';
         if (fragment.childNodes.length === 0) {
-            renderClimountMessage('No cli_mount log lines found.', 'info');
+            renderClimountMessage(`No ${window.MOUNT_LOG_LABEL || 'cli_mount'} log lines found.`, 'info');
             renderChips();
         } else {
             logEntries.appendChild(fragment);
@@ -839,8 +839,8 @@ if (shareBothBtn) {
                 ? `cli_debrid: ${cliDebridResult.value}`
                 : `cli_debrid: FAILED (${cliDebridResult.reason.message})`);
             lines.push(climountResult.status === 'fulfilled'
-                ? `cli_mount: ${climountResult.value}`
-                : `cli_mount: FAILED (${climountResult.reason.message})`);
+                ? `${window.MOUNT_LOG_LABEL || 'cli_mount'}: ${climountResult.value}`
+                : `${window.MOUNT_LOG_LABEL || 'cli_mount'}: FAILED (${climountResult.reason.message})`);
 
             const bothFailed = cliDebridResult.status === 'rejected' && climountResult.status === 'rejected';
             showPopup({
