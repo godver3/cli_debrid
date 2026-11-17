@@ -9,6 +9,10 @@
 //	POST   /jobs/{id}/retry        re-queue a failed job
 //	GET    /changes?since=<unix ms>  jobs updated and deleted since
 //	GET    /stats                  connection pools and transfer counters
+//	GET    /health?status=broken   jobs with health records (filtered)
+//	POST   /health/run?full=&ignore_last_checked=   check all ready jobs
+//	GET    /health/run             current/last run; POST /health/stop stops it
+//	GET|POST|DELETE /jobs/{id}/health   record / check now (?full=) / clear
 package api
 
 import (
@@ -40,6 +44,13 @@ func Handler(e *engine.Engine) http.Handler {
 	mux.HandleFunc("POST /jobs/{id}/retry", a.retry)
 	mux.HandleFunc("GET /changes", a.changes)
 	mux.HandleFunc("GET /stats", a.stats)
+	mux.HandleFunc("GET /health", a.healthList)
+	mux.HandleFunc("POST /health/run", a.healthRun)
+	mux.HandleFunc("GET /health/run", a.healthRunStatus)
+	mux.HandleFunc("POST /health/stop", a.healthStop)
+	mux.HandleFunc("GET /jobs/{id}/health", a.healthGet)
+	mux.HandleFunc("POST /jobs/{id}/health", a.healthCheck)
+	mux.HandleFunc("DELETE /jobs/{id}/health", a.healthClear)
 	return a.auth(mux)
 }
 
@@ -278,4 +289,71 @@ func (a *api) stats(w http.ResponseWriter, r *http.Request) {
 			"hits": a.e.Disk.Hits.Load(), "misses": a.e.Disk.Misses.Load()}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func truthy(s string) bool {
+	return s == "1" || strings.EqualFold(s, "true") || strings.EqualFold(s, "yes")
+}
+
+func (a *api) healthList(w http.ResponseWriter, r *http.Request) {
+	status := r.URL.Query().Get("status")
+	out := []jobOut{}
+	for _, j := range a.e.Store.List() {
+		if j.Health == nil || (status != "" && j.Health.Status != status) {
+			continue
+		}
+		out = append(out, a.render(j, false))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (a *api) healthRun(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	writeJSON(w, http.StatusAccepted, a.e.StartHealthRun(truthy(q.Get("full")), truthy(q.Get("ignore_last_checked"))))
+}
+
+func (a *api) healthRunStatus(w http.ResponseWriter, r *http.Request) {
+	run := a.e.HealthRunStatus()
+	if run == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"status": "idle"})
+		return
+	}
+	writeJSON(w, http.StatusOK, run)
+}
+
+func (a *api) healthStop(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]bool{"stopped": a.e.StopHealthRun()})
+}
+
+func (a *api) healthGet(w http.ResponseWriter, r *http.Request) {
+	j, _, err := a.e.Store.Get(r.PathValue("id"))
+	if err != nil {
+		storeErr(w, err)
+		return
+	}
+	if j.Health == nil {
+		writeJSON(w, http.StatusOK, store.Health{Status: "unknown"})
+		return
+	}
+	writeJSON(w, http.StatusOK, j.Health)
+}
+
+func (a *api) healthCheck(w http.ResponseWriter, r *http.Request) {
+	err := a.e.CheckHealth(r.PathValue("id"), truthy(r.URL.Query().Get("full")))
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusAccepted, map[string]string{"status": "checking"})
+	case errors.Is(err, engine.ErrNotReady):
+		writeErr(w, http.StatusConflict, err)
+	default:
+		storeErr(w, err)
+	}
+}
+
+func (a *api) healthClear(w http.ResponseWriter, r *http.Request) {
+	if err := a.e.ClearHealth(r.PathValue("id")); err != nil {
+		storeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

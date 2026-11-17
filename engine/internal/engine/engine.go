@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/godver3/cli_debrid/engine/internal/diskcache"
+	"github.com/godver3/cli_debrid/engine/internal/health"
 	"github.com/godver3/cli_debrid/engine/internal/job"
 	"github.com/godver3/cli_debrid/engine/internal/nntp"
 	"github.com/godver3/cli_debrid/engine/internal/nzb"
@@ -41,6 +42,7 @@ type Config struct {
 	Token         string          `json:"token"`
 	ReadAhead     int             `json:"read_ahead"`     // segments prefetched after a live read
 	ImportWorkers int             `json:"import_workers"` // jobs imported at once
+	HealthWorkers int             `json:"health_workers"` // jobs health-checked at once
 	Parallel      int             `json:"parallel"`       // probes per import
 	Providers     []nntp.Provider `json:"providers"`
 }
@@ -54,6 +56,9 @@ func (c *Config) defaults() {
 	}
 	if c.ImportWorkers <= 0 {
 		c.ImportWorkers = 2
+	}
+	if c.HealthWorkers <= 0 {
+		c.HealthWorkers = 1
 	}
 	if c.Parallel <= 0 {
 		c.Parallel = 8
@@ -82,6 +87,11 @@ type Engine struct {
 
 	treeMu sync.RWMutex
 	tree   map[string]map[string]*Folder // top folder -> folder name -> job folder
+
+	healthSem chan struct{}
+	runMu     sync.Mutex
+	run       *HealthRun
+	runCancel context.CancelFunc
 }
 
 // Folder is one job's folder in the tree.
@@ -108,7 +118,8 @@ func New(cfg Config, log *slog.Logger) (*Engine, error) {
 	}
 	e := &Engine{cfg: cfg, log: log, Client: client, Store: st,
 		Cache: stream.NewCache(cfg.MemCacheBytes),
-		queue: make(chan string, 4096), open: map[string]*job.Files{}}
+		queue: make(chan string, 4096), open: map[string]*job.Files{},
+		healthSem: make(chan struct{}, cfg.HealthWorkers)}
 	if cfg.CacheDir != "" && cfg.CacheBytes > 0 {
 		if e.Disk, err = diskcache.Open(cfg.CacheDir, cfg.CacheBytes); err != nil {
 			return nil, fmt.Errorf("engine: disk cache: %w", err)
@@ -402,4 +413,224 @@ func (e *Engine) Retry(id string) (store.Job, error) {
 		e.queue <- id
 	}
 	return j, err
+}
+
+// ---- health (feeds cli_debrid's repair system) ---------------------------
+
+// ErrNotReady means the job has no import result to check yet.
+var ErrNotReady = errors.New("engine: job is not ready")
+
+// staleAfter: a sweep re-checks jobs whose last check is older than this.
+const staleAfter = 7 * 24 * time.Hour
+
+// CheckHealth starts a background check of one job. Checks share one
+// worker slot by default and use prefetch priority, so playback wins.
+func (e *Engine) CheckHealth(id string, full bool) error {
+	j, res, err := e.Store.Get(id)
+	if err != nil {
+		return err
+	}
+	if j.Status != store.Ready || res == nil {
+		return ErrNotReady
+	}
+	if j.Health != nil && j.Health.Status == "checking" {
+		return nil // already running
+	}
+	prev := j.Health
+	if _, err := e.Store.Update(id, func(j *store.Job) {
+		h := store.Health{Status: "checking"}
+		if prev != nil {
+			h.Broken = prev.Broken // keep proof from playback until re-checked
+		}
+		j.Health = &h
+	}); err != nil {
+		return err
+	}
+	e.wg.Add(1)
+	go func() {
+		defer e.wg.Done()
+		e.runCheck(id, full)
+	}()
+	return nil
+}
+
+func (e *Engine) runCheck(id string, full bool) {
+	select {
+	case e.healthSem <- struct{}{}:
+		defer func() { <-e.healthSem }()
+	case <-e.ctx.Done():
+		return
+	}
+	_, res, err := e.Store.Get(id)
+	if err != nil || res == nil {
+		return
+	}
+	data, err := e.Store.NZB(id)
+	if err != nil {
+		return
+	}
+	parsed, err := nzb.Parse(bytes.NewReader(data))
+	if err != nil {
+		return
+	}
+	rep, err := health.Check(e.ctx, e.Client, parsed, res, health.Options{Full: full})
+	if err != nil {
+		if e.ctx.Err() == nil {
+			e.log.Warn("health check failed", "job", id, "err", err)
+		}
+		return
+	}
+	now := time.Now()
+	e.Store.Update(id, func(j *store.Job) {
+		h := store.Health{Status: rep.Status, CheckedAt: now, Inconclusive: rep.Inconclusive}
+		for _, f := range rep.Broken() {
+			h.Broken = append(h.Broken, store.BrokenFile{Name: f.Name, Reason: f.Reason, Segment: f.Segment, Via: "check", At: now})
+		}
+		// Proof from playback stays unless this check covered the same
+		// article conclusively (it would then be listed above again).
+		if j.Health != nil {
+			for _, b := range j.Health.Broken {
+				if b.Via == "playback" && !hasBroken(h.Broken, b.Name) {
+					h.Broken = append(h.Broken, b)
+					h.Status = health.Broken
+				}
+			}
+		}
+		j.Health = &h
+	})
+	e.log.Info("health checked", "job", id, "status", rep.Status, "checked", rep.Checked, "inconclusive", rep.Inconclusive)
+}
+
+func hasBroken(list []store.BrokenFile, name string) bool {
+	for _, b := range list {
+		if b.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// MarkBroken records a file proven unplayable during playback (an article
+// every provider answered missing for).
+func (e *Engine) MarkBroken(id, file, reason, segment string) {
+	_, err := e.Store.Update(id, func(j *store.Job) {
+		h := store.Health{Status: health.Broken}
+		if j.Health != nil {
+			h = *j.Health
+			h.Status = health.Broken
+		}
+		if hasBroken(h.Broken, file) {
+			return
+		}
+		h.Broken = append(h.Broken, store.BrokenFile{Name: file, Reason: reason, Segment: segment, Via: "playback", At: time.Now()})
+		j.Health = &h
+	})
+	if err == nil {
+		e.log.Warn("file marked broken during playback", "job", id, "file", file, "reason", reason)
+	}
+}
+
+// ClearHealth drops a job's health record (after a repair replaced it).
+func (e *Engine) ClearHealth(id string) error {
+	_, err := e.Store.Update(id, func(j *store.Job) { j.Health = nil })
+	return err
+}
+
+// HealthRun is the state of a sweep over all ready jobs.
+type HealthRun struct {
+	ID        string    `json:"run_id"`
+	Status    string    `json:"status"` // running, completed, stopped
+	Full      bool      `json:"full"`
+	Total     int       `json:"total"`
+	Done      int       `json:"done"`
+	StartedAt time.Time `json:"started_at"`
+	EndedAt   time.Time `json:"ended_at,omitempty"`
+}
+
+// StartHealthRun checks every ready job (only those not checked in a week
+// unless ignoreLastChecked). One run at a time; returns the current run.
+func (e *Engine) StartHealthRun(full, ignoreLastChecked bool) HealthRun {
+	e.runMu.Lock()
+	if e.run != nil && e.run.Status == "running" {
+		r := *e.run
+		e.runMu.Unlock()
+		return r
+	}
+	var ids []string
+	for _, j := range e.Store.List() {
+		if j.Status != store.Ready {
+			continue
+		}
+		if !ignoreLastChecked && j.Health != nil && time.Since(j.Health.CheckedAt) < staleAfter {
+			continue
+		}
+		ids = append(ids, j.ID)
+	}
+	run := &HealthRun{ID: NewID(), Status: "running", Full: full, Total: len(ids), StartedAt: time.Now()}
+	ctx, cancel := context.WithCancel(e.ctx)
+	e.run, e.runCancel = run, cancel
+	r := *run
+	e.runMu.Unlock()
+
+	e.wg.Add(1)
+	go func() {
+		defer e.wg.Done()
+		for _, id := range ids {
+			if ctx.Err() != nil {
+				break
+			}
+			if err := e.CheckHealth(id, full); err == nil {
+				e.waitChecked(ctx, id)
+			}
+			e.runMu.Lock()
+			run.Done++
+			e.runMu.Unlock()
+		}
+		e.runMu.Lock()
+		run.EndedAt = time.Now()
+		if ctx.Err() != nil {
+			run.Status = "stopped"
+		} else {
+			run.Status = "completed"
+		}
+		e.runMu.Unlock()
+		cancel()
+	}()
+	return r
+}
+
+// waitChecked blocks until a job's check left "checking".
+func (e *Engine) waitChecked(ctx context.Context, id string) {
+	for ctx.Err() == nil {
+		j, _, err := e.Store.Get(id)
+		if err != nil || j.Health == nil || j.Health.Status != "checking" {
+			return
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
+// HealthRunStatus returns the latest run (nil if none).
+func (e *Engine) HealthRunStatus() *HealthRun {
+	e.runMu.Lock()
+	defer e.runMu.Unlock()
+	if e.run == nil {
+		return nil
+	}
+	r := *e.run
+	return &r
+}
+
+// StopHealthRun stops the running sweep.
+func (e *Engine) StopHealthRun() bool {
+	e.runMu.Lock()
+	defer e.runMu.Unlock()
+	if e.run == nil || e.run.Status != "running" {
+		return false
+	}
+	e.runCancel()
+	return true
 }

@@ -65,8 +65,8 @@ func (s *Server) SetDelay(d time.Duration) {
 	s.delay = d
 }
 
-// Drop makes the server close the connection instead of answering BODY for
-// id (a flaky provider, not a missing article).
+// Drop makes the server close the connection instead of answering BODY or
+// STAT for id (a flaky provider, not a missing article).
 func (s *Server) Drop(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -153,7 +153,11 @@ func (s *Server) handle(c net.Conn) {
 			s.Stats.Add(1)
 			s.mu.Lock()
 			_, ok := s.articles[arg]
+			drop := s.drop[strings.Trim(arg, "<>")]
 			s.mu.Unlock()
+			if drop {
+				return
+			}
 			if ok {
 				write("223 0 " + arg)
 			} else {

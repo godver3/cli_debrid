@@ -145,6 +145,24 @@ func TestMountServesJobsThroughFUSE(t *testing.T) {
 		t.Fatalf("RAR member through FUSE: %v", err)
 	}
 
+	// Playback hitting an article missing everywhere marks the file broken
+	// for cli_debrid's repair (the read itself fails with EIO).
+	gone := random(4, 300_000)
+	j3, err := e.Submit(nntptest.PostNZB(s, "g", nntptest.File{Name: "Gone.mkv", Data: gone}), "Gone", "movies", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitReady(t, e, j3.ID)
+	s.Remove("g0.3@test")
+	time.Sleep(dirTTL + 200*time.Millisecond)
+	if _, err := os.ReadFile(filepath.Join(dir, "__all__", "Gone", "Gone.mkv")); err == nil {
+		t.Fatal("read of a file with a missing article succeeded")
+	}
+	if g, _, _ := e.Store.Get(j3.ID); g.Health == nil || g.Health.Status != "broken" ||
+		len(g.Health.Broken) != 1 || g.Health.Broken[0].Via != "playback" || g.Health.Broken[0].Segment != "g0.3@test" {
+		t.Fatalf("playback miss not recorded: %+v", g.Health)
+	}
+
 	// Deleted jobs disappear.
 	if err := e.Delete(j.ID); err != nil {
 		t.Fatal(err)

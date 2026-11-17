@@ -45,6 +45,25 @@ type Job struct {
 	CLIIDs    map[string]int `json:"cli_ids,omitempty"` // entry name -> cli_debrid item id
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`
+	Health    *Health        `json:"health,omitempty"`
+}
+
+// Health is the latest health record of a job, for cli_debrid's repair.
+type Health struct {
+	// Status: checking, healthy, broken or unknown (nothing conclusive).
+	Status       string       `json:"status"`
+	CheckedAt    time.Time    `json:"checked_at,omitempty"`
+	Broken       []BrokenFile `json:"broken_files,omitempty"`
+	Inconclusive int          `json:"inconclusive,omitempty"`
+}
+
+// BrokenFile is a file proven unplayable.
+type BrokenFile struct {
+	Name    string    `json:"file_name"`
+	Reason  string    `json:"reason"`
+	Segment string    `json:"segment,omitempty"`
+	Via     string    `json:"via"` // "check" or "playback"
+	At      time.Time `json:"at"`
 }
 
 // Tombstone records a deleted job for the changes feed.
@@ -98,6 +117,12 @@ func Open(dir string) (*Store, error) {
 		}
 		if j.Status == Importing || j.Status == Queued {
 			j.Status = Queued // interrupted import: the engine re-runs it
+		}
+		if j.Health != nil && j.Health.Status == "checking" {
+			j.Health.Status = "unknown" // interrupted check; proof already found is kept
+			if len(j.Health.Broken) > 0 {
+				j.Health.Status = "broken"
+			}
 		}
 		s.jobs[j.ID] = &j
 		var r job.Result

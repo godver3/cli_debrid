@@ -10,6 +10,7 @@ package mount
 
 import (
 	"context"
+	"errors"
 	"hash/fnv"
 	"log/slog"
 	"syscall"
@@ -21,6 +22,7 @@ import (
 	"github.com/godver3/cli_debrid/engine/internal/engine"
 	"github.com/godver3/cli_debrid/engine/internal/job"
 	"github.com/godver3/cli_debrid/engine/internal/nntp"
+	"github.com/godver3/cli_debrid/engine/internal/stream"
 )
 
 // Options for Mount.
@@ -218,7 +220,7 @@ func (f *file) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 		return nil, 0, syscall.EIO
 	}
 	// Keep the kernel page cache between opens: content never changes.
-	return &handle{r: files.Entry(f.entry), name: f.entry.Name, log: f.log}, fuse.FOPEN_KEEP_CACHE, 0
+	return &handle{r: files.Entry(f.entry), name: f.entry.Name, jobID: f.jobID, e: f.e, log: f.log}, fuse.FOPEN_KEEP_CACHE, 0
 }
 
 func (f *file) Read(ctx context.Context, fh fs.FileHandle, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
@@ -230,9 +232,11 @@ func (f *file) Read(ctx context.Context, fh fs.FileHandle, dest []byte, off int6
 }
 
 type handle struct {
-	r    *job.EntryReader
-	name string
-	log  *slog.Logger
+	r     *job.EntryReader
+	name  string
+	jobID string
+	e     *engine.Engine
+	log   *slog.Logger
 }
 
 func (h *handle) read(ctx context.Context, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
@@ -243,6 +247,15 @@ func (h *handle) read(ctx context.Context, dest []byte, off int64) (fuse.ReadRes
 	if err != nil && n < len(dest) && off+int64(n) < h.r.Size() {
 		h.log.Warn("read failed", "file", h.name, "offset", off, "len", len(dest), "err", err,
 			"missing", nntp.IsNotFound(err))
+		if nntp.IsNotFound(err) {
+			// Proof the file can't play: hand it to cli_debrid's repair.
+			seg := ""
+			var se *stream.SegmentError
+			if errors.As(err, &se) {
+				seg = se.ID
+			}
+			h.e.MarkBroken(h.jobID, h.name, "article missing on every provider during playback", seg)
+		}
 		return nil, syscall.EIO
 	}
 	return fuse.ReadResultData(dest[:n]), 0

@@ -225,3 +225,100 @@ func TestRejectsAndFailures(t *testing.T) {
 		t.Fatalf("retried job: %+v", j)
 	}
 }
+
+type healthOut struct {
+	Status string `json:"status"`
+	Broken []struct {
+		Name    string `json:"file_name"`
+		Segment string `json:"segment"`
+		Via     string `json:"via"`
+	} `json:"broken_files"`
+	Inconclusive int `json:"inconclusive"`
+}
+
+func (h *harness) waitHealth(id string) healthOut {
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		var out healthOut
+		h.do("GET", "/jobs/"+id+"/health", nil, &out)
+		if out.Status != "checking" && out.Status != "" {
+			return out
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	h.t.Fatalf("health check of %s never finished", id)
+	return healthOut{}
+}
+
+func TestHealthForRepair(t *testing.T) {
+	h := newHarness(t)
+	var a, b jobOut
+	h.do("POST", "/jobs?name=A", nzbXML(h.s, "ha", file{Name: "A.mkv", Data: random(10, 400_000)}), &a)
+	h.do("POST", "/jobs?name=B", nzbXML(h.s, "hb", file{Name: "B.mkv", Data: random(11, 400_000)}), &b)
+	h.waitDone(a.ID)
+	h.waitDone(b.ID)
+
+	if code := h.do("POST", "/jobs/"+a.ID+"/health?full=true", nil, nil); code != 202 {
+		t.Fatalf("start check: %d", code)
+	}
+	if got := h.waitHealth(a.ID); got.Status != "healthy" {
+		t.Fatalf("A: %+v", got)
+	}
+
+	// An article gone from every provider: B is broken, with the exact article.
+	h.s.Remove("hb0.4@test")
+	h.do("POST", "/jobs/"+b.ID+"/health?full=1", nil, nil)
+	got := h.waitHealth(b.ID)
+	if got.Status != "broken" || len(got.Broken) != 1 || got.Broken[0].Name != "B.mkv" ||
+		got.Broken[0].Segment != "hb0.4@test" || got.Broken[0].Via != "check" {
+		t.Fatalf("B: %+v", got)
+	}
+	var broken []jobOut
+	h.do("GET", "/health?status=broken", nil, &broken)
+	if len(broken) != 1 || broken[0].ID != b.ID || broken[0].Health == nil {
+		t.Fatalf("broken list: %+v", broken)
+	}
+
+	// Repair done: cli_debrid clears the record.
+	if code := h.do("DELETE", "/jobs/"+b.ID+"/health", nil, nil); code != 204 {
+		t.Fatalf("clear: %d", code)
+	}
+	h.do("GET", "/health?status=broken", nil, &broken)
+	if len(broken) != 0 {
+		t.Fatalf("still listed: %+v", broken)
+	}
+
+	// A provider dropping connections proves nothing: never broken.
+	h.s.Drop("ha0.1@test")
+	h.s.Drop("ha0.7@test")
+	h.do("POST", "/jobs/"+a.ID+"/health?full=1", nil, nil)
+	if got := h.waitHealth(a.ID); got.Status == "broken" || got.Inconclusive == 0 {
+		t.Fatalf("flaky provider: %+v", got)
+	}
+
+	// Sweep over every ready job.
+	var run struct {
+		RunID  string `json:"run_id"`
+		Status string `json:"status"`
+		Total  int    `json:"total"`
+		Done   int    `json:"done"`
+	}
+	h.do("POST", "/health/run?ignore_last_checked=true&full=true", nil, &run) // sampled sweeps may miss one article; full ones may not
+	if run.Total != 2 {
+		t.Fatalf("run: %+v", run)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for run.Status != "completed" && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+		h.do("GET", "/health/run", nil, &run)
+	}
+	if run.Status != "completed" || run.Done != 2 {
+		t.Fatalf("run end: %+v", run)
+	}
+	if got := h.waitHealth(b.ID); got.Status != "broken" {
+		t.Fatalf("sweep should re-find B broken: %+v", got)
+	}
+	if code := h.do("POST", "/jobs/nope/health", nil, nil); code != 404 {
+		t.Fatalf("unknown job: %d", code)
+	}
+}
