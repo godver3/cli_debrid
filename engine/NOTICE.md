@@ -8,6 +8,7 @@ MIT License, Copyright (c) 2025 Mukhtar Akere.
 |---|---|
 | `internal/yenc/` | `internal/nntp/yenc/` (copied unchanged apart from this notice) |
 | `internal/archive/rar.go` | volume-number handling and its test cases from `pkg/usenet/parser/rar.go`, `rar_reader.go`, `rar_volume_order_test.go` (rewritten, not copied) |
+| `internal/par2/` | FileDesc packet layout from `pkg/usenet/parser/par2.go` (rewritten; adds length check and de-duplication) |
 
 Each adapted file keeps a header comment naming its source.
 
