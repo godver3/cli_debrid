@@ -1,0 +1,86 @@
+package engine
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"strings"
+	"sync/atomic"
+	"testing"
+
+	"github.com/godver3/cli_debrid/engine/internal/nntptest"
+	"github.com/godver3/cli_debrid/engine/internal/store"
+)
+
+// A debrid torrent registered by cli_debrid streams over HTTP ranges with
+// links from the callback; an expired/refused link is replaced once.
+func TestDebridJobStreamsWithFreshLinks(t *testing.T) {
+	file := data(21, 3*1<<20+12345) // 3 chunks + a bit
+	var served, refused atomic.Int64
+	cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("v") != "2" { // the first link has "expired"
+			refused.Add(1)
+			http.Error(w, "expired", http.StatusForbidden)
+			return
+		}
+		var a, b int64
+		fmt.Sscanf(r.Header.Get("Range"), "bytes=%d-%d", &a, &b)
+		served.Add(1)
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", a, b, len(file)))
+		w.WriteHeader(http.StatusPartialContent)
+		w.Write(file[a : b+1])
+	}))
+	defer cdn.Close()
+	var calls atomic.Int64
+	cb := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer tok" {
+			http.Error(w, "no", 401)
+			return
+		}
+		var req struct {
+			Ref     string `json:"ref"`
+			Refresh bool   `json:"refresh"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+		v := strconv.FormatInt(calls.Add(1), 10)
+		json.NewEncoder(w).Encode(map[string]any{"url": cdn.URL + "/" + req.Ref + "?v=" + v, "expires_in": 3600})
+	}))
+	defer cb.Close()
+
+	s := nntptest.Start(t)
+	e := newEngine(t, s, func(c *Config) { c.LinkCallback, c.Token = cb.URL, "tok" })
+	j, err := e.AddDebrid("realdebrid-ABC123", "Movie.2024.1080p", "movies",
+		[]DebridFile{{Name: "Movie.2024.1080p.mkv", Size: int64(len(file)), Ref: "ABC123:1"}})
+	if err != nil || j.Status != store.Ready || j.Protocol != ProtocolDebrid {
+		t.Fatalf("add: %+v %v", j, err)
+	}
+	files, err := e.Files(j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, res, _ := e.Store.Get(j.ID)
+	r := files.Entry(res.Entries[0])
+	got := make([]byte, len(file))
+	if n, err := r.ReadAt(got, 0); n != len(file) || (err != nil && err != io.EOF) || !bytes.Equal(got, file) {
+		t.Fatalf("read: n=%d err=%v equal=%v", n, err, bytes.Equal(got, file))
+	}
+	if refused.Load() != 1 || calls.Load() != 2 {
+		t.Fatalf("expected one refused link then one fresh one: refused=%d callbacks=%d", refused.Load(), calls.Load())
+	}
+	before := served.Load()
+	part := make([]byte, 1000)
+	r.ReadAt(part, 2<<20+5)
+	if served.Load() != before || !bytes.Equal(part, file[2<<20+5:2<<20+1005]) {
+		t.Fatal("a re-read should come from the cache")
+	}
+	if err := e.CheckHealth(j.ID, false); err == nil || !strings.Contains(err.Error(), "not a usenet job") {
+		t.Fatalf("health on a debrid job: %v", err)
+	}
+	if _, err := e.AddDebrid("bad id!", "x", "", []DebridFile{{Name: "a", Size: 1, Ref: "r"}}); err == nil {
+		t.Fatal("invalid id accepted")
+	}
+}

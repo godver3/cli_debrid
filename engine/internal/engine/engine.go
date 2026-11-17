@@ -48,6 +48,7 @@ type Config struct {
 	HealthSample  float64         `json:"health_sample_percent"`  // % checked by health checks (0 = 2%, max 30 per file)
 	IdleTimeout   int             `json:"idle_timeout_seconds"`   // close NNTP connections unused this long (default 300)
 	CacheExpiry   int             `json:"cache_expiry_seconds"`   // drop disk cache entries unused this long (0 = only by size)
+	LinkCallback  string          `json:"link_callback"`          // cli_debrid URL that hands out debrid download links
 	PreCacheMB    int             `json:"precache_mb"`            // on open, fetch this much of the start and end (0 = off)
 	CacheCleanup  int             `json:"cache_cleanup_seconds"`  // how often the expiry runs (default 60)
 	ImportWorkers int             `json:"import_workers"`         // jobs imported at once
@@ -152,6 +153,7 @@ type Engine struct {
 
 	healthSem chan struct{}
 	streams   streamTable
+	links     *callbackLinks
 	stopReq   chan struct{}
 	stopOnce  sync.Once
 	runMu     sync.Mutex
@@ -196,6 +198,7 @@ func New(cfg Config, log *slog.Logger) (*Engine, error) {
 		e.wg.Add(1)
 		go e.worker()
 	}
+	e.links = newCallbackLinks(cfg.LinkCallback, cfg.Token)
 	e.wg.Add(1)
 	go e.maintain()
 	e.Client.Warm(e.ctx)
@@ -478,11 +481,13 @@ func (e *Engine) Files(id string) (*job.Files, error) {
 	if err != nil {
 		return nil, err
 	}
-	parsed, err := nzb.Parse(bytes.NewReader(data))
-	if err != nil {
-		return nil, err
+	var parsed *nzb.NZB
+	if j.Protocol != ProtocolDebrid {
+		if parsed, err = nzb.Parse(bytes.NewReader(data)); err != nil {
+			return nil, err
+		}
 	}
-	fs, err := job.Open(res, parsed, e.Client, e.Cache, e.cfg.readAhead())
+	fs, err := job.Open(res, parsed, e.Client, e.Cache, e.cfg.readAhead(), e.links)
 	if err != nil {
 		return nil, err
 	}
@@ -644,6 +649,9 @@ func (e *Engine) CheckHealth(id string, full bool) error {
 	if j.Status != store.Ready || res == nil {
 		return ErrNotReady
 	}
+	if j.Protocol == ProtocolDebrid {
+		return ErrNotUsenet // article checks don't apply; a dead debrid link shows on read
+	}
 	if j.Health != nil && j.Health.Status == "checking" {
 		return nil // already running
 	}
@@ -775,7 +783,7 @@ func (e *Engine) StartHealthRun(full, ignoreLastChecked bool) HealthRun {
 	}
 	var ids []string
 	for _, j := range e.Store.List() {
-		if j.Status != store.Ready {
+		if j.Status != store.Ready || j.Protocol == ProtocolDebrid {
 			continue
 		}
 		if !ignoreLastChecked && j.Health != nil && time.Since(j.Health.CheckedAt) < staleAfter {

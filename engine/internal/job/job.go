@@ -32,6 +32,9 @@ type Source struct {
 	// Map, when set, places the file's bytes in its articles directly
 	// (jobs migrated from cli_mount); Layout then only carries the size.
 	Map []stream.MapSeg `json:"map,omitempty"`
+	// Remote, when set, is a debrid file reference: the file is read over
+	// HTTP from a link cli_debrid provides (Layout carries the size).
+	Remote string `json:"remote,omitempty"`
 }
 
 // MapIndex returns the 0-based segment of a mapped source holding off.

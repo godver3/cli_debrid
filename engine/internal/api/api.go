@@ -41,6 +41,7 @@ func Handler(e *engine.Engine) http.Handler {
 	mux.HandleFunc("GET /status", a.status)
 	mux.HandleFunc("POST /jobs", a.submit)
 	mux.HandleFunc("POST /jobs/import", a.importMapped)
+	mux.HandleFunc("POST /debrid/jobs", a.addDebrid)
 	mux.HandleFunc("GET /jobs", a.list)
 	mux.HandleFunc("GET /jobs/{id}", a.get)
 	mux.HandleFunc("PATCH /jobs/{id}", a.patch)
@@ -282,6 +283,26 @@ func (a *api) changes(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// addDebrid registers a debrid torrent (cli_debrid's account sync).
+func (a *api) addDebrid(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ID       string              `json:"id"`
+		Name     string              `json:"name"`
+		Category string              `json:"category"`
+		Files    []engine.DebridFile `json:"files"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 16<<20)).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	j, err := a.e.AddDebrid(body.ID, body.Name, body.Category, body.Files)
+	if err != nil {
+		storeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, a.render(j, false))
+}
+
 // importMapped adds a job migrated from cli_mount (its own segment maps).
 func (a *api) importMapped(w http.ResponseWriter, r *http.Request) {
 	var body struct {
@@ -403,7 +424,7 @@ func (a *api) healthCheck(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case err == nil:
 		writeJSON(w, http.StatusAccepted, map[string]string{"status": "checking"})
-	case errors.Is(err, engine.ErrNotReady):
+	case errors.Is(err, engine.ErrNotReady), errors.Is(err, engine.ErrNotUsenet):
 		writeErr(w, http.StatusConflict, err)
 	default:
 		storeErr(w, err)

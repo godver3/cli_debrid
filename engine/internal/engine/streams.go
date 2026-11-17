@@ -41,12 +41,15 @@ type streamTable struct {
 func (e *Engine) OpenStream(jobID, file string, size int64) uint64 {
 	t := &e.streams
 	id := t.next.Add(1)
-	folder := ""
+	folder, protocol := "", "usenet"
 	if j, _, err := e.Store.Get(jobID); err == nil {
 		folder = j.Name
+		if j.Protocol == ProtocolDebrid {
+			protocol = ProtocolDebrid
+		}
 	}
 	now := time.Now()
-	st := &streamState{s: Stream{ID: id, JobID: jobID, Folder: folder, File: file, Protocol: "usenet",
+	st := &streamState{s: Stream{ID: id, JobID: jobID, Folder: folder, File: file, Protocol: protocol,
 		Size: size, OpenedAt: now}, winStart: now}
 	t.mu.Lock()
 	if t.m == nil {

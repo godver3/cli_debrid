@@ -431,6 +431,11 @@ SETTINGS_SCHEMA = {
             "description": "Built-in mount only. Playback connection reserve: % of each server's connections that only playback may use; read-ahead, imports and health checks never take them (at least 1 when set; 0 = off).",
             "default": 10
         },
+        "debrid_streaming": {
+            "type": "boolean",
+            "description": "Built-in mount only. Stream your debrid account's finished torrents through the built-in mount too (Real-Debrid and TorBox), next to usenet: the mount mirrors the account like cli_mount or Zurg did.",
+            "default": True
+        },
         "plex_prewarm": {
             "type": "boolean",
             "description": "Built-in mount only. Plex next-episode prewarm: when someone is far enough into an episode playing from the mount, fetch the start of the next episode in the background so it starts instantly.",

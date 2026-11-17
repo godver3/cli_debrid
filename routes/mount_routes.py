@@ -32,11 +32,17 @@ def _start_background(state):
         mount_prewarm.start(get_setting)
     except Exception as exc:
         logging.warning(f'Mount prewarm poller not started: {exc}')
+    try:
+        from utilities import mount_debrid
+        mount_debrid.start(get_setting)
+    except Exception as exc:
+        logging.warning(f'Mount debrid sync not started: {exc}')
 
 SECTION = 'Built-in Mount'
 SECRET_KEYS = ('api_token',)
 GROUPS = [
     ('Mount', ['mount_path', 'allow_other', 'uid', 'gid', 'umask']),
+    ('Debrid', ['debrid_streaming']),
     ('Streaming', ['read_ahead_mb', 'max_connections_per_file', 'precache_mb', 'warm_connections',
                    'playback_reserve_percent', 'buffer_memory_mb', 'idle_timeout_minutes']),
     ('Plex next-episode prewarm', ['plex_prewarm', 'prewarm_trigger_percent', 'prewarm_percent', 'prewarm_max_mb']),
@@ -51,7 +57,7 @@ LABELS = {
     'gid': 'Group ID (GID)', 'umask': 'UMASK', 'read_ahead_mb': 'Read ahead (MB)',
     'max_connections_per_file': 'Max connections per file', 'buffer_memory_mb': 'Buffer memory (MB)',
     'idle_timeout_minutes': 'Connection idle timeout (minutes)', 'precache_mb': 'Pre-cache on open (MB)',
-    'warm_connections': 'Warm connections per server', 'plex_prewarm': 'Prewarm the next episode while one plays',
+    'warm_connections': 'Warm connections per server', 'debrid_streaming': 'Stream debrid torrents through this mount', 'plex_prewarm': 'Prewarm the next episode while one plays',
     'prewarm_trigger_percent': 'Start at (% watched)', 'prewarm_percent': 'Fetch (% of next episode)',
     'prewarm_max_mb': 'Fetch at most (MB)', 'playback_reserve_percent': 'Playback connection reserve %', 'cache_dir': 'Cache directory',
     'cache_size_gb': 'Disk cache size (GB)', 'cache_expiry_hours': 'Cache expiry (hours)',
@@ -319,6 +325,26 @@ def job_action(job_id, action):
         return _engine_unavailable()
     ok = code in (200, 202)
     return jsonify({'success': ok, **({} if ok else {'error': (body or {}).get('error', f'HTTP {code}')})}), (200 if ok else 400)
+
+
+# ---- Debrid links for the engine (not a user page) ---------------------------
+
+@mount_bp.route('/internal/link', methods=['POST'])
+def internal_link():
+    """The engine's link callback: a fresh download URL for one debrid file.
+    Only the local engine (its token, from localhost) may call it."""
+    from utilities import builtin_engine, mount_debrid
+    token = builtin_engine.current_token()
+    auth = request.headers.get('Authorization', '')
+    if not token or auth != f'Bearer {token}' or request.remote_addr not in ('127.0.0.1', '::1'):
+        return jsonify({'error': 'forbidden'}), 403
+    ref = str((request.get_json(silent=True) or {}).get('ref') or '')
+    try:
+        url, ttl = mount_debrid.link(ref)
+    except Exception as exc:
+        logging.warning(f'[mount debrid] no link for {ref}: {exc}')
+        return jsonify({'error': str(exc)}), 502
+    return jsonify({'url': url, 'expires_in': int(ttl)})
 
 
 # ---- Migrate from cli_mount -------------------------------------------------

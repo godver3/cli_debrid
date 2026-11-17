@@ -22,9 +22,19 @@ type Files struct {
 
 // Open prepares readers for a stored job. n must be the same NZB the job
 // was built from; no network traffic happens until something is read.
-func Open(res *Result, n *nzb.NZB, f stream.Fetcher, cache *stream.Cache, readAhead stream.ReadAhead) (*Files, error) {
+func Open(res *Result, n *nzb.NZB, f stream.Fetcher, cache *stream.Cache, readAhead stream.ReadAhead, links ...stream.LinkSource) (*Files, error) {
 	out := &Files{}
 	for _, s := range res.Sources {
+		if s.Remote != "" {
+			if len(links) == 0 || links[0] == nil {
+				return nil, fmt.Errorf("job: %q is a debrid file but no link source is configured", s.Name)
+			}
+			out.sources = append(out.sources, stream.OpenRemote(links[0], nil, cache, s.Remote, s.Layout.Size, readAhead))
+			continue
+		}
+		if n == nil {
+			return nil, fmt.Errorf("job: source %q needs the NZB", s.Name)
+		}
 		if s.NZBIndex < 0 || s.NZBIndex >= len(n.Files) {
 			return nil, fmt.Errorf("job: source %q points at NZB file %d of %d", s.Name, s.NZBIndex, len(n.Files))
 		}

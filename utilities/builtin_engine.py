@@ -194,6 +194,8 @@ def build_config(settings: dict) -> dict:
         'listen': f"127.0.0.1:{int(bm.get('api_port') or 8283)}",
         'token': resolve_token(settings),
         'read_ahead_mb': max(1, num('read_ahead_mb', 16)),
+        # Debrid streaming: the engine asks cli_debrid (this host) for links.
+        'link_callback': f"http://127.0.0.1:{os.environ.get('CLI_DEBRID_PORT', '5000')}/mount/internal/link",
         'precache_mb': max(0, num('precache_mb', 2)),
         'max_conns_per_file': num('max_connections_per_file', 15),
         'parallel': max(1, num('processing_connections', 8)),

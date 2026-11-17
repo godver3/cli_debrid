@@ -120,6 +120,22 @@ class MountRoutesTests(unittest.TestCase):
         self.assertIn(('POST', '/jobs/j1/health'), calls)
         self.assertNotIn(('del', ''), calls)
 
+    def test_internal_link_only_for_the_local_engine(self):
+        from utilities import builtin_engine, mount_debrid
+
+        def call(auth, addr='127.0.0.1'):
+            with Flask(__name__).test_request_context(json={'ref': 'rd:A:1'}, headers={'Authorization': auth},
+                                                      environ_base={'REMOTE_ADDR': addr}):
+                r = mr.internal_link()
+            return (r[1], r[0].get_json()) if isinstance(r, tuple) else (200, r.get_json())
+        with mock.patch.object(builtin_engine, 'current_token', return_value='tok'), \
+                mock.patch.object(mount_debrid, 'link', return_value=('https://cdn/x', 600)):
+            self.assertEqual(call('Bearer tok'), (200, {'url': 'https://cdn/x', 'expires_in': 600}))
+            self.assertEqual(call('Bearer nope')[0], 403)
+            self.assertEqual(call('Bearer tok', addr='192.168.1.5')[0], 403, 'never from the network')
+        with mock.patch.object(builtin_engine, 'current_token', return_value=''):
+            self.assertEqual(call('Bearer ')[0], 403, 'no token configured: closed')
+
     def test_unchanged_save_does_not_resync(self):
         code, body = self.save({'read_ahead_mb': 16})
         self.assertEqual((code, body['changed']), (200, []))

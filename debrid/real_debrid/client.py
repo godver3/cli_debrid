@@ -854,6 +854,37 @@ class RealDebridProvider(DebridProvider):
                 self.update_status(torrent_id, TorrentStatus.ERROR)
             return None
 
+    # ---- built-in mount ---------------------------------------------------
+
+    supports_mount_links = True
+
+    @staticmethod
+    def _mount_selected(info: Dict) -> List[Dict]:
+        """Selected files in RD's link order (by file id)."""
+        return sorted((f for f in info.get('files') or [] if f.get('selected')), key=lambda f: f.get('id', 0))
+
+    def mount_files(self, torrent_id: str) -> Optional[Tuple[str, List[Dict]]]:
+        info = make_request('GET', f'/torrents/info/{torrent_id}', self.api_key)
+        if not info or info.get('status') != 'downloaded':
+            return None
+        sel, links = self._mount_selected(info), info.get('links') or []
+        if not sel or len(links) != len(sel):
+            return None  # RD packed the files into one archive link: not streamable per file
+        return info.get('filename') or info.get('original_filename') or str(torrent_id), [
+            {'name': f.get('path', ''), 'size': int(f.get('bytes') or 0), 'file_id': str(f.get('id'))} for f in sel]
+
+    def mount_link(self, torrent_id: str, file_id: str) -> Tuple[str, int]:
+        info = make_request('GET', f'/torrents/info/{torrent_id}', self.api_key)
+        sel, links = self._mount_selected(info or {}), (info or {}).get('links') or []
+        ids = [str(f.get('id')) for f in sel]
+        if str(file_id) not in ids or len(links) != len(sel):
+            raise ValueError(f'file {file_id} is not a selected file of torrent {torrent_id}')
+        out = make_request('POST', '/unrestrict/link', self.api_key, data={'link': links[ids.index(str(file_id))]})
+        url = (out or {}).get('download')
+        if not url:
+            raise ValueError(f'Real-Debrid gave no download link for {torrent_id}/{file_id}')
+        return url, 12 * 3600
+
     def get_torrent_info_with_status(self, torrent_id: str) -> TorrentInfoStatus:
         """
         Get detailed information about a torrent, including fetch status,
