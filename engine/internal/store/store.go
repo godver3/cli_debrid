@@ -62,8 +62,11 @@ type Health struct {
 
 // BrokenFile is a file proven unplayable.
 type BrokenFile struct {
-	Name    string    `json:"file_name"`
+	Name string `json:"file_name"`
+	// Reason is a cli_mount-compatible code cli_debrid's repair acts on
+	// (usenet_segment_missing); Detail says what exactly was found.
 	Reason  string    `json:"reason"`
+	Detail  string    `json:"detail,omitempty"`
 	Segment string    `json:"segment,omitempty"`
 	Via     string    `json:"via"` // "check" or "playback"
 	At      time.Time `json:"at"`

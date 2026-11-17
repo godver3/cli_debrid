@@ -230,6 +230,7 @@ type healthOut struct {
 	Status string `json:"status"`
 	Broken []struct {
 		Name    string `json:"file_name"`
+		Reason  string `json:"reason"`
 		Segment string `json:"segment"`
 		Via     string `json:"via"`
 	} `json:"broken_files"`
@@ -270,7 +271,7 @@ func TestHealthForRepair(t *testing.T) {
 	h.do("POST", "/jobs/"+b.ID+"/health?full=1", nil, nil)
 	got := h.waitHealth(b.ID)
 	if got.Status != "broken" || len(got.Broken) != 1 || got.Broken[0].Name != "B.mkv" ||
-		got.Broken[0].Segment != "hb0.4@test" || got.Broken[0].Via != "check" {
+		got.Broken[0].Segment != "hb0.4@test" || got.Broken[0].Via != "check" || got.Broken[0].Reason != "usenet_segment_missing" {
 		t.Fatalf("B: %+v", got)
 	}
 	var broken []jobOut

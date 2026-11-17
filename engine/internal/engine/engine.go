@@ -497,7 +497,8 @@ func (e *Engine) runCheck(id string, full bool) {
 	e.Store.Update(id, func(j *store.Job) {
 		h := store.Health{Status: rep.Status, CheckedAt: now, Inconclusive: rep.Inconclusive}
 		for _, f := range rep.Broken() {
-			h.Broken = append(h.Broken, store.BrokenFile{Name: f.Name, Reason: f.Reason, Segment: f.Segment, Via: "check", At: now})
+			h.Broken = append(h.Broken, store.BrokenFile{Name: f.Name, Reason: ReasonSegmentMissing,
+				Detail: f.Reason, Segment: f.Segment, Via: "check", At: now})
 		}
 		// Proof from playback stays unless this check covered the same
 		// article conclusively (it would then be listed above again).
@@ -523,9 +524,13 @@ func hasBroken(list []store.BrokenFile, name string) bool {
 	return false
 }
 
+// ReasonSegmentMissing is the cli_mount reason code for a file with an
+// article missing on every provider; cli_debrid's playback repair acts on it.
+const ReasonSegmentMissing = "usenet_segment_missing"
+
 // MarkBroken records a file proven unplayable during playback (an article
-// every provider answered missing for).
-func (e *Engine) MarkBroken(id, file, reason, segment string) {
+// every provider answered missing for). detail is free text for logs/UI.
+func (e *Engine) MarkBroken(id, file, detail, segment string) {
 	_, err := e.Store.Update(id, func(j *store.Job) {
 		h := store.Health{Status: health.Broken}
 		if j.Health != nil {
@@ -535,11 +540,12 @@ func (e *Engine) MarkBroken(id, file, reason, segment string) {
 		if hasBroken(h.Broken, file) {
 			return
 		}
-		h.Broken = append(h.Broken, store.BrokenFile{Name: file, Reason: reason, Segment: segment, Via: "playback", At: time.Now()})
+		h.Broken = append(h.Broken, store.BrokenFile{Name: file, Reason: ReasonSegmentMissing, Detail: detail,
+			Segment: segment, Via: "playback", At: time.Now()})
 		j.Health = &h
 	})
 	if err == nil {
-		e.log.Warn("file marked broken during playback", "job", id, "file", file, "reason", reason)
+		e.log.Warn("file marked broken during playback", "job", id, "file", file, "detail", detail)
 	}
 }
 
