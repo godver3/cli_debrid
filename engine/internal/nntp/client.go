@@ -161,12 +161,12 @@ func (c *Client) Stat(ctx context.Context, prio Priority, id string) (bool, erro
 
 // PoolStats is a snapshot of one provider's connections.
 type PoolStats struct {
-	Name    string
-	Backup  bool
-	Max     int
-	Open    int
-	Idle    int
-	Waiting int
+	Name    string `json:"name"`
+	Backup  bool   `json:"backup"`
+	Max     int    `json:"max"`
+	Open    int    `json:"open"`
+	Idle    int    `json:"idle"`
+	Waiting int    `json:"waiting"`
 }
 
 // Stats returns per-provider connection use plus lifetime counters.

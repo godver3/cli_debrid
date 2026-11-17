@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"html"
 	"io"
 	"math/rand"
 	"net/http"
@@ -19,27 +18,10 @@ import (
 	"github.com/godver3/cli_debrid/engine/internal/nntptest"
 )
 
-type file struct {
-	subject string
-	data    []byte
-}
+type file = nntptest.File
 
-// nzbXML posts files to the server and returns an NZB document for them.
 func nzbXML(s *nntptest.Server, prefix string, files ...file) []byte {
-	var b strings.Builder
-	b.WriteString(`<?xml version="1.0" encoding="utf-8"?>` + "\n" + `<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">` + "\n")
-	for i, f := range files {
-		arts := nntptest.Post(fmt.Sprintf("%s%d", prefix, i), f.subject, f.data, 64_000)
-		s.Add(arts...)
-		subj := fmt.Sprintf(`[%d/%d] - "%s" yEnc (1/%d)`, i+1, len(files), f.subject, len(arts))
-		fmt.Fprintf(&b, ` <file poster="p" date="1700000000" subject="%s">`+"\n  <groups><group>alt.binaries.test</group></groups>\n  <segments>\n", html.EscapeString(subj))
-		for n, a := range arts {
-			fmt.Fprintf(&b, "   <segment bytes=\"%d\" number=\"%d\">%s</segment>\n", len(a.Body), n+1, a.ID)
-		}
-		b.WriteString("  </segments>\n </file>\n")
-	}
-	b.WriteString("</nzb>\n")
-	return []byte(b.String())
+	return nntptest.PostNZB(s, prefix, files...)
 }
 
 func random(seed int64, n int) []byte {
@@ -118,7 +100,7 @@ func (h *harness) waitDone(id string) jobOut {
 func TestSubmitImportReadAndManage(t *testing.T) {
 	h := newHarness(t)
 	movie := random(1, 300_000)
-	doc := nzbXML(h.s, "a", file{"Movie.2024.1080p.mkv", movie}, file{"Movie.2024.1080p.nfo", []byte("notes")})
+	doc := nzbXML(h.s, "a", file{Name: "Movie.2024.1080p.mkv", Data: movie}, file{Name: "Movie.2024.1080p.nfo", Data: []byte("notes")})
 
 	var j jobOut
 	if code := h.do("POST", "/jobs?name=Movie.2024.1080p&category=movies", doc, &j); code != 201 || j.Status != "queued" {
@@ -140,7 +122,7 @@ func TestSubmitImportReadAndManage(t *testing.T) {
 	}
 
 	// Migration keeps the caller's id; reusing it is a conflict.
-	doc2 := nzbXML(h.s, "b", file{"Other.mkv", random(2, 70_000)})
+	doc2 := nzbXML(h.s, "b", file{Name: "Other.mkv", Data: random(2, 70_000)})
 	if code := h.do("POST", "/jobs?name=Movie.2024.1080p&id=cli-mount-uuid-1", doc2, &j); code != 201 || j.ID != "cli-mount-uuid-1" {
 		t.Fatalf("submit with id: %d %+v", code, j)
 	}
@@ -207,9 +189,9 @@ func TestRejectsAndFailures(t *testing.T) {
 	vols := rartest.Write(rartest.RAR5, []rartest.Member{{Name: "Ep.mkv", Data: random(3, 400_000)}}, 90_000)
 	var files []file
 	for i, v := range vols[1:] {
-		files = append(files, file{fmt.Sprintf("ep.part%02d.rar", i+2), v})
+		files = append(files, file{Name: fmt.Sprintf("ep.part%02d.rar", i+2), Data: v})
 	}
-	files = append(files, file{"ep.sample.mkv", random(4, 20_000)})
+	files = append(files, file{Name: "ep.sample.mkv", Data: random(4, 20_000)})
 	var j jobOut
 	h.do("POST", "/jobs?name=Ep", nzbXML(h.s, "c", files...), &j)
 	if j = h.waitDone(j.ID); j.Status != "failed" || j.Retryable || !strings.Contains(j.Error, "leftovers") {
@@ -217,7 +199,7 @@ func TestRejectsAndFailures(t *testing.T) {
 	}
 
 	// Articles gone everywhere is proof, not network trouble: also final.
-	doc := nzbXML(h.s, "d", file{"Gone.mkv", random(5, 70_000)})
+	doc := nzbXML(h.s, "d", file{Name: "Gone.mkv", Data: random(5, 70_000)})
 	h.s.Remove("d0.1@test")
 	h.do("POST", "/jobs?name=Gone", doc, &j)
 	if j = h.waitDone(j.ID); j.Status != "failed" {
@@ -229,7 +211,7 @@ func TestRejectsAndFailures(t *testing.T) {
 
 	// A provider that drops the connection proves nothing: retryable, and
 	// a retry once it is back succeeds.
-	doc = nzbXML(h.s, "e", file{"Flaky.mkv", random(6, 70_000)})
+	doc = nzbXML(h.s, "e", file{Name: "Flaky.mkv", Data: random(6, 70_000)})
 	h.s.Drop("e0.1@test")
 	h.do("POST", "/jobs?name=Flaky", doc, &j)
 	if j = h.waitDone(j.ID); j.Status != "failed" || !j.Retryable {

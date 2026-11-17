@@ -17,19 +17,21 @@ import (
 
 // Provider is one usenet server account.
 type Provider struct {
-	Name     string
-	Host     string
-	Port     int
-	TLS      bool
-	Username string
-	Password string
+	Name     string `json:"name"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	TLS      bool   `json:"tls"`
+	Username string `json:"username"`
+	Password string `json:"password"`
 	// MaxConns caps open connections to this provider.
-	MaxConns int
+	MaxConns int `json:"max_conns"`
 	// Backup providers are only asked after every primary provider failed
 	// to deliver an article (missing or unreachable).
-	Backup bool
-	// Timeout bounds dial, each command, and each idle gap while reading a body.
-	Timeout time.Duration
+	Backup bool `json:"backup"`
+	// TimeoutSeconds bounds dial, each command, and each idle gap while
+	// reading a body (default 30). Timeout overrides it (tests).
+	TimeoutSeconds int           `json:"timeout_seconds"`
+	Timeout        time.Duration `json:"-"`
 }
 
 func (p Provider) addr() string { return net.JoinHostPort(p.Host, strconv.Itoa(p.Port)) }
@@ -37,6 +39,9 @@ func (p Provider) addr() string { return net.JoinHostPort(p.Host, strconv.Itoa(p
 func (p Provider) timeout() time.Duration {
 	if p.Timeout > 0 {
 		return p.Timeout
+	}
+	if p.TimeoutSeconds > 0 {
+		return time.Duration(p.TimeoutSeconds) * time.Second
 	}
 	return 30 * time.Second
 }
