@@ -1,4 +1,7 @@
-package archive
+// Package rartest writes stored multi-volume RAR4/RAR5 sets for tests.
+// Its output is checked against 7z (an independent RAR reader) in the
+// archive package's TestFixturesExtractWith7z.
+package rartest
 
 import (
 	"bytes"
@@ -6,18 +9,47 @@ import (
 	"hash/crc32"
 )
 
-// Test-only writer for stored multi-volume RAR4/RAR5 sets. Its output is
-// checked against 7z (an independent RAR reader) in TestFixturesExtractWith7z,
-// so the parser tests below are not just checking the writer's assumptions.
+// Format constants, kept separate from package archive on purpose so the
+// writer does not share the parser's definitions.
+const (
+	RAR4 = 4
+	RAR5 = 5
 
-type member struct {
-	name string
-	data []byte
+	rar4Main         = 0x73
+	rar4File         = 0x74
+	rar4End          = 0x7b
+	rar4LongBlock    = 0x8000
+	rar4MainVolume   = 0x0001
+	rar4MainFirstVol = 0x0100
+	rar4FileSplitBef = 0x0001
+	rar4FileSplitAft = 0x0002
+	rar4EndVolNumber = 0x0008
+	rar4MethodStored = 0x30
+	rar5Main         = 1
+	rar5File         = 2
+	rar5End          = 5
+	rar5HdrData      = 0x02
+	rar5HdrSplitBef  = 0x08
+	rar5HdrSplitAft  = 0x10
+	rar5MainVolume   = 0x01
+	rar5MainVolNum   = 0x02
+	rar5FileCRC      = 0x04
+)
+
+var (
+	rar4Sig = []byte("Rar!\x1a\x07\x00")
+	rar5Sig = []byte("Rar!\x1a\x07\x01\x00")
+)
+
+// Member is a file to store.
+type Member struct {
+	Name string
+	Data []byte
 }
 
-// writeRAR splits the concatenated members into volumes holding at most
+// Write stores members (format RAR4 or RAR5) in volumes holding at most
 // volData bytes of member data each and returns the volume images.
-func writeRAR(v Version, members []member, volData int) [][]byte {
+func Write(v int, members []Member, volData int) [][]byte {
 	type piece struct {
 		m                       int
 		from, to                int
@@ -33,13 +65,13 @@ func writeRAR(v Version, members []member, volData int) [][]byte {
 				vols = append(vols, cur)
 				cur, room = nil, volData
 			}
-			take := min(room, len(m.data)-from)
+			take := min(room, len(m.Data)-from)
 			p := piece{m: mi, from: from, to: from + take, splitBefore: from > 0}
 			from += take
 			room -= take
-			p.splitAfter = from < len(m.data)
+			p.splitAfter = from < len(m.Data)
 			cur = append(cur, p)
-			if from == len(m.data) {
+			if from == len(m.Data) {
 				break
 			}
 			vols = append(vols, cur)
@@ -58,12 +90,12 @@ func writeRAR(v Version, members []member, volData int) [][]byte {
 			writeRAR4Main(&b, multi, vi == 0)
 			for _, p := range pieces {
 				m := members[p.m]
-				part := m.data[p.from:p.to]
+				part := m.Data[p.from:p.to]
 				crc := crc32.ChecksumIEEE(part)
 				if !p.splitAfter {
-					crc = crc32.ChecksumIEEE(m.data) // last part carries the whole file's CRC
+					crc = crc32.ChecksumIEEE(m.Data) // last part carries the whole file's CRC
 				}
-				writeRAR4File(&b, m.name, part, len(m.data), crc, p.splitBefore, p.splitAfter)
+				writeRAR4File(&b, m.Name, part, len(m.Data), crc, p.splitBefore, p.splitAfter)
 			}
 			writeRAR4End(&b, !last, vi)
 		} else {
@@ -71,12 +103,12 @@ func writeRAR(v Version, members []member, volData int) [][]byte {
 			writeRAR5Main(&b, multi, vi)
 			for _, p := range pieces {
 				m := members[p.m]
-				part := m.data[p.from:p.to]
+				part := m.Data[p.from:p.to]
 				crc := crc32.ChecksumIEEE(part)
 				if !p.splitAfter {
-					crc = crc32.ChecksumIEEE(m.data)
+					crc = crc32.ChecksumIEEE(m.Data)
 				}
-				writeRAR5File(&b, m.name, part, len(m.data), crc, p.splitBefore, p.splitAfter)
+				writeRAR5File(&b, m.Name, part, len(m.Data), crc, p.splitBefore, p.splitAfter)
 			}
 			writeRAR5End(&b, !last)
 		}

@@ -24,14 +24,14 @@ func make7z(t *testing.T, level string, split bool, members []member) []Volume {
 	src := filepath.Join(dir, "src")
 	var names []string
 	for _, m := range members {
-		p := filepath.Join(src, filepath.FromSlash(m.name))
+		p := filepath.Join(src, filepath.FromSlash(m.Name))
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(p, m.data, 0o644); err != nil {
+		if err := os.WriteFile(p, m.Data, 0o644); err != nil {
 			t.Fatal(err)
 		}
-		names = append(names, filepath.FromSlash(m.name))
+		names = append(names, filepath.FromSlash(m.Name))
 	}
 	args := []string{"a", "-mx=" + level, "-mhe=off", "-ms=off"}
 	if split {
@@ -70,20 +70,20 @@ func TestSevenZipStoredSplitStreams(t *testing.T) {
 		byName[m.Name] = m
 	}
 	for _, want := range members {
-		m, ok := byName[want.name]
-		if !ok || m.Err != nil || m.Size != int64(len(want.data)) {
-			t.Fatalf("%s: %+v (members %v)", want.name, m, set.Members)
+		m, ok := byName[want.Name]
+		if !ok || m.Err != nil || m.Size != int64(len(want.Data)) {
+			t.Fatalf("%s: %+v (members %v)", want.Name, m, set.Members)
 		}
 		got := make([]byte, m.Size)
 		n, err := set.ReaderAt(m).ReadAt(got, 0)
-		if n != len(got) || (err != nil && err != io.EOF) || !bytes.Equal(got, want.data) {
+		if n != len(got) || (err != nil && err != io.EOF) || !bytes.Equal(got, want.Data) {
 			t.Fatalf("%s: n=%d err=%v data mismatch", m.Name, n, err)
 		}
 	}
 }
 
 func TestSevenZipCompressedIsRefused(t *testing.T) {
-	vols := make7z(t, "5", false, []member{{"a.txt", bytes.Repeat([]byte("compress me "), 5000)}})
+	vols := make7z(t, "5", false, []member{{Name: "a.txt", Data: bytes.Repeat([]byte("compress me "), 5000)}})
 	set, err := OpenSevenZip(vols)
 	if err != nil {
 		t.Fatal(err)

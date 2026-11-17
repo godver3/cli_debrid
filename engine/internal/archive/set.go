@@ -16,6 +16,7 @@ type Volume struct {
 	Name string
 	R    io.ReaderAt
 	Size int64
+	ID   int // caller's own reference, carried through unchanged
 }
 
 // Extent is a contiguous run of member data inside one volume.

@@ -2,10 +2,12 @@ package archive
 
 import (
 	"bytes"
+
 	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/godver3/cli_debrid/engine/internal/archive/rartest"
 	"io"
 	"math/rand"
 	"os"
@@ -15,6 +17,12 @@ import (
 	"testing"
 )
 
+type member = rartest.Member
+
+func writeRAR(v Version, members []member, volData int) [][]byte {
+	return rartest.Write(int(v), members, volData)
+}
+
 func fixtureMembers() []member {
 	rnd := rand.New(rand.NewSource(42))
 	movie := make([]byte, 300_000)
@@ -22,9 +30,9 @@ func fixtureMembers() []member {
 	sample := make([]byte, 20_000)
 	rnd.Read(sample)
 	return []member{
-		{"Some.Movie.2024.1080p.mkv", movie},
-		{"Sample/some.movie.sample.mkv", sample},
-		{"some.movie.nfo", []byte("release notes\r\n")},
+		{Name: "Some.Movie.2024.1080p.mkv", Data: movie},
+		{Name: "Sample/some.movie.sample.mkv", Data: sample},
+		{Name: "some.movie.nfo", Data: []byte("release notes\r\n")},
 	}
 }
 
@@ -57,9 +65,9 @@ func TestFixturesExtractWith7z(t *testing.T) {
 				t.Fatalf("7z x failed: %v\n%s", err, b)
 			}
 			for _, m := range members {
-				got, err := os.ReadFile(filepath.Join(out, filepath.FromSlash(m.name)))
-				if err != nil || !bytes.Equal(got, m.data) {
-					t.Fatalf("%s: 7z extracted wrong data (err %v)", m.name, err)
+				got, err := os.ReadFile(filepath.Join(out, filepath.FromSlash(m.Name)))
+				if err != nil || !bytes.Equal(got, m.Data) {
+					t.Fatalf("%s: 7z extracted wrong data (err %v)", m.Name, err)
 				}
 			}
 		})
@@ -95,12 +103,12 @@ func TestStreamMembersFromShuffledObfuscatedVolumes(t *testing.T) {
 			rnd := rand.New(rand.NewSource(9))
 			for i, m := range set.Members {
 				want := members[i]
-				if m.Err != nil || m.Name != want.name || m.Size != int64(len(want.data)) {
+				if m.Err != nil || m.Name != want.Name || m.Size != int64(len(want.Data)) {
 					t.Fatalf("member %d: %+v", i, m)
 				}
 				r := set.ReaderAt(m)
 				all := make([]byte, m.Size)
-				if n, err := r.ReadAt(all, 0); n != len(all) || (err != nil && err != io.EOF) || !bytes.Equal(all, want.data) {
+				if n, err := r.ReadAt(all, 0); n != len(all) || (err != nil && err != io.EOF) || !bytes.Equal(all, want.Data) {
 					t.Fatalf("%s: full read n=%d err=%v", m.Name, n, err)
 				}
 				for k := 0; k < 50 && m.Size > 1; k++ {
@@ -108,7 +116,7 @@ func TestStreamMembersFromShuffledObfuscatedVolumes(t *testing.T) {
 					buf := make([]byte, 1+rnd.Intn(150_000))
 					n, err := r.ReadAt(buf, off)
 					end := min(off+int64(len(buf)), m.Size)
-					if int64(n) != end-off || !bytes.Equal(buf[:n], want.data[off:end]) {
+					if int64(n) != end-off || !bytes.Equal(buf[:n], want.Data[off:end]) {
 						t.Fatalf("%s: read %d@%d n=%d err=%v", m.Name, len(buf), off, n, err)
 					}
 					if n < len(buf) && err != io.EOF {

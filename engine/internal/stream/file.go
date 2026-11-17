@@ -21,8 +21,9 @@ type Fetcher interface {
 // last. It comes from the first segment's yEnc header and is stored so a
 // file can be reopened without a network round trip.
 type Layout struct {
-	Size     int64
-	PartSize int64
+	Size     int64  `json:"size"`
+	PartSize int64  `json:"part_size"`
+	YencName string `json:"yenc_name,omitempty"` // filename from the yEnc header
 }
 
 // ErrLayout means a segment did not sit where the layout says: the server
@@ -70,7 +71,7 @@ func Probe(ctx context.Context, f Fetcher, cache *Cache, file nzb.File) (Layout,
 			return Layout{}, &SegmentError{File: file.Name, Number: 1, ID: first.ID, Err: err}
 		}
 	}
-	l := Layout{Size: meta.FileSize, PartSize: meta.PartSize}
+	l := Layout{Size: meta.FileSize, PartSize: meta.PartSize, YencName: meta.FileName}
 	if l.PartSize <= 0 {
 		l.PartSize = int64(len(data))
 	}
