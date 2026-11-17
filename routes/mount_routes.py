@@ -22,12 +22,23 @@ from utilities.settings_schema import SETTINGS_SCHEMA
 
 mount_bp = Blueprint('mount', __name__)
 
+
+@mount_bp.record_once
+def _start_background(state):
+    """Plex next-episode prewarm poller (idle unless the mount is in use)."""
+    try:
+        from utilities import mount_prewarm
+        mount_prewarm.start(get_setting)
+    except Exception as exc:
+        logging.warning(f'Mount prewarm poller not started: {exc}')
+
 SECTION = 'Built-in Mount'
 SECRET_KEYS = ('api_token',)
 GROUPS = [
     ('Mount', ['mount_path', 'allow_other', 'uid', 'gid', 'umask']),
     ('Streaming', ['read_ahead_mb', 'max_connections_per_file', 'precache_mb', 'warm_connections',
                    'playback_reserve_percent', 'buffer_memory_mb', 'idle_timeout_minutes']),
+    ('Plex next-episode prewarm', ['plex_prewarm', 'prewarm_trigger_percent', 'prewarm_percent', 'prewarm_max_mb']),
     ('Disk cache', ['cache_dir', 'cache_size_gb', 'cache_expiry_hours', 'cache_cleanup_minutes']),
     ('Importing & health checks', ['processing_connections', 'processing_timeout_minutes',
                                    'import_sample_percent', 'health_sample_percent']),
@@ -39,7 +50,9 @@ LABELS = {
     'gid': 'Group ID (GID)', 'umask': 'UMASK', 'read_ahead_mb': 'Read ahead (MB)',
     'max_connections_per_file': 'Max connections per file', 'buffer_memory_mb': 'Buffer memory (MB)',
     'idle_timeout_minutes': 'Connection idle timeout (minutes)', 'precache_mb': 'Pre-cache on open (MB)',
-    'warm_connections': 'Warm connections per server', 'playback_reserve_percent': 'Playback connection reserve %', 'cache_dir': 'Cache directory',
+    'warm_connections': 'Warm connections per server', 'plex_prewarm': 'Prewarm the next episode while one plays',
+    'prewarm_trigger_percent': 'Start at (% watched)', 'prewarm_percent': 'Fetch (% of next episode)',
+    'prewarm_max_mb': 'Fetch at most (MB)', 'playback_reserve_percent': 'Playback connection reserve %', 'cache_dir': 'Cache directory',
     'cache_size_gb': 'Disk cache size (GB)', 'cache_expiry_hours': 'Cache expiry (hours)',
     'cache_cleanup_minutes': 'Cache cleanup interval (minutes)', 'processing_connections': 'Processing connections per file',
     'processing_timeout_minutes': 'Processing timeout (minutes)', 'import_sample_percent': 'NZB import availability sample %',

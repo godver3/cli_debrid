@@ -431,6 +431,26 @@ SETTINGS_SCHEMA = {
             "description": "Built-in mount only. Playback connection reserve: % of each server's connections that only playback may use; read-ahead, imports and health checks never take them (at least 1 when set; 0 = off).",
             "default": 10
         },
+        "plex_prewarm": {
+            "type": "boolean",
+            "description": "Built-in mount only. Plex next-episode prewarm: when someone is far enough into an episode playing from the mount, fetch the start of the next episode in the background so it starts instantly.",
+            "default": True
+        },
+        "prewarm_trigger_percent": {
+            "type": "integer",
+            "description": "Built-in mount only. Prewarm when the current episode is this far in (%).",
+            "default": 70
+        },
+        "prewarm_percent": {
+            "type": "integer",
+            "description": "Built-in mount only. How much of the next episode to fetch (%), up to the size limit below.",
+            "default": 20
+        },
+        "prewarm_max_mb": {
+            "type": "integer",
+            "description": "Built-in mount only. Prewarm at most this many MB of the next episode.",
+            "default": 256
+        },
         "buffer_memory_mb": {
             "type": "integer",
             "description": "Built-in mount only. Buffer memory: RAM in MB for downloaded articles across all open files (the disk cache holds the rest).",

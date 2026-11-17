@@ -48,6 +48,7 @@ func Handler(e *engine.Engine) http.Handler {
 	mux.HandleFunc("GET /changes", a.changes)
 	mux.HandleFunc("GET /stats", a.stats)
 	mux.HandleFunc("GET /streams", a.streams)
+	mux.HandleFunc("POST /prewarm", a.prewarm)
 	mux.HandleFunc("GET /health", a.healthList)
 	mux.HandleFunc("POST /health/run", a.healthRun)
 	mux.HandleFunc("GET /health/run", a.healthRunStatus)
@@ -277,6 +278,25 @@ func (a *api) changes(w http.ResponseWriter, r *http.Request) {
 		"jobs":    out,
 		"deleted": gone,
 	})
+}
+
+// prewarm starts fetching the start of one file in the background
+// (cli_debrid's next-episode prewarm). Body: {"job_id","file","bytes"}.
+func (a *api) prewarm(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		JobID string `json:"job_id"`
+		File  string `json:"file"`
+		Bytes int64  `json:"bytes"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil || body.JobID == "" || body.File == "" || body.Bytes <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "job_id, file and bytes are required"})
+		return
+	}
+	if err := a.e.Prewarm(body.JobID, body.File, body.Bytes); err != nil {
+		storeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "prewarming"})
 }
 
 // streams lists files open on the mount (for "now playing").

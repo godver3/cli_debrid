@@ -485,6 +485,11 @@ class BuiltinClient(UnsupportedFeaturesMixin):
         code, body = self._call('GET', '/streams', timeout=5)
         return body if code == 200 and isinstance(body, list) else []
 
+    def prewarm(self, job_id: str, file: str, nbytes: int) -> bool:
+        """Ask the engine to fetch the start of a file in the background."""
+        code, _ = self._call('POST', '/prewarm', timeout=5, json={'job_id': job_id, 'file': file, 'bytes': int(nbytes)})
+        return code == 202
+
     # ---- logs (capability LOGS) -------------------------------------------
 
     def fetch_logs(self, lines: int = 1000, level: str = 'all') -> dict:

@@ -106,3 +106,38 @@ func TestNothingStreamableSaysWhy(t *testing.T) {
 		t.Fatalf("error should name the failed file: %q", got.Error)
 	}
 }
+
+func TestPrewarmFetchesTheStartOnly(t *testing.T) {
+	s := nntptest.Start(t)
+	e := newEngine(t, s, nil)
+	j, _ := e.Submit(nntptest.PostNZB(s, "m", nntptest.File{Name: "Ep.mkv", Data: data(7, 1_280_000)}), "Ep", "tv", "")
+	if got := waitDone(t, e, j.ID); got.Status != store.Ready {
+		t.Fatalf("import: %+v", got)
+	}
+	if err := e.Prewarm(j.ID, "nope.mkv", 1); err == nil {
+		t.Fatal("unknown file accepted")
+	}
+	if err := e.Prewarm(j.ID, "Ep.mkv", 320_000); err != nil { // 5 of 20 articles
+		t.Fatal(err)
+	}
+	want := map[string]bool{"m0.1@test": true, "m0.2@test": true, "m0.3@test": true, "m0.4@test": true, "m0.5@test": true}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		got := map[string]bool{}
+		for _, id := range s.BodyOrder() {
+			got[id] = true
+		}
+		done := true
+		for id := range want {
+			done = done && got[id]
+		}
+		if done {
+			if got["m0.10@test"] {
+				t.Fatal("prewarm fetched past the requested bytes")
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("prewarm did not fetch the start: %v", s.BodyOrder())
+}
