@@ -29,6 +29,7 @@ type fileConfig struct {
 	AllowOther bool   `json:"allow_other"`
 	UID        uint32 `json:"uid"`
 	GID        uint32 `json:"gid"`
+	Umask      uint32 `json:"umask"`
 	LogLevel   string `json:"log_level"`
 }
 
@@ -80,7 +81,7 @@ func run(cfgPath string, noMount bool) error {
 		if err := os.MkdirAll(cfg.MountPath, 0o755); err != nil {
 			return err
 		}
-		fsrv, err := mount.Mount(e, cfg.MountPath, mount.Options{AllowOther: cfg.AllowOther, UID: cfg.UID, GID: cfg.GID}, log)
+		fsrv, err := mount.Mount(e, cfg.MountPath, mount.Options{AllowOther: cfg.AllowOther, UID: cfg.UID, GID: cfg.GID, Umask: cfg.Umask}, log)
 		if err != nil {
 			return fmt.Errorf("mount %s: %w", cfg.MountPath, err)
 		}

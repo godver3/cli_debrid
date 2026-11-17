@@ -18,6 +18,7 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 const headerLen = 8 // uint32 length + uint32 CRC32
@@ -38,8 +39,9 @@ type Cache struct {
 }
 
 type item struct {
-	name string // hashed file name
-	size int64  // bytes on disk
+	name string    // hashed file name
+	size int64     // bytes on disk
+	at   time.Time // last written or read
 }
 
 type write struct {
@@ -79,7 +81,7 @@ func Open(dir string, maxBytes int64) (*Cache, error) {
 	})
 	sort.Slice(all, func(i, j int) bool { return all[i].mod < all[j].mod }) // oldest first
 	for _, f := range all {
-		c.items[f.name] = c.ll.PushFront(&item{name: f.name, size: f.size})
+		c.items[f.name] = c.ll.PushFront(&item{name: f.name, size: f.size, at: time.Unix(0, f.mod)})
 		c.used += f.size
 	}
 	c.mu.Lock()
@@ -103,6 +105,7 @@ func (c *Cache) Get(key string) ([]byte, bool) {
 	el, ok := c.items[name]
 	if ok {
 		c.ll.MoveToFront(el)
+		el.Value.(*item).at = time.Now()
 	}
 	c.mu.Unlock()
 	if !ok {
@@ -179,7 +182,7 @@ func (c *Cache) store(w write) {
 	}
 	c.mu.Lock()
 	if _, ok := c.items[w.name]; !ok {
-		c.items[w.name] = c.ll.PushFront(&item{name: w.name, size: int64(len(buf))})
+		c.items[w.name] = c.ll.PushFront(&item{name: w.name, size: int64(len(buf)), at: time.Now()})
 		c.used += int64(len(buf))
 		c.evictLocked()
 	}
@@ -195,6 +198,31 @@ func (c *Cache) evictLocked() {
 		c.used -= it.size
 		os.Remove(c.path(it.name))
 	}
+}
+
+// Expire removes segments not read or written for longer than maxAge
+// (cache expiry). Returns how many were removed.
+func (c *Cache) Expire(maxAge time.Duration) int {
+	if maxAge <= 0 {
+		return 0
+	}
+	cutoff := time.Now().Add(-maxAge)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := 0
+	for c.ll.Len() > 0 {
+		el := c.ll.Back() // least recently used first
+		it := el.Value.(*item)
+		if it.at.After(cutoff) {
+			break
+		}
+		c.ll.Remove(el)
+		delete(c.items, it.name)
+		c.used -= it.size
+		os.Remove(c.path(it.name))
+		n++
+	}
+	return n
 }
 
 func (c *Cache) drop(name string) {

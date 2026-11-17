@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/godver3/cli_debrid/engine/internal/nntp"
 	"github.com/godver3/cli_debrid/engine/internal/stream"
@@ -82,5 +83,26 @@ func TestMemoryCacheUsesDiskBeforeNetwork(t *testing.T) {
 	got, err := second.Do("seg@x", nntp.Live, fetch)
 	if err != nil || string(got) != "segment" || fetches != 1 {
 		t.Fatalf("got %q err %v fetches %d", got, err, fetches)
+	}
+}
+
+func TestExpireDropsOnlyStaleSegments(t *testing.T) {
+	c, _ := Open(t.TempDir(), 1<<20)
+	c.Put("old", []byte("a"))
+	c.Flush()
+	time.Sleep(60 * time.Millisecond)
+	c.Put("new", []byte("b"))
+	c.Flush()
+	if n := c.Expire(40 * time.Millisecond); n != 1 {
+		t.Fatalf("expired %d, want 1", n)
+	}
+	if _, ok := c.Get("old"); ok {
+		t.Fatal("stale segment still served")
+	}
+	if _, ok := c.Get("new"); !ok {
+		t.Fatal("fresh segment expired")
+	}
+	if c.Expire(0) != 0 {
+		t.Fatal("expiry 0 must mean off")
 	}
 }

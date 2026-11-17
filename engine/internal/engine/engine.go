@@ -40,11 +40,22 @@ type Config struct {
 	MountPath     string          `json:"mount_path"`
 	Listen        string          `json:"listen"`
 	Token         string          `json:"token"`
-	ReadAhead     int             `json:"read_ahead"`     // segments prefetched after a live read
-	ImportWorkers int             `json:"import_workers"` // jobs imported at once
-	HealthWorkers int             `json:"health_workers"` // jobs health-checked at once
-	Parallel      int             `json:"parallel"`       // probes per import
+	ReadAhead     int             `json:"read_ahead"`             // segments prefetched after a live read
+	ReadAheadMB   int             `json:"read_ahead_mb"`          // or: megabytes ahead (wins when set)
+	FileConns     int             `json:"max_conns_per_file"`     // prefetches at once per open file (0 = no cap)
+	ImportTimeout int             `json:"import_timeout_seconds"` // per import; a timeout is retryable, never final
+	ImportSample  float64         `json:"import_sample_percent"`  // % of articles checked before a job is ready (0 = off)
+	HealthSample  float64         `json:"health_sample_percent"`  // % checked by health checks (0 = 2%, max 30 per file)
+	IdleTimeout   int             `json:"idle_timeout_seconds"`   // close NNTP connections unused this long (default 300)
+	CacheExpiry   int             `json:"cache_expiry_seconds"`   // drop disk cache entries unused this long (0 = only by size)
+	CacheCleanup  int             `json:"cache_cleanup_seconds"`  // how often the expiry runs (default 60)
+	ImportWorkers int             `json:"import_workers"`         // jobs imported at once
+	HealthWorkers int             `json:"health_workers"`         // jobs health-checked at once
+	Parallel      int             `json:"parallel"`               // probes per import
 	Providers     []nntp.Provider `json:"providers"`
+	// RetryBackoff: waits before re-importing after an unproven failure
+	// (default 1m, 5m, 15m); once used up the job fails, still retryable.
+	RetryBackoff []time.Duration `json:"-"`
 }
 
 func (c *Config) defaults() {
@@ -65,6 +76,55 @@ func (c *Config) defaults() {
 	}
 	if c.Listen == "" {
 		c.Listen = "127.0.0.1:8283"
+	}
+	if c.IdleTimeout <= 0 {
+		c.IdleTimeout = 300
+	}
+	if c.RetryBackoff == nil {
+		c.RetryBackoff = []time.Duration{time.Minute, 5 * time.Minute, 15 * time.Minute}
+	}
+	if c.CacheCleanup <= 0 {
+		c.CacheCleanup = 60
+	}
+}
+
+func (c Config) readAhead() stream.ReadAhead {
+	return stream.ReadAhead{Segments: c.ReadAhead, Bytes: int64(c.ReadAheadMB) << 20, MaxConns: c.FileConns}
+}
+
+// healthOptions turns a sample percentage into health.Options; a
+// percentage the user set is not capped per file.
+func healthOptions(percent float64, full bool) health.Options {
+	if full || percent >= 100 {
+		return health.Options{Full: true}
+	}
+	if percent <= 0 {
+		return health.Options{} // built-in default: 2%, at most 30 per file
+	}
+	return health.Options{SampleRate: percent / 100, Max: 1 << 30}
+}
+
+// maintain closes idle NNTP connections and expires the disk cache.
+func (e *Engine) maintain() {
+	defer e.wg.Done()
+	idle := time.Duration(e.cfg.IdleTimeout) * time.Second
+	expiry := time.Duration(e.cfg.CacheExpiry) * time.Second
+	t := time.NewTicker(min(idle, time.Duration(e.cfg.CacheCleanup)*time.Second))
+	defer t.Stop()
+	lastExpire := time.Now()
+	for {
+		select {
+		case <-e.ctx.Done():
+			return
+		case <-t.C:
+			e.Client.CloseIdle(idle)
+			if e.Disk != nil && expiry > 0 && time.Since(lastExpire) >= time.Duration(e.cfg.CacheCleanup)*time.Second {
+				if n := e.Disk.Expire(expiry); n > 0 {
+					e.log.Debug("disk cache expired", "segments", n)
+				}
+				lastExpire = time.Now()
+			}
+		}
 	}
 }
 
@@ -131,6 +191,8 @@ func New(cfg Config, log *slog.Logger) (*Engine, error) {
 		e.wg.Add(1)
 		go e.worker()
 	}
+	e.wg.Add(1)
+	go e.maintain()
 	for _, j := range st.List() {
 		if j.Status == store.Queued {
 			e.queue <- j.ID
@@ -210,9 +272,27 @@ func (e *Engine) importJob(id string) {
 	}
 	start := time.Now()
 	fail := func(err error) {
-		// Only failures that prove nothing may be retried (dead-marking needs proof).
+		// Only failures that prove nothing may be retried (dead-marking
+		// needs proof). Those are retried here, the job staying queued, so
+		// cli_debrid never blacklists a release over a network blip.
 		retry := errors.Is(err, job.ErrInconclusive)
-		e.Store.Update(id, func(j *store.Job) { j.Status, j.Error, j.Retryable = store.Failed, err.Error(), retry })
+		var attempts int
+		j, _ := e.Store.Update(id, func(j *store.Job) {
+			j.Error, j.Retryable = err.Error(), retry
+			if retry && j.Attempts < len(e.cfg.RetryBackoff) {
+				j.Status = store.Queued
+				j.Attempts++
+			} else {
+				j.Status = store.Failed
+			}
+			attempts = j.Attempts
+		})
+		if j.Status == store.Queued {
+			wait := e.cfg.RetryBackoff[attempts-1]
+			e.log.Warn("import inconclusive, retrying", "job", id, "err", err, "attempt", attempts, "in", wait)
+			time.AfterFunc(wait, func() { e.requeue(id) })
+			return
+		}
 		e.log.Warn("import failed", "job", id, "err", err, "retryable", retry)
 	}
 	parsed, err := nzb.Parse(bytes.NewReader(data))
@@ -220,10 +300,30 @@ func (e *Engine) importJob(id string) {
 		fail(fmt.Errorf("%w: %v", ErrBadNZB, err))
 		return
 	}
-	res, err := job.Build(e.ctx, e.Client, e.Cache, parsed, job.Options{Parallel: e.cfg.Parallel})
+	ctx := e.ctx
+	if e.cfg.ImportTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(e.ctx, time.Duration(e.cfg.ImportTimeout)*time.Second)
+		defer cancel()
+	}
+	res, err := job.Build(ctx, e.Client, e.Cache, parsed, job.Options{Parallel: e.cfg.Parallel})
+	if err == nil && e.cfg.ImportSample > 0 {
+		err = e.importSample(ctx, parsed, res)
+	}
+	if err == nil && ctx.Err() != nil {
+		// The deadline hit part-way: files not yet probed failed with a
+		// context error, so a "success" here would be a partial job.
+		err = ctx.Err()
+	}
 	if err != nil {
 		if e.ctx.Err() != nil {
 			return // shutting down: stays "importing", reopens as queued
+		}
+		if ctx.Err() != nil {
+			err = fmt.Errorf("%w: import took longer than %ds", job.ErrInconclusive, e.cfg.ImportTimeout)
+		}
+		if res != nil && len(res.Failures) > 0 && !strings.Contains(err.Error(), res.Failures[0].Name) {
+			err = fmt.Errorf("%w (%s)", err, failureSummary(res.Failures))
 		}
 		fail(err)
 		return
@@ -234,6 +334,57 @@ func (e *Engine) importJob(id string) {
 	}
 	e.rebuildTree()
 	e.log.Info("imported", "job", id, "entries", len(res.Entries), "failures", len(res.Failures), "took", time.Since(start))
+}
+
+// requeue puts a still-queued job back on the import queue (unless it was
+// deleted or retried by hand meanwhile).
+func (e *Engine) requeue(id string) {
+	if e.ctx.Err() != nil {
+		return
+	}
+	if j, _, err := e.Store.Get(id); err == nil && j.Status == store.Queued {
+		select {
+		case e.queue <- id:
+		case <-e.ctx.Done():
+		}
+	}
+}
+
+// ErrUnavailable: the import-time availability sample proved articles of
+// the main file missing on every provider.
+var ErrUnavailable = errors.New("engine: articles missing on every provider")
+
+// importSample checks a share of the largest entry's articles before the
+// job becomes ready (cli_mount's "NZB import availability sample"). Only a
+// proven miss fails the import; an inconclusive check passes.
+func (e *Engine) importSample(ctx context.Context, parsed *nzb.NZB, res *job.Result) error {
+	if len(res.Entries) == 0 {
+		return nil
+	}
+	main := *res
+	main.Entries = res.Entries[:1] // sorted largest first
+	rep, err := health.Check(ctx, e.Client, parsed, &main, healthOptions(e.cfg.ImportSample, false))
+	if err != nil {
+		return nil
+	}
+	if b := rep.Broken(); len(b) > 0 {
+		return fmt.Errorf("%w: %s (article %s)", ErrUnavailable, b[0].Name, b[0].Segment)
+	}
+	return nil
+}
+
+// failureSummary lists up to three per-file failures for the job error, so
+// a failed import says why without digging through logs.
+func failureSummary(fs []job.Failure) string {
+	var parts []string
+	for i, f := range fs {
+		if i == 3 {
+			parts = append(parts, fmt.Sprintf("and %d more", len(fs)-3))
+			break
+		}
+		parts = append(parts, f.Name+": "+f.Error)
+	}
+	return strings.Join(parts, "; ")
 }
 
 // Delete removes a job (and its folder) for good.
@@ -284,7 +435,7 @@ func (e *Engine) Files(id string) (*job.Files, error) {
 	if err != nil {
 		return nil, err
 	}
-	fs, err := job.Open(res, parsed, e.Client, e.Cache, e.cfg.ReadAhead)
+	fs, err := job.Open(res, parsed, e.Client, e.Cache, e.cfg.readAhead())
 	if err != nil {
 		return nil, err
 	}
@@ -421,7 +572,7 @@ func (e *Engine) Retry(id string) (store.Job, error) {
 	if j.Status != store.Failed {
 		return j, fmt.Errorf("engine: job %s is %s, not failed", id, j.Status)
 	}
-	j, err = e.Store.Update(id, func(j *store.Job) { j.Status, j.Error, j.Retryable = store.Queued, "", false })
+	j, err = e.Store.Update(id, func(j *store.Job) { j.Status, j.Error, j.Retryable, j.Attempts = store.Queued, "", false, 0 })
 	if err == nil {
 		e.queue <- id
 	}
@@ -486,7 +637,7 @@ func (e *Engine) runCheck(id string, full bool) {
 	if err != nil {
 		return
 	}
-	rep, err := health.Check(e.ctx, e.Client, parsed, res, health.Options{Full: full})
+	rep, err := health.Check(e.ctx, e.Client, parsed, res, healthOptions(e.cfg.HealthSample, full))
 	if err != nil {
 		if e.ctx.Err() == nil {
 			e.log.Warn("health check failed", "job", id, "err", err)

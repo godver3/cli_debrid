@@ -64,7 +64,7 @@ func (e *env) build() (*Result, error) {
 
 // read returns an entry's full content through job.Open, as the mount will.
 func (e *env) read(res *Result, entry Entry) []byte {
-	fs, err := Open(res, e.nzb, e.c, stream.NewCache(64<<20), 2)
+	fs, err := Open(res, e.nzb, e.c, stream.NewCache(64<<20), stream.ReadAhead{Segments: 2})
 	if err != nil {
 		e.t.Fatal(err)
 	}

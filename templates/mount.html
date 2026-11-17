@@ -51,14 +51,19 @@
   </div></div>
 
   <form id="mntForm" autocomplete="off">
+  <div class="card"><h3>Usenet servers</h3><div class="body">
+    <p style="color:#8f8f8f;font-size:12px;margin-top:0">Tried top to bottom: when a server lacks an article the next one is asked. Servers marked <strong>Backup</strong> (block accounts) are asked last. Use the arrows to reorder. Leave a password empty to keep the saved one.</p>
+    <div class="srv"><table id="servers"><thead><tr><th></th><th>Host</th><th>Port</th><th>SSL</th><th>Username</th><th>Password</th><th>Connections</th><th>Backup</th><th></th></tr></thead><tbody></tbody></table></div>
+    <button type="button" class="btn sec" id="addServer" style="margin-top:8px">Add server</button>
+  </div></div>
   {% for title, fields in groups %}
   <div class="card"><h3>{{ title }}</h3><div class="body">
-    {% for key, spec in fields %}
+    {% for key, spec, label in fields %}
     <div class="f">
       {% if spec.type == 'boolean' %}
-      <label><input type="checkbox" name="{{ key }}" data-type="boolean"> {{ key.replace('_', ' ').capitalize() }}</label>
+      <label><input type="checkbox" name="{{ key }}" data-type="boolean"> {{ label }}</label>
       {% else %}
-      <label for="m-{{ key }}">{{ key.replace('primary_', '').replace('backup_', '').replace('_', ' ').capitalize() }}</label>
+      <label for="m-{{ key }}">{{ label }}</label>
       <input id="m-{{ key }}" name="{{ key }}" data-type="{{ spec.type }}"
              type="{{ 'password' if spec.sensitive else ('number' if spec.type == 'integer' else 'text') }}"
              {% if spec.sensitive %}placeholder="unchanged" autocomplete="new-password"{% endif %}>
@@ -67,13 +72,6 @@
     </div>
     {% endfor %}
   </div></div>
-  {% if loop.index == 3 %}
-  <div class="card"><h3>More servers (optional)</h3><div class="body">
-    <p class="d" style="color:#8f8f8f;font-size:12px;margin-top:0">Asked in order after the main server when it lacks an article; servers marked backup go last. Leave the password empty to keep the saved one.</p>
-    <div class="srv"><table id="servers"><thead><tr><th>Host</th><th>Port</th><th>SSL</th><th>Username</th><th>Password</th><th>Connections</th><th>Backup</th><th></th></tr></thead><tbody></tbody></table></div>
-    <button type="button" class="btn sec" id="addServer" style="margin-top:8px">Add server</button>
-  </div></div>
-  {% endif %}
   {% endfor %}
   </form>
 
@@ -95,18 +93,25 @@
   form.addEventListener('input', () => { dirty = true; });
 
   function serverRow(s) {
-    s = s || {port: 563, ssl: true, connections: 5};
+    s = s || {port: 563, ssl: true, connections: 10};
     const tr = document.createElement('tr');
     tr.innerHTML =
+      '<td style="white-space:nowrap"><button type="button" class="btn sec mv" data-d="-1" title="Move up" style="padding:3px 8px">▲</button> <button type="button" class="btn sec mv" data-d="1" title="Move down" style="padding:3px 8px">▼</button></td>' +
       '<td><input data-k="host" value="' + esc(s.host) + '" placeholder="news.example.com"></td>' +
       '<td><input data-k="port" type="number" value="' + esc(s.port ?? 563) + '" style="width:70px"></td>' +
       '<td><input data-k="ssl" type="checkbox"' + (s.ssl === false ? '' : ' checked') + ' style="width:auto"></td>' +
       '<td><input data-k="username" value="' + esc(s.username) + '"></td>' +
       '<td><input data-k="password" type="password" autocomplete="new-password" placeholder="' + (s.password_set ? 'unchanged' : '') + '"></td>' +
-      '<td><input data-k="connections" type="number" value="' + esc(s.connections ?? 5) + '" style="width:70px"></td>' +
+      '<td><input data-k="connections" type="number" value="' + esc(s.connections ?? 10) + '" style="width:70px"></td>' +
       '<td><input data-k="backup" type="checkbox"' + (s.backup ? ' checked' : '') + ' style="width:auto"></td>' +
-      '<td><button type="button" class="btn sec" style="padding:4px 10px">Remove</button></td>';
-    tr.querySelector('button').onclick = () => { tr.remove(); dirty = true; };
+      '<td><button type="button" class="btn sec rm" style="padding:4px 10px">Remove</button></td>';
+    tr.querySelector('.rm').onclick = () => { tr.remove(); dirty = true; };
+    tr.querySelectorAll('.mv').forEach(b => b.onclick = () => {
+      const sib = b.dataset.d === '-1' ? tr.previousElementSibling : tr.nextElementSibling;
+      if (!sib) return;
+      if (b.dataset.d === '-1') tr.parentNode.insertBefore(tr, sib); else tr.parentNode.insertBefore(sib, tr);
+      dirty = true;
+    });
     $('#servers tbody').appendChild(tr);
   }
   $('#addServer').onclick = () => { serverRow(); dirty = true; };
@@ -119,7 +124,7 @@
       else el.value = v ?? '';
     });
     $('#servers tbody').innerHTML = '';
-    (settings.additional_servers || []).forEach(serverRow);
+    (settings.servers || []).forEach(serverRow);
   }
 
   function tile(k, v, cls) { return '<div class="tile"><div class="k">' + esc(k) + '</div><div class="v ' + (cls || '') + '">' + v + '</div></div>'; }
@@ -162,7 +167,7 @@
       else if (el.dataset.type === 'integer') out[el.name] = el.value === '' ? 0 : parseInt(el.value, 10);
       else out[el.name] = el.value;
     });
-    out.additional_servers = [...document.querySelectorAll('#servers tbody tr')].map(tr => {
+    out.servers = [...document.querySelectorAll('#servers tbody tr')].map(tr => {
       const s = {};
       tr.querySelectorAll('[data-k]').forEach(i => { s[i.dataset.k] = i.type === 'checkbox' ? i.checked : (i.type === 'number' ? parseInt(i.value || '0', 10) : i.value); });
       return s;

@@ -96,20 +96,38 @@ type File struct {
 	layout    Layout
 	byNumber  map[int]nzb.Segment
 	readAhead int
+	slots     chan struct{} // caps concurrent prefetches for this file; nil = no cap
 
 	mu         sync.Mutex
 	prefetched map[int]bool // segments a read-ahead was already started for
 }
 
-// Open wraps file with a known layout. readAhead is how many segments to
-// prefetch after each live read (0 disables it).
-func Open(f Fetcher, cache *Cache, file nzb.File, l Layout, readAhead int) *File {
+// ReadAhead says how much to prefetch after each live read.
+type ReadAhead struct {
+	Segments int   // articles ahead (used when Bytes is 0)
+	Bytes    int64 // bytes ahead, rounded up to whole articles
+	MaxConns int   // prefetches running at once for one file (0 = no cap)
+}
+
+func (ra ReadAhead) segments(partSize int64) int {
+	if ra.Bytes > 0 && partSize > 0 {
+		return int((ra.Bytes + partSize - 1) / partSize)
+	}
+	return ra.Segments
+}
+
+// Open wraps file with a known layout. A zero ReadAhead disables prefetch.
+func Open(f Fetcher, cache *Cache, file nzb.File, l Layout, ra ReadAhead) *File {
 	by := make(map[int]nzb.Segment, len(file.Segments))
 	for _, s := range file.Segments {
 		by[s.Number] = s
 	}
-	return &File{name: file.Name, fetch: f, cache: cache, layout: l, byNumber: by,
-		readAhead: readAhead, prefetched: map[int]bool{}}
+	r := &File{name: file.Name, fetch: f, cache: cache, layout: l, byNumber: by,
+		readAhead: ra.segments(l.PartSize), prefetched: map[int]bool{}}
+	if ra.MaxConns > 0 {
+		r.slots = make(chan struct{}, ra.MaxConns)
+	}
+	return r
 }
 
 // Size is the decoded file size.
@@ -185,13 +203,6 @@ func (r *File) segment(ctx context.Context, prio nntp.Priority, idx int) ([]byte
 func (r *File) startReadAhead(from int) {
 	total := int((r.layout.Size + r.layout.PartSize - 1) / r.layout.PartSize)
 	for idx := from; idx < from+r.readAhead && idx < total; idx++ {
-		r.mu.Lock()
-		started := r.prefetched[idx]
-		r.prefetched[idx] = true
-		r.mu.Unlock()
-		if started {
-			continue
-		}
 		seg, ok := r.byNumber[idx+1]
 		if !ok {
 			continue
@@ -199,7 +210,28 @@ func (r *File) startReadAhead(from int) {
 		if _, cached := r.cache.Get(seg.ID); cached {
 			continue
 		}
+		r.mu.Lock()
+		started := r.prefetched[idx]
+		r.prefetched[idx] = true
+		r.mu.Unlock()
+		if started {
+			continue
+		}
+		if r.slots != nil {
+			select {
+			case r.slots <- struct{}{}:
+			default:
+				// Per-file cap reached: leave the rest for the next read-ahead.
+				r.mu.Lock()
+				delete(r.prefetched, idx)
+				r.mu.Unlock()
+				return
+			}
+		}
 		go func(idx int) {
+			if r.slots != nil {
+				defer func() { <-r.slots }()
+			}
 			if _, err := r.segment(context.Background(), nntp.Prefetch, idx); err != nil {
 				// A failed prefetch may be retried by a later read-ahead.
 				r.mu.Lock()

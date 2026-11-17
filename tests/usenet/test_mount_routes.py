@@ -34,7 +34,8 @@ def _load():
 
 mr = _load()
 
-SERVERS = [{'host': 'news.b', 'port': 563, 'ssl': True, 'username': 'ub', 'password': 'pb', 'connections': 4},
+SERVERS = [{'host': 'news.a', 'port': 563, 'ssl': True, 'username': 'ua', 'password': 'pa', 'connections': 10},
+           {'host': 'news.b', 'port': 563, 'ssl': True, 'username': 'ub', 'password': 'pb', 'connections': 4},
            {'host': 'block.c', 'port': 119, 'ssl': False, 'username': 'uc', 'password': 'pc', 'connections': 2,
             'backup': True}]
 
@@ -42,8 +43,7 @@ SERVERS = [{'host': 'news.b', 'port': 563, 'ssl': True, 'username': 'ub', 'passw
 class MountRoutesTests(unittest.TestCase):
     def setUp(self):
         self.store = {'Usenet Provider': {'enabled': True, 'provider': 'builtin'},
-                      'Built-in Mount': {'primary_host': 'news.a', 'primary_password': 'pa', 'api_token': 'tok',
-                                         'primary_connections': 10, 'additional_servers': json.dumps(SERVERS)}}
+                      'Built-in Mount': {'api_token': 'tok', 'read_ahead_mb': 16, 'servers': json.dumps(SERVERS)}}
 
         def get(section, key=None, default=None):
             sec = self.store.get(section, {})
@@ -67,31 +67,30 @@ class MountRoutesTests(unittest.TestCase):
 
     def test_public_settings_hide_secrets(self):
         pub = mr._public_settings()
-        self.assertEqual((pub['primary_password'], pub['primary_password_set']), ('', True))
         self.assertEqual((pub['api_token'], pub['api_token_set']), ('', True))
-        self.assertTrue(all(s['password'] == '' and s['password_set'] for s in pub['additional_servers']))
+        self.assertTrue(all(s['password'] == '' and s['password_set'] for s in pub['servers']))
         self.assertNotIn('pb', json.dumps(pub))
 
-    def test_blank_passwords_keep_saved_ones(self):
-        rows = [dict(s, password='') for s in SERVERS]
-        code, body = self.save({'primary_password': '', 'primary_connections': 12, 'additional_servers': rows})
+    def test_blank_passwords_keep_saved_ones_after_reorder(self):
+        rows = [dict(s, password='') for s in reversed(SERVERS)]  # moved around on the page
+        code, body = self.save({'api_token': '', 'read_ahead_mb': 32, 'servers': rows})
         self.assertEqual(code, 200, body)
         bm = self.store['Built-in Mount']
-        self.assertEqual(bm['primary_password'], 'pa')
-        self.assertEqual(bm['primary_connections'], 12)
-        self.assertEqual([s['password'] for s in json.loads(bm['additional_servers'])], ['pb', 'pc'])
+        self.assertEqual((bm['api_token'], bm['read_ahead_mb']), ('tok', 32))
+        saved = json.loads(bm['servers'])
+        self.assertEqual([(s['host'], s['password']) for s in saved], [('block.c', 'pc'), ('news.b', 'pb'), ('news.a', 'pa')])
         self.sync.assert_called_once()
 
     def test_new_password_and_removed_row(self):
-        code, _ = self.save({'additional_servers': [dict(SERVERS[1], password='new'), {'host': ''}]})
+        code, _ = self.save({'servers': [dict(SERVERS[2], password='new'), {'host': ''}]})
         self.assertEqual(code, 200)
-        saved = json.loads(self.store['Built-in Mount']['additional_servers'])
+        saved = json.loads(self.store['Built-in Mount']['servers'])
         self.assertEqual([(s['host'], s['password'], s['backup']) for s in saved], [('block.c', 'new', True)])
 
     def test_bad_input_writes_nothing(self):
         before = json.dumps(self.store)
-        for payload in ({'primary_connections': 'lots'}, {'mount_path': 'relative/path'},
-                        {'additional_servers': [{'host': 'x', 'port': 'abc'}]}):
+        for payload in ({'read_ahead_mb': 'lots'}, {'mount_path': 'relative/path'}, {'umask': '9'},
+                        {'import_sample_percent': 150}, {'servers': [{'host': 'x', 'port': 'abc'}]}):
             code, body = self.save(payload)
             self.assertEqual(code, 400, payload)
             self.assertFalse(body['success'])
@@ -99,7 +98,7 @@ class MountRoutesTests(unittest.TestCase):
         self.sync.assert_not_called()
 
     def test_unchanged_save_does_not_resync(self):
-        code, body = self.save({'primary_connections': 10})
+        code, body = self.save({'read_ahead_mb': 16})
         self.assertEqual((code, body['changed']), (200, []))
         self.sync.assert_not_called()
 

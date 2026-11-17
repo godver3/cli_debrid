@@ -40,7 +40,8 @@ type Job struct {
 	// Retryable marks failures that were not proof (network trouble):
 	// resubmitting later may work. Leftover-only or unusable NZBs are final.
 	Retryable bool           `json:"retryable,omitempty"`
-	Size      int64          `json:"size"` // sum of entry sizes once ready
+	Attempts  int            `json:"attempts,omitempty"` // imports retried after unproven failures
+	Size      int64          `json:"size"`               // sum of entry sizes once ready
 	Tags      []string       `json:"tags,omitempty"`
 	CLIIDs    map[string]int `json:"cli_ids,omitempty"` // entry name -> cli_debrid item id
 	CreatedAt time.Time      `json:"created_at"`

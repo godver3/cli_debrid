@@ -29,6 +29,7 @@ import (
 type Options struct {
 	AllowOther bool // let other users (Plex) read the mount; needs user_allow_other
 	UID, GID   uint32
+	Umask      uint32 // permission bits removed from the read-only modes (e.g. 0o027)
 	Debug      bool
 }
 
@@ -82,7 +83,7 @@ func ino(parts ...string) uint64 {
 }
 
 func (n *node) dirAttr(out *fuse.Attr, t time.Time) {
-	out.Mode = syscall.S_IFDIR | 0o555
+	out.Mode = syscall.S_IFDIR | 0o555&^n.opt.Umask
 	out.Owner = fuse.Owner{Uid: n.opt.UID, Gid: n.opt.GID}
 	out.SetTimes(&t, &t, &t)
 }
@@ -197,7 +198,7 @@ var _ = (fs.NodeReader)((*file)(nil))
 var _ = (fs.NodeGetattrer)((*file)(nil))
 
 func (f *file) attr(out *fuse.Attr) {
-	out.Mode = syscall.S_IFREG | 0o444
+	out.Mode = syscall.S_IFREG | 0o444&^f.opt.Umask
 	out.Size = uint64(f.entry.Size)
 	out.Blocks = (out.Size + 511) / 512
 	out.Blksize = 1 << 20

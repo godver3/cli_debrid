@@ -23,15 +23,26 @@ from utilities.settings_schema import SETTINGS_SCHEMA
 mount_bp = Blueprint('mount', __name__)
 
 SECTION = 'Built-in Mount'
-SECRET_KEYS = ('primary_password', 'backup_password', 'api_token')
+SECRET_KEYS = ('api_token',)
 GROUPS = [
-    ('Mount', ['mount_path', 'cache_dir', 'cache_size_gb', 'read_ahead_segments', 'allow_other']),
-    ('Main usenet server', ['primary_host', 'primary_port', 'primary_ssl', 'primary_username',
-                            'primary_password', 'primary_connections']),
-    ('Backup server (optional)', ['backup_host', 'backup_port', 'backup_ssl', 'backup_username',
-                                  'backup_password', 'backup_connections']),
+    ('Mount', ['mount_path', 'allow_other', 'uid', 'gid', 'umask']),
+    ('Streaming', ['read_ahead_mb', 'max_connections_per_file', 'buffer_memory_mb', 'idle_timeout_minutes']),
+    ('Disk cache', ['cache_dir', 'cache_size_gb', 'cache_expiry_hours', 'cache_cleanup_minutes']),
+    ('Importing & health checks', ['processing_connections', 'processing_timeout_minutes',
+                                   'import_sample_percent', 'health_sample_percent']),
     ('Advanced', ['api_port', 'api_token']),
 ]
+
+LABELS = {
+    'mount_path': 'Mount path', 'allow_other': 'Let other users (Plex) read the mount', 'uid': 'User ID (UID)',
+    'gid': 'Group ID (GID)', 'umask': 'UMASK', 'read_ahead_mb': 'Read ahead (MB)',
+    'max_connections_per_file': 'Max connections per file', 'buffer_memory_mb': 'Buffer memory (MB)',
+    'idle_timeout_minutes': 'Connection idle timeout (minutes)', 'cache_dir': 'Cache directory',
+    'cache_size_gb': 'Disk cache size (GB)', 'cache_expiry_hours': 'Cache expiry (hours)',
+    'cache_cleanup_minutes': 'Cache cleanup interval (minutes)', 'processing_connections': 'Processing connections per file',
+    'processing_timeout_minutes': 'Processing timeout (minutes)', 'import_sample_percent': 'NZB import availability sample %',
+    'health_sample_percent': 'Repair availability sample %', 'api_port': 'Engine API port', 'api_token': 'Engine API token',
+}
 
 _sync_lock = threading.Lock()
 _last_sync = {'result': '', 'running': False}
@@ -68,7 +79,7 @@ def _public_settings() -> dict:
     cur, schema = _current(), _schema()
     out = {}
     for key, spec in schema.items():
-        if key == 'additional_servers':
+        if key == 'servers':
             continue
         val = cur.get(key, spec.get('default'))
         if key in SECRET_KEYS:
@@ -76,9 +87,9 @@ def _public_settings() -> dict:
             out[key + '_set'] = bool(val)
         else:
             out[key] = val
-    out['additional_servers'] = [
+    out['servers'] = [
         {**{k: v for k, v in s.items() if k != 'password'}, 'password': '', 'password_set': bool(s.get('password'))}
-        for s in _servers(cur.get('additional_servers')) if isinstance(s, dict)]
+        for s in _servers(cur.get('servers')) if isinstance(s, dict)]
     return out
 
 
@@ -100,17 +111,17 @@ def _coerce(key, spec, value):
 def _merge_servers(new_list, old_list) -> list:
     """Validate the edited server rows; an empty password keeps the old one
     (matched by host + username, else by position)."""
-    from utilities.builtin_engine import additional_servers
+    from utilities.builtin_engine import servers
     old = [s for s in _servers(old_list) if isinstance(s, dict)]
     out = []
     for i, s in enumerate(new_list or []):
         if not isinstance(s, dict):
-            raise ValueError(f'additional server {i + 1} is not valid')
+            raise ValueError(f'server {i + 1} is not valid')
         host = str(s.get('host') or '').strip()
         if not host:
             continue  # blank row
         row = {'host': host, 'port': s.get('port') or 563, 'ssl': bool(s.get('ssl', True)),
-               'username': str(s.get('username') or '').strip(), 'connections': s.get('connections') or 5,
+               'username': str(s.get('username') or '').strip(), 'connections': s.get('connections') or 10,
                'backup': bool(s.get('backup', False)), 'password': str(s.get('password') or '')}
         if not row['password']:
             match = next((o for o in old if o.get('host') == host and (o.get('username') or '') == row['username']), None)
@@ -118,7 +129,7 @@ def _merge_servers(new_list, old_list) -> list:
                 match = old[i]
             row['password'] = (match or {}).get('password', '')
         out.append(row)
-    additional_servers({'additional_servers': out})  # raises ValueError on bad rows
+    servers({'servers': out})  # raises ValueError on bad rows
     return out
 
 
@@ -146,9 +157,10 @@ def _sync_in_background():
 @admin_required
 def index():
     schema = _schema()
-    groups = [(title, [(k, schema[k]) for k in keys if k in schema]) for title, keys in GROUPS]
+    groups = [(title, [(k, schema[k], LABELS.get(k) or k.split('_', 1)[-1].replace('_', ' ').capitalize())
+                       for k in keys if k in schema]) for title, keys in GROUPS]
     return render_template('mount.html', groups=groups, selected=builtin_selected(),
-                           servers_help=schema.get('additional_servers', {}).get('description', ''))
+                           servers_help=schema.get('servers', {}).get('description', ''))
 
 
 @mount_bp.route('/api/status')
@@ -182,7 +194,7 @@ def save_settings():
     updates = {}
     try:
         for key, value in data.items():
-            if key == 'additional_servers':
+            if key == 'servers':
                 updates[key] = json.dumps(_merge_servers(value, cur.get(key)))
                 continue
             spec = schema.get(key)
@@ -191,8 +203,14 @@ def save_settings():
             v = _coerce(key, spec, value)
             if key in SECRET_KEYS and v == '':
                 continue  # empty secret: keep current
-            if key == 'mount_path' and not str(v).startswith('/'):
-                raise ValueError('mount path must be an absolute path')
+            if key == 'mount_path' and not (str(v).startswith('/') or (len(str(v)) >= 2 and str(v)[1] == ':')):
+                raise ValueError('mount path must be an absolute path (or a drive letter like M: on Windows)')
+            if key in ('uid', 'gid') and v and not str(v).isdigit():
+                raise ValueError(f'{key} must be a number or empty')
+            if key == 'umask' and v and not all(ch in '01234567' for ch in str(v)):
+                raise ValueError('umask must be octal digits, e.g. 022')
+            if key.endswith('_percent') and v > 100:
+                raise ValueError(f'{key.replace("_", " ")} must be 0-100')
             updates[key] = v
     except ValueError as exc:
         return jsonify({'success': False, 'error': str(exc)}), 400

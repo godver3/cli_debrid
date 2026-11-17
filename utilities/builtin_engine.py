@@ -55,33 +55,18 @@ def problems(settings: dict = None) -> list:
     if not os.path.exists('/dev/fuse'):
         out.append('/dev/fuse is not available: add `devices: [/dev/fuse]` and `cap_add: [SYS_ADMIN]` to the container')
     bm = s.get('Built-in Mount') or {}
-    if not (bm.get('primary_host') or '').strip():
-        out.append('no usenet server set (Built-in Mount → primary host)')
     try:
-        additional_servers(bm)
+        if not servers(bm):
+            out.append('no usenet server set (Mount page → Usenet servers)')
     except ValueError as exc:
-        out.append(f'Built-in Mount → additional servers: {exc}')
+        out.append(f'usenet servers: {exc}')
     return out
 
 
-def _provider(bm: dict, prefix: str, backup: bool) -> dict:
-    host = (bm.get(f'{prefix}_host') or '').strip()
-    return {
-        'name': host or prefix,
-        'host': host,
-        'port': int(bm.get(f'{prefix}_port') or 563),
-        'tls': bool(bm.get(f'{prefix}_ssl', True)),
-        'username': bm.get(f'{prefix}_username') or '',
-        'password': bm.get(f'{prefix}_password') or '',
-        'max_conns': max(1, int(bm.get(f'{prefix}_connections') or (5 if backup else 20))),
-        'backup': backup,
-    }
-
-
-def additional_servers(bm: dict) -> list:
-    """Engine providers from the `additional_servers` JSON list. Raises
-    ValueError describing the first bad entry."""
-    raw = bm.get('additional_servers')
+def servers(bm: dict) -> list:
+    """Engine providers from the `servers` JSON list (order kept; the engine
+    asks backups last). Raises ValueError describing the first bad entry."""
+    raw = bm.get('servers')
     if isinstance(raw, str):
         raw = raw.strip()
         if not raw:
@@ -97,12 +82,12 @@ def additional_servers(bm: dict) -> list:
     out = []
     for i, e in enumerate(raw, 1):
         if not isinstance(e, dict) or not str(e.get('host') or '').strip():
-            raise ValueError(f'entry {i} needs a "host"')
+            raise ValueError(f'server {i} needs a host')
         try:
             port = int(e.get('port') or 563)
-            conns = max(1, int(e.get('connections') or e.get('max_connections') or 5))
+            conns = max(1, int(e.get('connections') or e.get('max_connections') or 10))
         except (TypeError, ValueError):
-            raise ValueError(f'entry {i}: port and connections must be numbers') from None
+            raise ValueError(f'server {i}: port and connections must be numbers') from None
         ssl = e.get('ssl', e.get('tls', True))
         out.append({
             'name': str(e.get('name') or e['host']).strip(),
@@ -120,25 +105,50 @@ def additional_servers(bm: dict) -> list:
 def build_config(settings: dict) -> dict:
     """The engine config for these settings (token must already be set)."""
     bm = settings.get('Built-in Mount') or {}
-    providers = [_provider(bm, 'primary', False)]
-    if (bm.get('backup_host') or '').strip():
-        providers.append(_provider(bm, 'backup', True))
     try:
-        providers += additional_servers(bm)
+        providers = servers(bm)
     except ValueError:
-        pass  # problems() reports it; sync() never gets here with it
+        providers = []  # problems() reports it; sync() never gets here with it
     cache_gb = int(bm.get('cache_size_gb') or 0)
+
+    def num(key, default):
+        try:
+            v = bm.get(key)
+            return default if v in (None, '') else int(v)
+        except (TypeError, ValueError):
+            return default
+
+    def ident(key, env):
+        v = str(bm.get(key) or '').strip() or os.environ.get(env, '0') or '0'
+        try:
+            return int(v)
+        except ValueError:
+            return 0
+    try:
+        umask = int(str(bm.get('umask') or '0').strip() or '0', 8) & 0o777
+    except ValueError:
+        umask = 0
     return {
         'data_dir': os.path.join(os.environ.get('USER_DB_CONTENT', '/user/db_content'), 'engine'),
         'cache_dir': bm.get('cache_dir') or '/user/cache/engine',
         'cache_bytes': cache_gb * (1 << 30),
+        'mem_cache_bytes': max(64, num('buffer_memory_mb', 512)) << 20,
+        'cache_expiry_seconds': num('cache_expiry_hours', 0) * 3600,
+        'cache_cleanup_seconds': max(1, num('cache_cleanup_minutes', 1)) * 60,
         'mount_path': (bm.get('mount_path') or '/mnt/clid').rstrip('/'),
         'listen': f"127.0.0.1:{int(bm.get('api_port') or 8283)}",
         'token': resolve_token(settings),
-        'read_ahead': int(bm.get('read_ahead_segments') or 8),
+        'read_ahead_mb': max(1, num('read_ahead_mb', 16)),
+        'max_conns_per_file': num('max_connections_per_file', 15),
+        'parallel': max(1, num('processing_connections', 8)),
+        'import_timeout_seconds': num('processing_timeout_minutes', 5) * 60,
+        'import_sample_percent': min(100, num('import_sample_percent', 1)),
+        'health_sample_percent': min(100, num('health_sample_percent', 0)),
+        'idle_timeout_seconds': max(1, num('idle_timeout_minutes', 5)) * 60,
         'allow_other': bool(bm.get('allow_other', True)),
-        'uid': int(os.environ.get('PUID', '0') or 0),
-        'gid': int(os.environ.get('PGID', '0') or 0),
+        'uid': ident('uid', 'PUID'),
+        'gid': ident('gid', 'PGID'),
+        'umask': umask,
         'providers': providers,
     }
 

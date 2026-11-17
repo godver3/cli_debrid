@@ -44,7 +44,8 @@ func newHarness(t *testing.T) *harness {
 	h := &harness{t: t, s: s, cfg: engine.Config{
 		DataDir: t.TempDir(), CacheDir: t.TempDir(), CacheBytes: 64 << 20,
 		MountPath: "/mnt/clid", Token: "secret", ImportWorkers: 2,
-		Providers: []nntp.Provider{{Name: "t", Host: host, Port: port, MaxConns: 8, Timeout: 5 * time.Second}},
+		RetryBackoff: []time.Duration{50 * time.Millisecond}, // one quick automatic retry
+		Providers:    []nntp.Provider{{Name: "t", Host: host, Port: port, MaxConns: 8, Timeout: 5 * time.Second}},
 	}}
 	h.start()
 	return h
@@ -209,12 +210,13 @@ func TestRejectsAndFailures(t *testing.T) {
 		t.Fatalf("articles missing everywhere must be final: %+v", j)
 	}
 
-	// A provider that drops the connection proves nothing: retryable, and
-	// a retry once it is back succeeds.
+	// A provider that drops the connection proves nothing: retried
+	// automatically, then failed as retryable; a retry once it is back
+	// succeeds.
 	doc = nzbXML(h.s, "e", file{Name: "Flaky.mkv", Data: random(6, 70_000)})
 	h.s.Drop("e0.1@test")
 	h.do("POST", "/jobs?name=Flaky", doc, &j)
-	if j = h.waitDone(j.ID); j.Status != "failed" || !j.Retryable {
+	if j = h.waitDone(j.ID); j.Status != "failed" || !j.Retryable || j.Attempts != 1 {
 		t.Fatalf("flaky job: %+v", j)
 	}
 	h.s.Undrop("e0.1@test")

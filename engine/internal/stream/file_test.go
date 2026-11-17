@@ -45,7 +45,7 @@ func TestRandomReadsMatchSource(t *testing.T) {
 	if l.Size != int64(len(data)) || l.PartSize != 700_000 {
 		t.Fatalf("layout %+v", l)
 	}
-	r := Open(c, cache, f, l, 0)
+	r := Open(c, cache, f, l, ReadAhead{})
 	rnd := rand.New(rand.NewSource(7))
 	for i := 0; i < 200; i++ {
 		off := rnd.Int63n(int64(len(data)))
@@ -78,7 +78,7 @@ func TestWrongArticleIsALayoutErrorNotWrongBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := Open(c, cache, f, l, 0)
+	r := Open(c, cache, f, l, ReadAhead{})
 	_, err = r.ReadAt(make([]byte, 10), 700_000)
 	var se *SegmentError
 	if !errors.Is(err, ErrLayout) || !errors.As(err, &se) || se.Number != 2 {
@@ -98,7 +98,7 @@ func TestSegmentMissingFromNZBIsProof(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = Open(c, cache, f, l, 0).ReadAt(make([]byte, 10), 800_000)
+	_, err = Open(c, cache, f, l, ReadAhead{}).ReadAt(make([]byte, 10), 800_000)
 	if !nntp.IsNotFound(err) {
 		t.Fatalf("got %v, want proof of absence", err)
 	}
@@ -108,7 +108,7 @@ func TestReadAheadMakesNextReadFree(t *testing.T) {
 	data, _, s, c, f := setup(t, 3_500_000, 700_000) // 5 segments
 	cache := NewCache(64 << 20)
 	l, _ := Probe(context.Background(), c, cache, f)
-	r := Open(c, cache, f, l, 3)
+	r := Open(c, cache, f, l, ReadAhead{Segments: 3})
 	buf := make([]byte, 1000)
 	if _, err := r.ReadAt(buf, 0); err != nil {
 		t.Fatal(err)
@@ -215,5 +215,26 @@ func TestLiveJoinsPrefetchAlreadyOnTheWire(t *testing.T) {
 	close(release)
 	if d := <-done; string(d) != "data" || fetches.Load() != 1 {
 		t.Fatalf("live got %q after %d fetches; want to share the running prefetch", d, fetches.Load())
+	}
+}
+
+func TestReadAheadBytesAndPerFileCap(t *testing.T) {
+	if got := (ReadAhead{Bytes: 1_400_001, Segments: 9}).segments(700_000); got != 3 {
+		t.Fatalf("1.4MB+1 over 700k articles = %d segments, want 3 (bytes win over segments)", got)
+	}
+	_, _, s, c, f := setup(t, 3_500_000, 700_000) // 5 segments
+	cache := NewCache(64 << 20)
+	l, _ := Probe(context.Background(), c, cache, f)
+	s.SetDelay(400 * time.Millisecond)
+	r := Open(c, cache, f, l, ReadAhead{Segments: 4, MaxConns: 1})
+	if _, err := r.ReadAt(make([]byte, 10), 0); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	r.mu.Lock()
+	inFlight := len(r.prefetched)
+	r.mu.Unlock()
+	if inFlight != 1 || len(r.slots) != 1 {
+		t.Fatalf("with MaxConns 1, %d prefetches started (%d slots used), want 1", inFlight, len(r.slots))
 	}
 }

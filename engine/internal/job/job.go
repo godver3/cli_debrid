@@ -116,7 +116,7 @@ func Build(ctx context.Context, f stream.Fetcher, cache *stream.Cache, n *nzb.NZ
 		if p.err != nil {
 			return
 		}
-		p.sf = stream.Open(f, cache, p.file, p.layout, 0)
+		p.sf = stream.Open(f, cache, p.file, p.layout, stream.ReadAhead{})
 		p.head = make([]byte, min(int64(par2.HashLen), p.layout.Size))
 		if _, err := p.sf.ReadAtCtx(ctx, nntp.Live, p.head, 0); err != nil && err != io.EOF {
 			p.err = err
@@ -249,14 +249,16 @@ func Build(ctx context.Context, f stream.Fetcher, cache *stream.Cache, n *nzb.NZ
 	}
 
 	sort.SliceStable(res.Entries, func(i, j int) bool { return res.Entries[i].Size > res.Entries[j].Size })
-	if len(res.Entries) == 0 {
-		// Proof (articles missing everywhere, bad archives) is final; a
-		// probe that failed for network reasons only means "not yet".
-		for _, p := range todo {
-			if p.err != nil && !nntp.IsNotFound(p.err) && !errors.Is(p.err, stream.ErrLayout) {
-				return res, fmt.Errorf("%w: %v", ErrInconclusive, p.err)
-			}
+	// Proof (articles missing everywhere, bad archives) is final; a probe
+	// that failed for network reasons only means "not yet". Even with other
+	// files streamable, such a job is retried rather than made ready
+	// without the file (an episode silently missing from a pack).
+	for _, p := range todo {
+		if p.err != nil && !nntp.IsNotFound(p.err) && !errors.Is(p.err, stream.ErrLayout) {
+			return res, fmt.Errorf("%w: %s: %v", ErrInconclusive, p.name, p.err)
 		}
+	}
+	if len(res.Entries) == 0 {
 		return res, ErrNothingStreamable
 	}
 	if LeftoverOnly(res.Entries[0].Size, failedArchive) {

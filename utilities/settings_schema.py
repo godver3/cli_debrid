@@ -406,81 +406,79 @@ SETTINGS_SCHEMA = {
             "description": "Built-in mount only. Maximum size of the disk cache in GB (0 disables it).",
             "default": 50
         },
-        "read_ahead_segments": {
+        "read_ahead_mb": {
             "type": "integer",
-            "description": "Built-in mount only. Articles fetched ahead of playback (about 0.7 MB each).",
+            "description": "Built-in mount only. Read ahead: megabytes fetched ahead of playback (cli_mount default 16).",
+            "default": 16
+        },
+        "max_connections_per_file": {
+            "type": "integer",
+            "description": "Built-in mount only. Max connections per file: downloads running at once for one playing file (0 = no limit).",
+            "default": 15
+        },
+        "buffer_memory_mb": {
+            "type": "integer",
+            "description": "Built-in mount only. Buffer memory: RAM in MB for downloaded articles across all open files (the disk cache holds the rest).",
+            "default": 512
+        },
+        "cache_expiry_hours": {
+            "type": "integer",
+            "description": "Built-in mount only. Cache expiry: drop disk cache entries not used for this many hours (0 = only when the cache is full).",
+            "default": 0
+        },
+        "cache_cleanup_minutes": {
+            "type": "integer",
+            "description": "Built-in mount only. Cache cleanup interval in minutes (how often cache expiry runs).",
+            "default": 1
+        },
+        "processing_connections": {
+            "type": "integer",
+            "description": "Built-in mount only. Processing connections per file: parallel downloads while importing an NZB (reading archive headers, PAR2).",
             "default": 8
+        },
+        "processing_timeout_minutes": {
+            "type": "integer",
+            "description": "Built-in mount only. Processing timeout per NZB import in minutes. A timeout is retried, never treated as a dead release (0 = no limit).",
+            "default": 5
+        },
+        "import_sample_percent": {
+            "type": "integer",
+            "description": "Built-in mount only. NZB import availability sample %: share of the main file's articles checked before the release counts as added (0 = off; a proven miss rejects the release, a timeout never does).",
+            "default": 1
+        },
+        "health_sample_percent": {
+            "type": "integer",
+            "description": "Built-in mount only. Repair availability sample %: share of articles checked by health checks (0 = automatic: 2%, at most 30 per file; 100 = every article).",
+            "default": 0
+        },
+        "idle_timeout_minutes": {
+            "type": "integer",
+            "description": "Built-in mount only. Connection idle timeout: minutes to keep unused usenet connections open before closing them.",
+            "default": 5
         },
         "allow_other": {
             "type": "boolean",
             "description": "Built-in mount only. Let other users (Plex) read the mount. Needs user_allow_other in /etc/fuse.conf (set in the image).",
             "default": True
         },
-        "primary_host": {
+        "uid": {
             "type": "string",
-            "description": "Built-in mount only. Your usenet provider's server, e.g. news.example.com.",
+            "description": "Built-in mount only. User ID (UID) that owns the mounted files. Empty = the container's PUID.",
             "default": ""
         },
-        "primary_port": {
-            "type": "integer",
-            "description": "Built-in mount only. Server port (563 for SSL, 119 without).",
-            "default": 563
-        },
-        "primary_ssl": {
-            "type": "boolean",
-            "description": "Built-in mount only. Connect with SSL/TLS.",
-            "default": True
-        },
-        "primary_username": {
+        "gid": {
             "type": "string",
-            "description": "Built-in mount only. Usenet account username.",
+            "description": "Built-in mount only. Group ID (GID) that owns the mounted files. Empty = the container's PGID.",
             "default": ""
         },
-        "primary_password": {
+        "umask": {
             "type": "string",
-            "description": "Built-in mount only. Usenet account password.",
-            "default": "",
-            "sensitive": True
-        },
-        "primary_connections": {
-            "type": "integer",
-            "description": "Built-in mount only. Connections to open at most. Stay below your plan's limit if another app (cli_mount, a downloader) uses the same account.",
-            "default": 20
-        },
-        "backup_host": {
-            "type": "string",
-            "description": "Built-in mount only. Optional backup (block account) server, asked only when the primary lacks an article. Leave empty for none.",
+            "description": "Built-in mount only. UMASK: permission bits removed from the read-only files, in octal (e.g. 022; 027 hides files from other users). Empty = none.",
             "default": ""
         },
-        "backup_port": {
-            "type": "integer",
-            "description": "Built-in mount only. Backup server port.",
-            "default": 563
-        },
-        "backup_ssl": {
-            "type": "boolean",
-            "description": "Built-in mount only. Connect to the backup with SSL/TLS.",
-            "default": True
-        },
-        "backup_username": {
+        "servers": {
             "type": "string",
-            "description": "Built-in mount only. Backup account username.",
-            "default": ""
-        },
-        "backup_password": {
-            "type": "string",
-            "description": "Built-in mount only. Backup account password.",
-            "default": "",
-            "sensitive": True
-        },
-        "backup_connections": {
-            "type": "integer",
-            "description": "Built-in mount only. Backup connections at most.",
-            "default": 5
-        },
-        "additional_servers": {
-            "type": "string",
-            "description": "Built-in mount only. Optional extra usenet servers, as a JSON list tried in order after the primary (entries with \"backup\": true go last, after the backup above), e.g. <code>[{\"host\": \"news.other.com\", \"port\": 563, \"ssl\": true, \"username\": \"u\", \"password\": \"p\", \"connections\": 10, \"backup\": false}]</code>. Leave empty for none. The cli_mount migration fills this in from cli_mount's provider list.",
+            "description": "Built-in mount only. Your usenet servers as a JSON list, tried top to bottom (servers marked backup go last, asked only when the others lack an article). Edit them on the Mount page.",
             "default": "",
             "sensitive": True
         },

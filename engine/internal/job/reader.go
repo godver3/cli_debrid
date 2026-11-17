@@ -17,7 +17,7 @@ type Files struct {
 
 // Open prepares readers for a stored job. n must be the same NZB the job
 // was built from; no network traffic happens until something is read.
-func Open(res *Result, n *nzb.NZB, f stream.Fetcher, cache *stream.Cache, readAhead int) (*Files, error) {
+func Open(res *Result, n *nzb.NZB, f stream.Fetcher, cache *stream.Cache, readAhead stream.ReadAhead) (*Files, error) {
 	out := &Files{}
 	for _, s := range res.Sources {
 		if s.NZBIndex < 0 || s.NZBIndex >= len(n.Files) {

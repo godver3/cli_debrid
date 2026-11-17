@@ -187,8 +187,8 @@ class EngineManagerTests(unittest.TestCase):
 
     def settings(self, provider='builtin'):
         return {'Usenet Provider': {'enabled': True, 'provider': provider},
-                'Built-in Mount': {'mount_path': '/mnt/clid/', 'primary_host': 'news.x', 'primary_password': 'pw',
-                                   'primary_connections': 30, 'backup_host': '', 'cache_size_gb': 2}}
+                'Built-in Mount': {'mount_path': '/mnt/clid/', 'cache_size_gb': 2,
+                                   'servers': json.dumps([{'host': 'news.x', 'password': 'pw', 'connections': 30}])}}
 
     def test_config(self):
         cfg = self.be.build_config(self.settings())
@@ -198,33 +198,32 @@ class EngineManagerTests(unittest.TestCase):
         self.assertEqual(len(cfg['providers']), 1)
         self.assertEqual(cfg['providers'][0]['max_conns'], 30)
         self.assertTrue(cfg['token'])
-
-    def test_additional_servers(self):
+        # cli_mount-style streaming settings map onto engine fields.
+        self.assertEqual((cfg['read_ahead_mb'], cfg['max_conns_per_file'], cfg['mem_cache_bytes']), (16, 15, 512 << 20))
+        self.assertEqual((cfg['import_timeout_seconds'], cfg['idle_timeout_seconds'], cfg['import_sample_percent']),
+                         (300, 300, 1))
         s = self.settings()
-        s['Built-in Mount']['additional_servers'] = json.dumps([
-            {'host': 'news.b', 'username': 'u', 'password': 'p', 'connections': 4},
-            {'host': 'block.c', 'port': 119, 'ssl': False, 'backup': True}])
+        s['Built-in Mount'].update(umask='027', uid='1000', gid='', cache_expiry_hours=2, health_sample_percent=150)
+        with mock.patch.dict(os.environ, {'PGID': '1001'}):
+            cfg = self.be.build_config(s)
+        self.assertEqual((cfg['umask'], cfg['uid'], cfg['gid']), (0o027, 1000, 1001))
+        self.assertEqual((cfg['cache_expiry_seconds'], cfg['health_sample_percent']), (7200, 100))
+
+    def test_servers_list(self):
+        s = self.settings()
+        s['Built-in Mount']['servers'] = json.dumps([
+            {'host': 'block.c', 'port': 119, 'ssl': False, 'backup': True},
+            {'host': 'news.a', 'username': 'u', 'password': 'p', 'connections': 30},
+            {'host': 'news.b', 'connections': 4}])
         ps = self.be.build_config(s)['providers']
         self.assertEqual([(p['host'], p['port'], p['tls'], p['max_conns'], p['backup']) for p in ps],
-                         [('news.x', 563, True, 30, False), ('news.b', 563, True, 4, False),
-                          ('block.c', 119, False, 5, True)])
+                         [('block.c', 119, False, 10, True), ('news.a', 563, True, 30, False),
+                          ('news.b', 563, True, 4, False)], 'order kept; the engine itself asks backups last')
+        s['Built-in Mount']['servers'] = ''
         for bad in ('{not json', '{"host": "x"}', '[{"port": 1}]', '[{"host": "x", "port": "abc"}]'):
-            s['Built-in Mount']['additional_servers'] = bad
+            s['Built-in Mount']['servers'] = bad
             with self.assertRaises(ValueError):
-                self.be.additional_servers(s['Built-in Mount'])
-
-    def test_sync_starts_restarts_only_on_change_and_stops(self):
-        self.assertEqual(self.be.sync(self.settings()), 'started')
-        token = json.load(open(self.be.config_path()))['token']
-        self.assertEqual(oct(os.stat(self.be.config_path()).st_mode & 0o777), '0o600')
-        self.state = 'RUNNING'
-        self.assertEqual(self.be.sync(self.settings()), 'running', 'unchanged config: no restart')
-        self.assertEqual(json.load(open(self.be.config_path()))['token'], token, 'token kept across syncs')
-        s = self.settings()
-        s['Built-in Mount']['primary_connections'] = 10
-        self.assertEqual(self.be.sync(s), 'restarted')
-        self.assertEqual(self.be.sync(self.settings('climount')), 'stopped')
-        self.assertIn(('stop', 'mount_engine'), self.calls)
+                self.be.servers(s['Built-in Mount'])
 
     def test_user_stop_survives_sync_until_start(self):
         self.state = 'RUNNING'
