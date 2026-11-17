@@ -1,0 +1,140 @@
+"""
+"Now playing" for the built-in mount: Plex sessions whose file is served by
+the mount, with the Plex user, player and whether it streams from usenet or
+debrid. Sessions playing anything else are left out.
+
+A Plex session is matched to an open file on the mount (engine /streams):
+  1. the session's file resolves (symlink) to <mount>/.../<folder>/<file>;
+  2. else its path ends with <folder>/<file> (Plex mode: Plex sees the
+     mount under its own prefix);
+  3. else its file name contains the mount file's name (symlink templates
+     that keep the original filename, when the symlink isn't visible here).
+"""
+
+import logging
+import os
+from typing import Callable, List, Optional
+
+import requests
+
+
+def plex_server(get_setting: Callable) -> tuple:
+    url = (get_setting('Plex', 'url', '') or get_setting('File Management', 'plex_url_for_symlink', '') or '').rstrip('/')
+    token = get_setting('Plex', 'token', '') or get_setting('File Management', 'plex_token_for_symlink', '') or ''
+    return url, token
+
+
+def plex_sessions(url: str, token: str, timeout: float = 5) -> List[dict]:
+    if not url or not token:
+        return []
+    try:
+        r = requests.get(f'{url}/status/sessions', headers={'X-Plex-Token': token, 'Accept': 'application/json'},
+                         timeout=timeout)
+        r.raise_for_status()
+        return (r.json().get('MediaContainer') or {}).get('Metadata') or []
+    except Exception as exc:
+        logging.debug(f'[now playing] Plex sessions failed: {exc}')
+        return []
+
+
+def _session_files(s: dict, lookup: Optional[Callable] = None) -> List[str]:
+    """The file(s) a session may be playing. Some sessions (transcodes)
+    omit the path; then the item's own parts are looked up, the session's
+    media version first."""
+    files = [p['file'] for m in s.get('Media') or [] for p in m.get('Part') or [] if p.get('file')]
+    if files or lookup is None or not s.get('ratingKey'):
+        return files
+    media_ids = {str(m.get('id')) for m in s.get('Media') or [] if m.get('id') is not None}
+    item = lookup(str(s['ratingKey'])) or {}
+    mine, rest = [], []
+    for m in item.get('Media') or []:
+        for p in m.get('Part') or []:
+            if p.get('file'):
+                (mine if str(m.get('id')) in media_ids else rest).append(p['file'])
+    return mine + rest
+
+
+def metadata_lookup(url: str, token: str, timeout: float = 5) -> Callable:
+    """ratingKey -> Plex metadata item (memoised for one now-playing call)."""
+    cache = {}
+
+    def get(key: str) -> dict:
+        if key not in cache:
+            try:
+                r = requests.get(f'{url}/library/metadata/{key}',
+                                 headers={'X-Plex-Token': token, 'Accept': 'application/json'}, timeout=timeout)
+                r.raise_for_status()
+                cache[key] = ((r.json().get('MediaContainer') or {}).get('Metadata') or [{}])[0]
+            except Exception as exc:
+                logging.debug(f'[now playing] metadata {key} failed: {exc}')
+                cache[key] = {}
+        return cache[key]
+    return get
+
+
+def match_stream(plex_file: str, streams: List[dict], mount_path: str) -> Optional[dict]:
+    if not plex_file:
+        return None
+    real = ''
+    try:
+        if os.path.lexists(plex_file):
+            real = os.path.realpath(plex_file)
+    except OSError:
+        pass
+    norm = plex_file.replace('\\', '/')
+    base = norm.rsplit('/', 1)[-1]
+    for st in streams:
+        tail = f"{st.get('folder', '')}/{st.get('file', '')}"
+        if real and real.startswith(mount_path.rstrip('/') + '/') and real.endswith('/' + tail):
+            return st
+    for st in streams:
+        if norm.endswith('/' + f"{st.get('folder', '')}/{st.get('file', '')}"):
+            return st
+    for st in streams:
+        name = st.get('file') or ''
+        stem = name.rsplit('.', 1)[0]
+        if stem and len(stem) >= 8 and stem in base:
+            return st
+    return None
+
+
+def _title(s: dict) -> tuple:
+    if s.get('type') == 'episode':
+        se = ''
+        if s.get('parentIndex') is not None and s.get('index') is not None:
+            se = f"S{int(s['parentIndex']):02d}E{int(s['index']):02d}"
+        return s.get('grandparentTitle') or s.get('title', ''), ' · '.join(x for x in (se, s.get('title', '')) if x)
+    year = f" ({s['year']})" if s.get('year') else ''
+    return f"{s.get('title', '')}{year}", ''
+
+
+def now_playing(sessions: List[dict], streams: List[dict], mount_path: str,
+                lookup: Optional[Callable] = None) -> List[dict]:
+    out = []
+    for s in sessions:
+        st = next((m for m in (match_stream(f, streams, mount_path) for f in _session_files(s, lookup)) if m), None)
+        if st is None:
+            continue  # not from the mount
+        title, subtitle = _title(s)
+        dur = int(s.get('duration') or 0)
+        off = int(s.get('viewOffset') or 0)
+        player = s.get('Player') or {}
+        ts = s.get('TranscodeSession') or {}
+        out.append({
+            'user': (s.get('User') or {}).get('title') or 'Unknown user',
+            'player': player.get('title') or player.get('product') or '',
+            'state': player.get('state') or '',
+            'title': title,
+            'subtitle': subtitle,
+            'type': s.get('type', ''),
+            'progress': round(100 * off / dur, 1) if dur else None,
+            'position_ms': off,
+            'duration_ms': dur,
+            'decision': (ts.get('videoDecision') or 'direct play') if ts else 'direct play',
+            'protocol': st.get('protocol') or 'usenet',
+            'source': st.get('folder', ''),
+            'file': st.get('file', ''),
+            'rate_bytes': int(st.get('rate_bytes') or 0),
+            'bytes_read': int(st.get('bytes_read') or 0),
+        })
+    return out

@@ -480,6 +480,11 @@ class BuiltinClient(UnsupportedFeaturesMixin):
 
     # ---- stats / sync feed ---------------------------------------------------
 
+    def get_streams(self) -> List[dict]:
+        """Files open on the mount right now (engine GET /streams)."""
+        code, body = self._call('GET', '/streams', timeout=5)
+        return body if code == 200 and isinstance(body, list) else []
+
     # ---- logs (capability LOGS) -------------------------------------------
 
     def fetch_logs(self, lines: int = 1000, level: str = 'all') -> dict:

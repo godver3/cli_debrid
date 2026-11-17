@@ -149,6 +149,7 @@ type Engine struct {
 	tree   map[string]map[string]*Folder // top folder -> folder name -> job folder
 
 	healthSem chan struct{}
+	streams   streamTable
 	runMu     sync.Mutex
 	run       *HealthRun
 	runCancel context.CancelFunc

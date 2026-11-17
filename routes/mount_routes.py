@@ -223,6 +223,24 @@ def save_settings():
                     'applying': bool(changed and builtin_selected())})
 
 
+@mount_bp.route('/api/now_playing')
+@admin_required
+def now_playing():
+    """Plex sessions streaming from the built-in mount (others left out)."""
+    if not builtin_selected():
+        return jsonify({'selected': False, 'sessions': []})
+    from usenet.builtin_client import BuiltinClient
+    from utilities import mount_now_playing as np
+    client = BuiltinClient()
+    streams = client.get_streams()
+    sessions = []
+    if streams:  # nothing open on the mount: nothing to ask Plex about
+        url, token = np.plex_server(get_setting)
+        sessions = np.now_playing(np.plex_sessions(url, token), streams, client.mount_path,
+                                  np.metadata_lookup(url, token))
+    return jsonify({'selected': True, 'sessions': sessions, 'open_files': len(streams)})
+
+
 @mount_bp.route('/api/state')
 @admin_required
 def engine_state():

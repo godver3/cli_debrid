@@ -1052,6 +1052,53 @@
         {% if not is_user_system_enabled() or (current_user.is_authenticated and current_user.role == 'admin') %}
         {% include 'partials/_command_bar.html' %}
         {% endif %}
+        {% if builtin_mount_selected() and (not is_user_system_enabled() or (current_user.is_authenticated and current_user.role == 'admin')) %}
+        {# Built-in mount: Plex sessions streaming from it (others left out). #}
+        <div class="stats-box mount-now-playing" id="mount_now_playing" style="display:none;margin-bottom:16px">
+            <h3>Now playing <span style="font-weight:400;font-size:.75em;color:#999">from the mount</span>
+                <a href="/mount/" class="calendar-link">Mount →</a></h3>
+            <div id="mount_np_list"></div>
+        </div>
+        <style>
+        .mount-now-playing .np-row{display:flex;gap:12px;align-items:center;padding:8px 0;border-top:1px solid rgba(255,255,255,.06)}
+        .mount-now-playing .np-row:first-child{border-top:none}
+        .mount-now-playing .np-main{flex:1;min-width:0}
+        .mount-now-playing .np-title{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .mount-now-playing .np-sub{color:#9a9a9a;font-size:.85em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .mount-now-playing .np-bar{height:4px;background:rgba(255,255,255,.1);border-radius:2px;margin-top:5px;overflow:hidden}
+        .mount-now-playing .np-bar i{display:block;height:100%;background:#e8601c}
+        .mount-now-playing .np-tag{font-size:.75em;padding:2px 7px;border-radius:9px;border:1px solid #555;white-space:nowrap}
+        .mount-now-playing .np-tag.usenet{border-color:#3d7bd9;color:#8fb7f2}
+        .mount-now-playing .np-tag.debrid{border-color:#2f9e6b;color:#8fdcb6}
+        .mount-now-playing .np-side{text-align:right;font-size:.8em;color:#aaa;white-space:nowrap}
+        </style>
+        <script>
+        (function () {
+            var box = document.getElementById('mount_now_playing'), list = document.getElementById('mount_np_list');
+            if (!box) return;
+            function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+            function mb(b) { return b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB/s' : (b / 1024).toFixed(0) + ' KB/s'; }
+            function poll() {
+                if (document.hidden) return;
+                fetch('/mount/api/now_playing').then(function (r) { return r.json(); }).then(function (d) {
+                    var rows = (d.sessions || []);
+                    box.style.display = rows.length ? '' : 'none';
+                    list.innerHTML = rows.map(function (s) {
+                        var pct = s.progress == null ? 0 : s.progress;
+                        return '<div class="np-row"><div class="np-main">' +
+                            '<div class="np-title">' + esc(s.title) + (s.subtitle ? ' <span style="font-weight:400;color:#bbb">' + esc(s.subtitle) + '</span>' : '') + '</div>' +
+                            '<div class="np-sub">' + esc(s.user) + (s.player ? ' · ' + esc(s.player) : '') + ' · ' + esc(s.decision) + (s.state && s.state !== 'playing' ? ' · ' + esc(s.state) : '') + '</div>' +
+                            '<div class="np-bar"><i style="width:' + pct + '%"></i></div></div>' +
+                            '<div class="np-side"><span class="np-tag ' + esc(s.protocol) + '">' + (s.protocol === 'debrid' ? 'Debrid' : 'Usenet') + '</span>' +
+                            (s.rate_bytes ? '<div style="margin-top:4px">' + mb(s.rate_bytes) + '</div>' : '') + '</div></div>';
+                    }).join('');
+                }).catch(function () {});
+            }
+            poll();
+            setInterval(poll, 10000);
+        })();
+        </script>
+        {% endif %}
         <div class="top-stats">
             <div class="stats-box recently-aired" id="recently_aired">
                 <h3>

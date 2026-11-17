@@ -47,6 +47,7 @@ func Handler(e *engine.Engine) http.Handler {
 	mux.HandleFunc("POST /jobs/{id}/retry", a.retry)
 	mux.HandleFunc("GET /changes", a.changes)
 	mux.HandleFunc("GET /stats", a.stats)
+	mux.HandleFunc("GET /streams", a.streams)
 	mux.HandleFunc("GET /health", a.healthList)
 	mux.HandleFunc("POST /health/run", a.healthRun)
 	mux.HandleFunc("GET /health/run", a.healthRunStatus)
@@ -276,6 +277,11 @@ func (a *api) changes(w http.ResponseWriter, r *http.Request) {
 		"jobs":    out,
 		"deleted": gone,
 	})
+}
+
+// streams lists files open on the mount (for "now playing").
+func (a *api) streams(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, a.e.Streams())
 }
 
 func (a *api) stats(w http.ResponseWriter, r *http.Request) {

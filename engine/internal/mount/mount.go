@@ -221,7 +221,9 @@ func (f *file) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 		return nil, 0, syscall.EIO
 	}
 	// Keep the kernel page cache between opens: content never changes.
-	return &handle{r: files.Entry(f.entry), name: f.entry.Name, jobID: f.jobID, e: f.e, log: f.log}, fuse.FOPEN_KEEP_CACHE, 0
+	h := &handle{r: files.Entry(f.entry), name: f.entry.Name, jobID: f.jobID, e: f.e, log: f.log}
+	h.stream = f.e.OpenStream(f.jobID, f.entry.Name, f.entry.Size)
+	return h, fuse.FOPEN_KEEP_CACHE, 0
 }
 
 func (f *file) Read(ctx context.Context, fh fs.FileHandle, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
@@ -232,12 +234,21 @@ func (f *file) Read(ctx context.Context, fh fs.FileHandle, dest []byte, off int6
 	return h.read(ctx, dest, off)
 }
 
+var _ = (fs.FileReleaser)((*handle)(nil))
+
+// Release ends the stream record when the file is closed.
+func (h *handle) Release(ctx context.Context) syscall.Errno {
+	h.e.CloseStream(h.stream)
+	return 0
+}
+
 type handle struct {
-	r     *job.EntryReader
-	name  string
-	jobID string
-	e     *engine.Engine
-	log   *slog.Logger
+	stream uint64
+	r      *job.EntryReader
+	name   string
+	jobID  string
+	e      *engine.Engine
+	log    *slog.Logger
 }
 
 func (h *handle) read(ctx context.Context, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
@@ -259,5 +270,6 @@ func (h *handle) read(ctx context.Context, dest []byte, off int64) (fuse.ReadRes
 		}
 		return nil, syscall.EIO
 	}
+	h.e.StreamRead(h.stream, off, n)
 	return fuse.ReadResultData(dest[:n]), 0
 }

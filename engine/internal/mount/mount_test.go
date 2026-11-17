@@ -117,7 +117,21 @@ func TestMountServesJobsThroughFUSE(t *testing.T) {
 			t.Fatalf("ReadAt %d@%d: n=%d err=%v", len(buf), off, n, err)
 		}
 	}
+	// An open, read file shows as a stream ("now playing"); closing ends it.
+	// (Reads here come from the kernel page cache after the full read
+	// above, so BytesRead may stay 0; only reads reaching us count.)
+	if ss := e.Streams(); len(ss) != 1 || ss[0].File != "Movie.2024.mkv" || ss[0].Folder != "Movie.2024" ||
+		ss[0].Protocol != "usenet" {
+		f.Close()
+		t.Fatalf("streams while open: %+v", ss)
+	}
 	f.Close()
+	for i := 0; i < 50 && len(e.Streams()) > 0; i++ {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if ss := e.Streams(); len(ss) != 0 {
+		t.Fatalf("stream still listed after close: %+v", ss)
+	}
 	if st, _ := os.Stat(path); st.Size() != int64(len(movie)) || st.Mode().Perm() != 0o444 {
 		t.Fatalf("stat %v %v", st.Size(), st.Mode())
 	}
