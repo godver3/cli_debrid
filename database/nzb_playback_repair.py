@@ -14,6 +14,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from database.core import get_db_connection, retry_on_db_lock
+from usenet.base import EXACT_REMOVE, supports
 
 log = logging.getLogger(__name__)
 _worker_lock = threading.Lock()
@@ -986,8 +987,11 @@ def process_pending_playback_repairs():
             failed_jobs = _json(repair['failed_job_ids_json'], [])
             failed_job_attempts = _json(repair['failed_job_attempts_json'], {})
             remaining_jobs = []
+            _exact = supports(client, EXACT_REMOVE)
             for failed_job_id in failed_jobs:
-                if client.remove_nzb_exact(failed_job_id):
+                removed = (client.remove_nzb_exact(failed_job_id) if _exact
+                           else client.remove_nzb(failed_job_id))
+                if removed:
                     failed_job_attempts.pop(failed_job_id, None)
                     continue
                 attempts = failed_job_attempts.get(failed_job_id, 0) + 1

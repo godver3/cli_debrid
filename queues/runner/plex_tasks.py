@@ -822,7 +822,8 @@ class PlexTasks:
                                                         try:
                                                             from usenet import get_usenet_client
                                                             _dc = get_usenet_client()
-                                                            if not hasattr(_dc, 'rename_nzb'):
+                                                            from usenet.base import supports, RENAME
+                                                            if not supports(_dc, RENAME):
                                                                 return  # active usenet provider (e.g. nzbdav) has no rename semantics
                                                             for _a in range(5):
                                                                 # This short loop (5 attempts x 10s = 50s total) isn't long

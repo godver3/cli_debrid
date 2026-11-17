@@ -253,15 +253,16 @@ def _backfill_hash_for_item(item: dict) -> str:
     if not item:
         return ''
     try:
-        import requests as _req
         from utilities.settings import get_setting
         from database.database_writing import update_media_item
+        from usenet.base import supports, QUEUE
 
-        dcy_url = get_setting('Usenet Provider', 'url', default='').rstrip('/')
-        dcy_token = get_setting('Usenet Provider', 'api_token', default='')
-        if not dcy_url:
+        if not get_setting('Usenet Provider', 'url', default='').rstrip('/'):
             return ''
-        headers = {'Authorization': f'Bearer {dcy_token}'} if dcy_token else {}
+        client = _client()
+        # cli_mount job lookup only; SAB-style backends already store native ids.
+        if not supports(client, QUEUE):
+            return ''
 
         # Build candidate names from the DB item
         candidates = []
@@ -306,27 +307,19 @@ def _backfill_hash_for_item(item: dict) -> str:
         # Search provider for each candidate
         for candidate in unique_candidates:
             try:
-                r = _req.get(
-                    f'{dcy_url}/api/torrents',
-                    params={'search': candidate[:60]},
-                    headers=headers,
-                    timeout=10,
-                )
-                if r.status_code == 200:
-                    for t in r.json().get('torrents', []):
-                        if t.get('name', '').strip() == candidate.strip():
-                            found_hash = t.get('info_hash', '')
-                            if found_hash:
-                                logger.info(
-                                    f'[NZBRepair] Targeted backfill resolved hash {found_hash!r} '
-                                    f'via candidate {candidate!r} for item id={item.get("id")}'
-                                )
-                                # Update DB so future lookups work
-                                try:
-                                    update_media_item(item['id'], filled_by_torrent_id=f'nzb:{found_hash}')
-                                except Exception:
-                                    pass
-                                return found_hash
+                # resolve_job_id: search=<candidate[:60]> + exact (stripped) name match.
+                found_hash = client.resolve_job_id(candidate)
+                if found_hash:
+                    logger.info(
+                        f'[NZBRepair] Targeted backfill resolved hash {found_hash!r} '
+                        f'via candidate {candidate!r} for item id={item.get("id")}'
+                    )
+                    # Update DB so future lookups work
+                    try:
+                        update_media_item(item['id'], filled_by_torrent_id=f'nzb:{found_hash}')
+                    except Exception:
+                        pass
+                    return found_hash
             except Exception as _e:
                 logger.debug(f'[NZBRepair] backfill candidate {candidate!r} error: {_e}')
 
@@ -1615,7 +1608,8 @@ def _teardown_playback_repair_mounts(repair: dict, item: dict) -> None:
     client = _client()
     for info_hash, entry_name in sources:
         try:
-            if hasattr(client, 'remove_nzb_exact'):
+            from usenet.base import supports, EXACT_REMOVE
+            if supports(client, EXACT_REMOVE):
                 client.remove_nzb_exact(info_hash)
             else:
                 _delete_from_provider(info_hash, entry_name)

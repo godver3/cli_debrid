@@ -17,10 +17,13 @@ import re
 import threading
 import time
 import urllib.parse
+
+import requests
 from typing import Optional, Dict, Any, Tuple
 
 from utilities.settings import get_setting
 from routes.api_tracker import api
+from usenet.base import ALL_CAPABILITIES
 
 # Jobs we ourselves just told the provider to delete. is_nzb_job_alive() checks
 # this before trusting a fresh provider response, since a delete call returning
@@ -100,6 +103,7 @@ class CliMountClient:
     """Submits NZB URLs to cli_mount and polls for completion."""
 
     PROVIDER_NAME = "cli_mount (Usenet)"
+    CAPABILITIES = ALL_CAPABILITIES
 
     def __init__(self):
         cfg = get_setting('Usenet Provider') or {}
@@ -959,6 +963,80 @@ class CliMountClient:
         except Exception as exc:
             logging.debug(f'[cli_mount] resolve_job_id error: {exc}')
         return ''
+
+    # ---- queue listing (capability QUEUE) ---------------------------------
+
+    def iter_queue_jobs(self, search: str = '', page_size: int = 50, sort: bool = True,
+                        timeout: int = 10, retries: int = 1):
+        """Yield every job dict from GET /api/torrents, page by page.
+
+        Stops quietly, keeping what was already yielded, when a page still
+        fails (non-200 or request error) after ``retries`` attempts.
+        """
+        params = {'limit': page_size}
+        if sort:
+            params.update({'sort_by': 'added_on', 'sort_order': 'desc'})
+        if search:
+            params['search'] = search
+        page = 1
+        while True:
+            r = None
+            for attempt in range(retries):
+                try:
+                    # Plain requests, not the api tracker: a non-200 page is an
+                    # expected stop condition here, not an error to raise and log.
+                    r = requests.get(f'{self.base_url}/api/torrents', params={**params, 'page': page},
+                                     headers=self._headers(), timeout=timeout)
+                except Exception as exc:
+                    r = None
+                    logging.warning(f'[cli_mount] /api/torrents page {page} error (attempt {attempt + 1}): {exc}')
+                    continue
+                if r.status_code == 200:
+                    break
+                logging.warning(f'[cli_mount] /api/torrents page {page} HTTP {r.status_code} (attempt {attempt + 1})')
+            if r is None or r.status_code != 200:
+                return
+            data = r.json()
+            yield from data.get('torrents', [])
+            if not data.get('has_next'):
+                return
+            page += 1
+
+    def find_job_hash_by_name(self, name: str, page_size: int = 50, sort: bool = True) -> str:
+        """info_hash of the first job whose name equals ``name`` (stripped), or ''."""
+        name = (name or '').strip()
+        if not name:
+            return ''
+        for t in self.iter_queue_jobs(page_size=page_size, sort=sort):
+            if t.get('name', '').strip() == name:
+                return t.get('info_hash', '')
+        return ''
+
+    def delete_queue_job(self, info_hash: str) -> Optional[int]:
+        """DELETE /api/torrents?hashes=<hash>. Returns the HTTP status (None on error)."""
+        status, exc = _delete_status(f'{self.base_url}/api/torrents', headers=self._headers(),
+                                     params={'hashes': info_hash}, timeout=10)
+        if status is None:
+            logging.debug(f'[cli_mount] delete_queue_job {info_hash!r} error: {exc}')
+        return status
+
+    def iter_library_nzbs(self, page_size: int = 100, timeout: int = 10):
+        """Yield every entry dict from GET /api/browse/nzbs, page by page."""
+        page = 1
+        while True:
+            r = requests.get(f'{self.base_url}/api/browse/nzbs', params={'page': page, 'limit': page_size},
+                             headers=self._headers(), timeout=timeout)
+            if r.status_code != 200:
+                return
+            data = r.json()
+            entries = data.get('entries', data) if isinstance(data, dict) else data
+            if not entries:
+                return
+            yield from entries
+            total = data.get('total_pages', 1) if isinstance(data, dict) else 1
+            if page >= total:
+                return
+            page += 1
 
     def wait_for_completion(self, job_id: str, timeout: int = 3600, poll_interval: int = 10) -> bool:
         """Poll until the job completes or timeout. Returns True on success."""

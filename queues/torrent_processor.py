@@ -1224,64 +1224,45 @@ class TorrentProcessor:
             pass
 
         # cli_mount-only: also check provider queue by title for exact/prefix match.
-        # NzbDAV has no /api/torrents endpoint — silently skipped via except.
+        # Backends without a job queue listing (NzbDAV, Zurg) yield nothing here.
         try:
-            from routes.api_tracker import api as _check_api
-            from utilities.settings import get_setting as _gs_check
-            _dcy_url = _gs_check('Usenet Provider', 'url', default='').rstrip('/')
-            _dcy_token = _gs_check('Usenet Provider', 'api_token', default='')
-            _ch = {'Authorization': f'Bearer {_dcy_token}'} if _dcy_token else {}
-            _page_dc = 1
-            _found_dc = False
-            while not _found_dc:
-                _er = _check_api.get(f'{_dcy_url}/api/torrents', headers=_ch,
-                                     # search= (name/hash substring) narrows the list to
-                                     # candidates whose name contains the prefix — every
-                                     # exact/prefix match below does — instead of paging
-                                     # through every job in cli_mount on each submission.
-                                     params={'page': _page_dc, 'limit': 100,
-                                             'search': _job_prefix or job_title,
-                                             'sort_by': 'added_on', 'sort_order': 'desc'},
-                                     timeout=5)
-                if _er.status_code != 200:
-                    break
-                _data_dc = _er.json()
-                _torrents_dc = _data_dc.get('torrents', [])
-                for _t in _torrents_dc:
-                    _t_name = _t.get('name', '')
-                    _exact = (_t_name == job_title or _t.get('original_filename', '') == job_title)
-                    _prefix = (bool(_job_prefix) and _title_prefix(_t_name) == _job_prefix)
-                    if _exact or _prefix:
-                        _existing_hash = _t.get('info_hash', '')
-                        # Verify the matched job is still actually alive on the provider
-                        # before reusing it - a title match against cli_mount's listing can
-                        # still be a stale/completed-and-cleaned-up entry, and reusing it
-                        # blindly ghosts every retry forever (same failure class the Aug 18
-                        # is_nzb_job_alive() fix closed for the sibling-pack reuse sites,
-                        # just not here).
-                        try:
-                            from usenet import is_nzb_job_alive as _is_job_alive
-                            if not _is_job_alive(_existing_hash):
-                                logging.warning(f'[{item_identifier}] Matched job {_existing_hash} in cli_mount listing no longer alive on provider - not reusing')
-                                continue
-                        except Exception:
-                            pass  # unknown due to error - don't block a legitimate reuse
-                        # A job can be alive on the provider yet permanently stuck (e.g. the
-                        # "folder never appeared" health-check failure) - is_nzb_job_alive()
-                        # only proves it still exists, not that it's healthy. Once a job's
-                        # hash has been blacklisted, reusing it here just re-enters the same
-                        # stuck job and defeats the health-check's not-wanted list entirely.
-                        if _blocked_nzb_job_reuse(_existing_hash):
+            from usenet import get_usenet_client as _guc_dc
+            # search= (name/hash substring) narrows the list to candidates whose
+            # name contains the prefix — every exact/prefix match below does —
+            # instead of paging through every job in cli_mount on each submission.
+            # No-op on backends without a job queue listing (capability QUEUE).
+            for _t in _guc_dc().iter_queue_jobs(search=_job_prefix or job_title,
+                                                page_size=100, timeout=5):
+                _t_name = _t.get('name', '')
+                _exact = (_t_name == job_title or _t.get('original_filename', '') == job_title)
+                _prefix = (bool(_job_prefix) and _title_prefix(_t_name) == _job_prefix)
+                if _exact or _prefix:
+                    _existing_hash = _t.get('info_hash', '')
+                    # Verify the matched job is still actually alive on the provider
+                    # before reusing it - a title match against cli_mount's listing can
+                    # still be a stale/completed-and-cleaned-up entry, and reusing it
+                    # blindly ghosts every retry forever (same failure class the Aug 18
+                    # is_nzb_job_alive() fix closed for the sibling-pack reuse sites,
+                    # just not here).
+                    try:
+                        from usenet import is_nzb_job_alive as _is_job_alive
+                        if not _is_job_alive(_existing_hash):
+                            logging.warning(f'[{item_identifier}] Matched job {_existing_hash} in cli_mount listing no longer alive on provider - not reusing')
                             continue
-                        _match_type = 'exact' if _exact else 'prefix'
-                        logging.info(f'[{item_identifier}] NZB already in cli_mount ({_match_type} match): {_t_name} (hash={_existing_hash}) — reusing job')
-                        _found_dc = True
-                        return {'id': _existing_hash, 'filename': job_title, 'original_title': job_title,
-                                'status': _t.get('status', 'downloading'), 'files': [], 'progress': 0,
-                                '_provider': 'cli_mount', '_is_nzb': True, '_nzb_url': nzb_url}, nzb_url, result
-                if not _data_dc.get('has_next'):
-                    break
-                _page_dc += 1
+                    except Exception:
+                        pass  # unknown due to error - don't block a legitimate reuse
+                    # A job can be alive on the provider yet permanently stuck (e.g. the
+                    # "folder never appeared" health-check failure) - is_nzb_job_alive()
+                    # only proves it still exists, not that it's healthy. Once a job's
+                    # hash has been blacklisted, reusing it here just re-enters the same
+                    # stuck job and defeats the health-check's not-wanted list entirely.
+                    if _blocked_nzb_job_reuse(_existing_hash):
+                        continue
+                    _match_type = 'exact' if _exact else 'prefix'
+                    logging.info(f'[{item_identifier}] NZB already in cli_mount ({_match_type} match): {_t_name} (hash={_existing_hash}) — reusing job')
+                    return {'id': _existing_hash, 'filename': job_title, 'original_title': job_title,
+                            'status': _t.get('status', 'downloading'), 'files': [], 'progress': 0,
+                            '_provider': 'cli_mount', '_is_nzb': True, '_nzb_url': nzb_url}, nzb_url, result
         except Exception:
             pass
 
@@ -1937,7 +1918,8 @@ class TorrentProcessor:
                                             try:
                                                 from usenet import get_usenet_client
                                                 _dc = get_usenet_client()
-                                                if not hasattr(_dc, 'rename_nzb'):
+                                                from usenet.base import supports, RENAME
+                                                if not supports(_dc, RENAME):
                                                     logging.info(f'[DebridNaming] Client has no rename_nzb for {ident!r}')
                                                     return  # active usenet provider (e.g. nzbdav) has no rename semantics
                                                 # cli_mount only registers an entry as queryable-by-hash after its

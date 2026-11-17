@@ -824,7 +824,8 @@ def add_torrent_to_debrid():
                                         try:
                                             from usenet import get_usenet_client
                                             _dc_sp = get_usenet_client()
-                                            if not hasattr(_dc_sp, 'rename_nzb_with_status'):
+                                            from usenet.base import supports, RENAME
+                                            if not supports(_dc_sp, RENAME):
                                                 return  # active usenet provider (e.g. nzbdav) has no rename semantics
                                             # cli_mount only registers an entry as queryable-by-hash after its
                                             # own periodic sync (default ~10 min) — a 404 in the first several
@@ -988,7 +989,8 @@ def add_torrent_to_debrid():
                                         try:
                                             from usenet import get_usenet_client
                                             _dc2 = get_usenet_client()
-                                            if not hasattr(_dc2, 'rename_nzb_with_status'):
+                                            from usenet.base import supports, RENAME
+                                            if not supports(_dc2, RENAME):
                                                 return  # active usenet provider (e.g. nzbdav) has no rename semantics
                                             # cli_mount only registers an entry as queryable-by-hash after its
                                             # own periodic sync (default ~10 min) — a 404 in the first several
@@ -2315,30 +2317,11 @@ def _add_nzb_pack_to_usenet(episode_nzb_urls, fallback_nzb_urls, title, year, me
     # Pre-load existing cli_mount NZB names to skip already-submitted episodes
     _existing_nzb_names = set()
     try:
-        from routes.api_tracker import api as _dcy_check_api
-        from utilities.settings import get_setting as _gs2
-        _dcy_url2 = _gs2('Usenet Provider', 'url', default='').rstrip('/')
-        _dcy_token2 = _gs2('Usenet Provider', 'api_token', default='')
-        _dh2 = {'Authorization': f'Bearer {_dcy_token2}'} if _dcy_token2 else {}
-        _pg2 = 1
-        while True:
-            _tr2 = _dcy_check_api.get(f'{_dcy_url2}/api/browse/nzbs',
-                                       params={'page': _pg2, 'limit': 100},
-                                       headers=_dh2, timeout=10)
-            if _tr2.status_code != 200:
-                break
-            _td2 = _tr2.json()
-            _entries2 = _td2.get('entries', _td2) if isinstance(_td2, dict) else _td2
-            if not _entries2:
-                break
-            for _n2 in _entries2:
-                _name2 = _n2.get('name') or _n2.get('title') or _n2.get('filename') or ''
-                if _name2:
-                    _existing_nzb_names.add(_name2.strip())
-            _total2 = _td2.get('total_pages', 1) if isinstance(_td2, dict) else 1
-            if _pg2 >= _total2:
-                break
-            _pg2 += 1
+        from usenet import get_usenet_client as _guc2
+        for _n2 in _guc2().iter_library_nzbs(page_size=100, timeout=10):
+            _name2 = _n2.get('name') or _n2.get('title') or _n2.get('filename') or ''
+            if _name2:
+                _existing_nzb_names.add(_name2.strip())
         logging.info(f'[NZBPack] Loaded {len(_existing_nzb_names)} existing cli_mount NZBs for dedup check')
     except Exception as _de2:
         logging.warning(f'[NZBPack] Could not load existing cli_mount NZBs: {_de2}')
@@ -2430,30 +2413,11 @@ def _add_nzb_pack_to_usenet(episode_nzb_urls, fallback_nzb_urls, title, year, me
                         pass
                     # Delete from cli_mount
                     try:
-                        from routes.api_tracker import api as _del_api
-                        from utilities.settings import get_setting as _gs
-                        _dcy_url = _gs('Usenet Provider', 'url', default='').rstrip('/')
-                        _dcy_token = _gs('Usenet Provider', 'api_token', default='')
-                        _dh = {'Authorization': f'Bearer {_dcy_token}'} if _dcy_token else {}
-                        _pg = 1
-                        _real_hash = None
-                        while not _real_hash:
-                            _tr = _del_api.get(f'{_dcy_url}/api/torrents',
-                                               params={'page': _pg, 'limit': 50},
-                                               headers=_dh, timeout=10)
-                            if _tr.status_code != 200:
-                                break
-                            _td = _tr.json()
-                            for _t in _td.get('torrents', []):
-                                if _t.get('name', '').strip() == ep_label:
-                                    _real_hash = _t.get('info_hash', '')
-                                    break
-                            if _real_hash or not _td.get('has_next'):
-                                break
-                            _pg += 1
+                        from usenet import get_usenet_client as _guc_del
+                        _client_del = _guc_del()
+                        _real_hash = _client_del.find_job_hash_by_name(ep_label, sort=False)
                         if _real_hash:
-                            _del_api.delete(f'{_dcy_url}/api/torrents',
-                                            headers=_dh, params={'hashes': _real_hash}, timeout=10)
+                            _client_del.delete_queue_job(_real_hash)
                     except Exception as _de:
                         logging.warning(f'[NZBPack] Could not delete broken entry: {_de}')
                     job_id = None

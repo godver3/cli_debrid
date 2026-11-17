@@ -595,27 +595,10 @@ class UsenetTasks:
                             pass
                         # Delete the stalled job from cli_mount
                         try:
-                            import requests as _req_to
-                            _dcy_url_to = _gs('Usenet Provider', 'url', default='').rstrip('/')
-                            _dcy_token_to = _gs('Usenet Provider', 'api_token', default='')
-                            _headers_to = {'Authorization': f'Bearer {_dcy_token_to}'} if _dcy_token_to else {}
+                            from usenet import get_usenet_client as _guc_to
+                            _client_to = _guc_to()
                             _search_to = (entry_name or nzb_title or '').strip()
-                            _real_hash_to = None
-                            _page_to = 1
-                            while not _real_hash_to:
-                                _tr_to = _req_to.get(f'{_dcy_url_to}/api/torrents',
-                                                     params={'page': _page_to, 'limit': 50, 'sort_by': 'added_on', 'sort_order': 'desc'},
-                                                     headers=_headers_to, timeout=10)
-                                if _tr_to.status_code != 200:
-                                    break
-                                _data_to = _tr_to.json()
-                                for _t_to in _data_to.get('torrents', []):
-                                    if _t_to.get('name', '').strip() == _search_to:
-                                        _real_hash_to = _t_to.get('info_hash', '')
-                                        break
-                                if _real_hash_to or not _data_to.get('has_next'):
-                                    break
-                                _page_to += 1
+                            _real_hash_to = _client_to.find_job_hash_by_name(_search_to)
                             if _real_hash_to:
                                 # Safety: never delete if another live item (e.g. a different
                                 # version sharing this job id due to a since-fixed dedup bug)
@@ -633,13 +616,11 @@ class UsenetTasks:
                                 if _stall_sibs:
                                     logging.info(f'[NZB] Skipping provider delete of stalled job {_real_hash_to} — {_stall_sibs} sibling(s) still active')
                                 else:
-                                    _dr_to = _req_to.delete(f'{_dcy_url_to}/api/torrents',
-                                                            headers=_headers_to,
-                                                            params={'hashes': _real_hash_to}, timeout=10)
-                                    if _dr_to.status_code == 200:
+                                    _dr_status_to = _client_to.delete_queue_job(_real_hash_to)
+                                    if _dr_status_to == 200:
                                         logging.info(f'[NZB] Deleted stalled job {_real_hash_to} from cli_mount')
                                     else:
-                                        logging.warning(f'[NZB] Could not delete stalled job: HTTP {_dr_to.status_code}')
+                                        logging.warning(f'[NZB] Could not delete stalled job: HTTP {_dr_status_to}')
                         except Exception as _del_to_err:
                             logging.debug(f'[NZB] Could not delete stalled job from cli_mount: {_del_to_err}')
                         # Handle siblings sharing this stalled job
@@ -815,35 +796,18 @@ class UsenetTasks:
                             _health_results.pop(entry_name, None)
                         self._nzb_health_triggered.pop(entry_name, None)
                         try:
-                            import requests as _req
-                            _dcy_url = _gs('Usenet Provider', 'url', default='').rstrip('/')
-                            _dcy_token = _gs('Usenet Provider', 'api_token', default='')
-                            _headers = {'Authorization': f'Bearer {_dcy_token}'} if _dcy_token else {}
-                            _real_hash = None
+                            from usenet import get_usenet_client as _guc_br
+                            from usenet.base import supports as _supports_br, QUEUE as _QUEUE_br
+                            _client_br = _guc_br()
                             _search_name = (entry_name or nzb_title or '').strip()
-                            _page = 1
-                            while not _real_hash:
-                                _tr = _req.get(f'{_dcy_url}/api/torrents',
-                                               params={'page': _page, 'limit': 50, 'sort_by': 'added_on', 'sort_order': 'desc'},
-                                               headers=_headers, timeout=10)
-                                if _tr.status_code != 200:
-                                    break
-                                _data = _tr.json()
-                                for _t in _data.get('torrents', []):
-                                    if _t.get('name', '').strip() == _search_name:
-                                        _real_hash = _t.get('info_hash', '')
-                                        break
-                                if _real_hash or not _data.get('has_next'):
-                                    break
-                                _page += 1
+                            _real_hash = _client_br.find_job_hash_by_name(_search_name)
                             if _real_hash:
-                                _dr = _req.delete(f'{_dcy_url}/api/torrents', headers=_headers,
-                                                  params={'hashes': _real_hash}, timeout=10)
-                                if _dr.status_code == 200:
+                                _dr_status = _client_br.delete_queue_job(_real_hash)
+                                if _dr_status == 200:
                                     logging.info(f'[NZB] Deleted broken entry {_real_hash} from cli_mount')
                                 else:
-                                    logging.warning(f'[NZB] Could not delete {_real_hash}: HTTP {_dr.status_code}')
-                            else:
+                                    logging.warning(f'[NZB] Could not delete {_real_hash}: HTTP {_dr_status}')
+                            elif _supports_br(_client_br, _QUEUE_br):
                                 logging.warning(f'[NZB] Entry {_search_name!r} not found in /api/torrents')
                         except Exception as _de:
                             logging.warning(f'[NZB] Error deleting broken entry: {_de}')
@@ -1288,58 +1252,34 @@ class UsenetTasks:
         """Backfill filled_by_torrent_id for collected items on cli_mount mount that have no torrent ID.
         Matches location_on_disk folder name against cli_mount /api/torrents entries."""
         try:
-            import requests as _req
             from utilities.settings import get_setting
             from database.database_reading import get_all_media_items
             from database.database_writing import update_media_item
+            from usenet import get_usenet_client
+            from usenet.base import supports, QUEUE
 
             # cli_mount-specific: this backfills filled_by_torrent_id for legacy
             # cli_mount-collected items that predate the nzb: convention, via
             # /api/torrents (which nzbdav doesn't implement). nzbdav items already
             # carry their nzb: id natively, so there is nothing to backfill — skip
             # cleanly to avoid failed requests + a misleading "Loaded 0 entries" log.
-            if (get_setting('Usenet Provider', 'provider', 'climount') or 'climount').strip().lower() != 'climount':
-                logging.info('[NZBBackfill] Skipped — cli_mount-specific backfill (active usenet provider is not climount).')
+            client = get_usenet_client()
+            if not supports(client, QUEUE):
+                logging.info('[NZBBackfill] Skipped — cli_mount-specific backfill (active usenet provider has no job queue listing).')
                 return
 
-            dcy_url = get_setting('Usenet Provider', 'url', default='').rstrip('/')
-            dcy_token = get_setting('Usenet Provider', 'api_token', default='')
-            if not dcy_url:
+            if not get_setting('Usenet Provider', 'url', default='').rstrip('/'):
                 logging.warning('[NZBBackfill] Usenet Provider URL not configured, skipping.')
                 return
-            headers = {'Authorization': f'Bearer {dcy_token}'} if dcy_token else {}
 
             # Fetch all cli_mount entries (paginated), build name→info_hash map
             logging.info('[NZBBackfill] Fetching cli_mount entries...')
             name_to_hash = {}
-            page = 1
-            while True:
-                for attempt in range(3):
-                    try:
-                        r = _req.get(f'{dcy_url}/api/torrents',
-                                     params={'page': page, 'limit': 100, 'sort_by': 'added_on', 'sort_order': 'desc'},
-                                     headers=headers, timeout=30)
-                        if r.status_code == 200:
-                            break
-                        logging.warning(f'[NZBBackfill] cli_mount API HTTP {r.status_code} on page {page} (attempt {attempt+1})')
-                    except Exception as _pe:
-                        logging.warning(f'[NZBBackfill] cli_mount API error on page {page} (attempt {attempt+1}): {_pe}')
-                    if attempt == 2:
-                        logging.error(f'[NZBBackfill] Giving up on page {page} after 3 attempts')
-                        break
-                else:
-                    break
-                if r.status_code != 200:
-                    break
-                data = r.json()
-                for t in data.get('torrents', []):
-                    name = (t.get('name') or '').strip()
-                    info_hash = (t.get('info_hash') or '').strip()
-                    if name and info_hash:
-                        name_to_hash[name] = info_hash
-                if not data.get('has_next'):
-                    break
-                page += 1
+            for t in client.iter_queue_jobs(page_size=100, timeout=30, retries=3):
+                name = (t.get('name') or '').strip()
+                info_hash = (t.get('info_hash') or '').strip()
+                if name and info_hash:
+                    name_to_hash[name] = info_hash
 
             logging.info(f'[NZBBackfill] Loaded {len(name_to_hash)} cli_mount entries.')
 
