@@ -146,3 +146,22 @@ func (c *Cache) Len() (int, int64) {
 	defer c.mu.Unlock()
 	return c.ll.Len(), c.used
 }
+
+// Put stores data fetched outside DoCtx (a streaming download) in memory
+// and on disk.
+func (c *Cache) Put(key string, data []byte) {
+	c.mu.Lock()
+	c.put(key, data)
+	c.mu.Unlock()
+	if c.disk != nil {
+		c.disk.Put(key, data)
+	}
+}
+
+// Started reports whether a fetch of key is already on the wire.
+func (c *Cache) Started(key string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cl, ok := c.inflight[key]
+	return ok && cl.started.Load()
+}

@@ -27,8 +27,7 @@ func TestDebridJobStreamsWithFreshLinks(t *testing.T) {
 			http.Error(w, "expired", http.StatusForbidden)
 			return
 		}
-		var a, b int64
-		fmt.Sscanf(r.Header.Get("Range"), "bytes=%d-%d", &a, &b)
+		a, b := rangeOf(r, len(file))
 		served.Add(1)
 		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", a, b, len(file)))
 		w.WriteHeader(http.StatusPartialContent)
@@ -96,8 +95,7 @@ func TestDebridRetriesResetConnections(t *testing.T) {
 			conn.Close() // reset mid-request
 			return
 		}
-		var a, b int64
-		fmt.Sscanf(r.Header.Get("Range"), "bytes=%d-%d", &a, &b)
+		a, b := rangeOf(r, len(file))
 		w.WriteHeader(http.StatusPartialContent)
 		w.Write(file[a : b+1])
 	}))
@@ -120,4 +118,17 @@ func TestDebridRetriesResetConnections(t *testing.T) {
 	if links.Load() != 1 {
 		t.Fatalf("a reset should not cost a new link: %d link requests", links.Load())
 	}
+}
+
+// rangeOf parses "bytes=a-b" or "bytes=a-" (streams ask open-ended).
+func rangeOf(r *http.Request, size int) (int64, int64) {
+	var a, b int64 = 0, int64(size) - 1
+	spec := strings.TrimPrefix(r.Header.Get("Range"), "bytes=")
+	if parts := strings.SplitN(spec, "-", 2); len(parts) == 2 {
+		fmt.Sscan(parts[0], &a)
+		if parts[1] != "" {
+			fmt.Sscan(parts[1], &b)
+		}
+	}
+	return a, b
 }

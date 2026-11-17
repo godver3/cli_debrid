@@ -43,6 +43,11 @@ type RemoteFile struct {
 
 	mu         sync.Mutex
 	prefetched map[int]bool
+
+	// live playback streams (remote_stream.go)
+	smu     sync.Mutex
+	scond   *sync.Cond
+	streams []*downloader
 }
 
 // OpenRemote wraps a debrid file of the given size.
@@ -57,6 +62,7 @@ func OpenRemote(links LinkSource, client *http.Client, cache *Cache, ref string,
 		conns = min(conns, ra.MaxConns)
 	}
 	r.slots = make(chan struct{}, conns)
+	r.scond = sync.NewCond(&r.smu)
 	return r
 }
 
@@ -159,10 +165,10 @@ func (r *RemoteFile) ReadAtCtx(ctx context.Context, prio nntp.Priority, p []byte
 	if off >= r.size {
 		return 0, io.EOF
 	}
-	if prio == nntp.Live && r.readAhead > 0 {
-		// Start the next chunks now, not after this one arrives: over HTTP
-		// the gap between chunks would otherwise halve sequential speed.
-		r.startReadAhead(int(off/RemoteChunk) + 1)
+	if prio == nntp.Live {
+		// Playback: sequential streams that start where the player reads
+		// (remote_stream.go). Chunk fetches below are for pre-cache/prewarm.
+		return r.readStream(ctx, p, off)
 	}
 	n, last := 0, -1
 	for n < len(p) && off+int64(n) < r.size {

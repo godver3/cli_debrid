@@ -4,15 +4,47 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/godver3/cli_debrid/engine/internal/nntp"
 )
+
+// serveRanges answers Range requests ("bytes=a-b" or "bytes=a-") from
+// file, optionally throttled to bps bytes/second.
+func serveRanges(file []byte, bps int, onReq func(r *http.Request)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if onReq != nil {
+			onReq(r)
+		}
+		var a, b int64 = 0, int64(len(file)) - 1
+		spec := strings.TrimPrefix(r.Header.Get("Range"), "bytes=")
+		if parts := strings.SplitN(spec, "-", 2); len(parts) == 2 {
+			fmt.Sscan(parts[0], &a)
+			if parts[1] != "" {
+				fmt.Sscan(parts[1], &b)
+			}
+		}
+		w.Header().Set("Content-Length", fmt.Sprint(b-a+1))
+		w.WriteHeader(http.StatusPartialContent)
+		body := file[a : b+1]
+		step := 32 << 10
+		for i := 0; i < len(body); i += step {
+			if _, err := w.Write(body[i:min(i+step, len(body))]); err != nil {
+				return
+			}
+			if bps > 0 {
+				w.(http.Flusher).Flush()
+				time.Sleep(time.Duration(float64(step) / float64(bps) * float64(time.Second)))
+			}
+		}
+	}
+}
 
 type staticLink string
 
@@ -25,12 +57,7 @@ func (s staticLink) Link(ctx context.Context, ref string, refresh bool) (string,
 // wrong length is an error, never a panic.
 func TestRemoteChunkCacheSafety(t *testing.T) {
 	file := bytes.Repeat([]byte("0123456789"), (RemoteChunk+5000)/10)
-	cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var a, b int64
-		fmt.Sscanf(r.Header.Get("Range"), "bytes=%d-%d", &a, &b)
-		w.WriteHeader(http.StatusPartialContent)
-		w.Write(file[a : b+1])
-	}))
+	cdn := httptest.NewServer(serveRanges(file, 0, nil))
 	defer cdn.Close()
 	cache := NewCache(64 << 20)
 	cache.put("remote:F:0", []byte("old 1 MiB chunk")) // the old key format
@@ -40,43 +67,108 @@ func TestRemoteChunkCacheSafety(t *testing.T) {
 		t.Fatalf("read with a stale old-format entry cached: %v", err)
 	}
 	cache.put(r.key(1), []byte("short")) // a wrong-length chunk under the current key
-	if _, err := r.ReadAtCtx(context.Background(), nntp.Live, buf, RemoteChunk+10); err == nil || !strings.Contains(err.Error(), "want") {
-		t.Fatalf("a wrong-length chunk must be an error: %v", err)
+	if _, err := r.ReadAtCtx(context.Background(), nntp.Prefetch, buf, RemoteChunk+10); err == nil || !strings.Contains(err.Error(), "want") {
+		t.Fatalf("chunk fetch: a wrong-length chunk must be an error: %v", err)
+	}
+	if _, err := r.ReadAtCtx(context.Background(), nntp.Live, buf, RemoteChunk+10); err != nil || !bytes.Equal(buf, file[RemoteChunk+10:RemoteChunk+110]) {
+		t.Fatalf("playback must ignore a wrong-length cached chunk and stream the bytes: %v", err)
 	}
 }
 
 // A live read for a chunk a read-ahead is already downloading joins it:
 // each chunk is fetched once.
-func TestRemoteLiveJoinsReadAhead(t *testing.T) {
-	file := bytes.Repeat([]byte("abcdefghij"), (6*RemoteChunk)/10)
-	var mu sync.Mutex
-	hits := map[string]int{}
-	cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		hits[r.Header.Get("Range")]++
-		mu.Unlock()
-		time.Sleep(100 * time.Millisecond)
-		var a, b int64
-		fmt.Sscanf(r.Header.Get("Range"), "bytes=%d-%d", &a, &b)
-		w.WriteHeader(http.StatusPartialContent)
-		w.Write(file[a : b+1])
-	}))
+func TestRemoteSequentialPlaybackUsesOneStream(t *testing.T) {
+	file := bytes.Repeat([]byte("abcdefghij"), (3*RemoteChunk+12345)/10)
+	var reqs atomic.Int64
+	cdn := httptest.NewServer(serveRanges(file, 0, func(q *http.Request) { reqs.Add(1); t.Log("request", q.Header.Get("Range")) }))
 	defer cdn.Close()
-	r := OpenRemote(staticLink(cdn.URL), nil, NewCache(256<<20), "J", int64(len(file)), ReadAhead{Segments: 4})
+	r := OpenRemote(staticLink(cdn.URL), nil, NewCache(256<<20), "S", int64(len(file)), ReadAhead{Bytes: 8 << 20})
+	got := make([]byte, 0, len(file))
 	buf := make([]byte, 128<<10)
-	for off := int64(0); off < int64(len(file)); off += int64(len(buf)) {
-		if _, err := r.ReadAtCtx(context.Background(), nntp.Live, buf, off); err != nil && off+int64(len(buf)) < int64(len(file)) {
+	for off := int64(0); off < int64(len(file)); {
+		n, err := r.ReadAtCtx(context.Background(), nntp.Live, buf, off)
+		got = append(got, buf[:n]...)
+		off += int64(n)
+		if err != nil && err != io.EOF {
 			t.Fatal(err)
 		}
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	for rng, n := range hits {
-		if n != 1 {
-			t.Fatalf("range %s fetched %d times: %v", rng, n, hits)
+		if n == 0 {
+			break
 		}
 	}
-	if len(hits) != 6 {
-		t.Fatalf("%d ranges fetched, want 6", len(hits))
+	if !bytes.Equal(got, file) {
+		t.Fatal("bytes differ")
+	}
+	if reqs.Load() != 1 {
+		t.Fatalf("sequential playback made %d requests, want 1 stream", reqs.Load())
+	}
+	if _, ok := r.cache.Get(r.key(1)); !ok {
+		t.Fatal("completed chunks should be cached")
+	}
+}
+
+// After a seek the first bytes come as soon as the new stream starts (not
+// after a whole chunk), and the old stream stops competing.
+func TestRemoteSeekStartsAFreshStreamFast(t *testing.T) {
+	file := bytes.Repeat([]byte("0123456789"), (8*RemoteChunk)/10)
+	cdn := httptest.NewServer(serveRanges(file, 4<<20, nil)) // 4 MB/s
+	defer cdn.Close()
+	r := OpenRemote(staticLink(cdn.URL), nil, NewCache(256<<20), "K", int64(len(file)), ReadAhead{Bytes: 16 << 20})
+	buf := make([]byte, 128<<10)
+	if _, err := r.ReadAtCtx(context.Background(), nntp.Live, buf, 0); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	seek := int64(5*RemoteChunk + 777)
+	start := time.Now()
+	if _, err := r.ReadAtCtx(context.Background(), nntp.Live, buf, seek); err != nil || !bytes.Equal(buf, file[seek:seek+int64(len(buf))]) {
+		t.Fatalf("read after seek: %v", err)
+	}
+	if took := time.Since(start); took > 600*time.Millisecond {
+		t.Fatalf("first bytes after a seek took %v; a whole 4 MiB chunk at 4 MB/s would be ~1 s", took)
+	}
+	r.smu.Lock()
+	var first *downloader
+	for _, d := range r.streams {
+		if d.bufFrom < RemoteChunk || d.prevFrom < RemoteChunk && d.prevBuf != nil {
+			first = d
+		}
+	}
+	paused := first == nil || first.target <= first.pos
+	r.smu.Unlock()
+	if !paused {
+		t.Fatal("the stream at the old position should be paused after the seek")
+	}
+}
+
+// A dropped connection resumes from where it stopped, with the same link.
+func TestRemoteStreamResumesAfterReset(t *testing.T) {
+	file := bytes.Repeat([]byte("qwertyuiop"), (2*RemoteChunk)/10)
+	var reqs atomic.Int64
+	serve := serveRanges(file, 0, nil)
+	cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if reqs.Add(1) == 1 { // first stream: send 1 MiB, then drop the connection
+			w.Header().Set("Content-Length", fmt.Sprint(len(file)))
+			w.WriteHeader(http.StatusPartialContent)
+			w.Write(file[:1<<20])
+			w.(http.Flusher).Flush()
+			conn, _, _ := w.(http.Hijacker).Hijack()
+			conn.Close()
+			return
+		}
+		if !strings.HasPrefix(r.Header.Get("Range"), "bytes=1048576-") {
+			t.Errorf("resumed at %q, want byte 1048576", r.Header.Get("Range"))
+		}
+		serve(w, r)
+	}))
+	defer cdn.Close()
+	r := OpenRemote(staticLink(cdn.URL), nil, NewCache(256<<20), "R", int64(len(file)), ReadAhead{Bytes: 8 << 20})
+	buf := make([]byte, 64<<10)
+	off := int64(3 << 20)
+	if _, err := r.ReadAtCtx(context.Background(), nntp.Live, buf, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.ReadAtCtx(context.Background(), nntp.Live, buf, off); err != nil || !bytes.Equal(buf, file[off:off+int64(len(buf))]) {
+		t.Fatalf("read past the reset: %v", err)
 	}
 }
