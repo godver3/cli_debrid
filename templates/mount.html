@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+{% block title %}Mount{% endblock %}
+{% block head %}
+<style>
+.mnt{max-width:1100px;margin:0 auto;padding:16px;color:#ddd}
+.mnt h2{margin:4px 0 4px;font-size:1.6em}
+.mnt .sub{color:#999;margin:0 0 18px}
+.mnt .warn{background:#3a2a12;border:1px solid #8a5a12;color:#f3d39b;border-radius:8px;padding:10px 14px;margin-bottom:14px}
+.mnt .bad{background:#3a1616;border:1px solid #8a2a2a;color:#f2b8b8;border-radius:8px;padding:10px 14px;margin-bottom:14px}
+.mnt .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:18px}
+.mnt .tile{background:#1e1e1e;border:1px solid #333;border-radius:8px;padding:10px 12px}
+.mnt .tile .k{color:#999;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+.mnt .tile .v{font-size:1.25em;margin-top:4px;font-variant-numeric:tabular-nums;word-break:break-all}
+.mnt .ok{color:#7fd47f}.mnt .no{color:#f08a8a}.mnt .mid{color:#e8c46a}
+.mnt .card{background:#1a1a1a;border:1px solid #333;border-radius:8px;margin-bottom:14px}
+.mnt .card h3{margin:0;padding:10px 14px;border-bottom:1px solid #333;font-size:1.05em}
+.mnt .card .body{padding:12px 14px}
+.mnt table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+.mnt th,.mnt td{text-align:left;padding:6px 8px;border-bottom:1px solid #2a2a2a;font-size:13px}
+.mnt th{color:#999;font-weight:600}
+.mnt .bar{height:6px;background:#2a2a2a;border-radius:3px;overflow:hidden;min-width:80px}
+.mnt .bar i{display:block;height:100%;background:#e8601c}
+.mnt .f{margin-bottom:12px}
+.mnt .f label{display:block;font-weight:600;margin-bottom:4px}
+.mnt .f input[type=text],.mnt .f input[type=number],.mnt .f input[type=password]{width:100%;max-width:520px;background:#111;border:1px solid #3d3d3d;color:#eee;border-radius:5px;padding:7px 9px}
+.mnt .f .d{color:#8f8f8f;font-size:12px;margin-top:4px;max-width:760px}
+.mnt .srv{overflow-x:auto}
+.mnt .srv input{background:#111;border:1px solid #3d3d3d;color:#eee;border-radius:4px;padding:5px 6px;width:100%;min-width:60px}
+.mnt .srv td{border-bottom:none;padding:4px}
+.mnt .btn{background:#e8601c;border:none;color:#fff;border-radius:6px;padding:8px 16px;cursor:pointer;font-weight:600}
+.mnt .btn.sec{background:#2a2a2a;border:1px solid #444;color:#ddd}
+.mnt .btn:disabled{opacity:.5;cursor:default}
+.mnt .actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:6px 0 30px}
+.mnt .msg{font-size:13px}
+</style>
+{% endblock %}
+{% block content %}
+<div class="mnt">
+  <h2>Built-in Mount</h2>
+  <p class="sub">cli_debrid's own usenet mount: status, servers and cache. Changes here restart only the mount engine, not cli_debrid.</p>
+
+  {% if not selected %}
+  <div class="warn">The built-in mount isn't your usenet backend right now. Choose <strong>Built-in mount (internal)</strong> under Settings → Required → Usenet Mount to use it. You can still edit these settings first.</div>
+  {% endif %}
+  <div id="problems" class="bad" style="display:none"></div>
+
+  <div class="grid" id="tiles"></div>
+
+  <div class="card"><h3>Usenet servers</h3><div class="body">
+    <table id="pools"><thead><tr><th>Server</th><th>Role</th><th>In use</th><th>Open</th><th>Waiting</th><th></th></tr></thead><tbody></tbody></table>
+  </div></div>
+
+  <form id="mntForm" autocomplete="off">
+  {% for title, fields in groups %}
+  <div class="card"><h3>{{ title }}</h3><div class="body">
+    {% for key, spec in fields %}
+    <div class="f">
+      {% if spec.type == 'boolean' %}
+      <label><input type="checkbox" name="{{ key }}" data-type="boolean"> {{ key.replace('_', ' ').capitalize() }}</label>
+      {% else %}
+      <label for="m-{{ key }}">{{ key.replace('primary_', '').replace('backup_', '').replace('_', ' ').capitalize() }}</label>
+      <input id="m-{{ key }}" name="{{ key }}" data-type="{{ spec.type }}"
+             type="{{ 'password' if spec.sensitive else ('number' if spec.type == 'integer' else 'text') }}"
+             {% if spec.sensitive %}placeholder="unchanged" autocomplete="new-password"{% endif %}>
+      {% endif %}
+      <div class="d">{{ spec.description | replace('Built-in mount only. ', '') | replace('Built-in mount only (Usenet Provider = builtin). ', '') | safe }}</div>
+    </div>
+    {% endfor %}
+  </div></div>
+  {% if loop.index == 3 %}
+  <div class="card"><h3>More servers (optional)</h3><div class="body">
+    <p class="d" style="color:#8f8f8f;font-size:12px;margin-top:0">Asked in order after the main server when it lacks an article; servers marked backup go last. Leave the password empty to keep the saved one.</p>
+    <div class="srv"><table id="servers"><thead><tr><th>Host</th><th>Port</th><th>SSL</th><th>Username</th><th>Password</th><th>Connections</th><th>Backup</th><th></th></tr></thead><tbody></tbody></table></div>
+    <button type="button" class="btn sec" id="addServer" style="margin-top:8px">Add server</button>
+  </div></div>
+  {% endif %}
+  {% endfor %}
+  </form>
+
+  <div class="actions">
+    <button class="btn" id="saveBtn">Save</button>
+    <button class="btn sec" id="restartBtn">Restart engine</button>
+    <span class="msg" id="msg"></span>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  const $ = s => document.querySelector(s);
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const fmtBytes = b => { if (!b) return '0 B'; const u = ['B','KB','MB','GB','TB']; let i = 0; while (b >= 1024 && i < 4) { b /= 1024; i++; } return b.toFixed(i ? 1 : 0) + ' ' + u[i]; };
+  const form = $('#mntForm');
+  let loaded = false, dirty = false;
+  form.addEventListener('input', () => { dirty = true; });
+
+  function serverRow(s) {
+    s = s || {port: 563, ssl: true, connections: 5};
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td><input data-k="host" value="' + esc(s.host) + '" placeholder="news.example.com"></td>' +
+      '<td><input data-k="port" type="number" value="' + esc(s.port ?? 563) + '" style="width:70px"></td>' +
+      '<td><input data-k="ssl" type="checkbox"' + (s.ssl === false ? '' : ' checked') + ' style="width:auto"></td>' +
+      '<td><input data-k="username" value="' + esc(s.username) + '"></td>' +
+      '<td><input data-k="password" type="password" autocomplete="new-password" placeholder="' + (s.password_set ? 'unchanged' : '') + '"></td>' +
+      '<td><input data-k="connections" type="number" value="' + esc(s.connections ?? 5) + '" style="width:70px"></td>' +
+      '<td><input data-k="backup" type="checkbox"' + (s.backup ? ' checked' : '') + ' style="width:auto"></td>' +
+      '<td><button type="button" class="btn sec" style="padding:4px 10px">Remove</button></td>';
+    tr.querySelector('button').onclick = () => { tr.remove(); dirty = true; };
+    $('#servers tbody').appendChild(tr);
+  }
+  $('#addServer').onclick = () => { serverRow(); dirty = true; };
+
+  function fill(settings) {
+    form.querySelectorAll('[name]').forEach(el => {
+      const v = settings[el.name];
+      if (el.dataset.type === 'boolean') el.checked = !!v;
+      else if (el.type === 'password') { el.value = ''; el.placeholder = settings[el.name + '_set'] ? 'unchanged' : 'not set'; }
+      else el.value = v ?? '';
+    });
+    $('#servers tbody').innerHTML = '';
+    (settings.additional_servers || []).forEach(serverRow);
+  }
+
+  function tile(k, v, cls) { return '<div class="tile"><div class="k">' + esc(k) + '</div><div class="v ' + (cls || '') + '">' + v + '</div></div>'; }
+
+  function render(st) {
+    const probs = st.selected ? (st.problems || []) : [];
+    $('#problems').style.display = probs.length ? '' : 'none';
+    $('#problems').innerHTML = probs.length ? '<strong>The engine can\'t start:</strong><br>' + probs.map(esc).join('<br>') : '';
+    const e = st.engine, s = st.stats;
+    const stateCls = st.state === 'RUNNING' ? 'ok' : (st.state === 'STARTING' ? 'mid' : 'no');
+    const jobs = e && e.jobs ? Object.entries(e.jobs).map(([k, v]) => v + ' ' + k).join(', ') || 'none' : '—';
+    const dc = s && s.disk_cache;
+    $('#tiles').innerHTML =
+      tile('Engine', esc(st.selected ? st.state : 'not selected'), st.selected ? stateCls : 'mid') +
+      tile('Mount', e ? esc(e.mount_path) + (e.ready ? ' <span class="ok">●</span>' : ' <span class="no">●</span>') : '—') +
+      tile('Jobs', esc(jobs)) +
+      tile('Downloaded', s ? fmtBytes(s.bytes_downloaded) + ' <span style="color:#888;font-size:.7em">' + (s.articles || 0) + ' articles</span>' : '—') +
+      tile('Missing articles', s ? String(s.articles_missing || 0) : '—', s && s.articles_missing ? 'mid' : '') +
+      tile('Disk cache', dc ? fmtBytes(dc.bytes) + ' <span style="color:#888;font-size:.7em">' + (dc.hits || 0) + ' hits / ' + (dc.misses || 0) + ' misses</span>' : '—') +
+      (st.last_sync && st.last_sync.result ? tile('Last apply', esc(st.last_sync.running ? 'applying…' : st.last_sync.result)) : '');
+    const pools = (s && s.pools) || (e && e.providers) || [];
+    $('#pools tbody').innerHTML = pools.length ? pools.map(p => {
+      const busy = Math.max(0, (p.open || 0) - (p.idle || 0));
+      const pct = p.max ? Math.round(100 * busy / p.max) : 0;
+      return '<tr><td>' + esc(p.name) + '</td><td>' + (p.backup ? 'backup' : 'main') + '</td><td>' + busy + ' / ' + p.max +
+             '</td><td>' + (p.open || 0) + '</td><td>' + (p.waiting || 0) + '</td><td><div class="bar"><i style="width:' + pct + '%"></i></div></td></tr>';
+    }).join('') : '<tr><td colspan="6" style="color:#888">The engine isn\'t running.</td></tr>';
+    if (!loaded || !dirty) { fill(st.settings); loaded = true; dirty = false; }
+  }
+
+  async function refresh() {
+    try { const r = await fetch('{{ url_for("mount.status") }}'); render(await r.json()); }
+    catch (e) { $('#msg').textContent = 'Could not load status: ' + e; }
+  }
+
+  function collect() {
+    const out = {};
+    form.querySelectorAll('[name]').forEach(el => {
+      if (el.dataset.type === 'boolean') out[el.name] = el.checked;
+      else if (el.dataset.type === 'integer') out[el.name] = el.value === '' ? 0 : parseInt(el.value, 10);
+      else out[el.name] = el.value;
+    });
+    out.additional_servers = [...document.querySelectorAll('#servers tbody tr')].map(tr => {
+      const s = {};
+      tr.querySelectorAll('[data-k]').forEach(i => { s[i.dataset.k] = i.type === 'checkbox' ? i.checked : (i.type === 'number' ? parseInt(i.value || '0', 10) : i.value); });
+      return s;
+    });
+    return out;
+  }
+
+  $('#saveBtn').onclick = async () => {
+    const btn = $('#saveBtn'); btn.disabled = true; $('#msg').textContent = 'Saving…';
+    try {
+      const r = await fetch('{{ url_for("mount.save_settings") }}', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(collect())});
+      const j = await r.json();
+      if (!j.success) { $('#msg').innerHTML = '<span class="no">' + esc(j.error) + '</span>'; return; }
+      dirty = false;
+      $('#msg').innerHTML = j.changed.length ? '<span class="ok">Saved.</span> ' + (j.applying ? 'Applying to the engine…' : '') : 'Nothing changed.';
+      setTimeout(refresh, 1500);
+    } catch (e) { $('#msg').textContent = 'Save failed: ' + e; }
+    finally { btn.disabled = false; }
+  };
+  $('#restartBtn').onclick = async () => {
+    if (!confirm('Restart the mount engine? Anything playing from the mount will stop for a few seconds.')) return;
+    $('#msg').textContent = 'Restarting…';
+    const r = await fetch('{{ url_for("mount.restart") }}', {method: 'POST'});
+    const j = await r.json();
+    $('#msg').innerHTML = j.success ? '<span class="ok">Restarted.</span>' : '<span class="no">' + esc(j.error || j.output) + '</span>';
+    setTimeout(refresh, 1500);
+  };
+
+  refresh();
+  setInterval(refresh, 4000);
+})();
+</script>
+{% endblock %}

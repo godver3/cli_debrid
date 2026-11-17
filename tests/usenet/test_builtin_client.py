@@ -147,6 +147,15 @@ class BuiltinClientTests(unittest.TestCase):
         self.assertEqual(st['usenet']['pool'], {'active': 3, 'idle': 2, 'max_connections': 25})
         self.assertEqual(st['repair']['health']['broken'], 1)
 
+    def test_generated_token_read_per_call(self):
+        """The client often exists before startup sync writes engine.json."""
+        self.c._configured_token = ''
+        tokens = iter(['', 'gen1', 'gen2'])
+        with mock.patch('utilities.builtin_engine.current_token', side_effect=lambda: next(tokens)):
+            self.assertNotIn('Authorization', self.c._headers())
+            self.assertEqual(self.c._headers()['Authorization'], 'Bearer gen1')
+            self.assertEqual(self.c._headers()['Authorization'], 'Bearer gen2')
+
     def test_unreachable_engine(self):
         with mock.patch('usenet.builtin_client.requests.request', side_effect=ConnectionError('refused')):
             ok, err = self.c.check_connectivity()
@@ -189,6 +198,20 @@ class EngineManagerTests(unittest.TestCase):
         self.assertEqual(len(cfg['providers']), 1)
         self.assertEqual(cfg['providers'][0]['max_conns'], 30)
         self.assertTrue(cfg['token'])
+
+    def test_additional_servers(self):
+        s = self.settings()
+        s['Built-in Mount']['additional_servers'] = json.dumps([
+            {'host': 'news.b', 'username': 'u', 'password': 'p', 'connections': 4},
+            {'host': 'block.c', 'port': 119, 'ssl': False, 'backup': True}])
+        ps = self.be.build_config(s)['providers']
+        self.assertEqual([(p['host'], p['port'], p['tls'], p['max_conns'], p['backup']) for p in ps],
+                         [('news.x', 563, True, 30, False), ('news.b', 563, True, 4, False),
+                          ('block.c', 119, False, 5, True)])
+        for bad in ('{not json', '{"host": "x"}', '[{"port": 1}]', '[{"host": "x", "port": "abc"}]'):
+            s['Built-in Mount']['additional_servers'] = bad
+            with self.assertRaises(ValueError):
+                self.be.additional_servers(s['Built-in Mount'])
 
     def test_sync_starts_restarts_only_on_change_and_stops(self):
         self.assertEqual(self.be.sync(self.settings()), 'started')

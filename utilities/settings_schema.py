@@ -478,6 +478,12 @@ SETTINGS_SCHEMA = {
             "description": "Built-in mount only. Backup connections at most.",
             "default": 5
         },
+        "additional_servers": {
+            "type": "string",
+            "description": "Built-in mount only. Optional extra usenet servers, as a JSON list tried in order after the primary (entries with \"backup\": true go last, after the backup above), e.g. <code>[{\"host\": \"news.other.com\", \"port\": 563, \"ssl\": true, \"username\": \"u\", \"password\": \"p\", \"connections\": 10, \"backup\": false}]</code>. Leave empty for none. The cli_mount migration fills this in from cli_mount's provider list.",
+            "default": "",
+            "sensitive": True
+        },
         "api_port": {
             "type": "integer",
             "description": "Built-in mount only. Local port of the engine's API (127.0.0.1 only). Change it only if it clashes.",

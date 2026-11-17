@@ -197,6 +197,7 @@ def _check_acquisition_providers(get_setting, providers_factory, usenet_factory)
             try:
                 client = usenet_factory()
                 label = getattr(client, 'PROVIDER_NAME', 'Usenet Provider')
+                usenet_url = usenet_url or getattr(client, 'base_url', '')
                 ok, err = client.check_connectivity()
                 if ok:
                     statuses['usenet'] = True

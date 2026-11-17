@@ -57,13 +57,18 @@ def problems(settings: dict = None) -> list:
     bm = s.get('Built-in Mount') or {}
     if not (bm.get('primary_host') or '').strip():
         out.append('no usenet server set (Built-in Mount → primary host)')
+    try:
+        additional_servers(bm)
+    except ValueError as exc:
+        out.append(f'Built-in Mount → additional servers: {exc}')
     return out
 
 
 def _provider(bm: dict, prefix: str, backup: bool) -> dict:
+    host = (bm.get(f'{prefix}_host') or '').strip()
     return {
-        'name': prefix,
-        'host': (bm.get(f'{prefix}_host') or '').strip(),
+        'name': host or prefix,
+        'host': host,
         'port': int(bm.get(f'{prefix}_port') or 563),
         'tls': bool(bm.get(f'{prefix}_ssl', True)),
         'username': bm.get(f'{prefix}_username') or '',
@@ -73,12 +78,55 @@ def _provider(bm: dict, prefix: str, backup: bool) -> dict:
     }
 
 
+def additional_servers(bm: dict) -> list:
+    """Engine providers from the `additional_servers` JSON list. Raises
+    ValueError describing the first bad entry."""
+    raw = bm.get('additional_servers')
+    if isinstance(raw, str):
+        raw = raw.strip()
+        if not raw:
+            return []
+        try:
+            raw = json.loads(raw)
+        except ValueError as exc:
+            raise ValueError(f'not valid JSON ({exc})') from None
+    if not raw:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError('must be a JSON list of servers')
+    out = []
+    for i, e in enumerate(raw, 1):
+        if not isinstance(e, dict) or not str(e.get('host') or '').strip():
+            raise ValueError(f'entry {i} needs a "host"')
+        try:
+            port = int(e.get('port') or 563)
+            conns = max(1, int(e.get('connections') or e.get('max_connections') or 5))
+        except (TypeError, ValueError):
+            raise ValueError(f'entry {i}: port and connections must be numbers') from None
+        ssl = e.get('ssl', e.get('tls', True))
+        out.append({
+            'name': str(e.get('name') or e['host']).strip(),
+            'host': str(e['host']).strip(),
+            'port': port,
+            'tls': ssl if isinstance(ssl, bool) else str(ssl).lower() not in ('false', '0', 'no', ''),
+            'username': str(e.get('username') or ''),
+            'password': str(e.get('password') or ''),
+            'max_conns': conns,
+            'backup': bool(e.get('backup', False)),
+        })
+    return out
+
+
 def build_config(settings: dict) -> dict:
     """The engine config for these settings (token must already be set)."""
     bm = settings.get('Built-in Mount') or {}
     providers = [_provider(bm, 'primary', False)]
     if (bm.get('backup_host') or '').strip():
         providers.append(_provider(bm, 'backup', True))
+    try:
+        providers += additional_servers(bm)
+    except ValueError:
+        pass  # problems() reports it; sync() never gets here with it
     cache_gb = int(bm.get('cache_size_gb') or 0)
     return {
         'data_dir': os.path.join(os.environ.get('USER_DB_CONTENT', '/user/db_content'), 'engine'),

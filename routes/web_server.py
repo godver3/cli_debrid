@@ -66,6 +66,18 @@ def inject_usenet_provider_name():
         return dict(usenet_provider_name='cli_mount')
 
 @app.context_processor
+def inject_builtin_mount_selected():
+    """`builtin_mount_selected()`: show the Mount nav item only when the
+    built-in mount is the usenet backend."""
+    def builtin_mount_selected():
+        try:
+            from routes.mount_routes import builtin_selected
+            return builtin_selected()
+        except Exception:
+            return False
+    return dict(builtin_mount_selected=builtin_mount_selected)
+
+@app.context_processor
 def inject_nzbdav_categories():
     """Expose the managed NzbDAV category list to templates.
 

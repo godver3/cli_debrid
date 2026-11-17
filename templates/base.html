@@ -249,6 +249,13 @@
                     </div>
                 </div>
 
+                {% if builtin_mount_selected() %}
+                <!-- Mount (built-in mount engine only) -->
+                <div class="st-nav-item" id="st-dd-mount">
+                    <a class="st-nav-btn" href="{{ url_for('mount.index') }}" style="text-decoration:none">Mount</a>
+                </div>
+                {% endif %}
+
                 <!-- Users -->
                 <div class="st-nav-item" id="st-dd-users">
                     <button class="st-nav-btn" onclick="stToggleDD('st-dd-users')">Users <i class="fa-solid fa-chevron-down st-arr"></i></button>
@@ -404,6 +411,13 @@
                             <a class="st-nav-mob-item" href="{{ url_for('overlay_page.overlays_page') }}"><i class="fa-solid fa-layer-group"></i> Overlays</a>
                         </div>
                     </div>
+
+                    {% if builtin_mount_selected() %}
+                    <!-- Mount -->
+                    <div class="st-nav-acc-section" id="st-acc-mount">
+                        <a class="st-nav-mob-item" href="{{ url_for('mount.index') }}"><i class="fa-solid fa-hard-drive"></i> Mount</a>
+                    </div>
+                    {% endif %}
 
                     <!-- Users -->
                     <div class="st-nav-acc-section" id="st-acc-users">

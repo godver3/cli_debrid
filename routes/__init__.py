@@ -27,6 +27,7 @@ from .video_routes import video_routes
 from routes.api_tracker import is_rate_limited, get_blocked_domains, APIRateLimiter, api  # Add this import at the top of the file
 from routes.extensions import app
 from .content_requestor_routes import content_requestor_bp
+from .mount_routes import mount_bp
 from .base_routes import base_bp  # Add this import
 from .library_management_routes import library_management
 from .library_routes import library_bp
@@ -159,6 +160,7 @@ def register_blueprints(app):
         (over_usage_bp, '/over_usage'),
         (video_routes, '/video'),
         (content_requestor_bp, '/content'),
+        (mount_bp, '/mount'),
         (base_bp, '/base'),
         (root_bp, '/'),
         (library_management, '/library_management'),

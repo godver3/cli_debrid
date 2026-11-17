@@ -427,7 +427,7 @@
             <svg class="info-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
             </svg>
-            <div class="info-banner-content">Connect a usenet backend — <strong>cli_mount</strong> (custom API, default port 8888), <strong>NzbDAV</strong> (SAB-compatible API, default port 3000), or <strong>Zurg</strong> (SABnzbd-emulation endpoint, e.g. Zurg 2.0). All handle NNTP and serve files via an rclone mount.</div>
+            <div class="info-banner-content">Pick a usenet backend — the <strong>built-in mount</strong> (runs inside cli_debrid; no extra container), or an external one: <strong>cli_mount</strong> (custom API, default port 8888), <strong>NzbDAV</strong> (SAB-compatible API, default port 3000) or <strong>Zurg</strong> (SABnzbd-emulation endpoint, e.g. Zurg 2.0).</div>
         </div>
         <div class="settings-form-group">
             <label for="usenet_provider-enabled" class="settings-title">Enable Usenet Mount:</label>
@@ -441,13 +441,17 @@
             <select id="usenet_provider-provider" name="Usenet Provider.provider"
                     data-section="Usenet Provider" data-key="provider"
                     class="settings-input">
-                <option value="climount" {% if _provider == 'climount' %}selected{% endif %}>cli_mount</option>
+                <option value="builtin"  {% if _provider == 'builtin' %}selected{% endif %}>Built-in mount (internal)</option>
+                <option value="climount" {% if _provider == 'climount' %}selected{% endif %}>cli_mount (external container)</option>
                 <option value="nzbdav"    {% if _provider == 'nzbdav' %}selected{% endif %}>NzbDAV</option>
                 <option value="zurg"      {% if _provider == 'zurg' %}selected{% endif %}>Zurg (generic SAB mount)</option>
             </select>
+            <span data-provider-only="climount,nzbdav,zurg">
             <button type="button" id="usenet-mount-detect-btn" class="dpr-btn" style="margin-top:6px">Detect</button>
             <span id="usenet-mount-detect-status" class="settings-description" style="margin-left:8px"></span>
-            <p class="settings-description">Backend type. cli_mount uses custom endpoints (<code>/api/add</code>, <code>/api/browse/nzbs</code>); NzbDAV uses standard SAB query-string API (<code>?mode=…</code>). Zurg selects the same SAB-compatible logic as NzbDAV but resolves job folders directly under the mount root instead of a <code>&lt;category&gt;/&lt;job&gt;</code> layout — use it for Zurg 2.0's usenet SAB emulation, or any other flat-layout SAB-compatible mount. All three expose the same client interface internally.</p>
+            </span>
+            <p class="settings-description" data-provider-only="builtin">cli_debrid runs its own usenet mount: no cli_mount container, no URL or token. Set your usenet servers, mount path and cache on the <a href="{{ url_for('mount.index') }}"><strong>Mount</strong></a> page (top menu, shown once this is saved). The container needs <code>/dev/fuse</code> and <code>SYS_ADMIN</code>; the Mount page says what's missing.</p>
+            <p class="settings-description" data-provider-only="climount,nzbdav,zurg">Backend type. cli_mount uses custom endpoints (<code>/api/add</code>, <code>/api/browse/nzbs</code>); NzbDAV uses standard SAB query-string API (<code>?mode=…</code>). Zurg selects the same SAB-compatible logic as NzbDAV but resolves job folders directly under the mount root instead of a <code>&lt;category&gt;/&lt;job&gt;</code> layout — use it for Zurg 2.0's usenet SAB emulation, or any other flat-layout SAB-compatible mount. All three expose the same client interface internally.</p>
         </div>
         <details data-provider-only="nzbdav" class="settings-form-group" style="border:1px solid #444;border-radius:6px;padding:8px 12px;">
             <summary style="cursor:pointer;font-weight:600;">How to set up NzbDAV (click to expand)</summary>
@@ -484,7 +488,7 @@
                 <li>Toggle <em>Enable Usenet</em> above.</li>
             </ol>
         </details>
-        <div class="settings-form-group">
+        <div class="settings-form-group" data-provider-only="climount,nzbdav,zurg">
             <label for="usenet_provider-url" class="settings-title">Mount URL:</label>
             <input type="text" id="usenet_provider-url" name="Usenet Provider.url"
                    value="{{ settings.get('Usenet Provider', {}).get('url', '') }}"
@@ -495,14 +499,14 @@
             <p class="settings-description" data-provider-only="nzbdav">Use the NzbDAV host IP or container name with its port (default 3000), e.g. <code>http://192.168.1.x:3000</code>. Do not append <code>/sabnzbd</code> — NzbDAV serves its SAB-compatible API at the root <code>/api</code>.</p>
             <p class="settings-description" data-provider-only="zurg">Use Zurg's SABnzbd-emulation host/port, e.g. <code>http://192.168.1.x:9999</code>.</p>
         </div>
-        <div class="settings-form-group">
+        <div class="settings-form-group" data-provider-only="climount,nzbdav,zurg">
             <label for="usenet_provider-api_token" class="settings-title">API Token:</label>
             <input type="password" id="usenet_provider-api_token" name="Usenet Provider.api_token"
                    value="{{ settings.get('Usenet Provider', {}).get('api_token', '') }}"
                    class="settings-input" data-section="Usenet Provider" data-key="api_token"
                    placeholder="Leave empty if auth is disabled">
         </div>
-        <div class="settings-form-group">
+        <div class="settings-form-group" data-provider-only="climount,nzbdav,zurg">
             <label for="usenet_provider-download_folder" class="settings-title"><span data-provider-only="nzbdav,zurg">Fallback Category <span style="color:#888;font-size:0.85em;">(rarely used)</span></span><span data-provider-only="climount">Download Folder / Category</span>:</label>
             <input type="text" id="usenet_provider-download_folder" name="Usenet Provider.download_folder"
                    value="{{ settings.get('Usenet Provider', {}).get('download_folder', '') }}"
@@ -565,6 +569,7 @@
   }
   async function detect() {
     const provider = sel.value;
+    if (provider === 'builtin') return;  // nothing external to find
     status.textContent = 'Looking…';
     btn.disabled = true;
     try {
