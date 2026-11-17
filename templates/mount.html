@@ -73,7 +73,7 @@
   <div class="pane" data-pane="overview">
   <div class="grid" id="tiles"></div>
   <div class="card"><h3>Server connections</h3><div class="body">
-    <table id="pools"><thead><tr><th>Server</th><th>Role</th><th>In use</th><th>Open</th><th>Waiting</th><th></th></tr></thead><tbody></tbody></table>
+    <div class="tbl"><table id="pools"><thead><tr><th>Server</th><th>Role</th><th>In use</th><th>Open</th><th>Waiting</th><th></th><th>Articles</th><th>Data</th><th>Missing</th><th>Errors</th><th>Avg fetch</th></tr></thead><tbody></tbody></table></div>
   </div></div>
   </div>
 
@@ -208,8 +208,12 @@
       const busy = Math.max(0, (p.open || 0) - (p.idle || 0));
       const pct = p.max ? Math.round(100 * busy / p.max) : 0;
       return '<tr><td>' + esc(p.name) + '</td><td>' + (p.backup ? 'backup' : 'main') + '</td><td>' + busy + ' / ' + p.max +
-             '</td><td>' + (p.open || 0) + '</td><td>' + (p.waiting || 0) + '</td><td><div class="bar"><i style="width:' + pct + '%"></i></div></td></tr>';
-    }).join('') : '<tr><td colspan="6" style="color:#888">The engine isn\'t running.</td></tr>';
+             '</td><td>' + (p.open || 0) + '</td><td>' + (p.waiting || 0) + '</td><td><div class="bar"><i style="width:' + pct + '%"></i></div></td>' +
+             '<td>' + (p.articles || 0) + '</td><td>' + fmtBytes(p.bytes || 0) + '</td>' +
+             '<td' + (p.missing ? ' class="mid"' : '') + '>' + (p.missing || 0) + '</td>' +
+             '<td' + (p.errors ? ' class="no" title="' + esc(p.last_error || '') + '"' : '') + '>' + (p.errors || 0) + '</td>' +
+             '<td>' + (p.latency_ms ? Math.round(p.latency_ms) + ' ms' : '—') + '</td></tr>';
+    }).join('') : '<tr><td colspan="11" style="color:#888">The engine isn\'t running.</td></tr>';
     if (!loaded || !dirty) { fill(st.settings); loaded = true; dirty = false; }
   }
 

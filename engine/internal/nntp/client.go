@@ -87,7 +87,9 @@ func (c *Client) attempt(ctx context.Context, prio Priority, id string,
 				break
 			}
 			acquired(ctx)
+			began := time.Now()
 			found, err := fn(cn)
+			pl.record(began, cn.lastBytes, found, err)
 			switch {
 			case err == nil && found:
 				pl.release(cn)
@@ -159,21 +161,38 @@ func (c *Client) Stat(ctx context.Context, prio Priority, id string) (bool, erro
 	return err == nil, err
 }
 
-// PoolStats is a snapshot of one provider's connections.
+// PoolStats is a snapshot of one provider's connections and counters.
 type PoolStats struct {
-	Name    string `json:"name"`
-	Backup  bool   `json:"backup"`
-	Max     int    `json:"max"`
-	Open    int    `json:"open"`
-	Idle    int    `json:"idle"`
-	Waiting int    `json:"waiting"`
+	Name      string  `json:"name"`
+	Backup    bool    `json:"backup"`
+	Max       int     `json:"max"`
+	Open      int     `json:"open"`
+	Idle      int     `json:"idle"`
+	Waiting   int     `json:"waiting"`
+	Reserve   int     `json:"reserve"`
+	Articles  int64   `json:"articles"`
+	Bytes     int64   `json:"bytes"`
+	Missing   int64   `json:"missing"`
+	Errors    int64   `json:"errors"`
+	LatencyMs float64 `json:"latency_ms"`
+	LastError string  `json:"last_error,omitempty"`
+}
+
+// Warm tops every provider up to its MinIdle connections.
+func (c *Client) Warm(ctx context.Context) {
+	for _, pl := range c.pools {
+		go pl.warm(ctx)
+	}
 }
 
 // Stats returns per-provider connection use plus lifetime counters.
 func (c *Client) Stats() (pools []PoolStats, bytes, articles, missing int64) {
 	for _, pl := range c.pools {
 		open, idle, waiting := pl.stats()
+		lastErr, _ := pl.lastErr.Load().(string)
 		pools = append(pools, PoolStats{Name: pl.p.Name, Backup: pl.p.Backup, Max: pl.p.MaxConns,
+			Reserve: pl.reserve(), Articles: pl.articles.Load(), Bytes: pl.bytes.Load(), Missing: pl.missing.Load(),
+			Errors: pl.errors.Load(), LatencyMs: float64(pl.latencyNs.Load()) / 1e6, LastError: lastErr,
 			Open: open, Idle: idle, Waiting: waiting})
 	}
 	return pools, c.bytes.Load(), c.articles.Load(), c.missing.Load()

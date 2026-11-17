@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -78,6 +79,7 @@ func (e *env) read(res *Result, entry Entry) []byte {
 func random(seed int64, n int) []byte {
 	b := make([]byte, n)
 	rand.New(rand.NewSource(seed)).Read(b)
+	copy(b, []byte{0x1A, 0x45, 0xDF, 0xA3}) // a real MKV start: archive members are header-checked
 	return b
 }
 
@@ -266,5 +268,35 @@ func TestLeftoverRatio(t *testing.T) {
 		if got := LeftoverOnly(c.kept, c.failed); got != c.reject {
 			t.Errorf("%s: reject=%v, want %v", c.name, got, c.reject)
 		}
+	}
+}
+
+// A media file rebuilt from an archive that doesn't start with its
+// container's header (volumes stitched in the wrong order) is rejected as
+// proof; the other members still import.
+func TestBadMediaHeaderInArchiveIsRejected(t *testing.T) {
+	e := newEnv(t)
+	garbled := random(9, 400_000)
+	copy(garbled, "not an mkv start")
+	members := []rartest.Member{
+		{Name: "Movie.2024.mkv", Data: garbled},
+		{Name: "Movie.2024.mp4", Data: append([]byte{0, 0, 0, 0x20, 'f', 't', 'y', 'p'}, random(10, 100_000)...)},
+	}
+	for i, v := range rartest.Write(rartest.RAR5, members, 90_000) {
+		name := fmt.Sprintf("movie.part%02d.rar", i+1)
+		e.post(name, name, v)
+	}
+	res, err := e.build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := entryNames(res); len(got) != 1 || got[0] != "Movie.2024.mp4" {
+		t.Fatalf("entries %v", got)
+	}
+	if len(res.Failures) != 1 || !strings.Contains(res.Failures[0].Error, "container header") {
+		t.Fatalf("failures %+v", res.Failures)
+	}
+	if !mediaHeaderValid("x.mpg", []byte("anything")) || mediaHeaderValid("x.avi", []byte("RIFX....")) {
+		t.Fatal("mpg is never judged; avi needs RIFF")
 	}
 }

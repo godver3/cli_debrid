@@ -3,6 +3,7 @@ package nntp
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -17,12 +18,49 @@ const (
 
 // pool hands out up to MaxConns connections to one provider.
 type pool struct {
-	p      Provider
-	mu     sync.Mutex
-	idle   []*conn
-	open   int
-	queues [2][]chan *slot // indexed by Priority
-	closed bool
+	p       Provider
+	mu      sync.Mutex
+	idle    []*conn
+	open    int
+	queues  [2][]chan *slot // indexed by Priority
+	closed  bool
+	warming int // dials in progress for MinIdle
+
+	// Per-provider counters for status pages.
+	articles, bytes, missing, errors atomic.Int64
+	latencyNs                        atomic.Int64 // moving average per fetch
+	lastErr                          atomic.Value // string
+}
+
+// reserve is the number of connections only live reads may use.
+func (pl *pool) reserve() int {
+	return min(max(pl.p.Reserve, 0), pl.p.MaxConns-1)
+}
+
+// prefetchMayTake says whether non-live work may take one more connection
+// when busy connections are already handed out (lock held).
+func (pl *pool) prefetchMayTake(busy int) bool {
+	return busy < pl.p.MaxConns-pl.reserve()
+}
+
+// record updates the counters after one fetch.
+func (pl *pool) record(start time.Time, n int, found bool, err error) {
+	switch {
+	case err == nil && found:
+		pl.articles.Add(1)
+		pl.bytes.Add(int64(n))
+	case err == nil || IsNotFound(err):
+		pl.missing.Add(1)
+	default:
+		pl.errors.Add(1)
+		pl.lastErr.Store(err.Error())
+	}
+	d := time.Since(start).Nanoseconds()
+	if old := pl.latencyNs.Load(); old == 0 {
+		pl.latencyNs.Store(d)
+	} else {
+		pl.latencyNs.Store(old + (d-old)/8)
+	}
 }
 
 // slot is what a waiter receives: either an idle connection or permission
@@ -43,13 +81,16 @@ func (pl *pool) acquire(ctx context.Context, prio Priority) (*conn, error) {
 		pl.mu.Unlock()
 		return nil, context.Canceled
 	}
-	if n := len(pl.idle); n > 0 {
-		c := pl.idle[n-1]
-		pl.idle = pl.idle[:n-1]
-		pl.mu.Unlock()
-		return c, nil
+	busy := pl.open - len(pl.idle)
+	if prio == Live || pl.prefetchMayTake(busy) {
+		if n := len(pl.idle); n > 0 {
+			c := pl.idle[n-1]
+			pl.idle = pl.idle[:n-1]
+			pl.mu.Unlock()
+			return c, nil
+		}
 	}
-	if pl.open < pl.p.MaxConns {
+	if pl.open < pl.p.MaxConns && (prio == Live || pl.prefetchMayTake(busy)) {
 		pl.open++
 		pl.mu.Unlock()
 		return pl.dial(ctx)
@@ -106,6 +147,11 @@ func (pl *pool) passOn(s *slot) {
 	defer pl.mu.Unlock()
 	for prio := Live; prio >= Prefetch; prio-- {
 		if q := pl.queues[prio]; len(q) > 0 {
+			// The slot being passed is still counted busy; a prefetch
+			// waiter may only keep it outside the playback reserve.
+			if prio == Prefetch && !pl.prefetchMayTake(pl.open-len(pl.idle)-1) {
+				break
+			}
 			ch := q[0]
 			pl.queues[prio] = q[1:]
 			ch <- s
@@ -140,8 +186,12 @@ func (pl *pool) closeIdle(maxIdle time.Duration) {
 	pl.mu.Lock()
 	defer pl.mu.Unlock()
 	keep := pl.idle[:0]
+	floor := 0
+	if maxIdle > 0 {
+		floor = min(pl.p.MinIdle, pl.p.MaxConns) // warm connections stay
+	}
 	for _, c := range pl.idle {
-		if maxIdle > 0 && time.Since(c.lastUsed) < maxIdle {
+		if (maxIdle > 0 && time.Since(c.lastUsed) < maxIdle) || len(keep) < floor {
 			keep = append(keep, c)
 			continue
 		}
@@ -149,6 +199,32 @@ func (pl *pool) closeIdle(maxIdle time.Duration) {
 		pl.open--
 	}
 	pl.idle = keep
+}
+
+// warm dials connections until MinIdle are open (idle or busy), so a new
+// session doesn't pay for the handshake. Failures are left for next time.
+func (pl *pool) warm(ctx context.Context) {
+	want := min(pl.p.MinIdle, pl.p.MaxConns)
+	for {
+		pl.mu.Lock()
+		if pl.closed || pl.open+pl.warming >= want || pl.open >= pl.p.MaxConns {
+			pl.mu.Unlock()
+			return
+		}
+		pl.open++
+		pl.warming++
+		pl.mu.Unlock()
+		c, err := dial(ctx, pl.p)
+		pl.mu.Lock()
+		pl.warming--
+		pl.mu.Unlock()
+		if err != nil {
+			pl.drop()
+			pl.lastErr.Store(err.Error())
+			return
+		}
+		pl.release(c)
+	}
 }
 
 func (pl *pool) shutdown() {

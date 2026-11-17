@@ -27,6 +27,7 @@ func nzbXML(s *nntptest.Server, prefix string, files ...file) []byte {
 func random(seed int64, n int) []byte {
 	b := make([]byte, n)
 	rand.New(rand.NewSource(seed)).Read(b)
+	copy(b, []byte{0x1A, 0x45, 0xDF, 0xA3}) // a real MKV start: archive members are header-checked
 	return b
 }
 

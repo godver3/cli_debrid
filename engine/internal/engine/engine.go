@@ -48,6 +48,7 @@ type Config struct {
 	HealthSample  float64         `json:"health_sample_percent"`  // % checked by health checks (0 = 2%, max 30 per file)
 	IdleTimeout   int             `json:"idle_timeout_seconds"`   // close NNTP connections unused this long (default 300)
 	CacheExpiry   int             `json:"cache_expiry_seconds"`   // drop disk cache entries unused this long (0 = only by size)
+	PreCacheMB    int             `json:"precache_mb"`            // on open, fetch this much of the start and end (0 = off)
 	CacheCleanup  int             `json:"cache_cleanup_seconds"`  // how often the expiry runs (default 60)
 	ImportWorkers int             `json:"import_workers"`         // jobs imported at once
 	HealthWorkers int             `json:"health_workers"`         // jobs health-checked at once
@@ -118,6 +119,7 @@ func (e *Engine) maintain() {
 			return
 		case <-t.C:
 			e.Client.CloseIdle(idle)
+			e.Client.Warm(e.ctx)
 			if e.Disk != nil && expiry > 0 && time.Since(lastExpire) >= time.Duration(e.cfg.CacheCleanup)*time.Second {
 				if n := e.Disk.Expire(expiry); n > 0 {
 					e.log.Debug("disk cache expired", "segments", n)
@@ -194,6 +196,7 @@ func New(cfg Config, log *slog.Logger) (*Engine, error) {
 	}
 	e.wg.Add(1)
 	go e.maintain()
+	e.Client.Warm(e.ctx)
 	for _, j := range st.List() {
 		if j.Status == store.Queued {
 			e.queue <- j.ID
@@ -349,6 +352,47 @@ func (e *Engine) requeue(id string) {
 		case <-e.ctx.Done():
 		}
 	}
+}
+
+// PreCache warms the start and end of a file that was just opened (players
+// read the header, then the index at the end) in parallel, at prefetch
+// priority. The player's own first reads join these fetches instead of
+// starting their own (the cache collapses duplicates).
+func (e *Engine) PreCache(jobID string, en job.Entry) {
+	n := int64(e.cfg.PreCacheMB) << 20
+	if n <= 0 || en.Size <= 0 {
+		return
+	}
+	files, err := e.Files(jobID)
+	if err != nil {
+		return
+	}
+	r := files.Entry(en)
+	const chunk = 512 << 10
+	var ranges [][2]int64
+	add := func(from, to int64) {
+		for off := max(from, 0); off < min(to, en.Size); off += chunk {
+			ranges = append(ranges, [2]int64{off, min(chunk, en.Size-off)})
+		}
+	}
+	add(0, n)
+	if en.Size > 2*n {
+		add(en.Size-n, en.Size)
+	} else {
+		add(n, en.Size)
+	}
+	ctx, cancel := context.WithTimeout(e.ctx, 2*time.Minute)
+	defer cancel()
+	var wg sync.WaitGroup
+	for _, rg := range ranges {
+		wg.Add(1)
+		go func(off, l int64) {
+			defer wg.Done()
+			buf := make([]byte, l)
+			r.ReadAtCtx(ctx, nntp.Prefetch, buf, off) // errors surface on the real read
+		}(rg[0], rg[1])
+	}
+	wg.Wait()
 }
 
 // ErrUnavailable: the import-time availability sample proved articles of

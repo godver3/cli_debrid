@@ -416,6 +416,21 @@ SETTINGS_SCHEMA = {
             "description": "Built-in mount only. Max connections per file: downloads running at once for one playing file (0 = no limit).",
             "default": 15
         },
+        "precache_mb": {
+            "type": "integer",
+            "description": "Built-in mount only. Pre-cache on open: MB of a file's start and end fetched the moment a player opens it, so the first bytes are ready sooner (0 = off).",
+            "default": 2
+        },
+        "warm_connections": {
+            "type": "integer",
+            "description": "Built-in mount only. Warm connections per server: kept open and logged in ahead of time so playback doesn't wait for a new connection (backup servers excluded; 0 = off).",
+            "default": 2
+        },
+        "playback_reserve_percent": {
+            "type": "integer",
+            "description": "Built-in mount only. Playback connection reserve: % of each server's connections that only playback may use; read-ahead, imports and health checks never take them (at least 1 when set; 0 = off).",
+            "default": 10
+        },
         "buffer_memory_mb": {
             "type": "integer",
             "description": "Built-in mount only. Buffer memory: RAM in MB for downloaded articles across all open files (the disk cache holds the rest).",

@@ -70,6 +70,10 @@ var ErrLeftoverOnly = errors.New("job: only leftovers are streamable, main conte
 // (provider unreachable, timeouts): trying again later may work.
 var ErrInconclusive = errors.New("job: import inconclusive")
 
+// ErrBadMediaHeader: a media file rebuilt from an archive doesn't start
+// with its container's header (archive volumes out of order).
+var ErrBadMediaHeader = errors.New("job: media file does not start with a valid container header (archive volumes likely out of order)")
+
 // ErrNothingStreamable means no file could be served at all.
 var ErrNothingStreamable = errors.New("job: nothing streamable")
 
@@ -248,6 +252,34 @@ func Build(ctx context.Context, f stream.Fetcher, cache *stream.Cache, n *nzb.NZ
 		addSet(setLabel(sevenZ), sevenZ, set, err)
 	}
 
+	// Media files rebuilt from archives must start with their container's
+	// header: obfuscated volumes put in the wrong order still "parse" but
+	// yield a file starting mid-stream that players can't open. A wrong
+	// header is proof; a read error just skips the check.
+	if len(res.Sources) > 0 {
+		byIdx := map[int]*posted{}
+		for _, p := range todo {
+			byIdx[p.idx] = p
+		}
+		fs := &Files{}
+		for _, s := range res.Sources {
+			fs.sources = append(fs.sources, byIdx[s.NZBIndex].sf)
+		}
+		kept := res.Entries[:0]
+		for _, e := range res.Entries {
+			if e.FromArchive != "" && e.Size >= mediaHeaderLen {
+				head := make([]byte, mediaHeaderLen)
+				if _, err := fs.Entry(e).ReadAtCtx(ctx, nntp.Live, head, 0); err == nil && !mediaHeaderValid(e.Name, head) {
+					res.Failures = append(res.Failures, Failure{Name: e.Name, Size: e.Size,
+						Error: fmt.Sprintf("%v (starts %x)", ErrBadMediaHeader, head)})
+					failedArchive = max(failedArchive, e.Size)
+					continue
+				}
+			}
+			kept = append(kept, e)
+		}
+		res.Entries = kept
+	}
 	sort.SliceStable(res.Entries, func(i, j int) bool { return res.Entries[i].Size > res.Entries[j].Size })
 	// Proof (articles missing everywhere, bad archives) is final; a probe
 	// that failed for network reasons only means "not yet". Even with other

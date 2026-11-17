@@ -167,3 +167,78 @@ func TestLiveOvertakesQueuedPrefetch(t *testing.T) {
 		t.Fatalf("BODY order %v: the live read must be served right after the busy connection frees", order)
 	}
 }
+
+// With 3 connections and 1 reserved, prefetch work holds at most 2: a live
+// read gets the third straight away instead of queueing behind it.
+func TestPlaybackReserve(t *testing.T) {
+	var arts []nntptest.Article
+	for _, id := range []string{"p1", "p2", "p3", "p4", "live"} {
+		arts = append(arts, nntptest.Post(id, id, awkward(100), 100)...)
+	}
+	s := nntptest.Start(t, arts...)
+	s.SetDelay(300 * time.Millisecond)
+	p := provider(s, "a", 3)
+	p.Reserve = 1
+	c, _ := NewClient([]Provider{p})
+	defer c.Close()
+	var wg sync.WaitGroup
+	for _, id := range []string{"p1", "p2", "p3", "p4"} {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			c.Body(context.Background(), Prefetch, id+".1@test")
+		}(id)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if pools, _, _, _ := c.Stats(); pools[0].Open-pools[0].Idle != 2 || pools[0].Reserve != 1 {
+		t.Fatalf("prefetch should hold exactly 2 of 3 connections: %+v", pools[0])
+	}
+	start := time.Now()
+	if _, _, err := c.Body(context.Background(), Live, "live.1@test"); err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(start); took > 450*time.Millisecond {
+		t.Fatalf("live read waited %v: it should use the reserved connection at once", took)
+	}
+	wg.Wait() // the queued prefetches still all complete
+	pools, _, _, _ := c.Stats()
+	if pools[0].Articles != 5 || pools[0].Bytes != 500 || pools[0].LatencyMs <= 0 {
+		t.Fatalf("counters: %+v", pools[0])
+	}
+}
+
+func TestReserveNeverStarvesASingleConnection(t *testing.T) {
+	s := nntptest.Start(t, nntptest.Post("x", "x", awkward(100), 100)...)
+	p := provider(s, "a", 1)
+	p.Reserve = 5 // clamped to MaxConns-1 = 0
+	c, _ := NewClient([]Provider{p})
+	defer c.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, _, err := c.Body(ctx, Prefetch, "x.1@test"); err != nil {
+		t.Fatalf("prefetch on a 1-connection provider: %v", err)
+	}
+}
+
+func TestWarmKeepsMinIdleOpen(t *testing.T) {
+	s := nntptest.Start(t, nntptest.Post("x", "x", awkward(100), 100)...)
+	p := provider(s, "a", 4)
+	p.MinIdle = 2
+	c, _ := NewClient([]Provider{p})
+	defer c.Close()
+	c.Warm(context.Background())
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if pools, _, _, _ := c.Stats(); pools[0].Idle == 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	c.CloseIdle(time.Nanosecond) // the idle reaper keeps the warm floor
+	if pools, _, _, _ := c.Stats(); pools[0].Idle != 2 || pools[0].Open != 2 {
+		t.Fatalf("warm connections: %+v", pools[0])
+	}
+	if pools, _, _, _ := c.Stats(); pools[0].Articles != 0 {
+		t.Fatal("warming must not fetch anything")
+	}
+}

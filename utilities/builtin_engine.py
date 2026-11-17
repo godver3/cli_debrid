@@ -102,6 +102,13 @@ def servers(bm: dict) -> list:
     return out
 
 
+def _int(v, default: int) -> int:
+    try:
+        return default if v in (None, '') else int(v)
+    except (TypeError, ValueError):
+        return default
+
+
 def build_config(settings: dict) -> dict:
     """The engine config for these settings (token must already be set)."""
     bm = settings.get('Built-in Mount') or {}
@@ -109,6 +116,11 @@ def build_config(settings: dict) -> dict:
         providers = servers(bm)
     except ValueError:
         providers = []  # problems() reports it; sync() never gets here with it
+    warm = _int(bm.get('warm_connections'), 2)
+    reserve_pct = _int(bm.get('playback_reserve_percent'), 10)
+    for p in providers:
+        p['min_idle'] = 0 if p['backup'] else min(max(warm, 0), p['max_conns'])
+        p['reserve'] = 0 if reserve_pct <= 0 or p['max_conns'] < 2 else max(1, round(p['max_conns'] * reserve_pct / 100))
     cache_gb = int(bm.get('cache_size_gb') or 0)
 
     def num(key, default):
@@ -139,6 +151,7 @@ def build_config(settings: dict) -> dict:
         'listen': f"127.0.0.1:{int(bm.get('api_port') or 8283)}",
         'token': resolve_token(settings),
         'read_ahead_mb': max(1, num('read_ahead_mb', 16)),
+        'precache_mb': max(0, num('precache_mb', 2)),
         'max_conns_per_file': num('max_connections_per_file', 15),
         'parallel': max(1, num('processing_connections', 8)),
         'import_timeout_seconds': num('processing_timeout_minutes', 5) * 60,

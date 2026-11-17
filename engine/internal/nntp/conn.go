@@ -32,6 +32,13 @@ type Provider struct {
 	// reading a body (default 30). Timeout overrides it (tests).
 	TimeoutSeconds int           `json:"timeout_seconds"`
 	Timeout        time.Duration `json:"-"`
+	// Reserve keeps this many connections for live (playback) reads:
+	// prefetch, imports' background work and health checks never take the
+	// last Reserve connections. Clamped to MaxConns-1.
+	Reserve int `json:"reserve"`
+	// MinIdle connections are dialled ahead of time and kept open, so the
+	// first read of a session skips the TCP/TLS/AUTH handshake.
+	MinIdle int `json:"min_idle"`
 }
 
 func (p Provider) addr() string { return net.JoinHostPort(p.Host, strconv.Itoa(p.Port)) }
@@ -62,6 +69,9 @@ type conn struct {
 	r        *bufio.Reader
 	provider Provider
 	lastUsed time.Time
+	// lastBytes is the decoded size of the last BODY (0 after STAT), for
+	// per-provider byte counts.
+	lastBytes int
 }
 
 func dial(ctx context.Context, p Provider) (*conn, error) {
@@ -163,6 +173,7 @@ func formatID(id string) string {
 // positioned after the NNTP terminator and can be reused. Any error other
 // than a clean status-code answer leaves the connection unusable.
 func (c *conn) body(id string) ([]byte, Meta, error) {
+	c.lastBytes = 0
 	if err := c.send("BODY " + formatID(id)); err != nil {
 		return nil, Meta{}, err
 	}
@@ -184,6 +195,7 @@ func (c *conn) body(id string) ([]byte, Meta, error) {
 	}
 	m := dec.Meta
 	c.lastUsed = time.Now()
+	c.lastBytes = out.Len()
 	return out.Bytes(), Meta{
 		FileName: m.FileName, FileSize: m.FileSize, Part: m.PartNumber,
 		Total: m.TotalParts, Offset: m.Offset, PartSize: m.PartSize,
@@ -192,6 +204,7 @@ func (c *conn) body(id string) ([]byte, Meta, error) {
 
 // stat asks whether an article exists without downloading it.
 func (c *conn) stat(id string) (bool, error) {
+	c.lastBytes = 0
 	if err := c.send("STAT " + formatID(id)); err != nil {
 		return false, err
 	}

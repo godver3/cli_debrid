@@ -223,6 +223,7 @@ func (f *file) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 	// Keep the kernel page cache between opens: content never changes.
 	h := &handle{r: files.Entry(f.entry), name: f.entry.Name, jobID: f.jobID, e: f.e, log: f.log}
 	h.stream = f.e.OpenStream(f.jobID, f.entry.Name, f.entry.Size)
+	go f.e.PreCache(f.jobID, f.entry)
 	return h, fuse.FOPEN_KEEP_CACHE, 0
 }
 
