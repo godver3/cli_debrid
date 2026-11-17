@@ -49,11 +49,26 @@ fi
 
 if [ $PUID != 0 ] || [ $PGID != 0 ]; then
     echo "Starting supervisord as appuser"
-    gosu appuser supervisord -n -c /etc/supervisor/conf.d/supervisord.conf & 
+    gosu appuser supervisord -n -c /etc/supervisor/conf.d/supervisord.conf &
 else
     echo "Starting supervisord as root"
-    supervisord -n -c /etc/supervisor/conf.d/supervisord.conf & 
+    supervisord -n -c /etc/supervisor/conf.d/supervisord.conf &
 fi
+SUPERVISORD_PID=$!
+
+# docker stop signals PID 1 (this script): pass it on to supervisord so every
+# program shuts down cleanly (the built-in mount unmounts instead of leaving
+# a dead mount behind) rather than being SIGKILLed when the timeout ends.
+shutdown() {
+    echo "Stopping supervisord..."
+    kill -TERM "$SUPERVISORD_PID" 2>/dev/null
+    wait "$SUPERVISORD_PID"
+    kill "$TAIL_PID" 2>/dev/null
+    exit 0
+}
+trap shutdown TERM INT
 
 sleep 2
-exec tail -F /user/logs/debug.log
+tail -F /user/logs/debug.log &
+TAIL_PID=$!
+wait "$SUPERVISORD_PID"

@@ -24,6 +24,8 @@ services:
     #   - apparmor:unconfined
     environment:
       - TZ=America/Edmonton
+    # Time to shut down cleanly (the built-in mount unmounts) before Docker kills it.
+    stop_grace_period: 40s
     restart: unless-stopped
     tty: true
     stdin_open: true
