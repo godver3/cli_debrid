@@ -264,6 +264,56 @@ class EngineManagerTests(unittest.TestCase):
         self.assertNotIn(('start', 'mount_engine'), self.calls)
 
 
+class WindowsProcessTests(unittest.TestCase):
+    """Windows has no supervisord: the engine is a detached process with a
+    pid file, stopped through its /shutdown API."""
+
+    def setUp(self):
+        from utilities import builtin_engine
+        self.be = builtin_engine
+        self.tmp = self.enterContext(__import__('tempfile').TemporaryDirectory())
+        self.enterContext(mock.patch.dict(os.environ, {'USER_CONFIG': self.tmp, 'USER_LOGS': self.tmp,
+                                                       'USER_DB_CONTENT': self.tmp}))
+        self.enterContext(mock.patch.object(builtin_engine, 'IS_WINDOWS', True))
+
+    def test_start_detached_and_state_from_pid(self):
+        popen = mock.Mock(return_value=mock.Mock(pid=4242))
+        with mock.patch.object(self.be.subprocess, 'Popen', popen), mock.patch.object(self.be, '_proc', return_value=None):
+            self.assertEqual(self.be.control('start'), 'started')
+        args, kw = popen.call_args
+        self.assertEqual(args[0][1:], ['--config', self.be.config_path()])
+        self.assertIs(kw['stdin'], self.be.subprocess.DEVNULL)
+        self.assertEqual(open(os.path.join(self.tmp, 'engine.pid')).read(), '4242')
+        self.assertTrue(os.path.exists(os.path.join(self.tmp, 'mount_engine.log')))
+        with mock.patch.object(self.be, '_proc', return_value=object()):
+            self.assertEqual(self.be.state(), 'RUNNING')
+            self.assertEqual(self.be.control('start'), 'already running')
+        with mock.patch.object(self.be, '_proc', return_value=None):
+            self.assertEqual(self.be.state(), 'STOPPED')
+
+    def test_stop_asks_the_engine_then_waits(self):
+        with open(self.be.config_path(), 'w') as f:
+            json.dump({'listen': '127.0.0.1:8283', 'token': 'tok'}, f)
+        proc = mock.Mock()
+        opened = []
+        with mock.patch.object(self.be, '_proc', return_value=proc), \
+                mock.patch('urllib.request.urlopen', side_effect=lambda r, timeout: opened.append(r) or mock.Mock()):
+            self.assertEqual(self.be.control('stop'), 'stopped')
+        self.assertEqual((opened[0].full_url, opened[0].get_method(), opened[0].headers['Authorization']),
+                         ('http://127.0.0.1:8283/shutdown', 'POST', 'Bearer tok'))
+        proc.wait.assert_called_once_with(timeout=20)
+        proc.terminate.assert_not_called()
+
+    def test_windows_paths_and_problems(self):
+        self.assertEqual(self.be.mount_path({'mount_path': '/mnt/clid'}), 'M:', 'Linux default becomes a drive')
+        self.assertEqual(self.be.mount_path({'mount_path': 'C:\\clid\\'}), 'C:\\clid')
+        with mock.patch.object(self.be, '_WINFSP_DLLS', ['/nonexistent/winfsp-x64.dll']), \
+                mock.patch.object(self.be, 'ENGINE_BIN', '/nonexistent/clid-engine.exe'):
+            probs = ' '.join(self.be.problems({'Built-in Mount': {'servers': '[{"host": "h"}]'}}))
+        self.assertIn('WinFsp', probs)
+        self.assertNotIn('/dev/fuse', probs)
+
+
 class FactoryTests(unittest.TestCase):
     def test_builtin_routing_and_configured(self):
         cfg = {'enabled': True, 'provider': 'builtin', 'url': ''}

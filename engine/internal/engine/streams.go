@@ -110,3 +110,13 @@ func (e *Engine) Streams() []Stream {
 	sort.Slice(out, func(i, j int) bool { return out[i].LastRead.After(out[j].LastRead) })
 	return out
 }
+
+// RequestShutdown asks the process to exit cleanly (unmounting first). The
+// API's POST /shutdown uses it: on Windows the engine runs detached, with no
+// console to send a signal to.
+func (e *Engine) RequestShutdown() {
+	e.stopOnce.Do(func() { close(e.stopReq) })
+}
+
+// ShutdownRequested is closed by RequestShutdown.
+func (e *Engine) ShutdownRequested() <-chan struct{} { return e.stopReq }

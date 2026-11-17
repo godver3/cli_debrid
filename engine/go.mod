@@ -19,6 +19,7 @@ require (
 	github.com/pierrec/lz4/v4 v4.1.22 // indirect
 	github.com/spf13/afero v1.11.0 // indirect
 	github.com/ulikunitz/xz v0.5.15 // indirect
+	github.com/winfsp/cgofuse v1.6.0 // indirect
 	go4.org v0.0.0-20200411211856-f5505b9728dd // indirect
 	golang.org/x/net v0.43.0 // indirect
 	golang.org/x/sync v0.16.0 // indirect

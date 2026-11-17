@@ -15,6 +15,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -31,6 +33,28 @@ type fileConfig struct {
 	GID        uint32 `json:"gid"`
 	Umask      uint32 `json:"umask"`
 	LogLevel   string `json:"log_level"`
+}
+
+// prepareMountPath: Linux mounts over an existing folder; WinFsp wants a
+// free drive letter ("M:") or a folder that does not exist yet (its
+// parent must).
+func prepareMountPath(p string) error {
+	if runtime.GOOS != "windows" {
+		return os.MkdirAll(p, 0o755)
+	}
+	if len(p) == 2 && p[1] == ':' {
+		return nil
+	}
+	if fi, err := os.Stat(p); err == nil {
+		if !fi.IsDir() {
+			return fmt.Errorf("mount path %s is a file", p)
+		}
+		if ents, _ := os.ReadDir(p); len(ents) > 0 {
+			return fmt.Errorf("mount path %s must be empty", p)
+		}
+		_ = os.Remove(p) // an empty leftover folder from a previous run
+	}
+	return os.MkdirAll(filepath.Dir(p), 0o755)
 }
 
 func main() {
@@ -78,31 +102,27 @@ func run(cfgPath string, noMount bool) error {
 		if cfg.MountPath == "" {
 			return errors.New("mount_path is required (or run with --no-mount)")
 		}
-		if err := os.MkdirAll(cfg.MountPath, 0o755); err != nil {
+		if err := prepareMountPath(cfg.MountPath); err != nil {
 			return err
 		}
-		mount.ClearStale(cfg.MountPath, log)
-		fsrv, err := mount.Mount(e, cfg.MountPath, mount.Options{AllowOther: cfg.AllowOther, UID: cfg.UID, GID: cfg.GID, Umask: cfg.Umask}, log)
+		m, err := mount.Start(e, cfg.MountPath, mount.Options{AllowOther: cfg.AllowOther, UID: cfg.UID, GID: cfg.GID, Umask: cfg.Umask}, log)
 		if err != nil {
 			return fmt.Errorf("mount %s: %w", cfg.MountPath, err)
 		}
 		log.Info("mounted", "path", cfg.MountPath)
 		defer func() {
-			if err := fsrv.Unmount(); err != nil {
-				// Busy (Plex has a file open): detach it anyway, or the
-				// next start stacks a new mount on a dead one.
-				if lerr := mount.LazyUnmount(cfg.MountPath); lerr != nil {
-					log.Warn("unmount", "err", err, "lazy", lerr)
-				} else {
-					log.Info("unmounted lazily (files were still open)")
-				}
+			if err := m.Unmount(); err != nil {
+				log.Warn("unmount", "err", err)
 			}
 		}()
 	}
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	<-sig
+	select {
+	case <-sig:
+	case <-e.ShutdownRequested():
+	}
 	log.Info("shutting down")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

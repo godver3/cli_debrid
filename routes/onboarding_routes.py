@@ -125,7 +125,8 @@ def _save_required_settings(form):
             # under <mount_path>/__all__, which is the original-files path.
             usenet['url'] = ''
             usenet['api_token'] = ''
-            mount = (config.get('Built-in Mount', {}).get('mount_path') or '/mnt/clid').rstrip('/')
+            from utilities.builtin_engine import mount_path as _builtin_mount_path
+            mount = _builtin_mount_path(config.get('Built-in Mount', {}) or {})
             fm = config.setdefault('File Management', {})
             if not (fm.get('original_files_path') or '').strip():
                 fm['original_files_path'] = f'{mount}/__all__'

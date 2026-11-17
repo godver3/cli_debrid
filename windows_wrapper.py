@@ -669,6 +669,16 @@ def run_main():
     # Set up environment first to ensure we can read settings and apply args
     setup_environment()
 
+    # Optional built-in mount: start the engine (a detached process that
+    # keeps running across cli_debrid restarts) when it is the usenet backend.
+    def _sync_builtin_engine():
+        try:
+            from utilities import builtin_engine
+            logging.info(f"Built-in mount engine: {builtin_engine.sync()}")
+        except Exception as exc:
+            logging.warning(f"Built-in mount engine sync failed: {exc}")
+    threading.Thread(target=_sync_builtin_engine, name='builtin-engine-sync', daemon=True).start()
+
     # Override Phalanx port env var if provided via command line
     if args.phalanx_port:
         os.environ['CLI_DEBRID_PHALANX_PORT'] = str(args.phalanx_port)

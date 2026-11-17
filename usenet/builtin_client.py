@@ -71,7 +71,11 @@ class BuiltinClient(UnsupportedFeaturesMixin):
         self.enabled = bool(up.get('enabled')) and (up.get('provider') or '').strip().lower() == 'builtin'
         self.base_url = f"http://127.0.0.1:{int(cfg.get('api_port') or 8283)}"
         self._configured_token = cfg.get('api_token') or ''
-        self.mount_path = (cfg.get('mount_path') or '/mnt/clid').rstrip('/')
+        try:  # same rule as the engine config (Windows: drive M: by default)
+            from utilities.builtin_engine import mount_path
+            self.mount_path = mount_path(cfg)
+        except Exception:
+            self.mount_path = (cfg.get('mount_path') or '/mnt/clid').rstrip('/')
         self.download_folder = up.get('download_folder', '')
         self.last_missing_segments = False
         self.last_failed_job_id = ''

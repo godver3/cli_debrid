@@ -1,3 +1,5 @@
+//go:build linux
+
 // Package mount serves the engine's folder tree as a read-only FUSE
 // filesystem:
 //
@@ -10,7 +12,6 @@ package mount
 
 import (
 	"context"
-	"errors"
 	"hash/fnv"
 	"log/slog"
 	"syscall"
@@ -21,17 +22,9 @@ import (
 
 	"github.com/godver3/cli_debrid/engine/internal/engine"
 	"github.com/godver3/cli_debrid/engine/internal/job"
-	"github.com/godver3/cli_debrid/engine/internal/nntp"
-	"github.com/godver3/cli_debrid/engine/internal/stream"
 )
 
 // Options for Mount.
-type Options struct {
-	AllowOther bool // let other users (Plex) read the mount; needs user_allow_other
-	UID, GID   uint32
-	Umask      uint32 // permission bits removed from the read-only modes (e.g. 0o027)
-	Debug      bool
-}
 
 // dirTTL keeps listings fresh enough that a finished import appears
 // within a second; file attributes never change, so they are cached long.
@@ -215,16 +208,12 @@ func (f *file) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 	if flags&(syscall.O_WRONLY|syscall.O_RDWR) != 0 {
 		return nil, 0, syscall.EROFS
 	}
-	files, err := f.e.Files(f.jobID)
+	of, err := openEntry(f.e, f.log, f.jobID, f.entry)
 	if err != nil {
-		f.log.Warn("open failed", "job", f.jobID, "file", f.entry.Name, "err", err)
 		return nil, 0, syscall.EIO
 	}
 	// Keep the kernel page cache between opens: content never changes.
-	h := &handle{r: files.Entry(f.entry), name: f.entry.Name, jobID: f.jobID, e: f.e, log: f.log}
-	h.stream = f.e.OpenStream(f.jobID, f.entry.Name, f.entry.Size)
-	go f.e.PreCache(f.jobID, f.entry)
-	return h, fuse.FOPEN_KEEP_CACHE, 0
+	return &handle{of: of}, fuse.FOPEN_KEEP_CACHE, 0
 }
 
 func (f *file) Read(ctx context.Context, fh fs.FileHandle, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
@@ -237,40 +226,19 @@ func (f *file) Read(ctx context.Context, fh fs.FileHandle, dest []byte, off int6
 
 var _ = (fs.FileReleaser)((*handle)(nil))
 
+// handle adapts an openFile to go-fuse.
+type handle struct{ of *openFile }
+
 // Release ends the stream record when the file is closed.
 func (h *handle) Release(ctx context.Context) syscall.Errno {
-	h.e.CloseStream(h.stream)
+	h.of.close()
 	return 0
 }
 
-type handle struct {
-	stream uint64
-	r      *job.EntryReader
-	name   string
-	jobID  string
-	e      *engine.Engine
-	log    *slog.Logger
-}
-
 func (h *handle) read(ctx context.Context, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
-	if off >= h.r.Size() {
-		return fuse.ReadResultData(nil), 0
-	}
-	n, err := h.r.ReadAtCtx(ctx, nntp.Live, dest, off)
-	if err != nil && n < len(dest) && off+int64(n) < h.r.Size() {
-		h.log.Warn("read failed", "file", h.name, "offset", off, "len", len(dest), "err", err,
-			"missing", nntp.IsNotFound(err))
-		if nntp.IsNotFound(err) {
-			// Proof the file can't play: hand it to cli_debrid's repair.
-			seg := ""
-			var se *stream.SegmentError
-			if errors.As(err, &se) {
-				seg = se.ID
-			}
-			h.e.MarkBroken(h.jobID, h.name, "article missing on every provider during playback", seg)
-		}
+	n, err := h.of.readAt(ctx, dest, off)
+	if err != nil {
 		return nil, syscall.EIO
 	}
-	h.e.StreamRead(h.stream, off, n)
 	return fuse.ReadResultData(dest[:n]), 0
 }

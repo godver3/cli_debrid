@@ -18,10 +18,28 @@ import json
 import os
 import secrets
 import subprocess
+import sys
 import tempfile
+import time
 
-ENGINE_BIN = os.environ.get('CLID_ENGINE_BIN', '/app/bin/clid-engine')
+IS_WINDOWS = sys.platform == 'win32'
 PROGRAM = 'mount_engine'
+
+
+def _default_bin() -> str:
+    if not IS_WINDOWS:
+        return '/app/bin/clid-engine'
+    # Windows build: shipped next to cli_debrid.exe; from source: engine/.
+    here = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else \
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'engine')
+    return os.path.join(here, 'clid-engine.exe')
+
+
+ENGINE_BIN = os.environ.get('CLID_ENGINE_BIN') or _default_bin()
+
+# WinFsp (https://winfsp.dev) provides FUSE on Windows.
+_WINFSP_DLLS = [os.path.join(os.environ.get(v, ''), 'WinFsp', 'bin', 'winfsp-x64.dll')
+                for v in ('ProgramFiles(x86)', 'ProgramFiles') if os.environ.get(v)]
 
 
 def _config_dir() -> str:
@@ -50,9 +68,12 @@ def problems(settings: dict = None) -> list:
     """Reasons the engine can't run here (empty when it can)."""
     s = settings if settings is not None else _load_settings()
     out = []
-    if not os.access(ENGINE_BIN, os.X_OK):
-        out.append(f'engine binary missing ({ENGINE_BIN}); this image has no built-in mount')
-    if not os.path.exists('/dev/fuse'):
+    if not (os.path.isfile(ENGINE_BIN) if IS_WINDOWS else os.access(ENGINE_BIN, os.X_OK)):
+        out.append(f'engine binary missing ({ENGINE_BIN}); this build has no built-in mount')
+    if IS_WINDOWS:
+        if not any(os.path.exists(p) for p in _WINFSP_DLLS):
+            out.append('WinFsp is not installed: get it from https://winfsp.dev (the built-in mount uses it on Windows)')
+    elif not os.path.exists('/dev/fuse'):
         out.append('/dev/fuse is not available: add `devices: [/dev/fuse]` and `cap_add: [SYS_ADMIN]` to the container')
     bm = s.get('Built-in Mount') or {}
     try:
@@ -102,6 +123,15 @@ def servers(bm: dict) -> list:
     return out
 
 
+def mount_path(bm: dict) -> str:
+    """The configured mount path; on Windows a Linux-style path (the default
+    /mnt/clid) becomes drive M:."""
+    p = (bm.get('mount_path') or '/mnt/clid').strip()
+    if IS_WINDOWS and p.startswith('/'):
+        return 'M:'
+    return p.rstrip('/\\') if len(p) > 3 else p
+
+
 def _int(v, default: int) -> int:
     try:
         return default if v in (None, '') else int(v)
@@ -147,7 +177,7 @@ def build_config(settings: dict) -> dict:
         'mem_cache_bytes': max(64, num('buffer_memory_mb', 512)) << 20,
         'cache_expiry_seconds': num('cache_expiry_hours', 0) * 3600,
         'cache_cleanup_seconds': max(1, num('cache_cleanup_minutes', 1)) * 60,
-        'mount_path': (bm.get('mount_path') or '/mnt/clid').rstrip('/'),
+        'mount_path': mount_path(bm),
         'listen': f"127.0.0.1:{int(bm.get('api_port') or 8283)}",
         'token': resolve_token(settings),
         'read_ahead_mb': max(1, num('read_ahead_mb', 16)),
@@ -219,11 +249,97 @@ def _supervisorctl(*args) -> str:
 
 def state() -> str:
     """RUNNING, STOPPED, STARTING, FATAL, ... or UNKNOWN."""
+    if IS_WINDOWS:
+        return _proc_state()
     out = _supervisorctl('status', PROGRAM)
     for word in ('RUNNING', 'STARTING', 'STOPPED', 'FATAL', 'BACKOFF', 'EXITED'):
         if word in out:
             return word
     return 'UNKNOWN'
+
+
+def control(action: str) -> str:
+    """start, stop or restart the engine process (supervisord in Docker; a
+    detached process on Windows, which keeps running across cli_debrid
+    restarts just like the supervised one)."""
+    if IS_WINDOWS:
+        return {'start': _proc_start, 'stop': _proc_stop, 'restart': _proc_restart}[action]()
+    return _supervisorctl(action, PROGRAM)
+
+
+# ---- Windows: detached process -------------------------------------------
+
+def _pid_path() -> str:
+    return os.path.join(_config_dir(), 'engine.pid')
+
+
+def _proc():
+    """The running engine process, or None."""
+    try:
+        import psutil
+        with open(_pid_path()) as f:
+            p = psutil.Process(int(f.read().strip()))
+        if p.is_running() and 'clid-engine' in (p.name() or '').lower():
+            return p
+    except Exception:
+        pass
+    return None
+
+
+def _proc_state() -> str:
+    return 'RUNNING' if _proc() is not None else 'STOPPED'
+
+
+def _log_path() -> str:
+    return os.path.join(os.environ.get('USER_LOGS', '/user/logs'), 'mount_engine.log')
+
+
+def _proc_start() -> str:
+    if _proc() is not None:
+        return 'already running'
+    log = _log_path()
+    os.makedirs(os.path.dirname(log), exist_ok=True)
+    try:
+        if os.path.getsize(log) > 50 << 20:
+            os.replace(log, log + '.1')
+    except OSError:
+        pass
+    flags = 0
+    for name in ('DETACHED_PROCESS', 'CREATE_NEW_PROCESS_GROUP', 'CREATE_NO_WINDOW'):
+        flags |= getattr(subprocess, name, 0)
+    with open(log, 'ab') as out:
+        p = subprocess.Popen([ENGINE_BIN, '--config', config_path()], stdout=out, stderr=subprocess.STDOUT,
+                             stdin=subprocess.DEVNULL, creationflags=flags, close_fds=True)
+    with open(_pid_path(), 'w') as f:
+        f.write(str(p.pid))
+    return 'started'
+
+
+def _proc_stop() -> str:
+    p = _proc()
+    if p is None:
+        return 'not running'
+    try:  # graceful: the engine unmounts, then exits
+        import urllib.request
+        with open(config_path()) as f:
+            cfg = json.load(f)
+        req = urllib.request.Request(f"http://{cfg['listen']}/shutdown", method='POST',
+                                     headers={'Authorization': f"Bearer {cfg['token']}"})
+        urllib.request.urlopen(req, timeout=5).read()
+        p.wait(timeout=20)
+    except Exception:
+        try:
+            p.terminate()
+            p.wait(timeout=5)
+        except Exception:
+            pass
+    return 'stopped'
+
+
+def _proc_restart() -> str:
+    _proc_stop()
+    time.sleep(1)
+    return _proc_start()
 
 
 def _stop_flag() -> str:
@@ -241,7 +357,7 @@ def user_stop() -> str:
     with open(_stop_flag(), 'w') as f:
         f.write('stopped from the cli_debrid UI\n')
     if state() in ('RUNNING', 'STARTING', 'BACKOFF'):
-        _supervisorctl('stop', PROGRAM)
+        control('stop')
     return 'stopped'
 
 
@@ -262,24 +378,24 @@ def sync(settings: dict = None) -> str:
     s = settings if settings is not None else _load_settings()
     if not selected(s):
         if state() in ('RUNNING', 'STARTING', 'BACKOFF'):
-            _supervisorctl('stop', PROGRAM)
+            control('stop')
             return 'stopped'
         return 'not selected'
     issues = problems(s)
     if issues:
         if state() in ('RUNNING', 'STARTING', 'BACKOFF'):
-            _supervisorctl('stop', PROGRAM)
+            control('stop')
         return 'cannot start: ' + '; '.join(issues)
     changed = write_config(build_config(s))
     if stopped_by_user():
         if state() in ('RUNNING', 'STARTING', 'BACKOFF'):
-            _supervisorctl('stop', PROGRAM)
+            control('stop')
         return 'stopped by user'
     st = state()
     if st not in ('RUNNING', 'STARTING'):
-        _supervisorctl('start', PROGRAM)
+        control('start')
         return 'started'
     if changed:
-        _supervisorctl('restart', PROGRAM)
+        control('restart')
         return 'restarted'
     return 'running'

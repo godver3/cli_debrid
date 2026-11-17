@@ -152,6 +152,8 @@ type Engine struct {
 
 	healthSem chan struct{}
 	streams   streamTable
+	stopReq   chan struct{}
+	stopOnce  sync.Once
 	runMu     sync.Mutex
 	run       *HealthRun
 	runCancel context.CancelFunc
@@ -182,7 +184,7 @@ func New(cfg Config, log *slog.Logger) (*Engine, error) {
 	e := &Engine{cfg: cfg, log: log, Client: client, Store: st,
 		Cache: stream.NewCache(cfg.MemCacheBytes),
 		queue: make(chan string, 4096), open: map[string]*job.Files{},
-		healthSem: make(chan struct{}, cfg.HealthWorkers)}
+		healthSem: make(chan struct{}, cfg.HealthWorkers), stopReq: make(chan struct{})}
 	if cfg.CacheDir != "" && cfg.CacheBytes > 0 {
 		if e.Disk, err = diskcache.Open(cfg.CacheDir, cfg.CacheBytes); err != nil {
 			return nil, fmt.Errorf("engine: disk cache: %w", err)

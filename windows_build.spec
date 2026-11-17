@@ -165,7 +165,8 @@ additional_imports = [
 a = Analysis(
     ['windows_wrapper.py'],
     pathex=[base_dir],
-    binaries=[],
+    # Built-in mount engine (built by CI with GOOS=windows; optional).
+    binaries=[(os.path.join(base_dir, 'engine', 'clid-engine.exe'), '.')] if os.path.exists(os.path.join(base_dir, 'engine', 'clid-engine.exe')) else [],
     datas=datas,
     hiddenimports=[
         'database',

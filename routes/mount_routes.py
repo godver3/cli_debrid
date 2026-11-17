@@ -353,5 +353,5 @@ def restart():
     except FileNotFoundError:
         pass
     builtin_engine.write_config(builtin_engine.build_config(builtin_engine._load_settings()))
-    out = builtin_engine._supervisorctl('restart', builtin_engine.PROGRAM)
+    out = builtin_engine.control('restart')
     return jsonify({'success': 'ERROR' not in out.upper(), 'output': out.strip()})
