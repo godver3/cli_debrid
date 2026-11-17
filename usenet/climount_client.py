@@ -1014,7 +1014,8 @@ def _map_state(raw: str) -> str:
     return 'unknown'
 
 # ---- Provider-switch factory (nzbdav-compat patch 2026-05-26) ----
-# Delegates to nzbdav_client when 'Usenet Provider.provider' == 'nzbdav'.
+# Delegates to nzbdav_client when 'Usenet Provider.provider' is a SAB-style
+# provider (usenet.SAB_STYLE_PROVIDERS: nzbdav, zurg).
 # The CliMountClient class above is unchanged.
 
 _client_instance = None
@@ -1031,7 +1032,8 @@ def _provider_key() -> str:
 
 def get_climount_client():
     global _client_instance
-    if _provider_key() == 'nzbdav':
+    from usenet import SAB_STYLE_PROVIDERS
+    if _provider_key() in SAB_STYLE_PROVIDERS:
         from .nzbdav_client import get_nzbdav_client
         return get_nzbdav_client()
     if _client_instance is None:
@@ -1090,6 +1092,7 @@ def is_nzb_job_alive(job_hash: str) -> bool:
 def reset_climount_client() -> None:
     global _client_instance
     _client_instance = None
-    if _provider_key() == 'nzbdav':
+    from usenet import SAB_STYLE_PROVIDERS
+    if _provider_key() in SAB_STYLE_PROVIDERS:
         from .nzbdav_client import reset_nzbdav_client
         reset_nzbdav_client()

@@ -48,6 +48,12 @@ if TYPE_CHECKING:
 # Both classes implement the same duck-typed interface (see module docstring).
 UsenetClient = Union['CliMountClient', 'NzbdavClient']
 
+# Providers served by NzbdavClient (SABnzbd-style API). Every factory and
+# reset path must use this one tuple; climount_client.get_climount_client()
+# delegates on it too, so a provider added here can't silently fall back to
+# CliMountClient at the legacy call sites.
+SAB_STYLE_PROVIDERS = ('nzbdav', 'zurg')
+
 
 def _get_provider_key() -> str:
     """Read the chosen provider from settings, defaulting to 'climount'.
@@ -63,7 +69,7 @@ def _get_provider_key() -> str:
 def get_usenet_client():
     """Return the singleton client for whichever provider is configured."""
     provider = _get_provider_key()
-    if provider in ('nzbdav', 'zurg'):
+    if provider in SAB_STYLE_PROVIDERS:
         from .nzbdav_client import get_nzbdav_client
         return get_nzbdav_client()
     # default + 'climount'
@@ -89,7 +95,7 @@ def get_usenet_provider_display_name() -> str:
 def reset_usenet_client() -> None:
     """Reset the active provider's singleton (call after settings change)."""
     provider = _get_provider_key()
-    if provider in ('nzbdav', 'zurg'):
+    if provider in SAB_STYLE_PROVIDERS:
         from .nzbdav_client import reset_nzbdav_client
         reset_nzbdav_client()
     else:
@@ -109,7 +115,7 @@ def is_nzb_job_alive(job_hash: str) -> bool:
     get_job_status() round-trip for them.
     """
     provider = _get_provider_key()
-    if provider in ('nzbdav', 'zurg'):
+    if provider in SAB_STYLE_PROVIDERS:
         import logging
         from .nzbdav_client import get_nzbdav_client
         try:
