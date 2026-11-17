@@ -29,6 +29,23 @@ type Source struct {
 	NZBIndex int           `json:"nzb_index"` // index into nzb.NZB.Files
 	Name     string        `json:"name"`      // best known name
 	Layout   stream.Layout `json:"layout"`
+	// Map, when set, places the file's bytes in its articles directly
+	// (jobs migrated from cli_mount); Layout then only carries the size.
+	Map []stream.MapSeg `json:"map,omitempty"`
+}
+
+// MapIndex returns the 0-based segment of a mapped source holding off.
+func (s Source) MapIndex(off int64) int {
+	lo, hi := 0, len(s.Map)
+	for lo < hi {
+		m := (lo + hi) / 2
+		if s.Map[m].Start+s.Map[m].Len > off {
+			hi = m
+		} else {
+			lo = m + 1
+		}
+	}
+	return lo
 }
 
 // Piece is a run of bytes of one source.

@@ -12,6 +12,7 @@ password field on save means "keep the current one".
 
 import json
 import logging
+import os
 import threading
 
 from flask import Blueprint, jsonify, render_template, request
@@ -61,6 +62,15 @@ LABELS = {
 
 _sync_lock = threading.Lock()
 _last_sync = {'result': '', 'running': False}
+
+
+def mount_page_visible() -> bool:
+    """Nav shows Mount when the built-in mount is the backend or a
+    migration from cli_mount is running alongside."""
+    try:
+        return builtin_selected() or bool((get_setting('Built-in Mount') or {}).get('run_alongside'))
+    except Exception:
+        return False
 
 
 def builtin_selected() -> bool:
@@ -311,6 +321,117 @@ def job_action(job_id, action):
     return jsonify({'success': ok, **({} if ok else {'error': (body or {}).get('error', f'HTTP {code}')})}), (200 if ok else 400)
 
 
+# ---- Migrate from cli_mount -------------------------------------------------
+
+def _climount_source():
+    from usenet.climount_client import CliMountClient
+    return CliMountClient()
+
+
+@mount_bp.route('/api/migrate/status')
+@admin_required
+def migrate_status():
+    from utilities import builtin_engine, builtin_migrate as bm
+    up = get_setting('Usenet Provider') or {}
+    data_path = up.get('data_path') or ''
+    mdir = bm.meta_dir(data_path)
+    try:
+        metas = sum(1 for n in os.listdir(mdir) if n.endswith('.meta')) if os.path.isdir(mdir) else 0
+    except OSError:
+        metas = 0
+    root = bm.climount_mount_root(get_setting)
+    return jsonify({
+        'provider': (up.get('provider') or 'climount'),
+        'climount_url': up.get('url') or '',
+        'alongside': bool((get_setting('Built-in Mount') or {}).get('run_alongside')),
+        'engine_state': builtin_engine.state(),
+        'problems': builtin_engine.problems(),
+        'meta_dir': mdir, 'metas': metas,
+        'climount_root': root,
+        'climount_root_mounted': bool(root) and os.path.ismount(root),
+        'builtin_root': _engine().mount_path,
+        'pre_migration_mount_path': (get_setting('Built-in Mount') or {}).get('pre_migration_mount_path') or '',
+    })
+
+
+@mount_bp.route('/api/migrate/alongside', methods=['POST'])
+@admin_required
+def migrate_alongside():
+    on = bool((request.get_json(silent=True) or {}).get('on'))
+    set_setting(SECTION, 'run_alongside', on)
+    _sync_in_background()
+    return jsonify({'success': True, 'alongside': on})
+
+
+@mount_bp.route('/api/migrate/import', methods=['POST'])
+@admin_required
+def migrate_import():
+    from utilities import builtin_migrate as bm
+    limit = int((request.get_json(silent=True) or {}).get('limit') or 0)
+    data_path = (get_setting('Usenet Provider') or {}).get('data_path') or ''
+    job = bm.start_import(_climount_source(), _engine(), data_path, limit=limit)
+    return jsonify({'success': True, 'job': job})
+
+
+@mount_bp.route('/api/migrate/job/<job_id>')
+@admin_required
+def migrate_job(job_id):
+    from utilities import builtin_migrate as bm
+    st = bm.status(job_id)
+    return (jsonify(st), 200) if st else (jsonify({'error': 'unknown job'}), 404)
+
+
+@mount_bp.route('/api/migrate/job/<job_id>/cancel', methods=['POST'])
+@admin_required
+def migrate_cancel(job_id):
+    from utilities import builtin_migrate as bm
+    return jsonify({'success': bm.cancel(job_id)})
+
+
+@mount_bp.route('/api/migrate/compare', methods=['POST'])
+@admin_required
+def migrate_compare():
+    from utilities import builtin_migrate as bm
+    sample = max(1, min(int((request.get_json(silent=True) or {}).get('sample') or 10), 50))
+    root = bm.climount_mount_root(get_setting)
+    client = _engine()
+    if not root:
+        return jsonify({'success': False, 'error': "cli_mount's mount path isn't known (File Management → original files path)."}), 400
+    out = bm.compare(client, os.path.join(root, '__all__'), os.path.join(client.mount_path, '__all__'), sample)
+    return jsonify({'success': True, **out})
+
+
+@mount_bp.route('/api/migrate/switch', methods=['POST'])
+@admin_required
+def migrate_switch():
+    """Make the built-in mount the backend on cli_mount's mount path."""
+    from utilities import builtin_migrate as bm
+    root = bm.climount_mount_root(get_setting)
+    if not root:
+        return jsonify({'success': False, 'error': "cli_mount's mount path isn't known (File Management → original files path)."}), 400
+    if os.path.ismount(root):
+        return jsonify({'success': False, 'error': f'{root} is still mounted: stop the cli_mount container first, then switch.'}), 409
+    cur = (get_setting('Built-in Mount') or {}).get('mount_path') or '/mnt/clid'
+    if cur.rstrip('/') != root.rstrip('/'):
+        set_setting(SECTION, 'pre_migration_mount_path', cur)
+    set_setting(SECTION, 'mount_path', root)
+    set_setting(SECTION, 'run_alongside', False)
+    set_setting('Usenet Provider', 'provider', 'builtin')  # URL/token kept for switching back
+    _sync_in_background()
+    return jsonify({'success': True, 'mount_path': root})
+
+
+@mount_bp.route('/api/migrate/rollback', methods=['POST'])
+@admin_required
+def migrate_rollback():
+    """Back to cli_mount: the engine stops (unmounting cli_mount's path)."""
+    prev = (get_setting('Built-in Mount') or {}).get('pre_migration_mount_path') or '/mnt/clid'
+    set_setting('Usenet Provider', 'provider', 'climount')
+    set_setting(SECTION, 'mount_path', prev)
+    _sync_in_background()
+    return jsonify({'success': True, 'message': 'Switched back to cli_mount. Start the cli_mount container again.'})
+
+
 @mount_bp.route('/api/state')
 @admin_required
 def engine_state():
@@ -324,7 +445,7 @@ def engine_state():
 @admin_required
 def start():
     from utilities import builtin_engine
-    if not builtin_selected():
+    if not mount_page_visible():
         return jsonify({'success': False, 'error': 'The built-in mount is not the selected usenet backend.'}), 400
     result = builtin_engine.user_start()
     ok = not result.startswith('cannot start')
@@ -341,7 +462,7 @@ def stop():
 @mount_bp.route('/api/restart', methods=['POST'])
 @admin_required
 def restart():
-    if not builtin_selected():
+    if not mount_page_visible():
         return jsonify({'success': False, 'error': 'The built-in mount is not the selected usenet backend.'}), 400
     from utilities import builtin_engine
     issues = builtin_engine.problems()

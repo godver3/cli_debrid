@@ -162,12 +162,19 @@ func sample(res *job.Result, e job.Entry, opt Options) []probe {
 		if pc.Length <= 0 {
 			continue
 		}
-		l := res.Sources[pc.Source].Layout
-		if l.PartSize <= 0 {
-			continue
+		src := res.Sources[pc.Source]
+		var first, last int
+		if len(src.Map) > 0 { // mapped (migrated from cli_mount): look the segments up
+			first = src.MapIndex(pc.Offset) + 1
+			last = src.MapIndex(pc.Offset+pc.Length-1) + 1
+		} else {
+			l := src.Layout
+			if l.PartSize <= 0 {
+				continue
+			}
+			first = int(pc.Offset/l.PartSize) + 1
+			last = int((pc.Offset+pc.Length-1)/l.PartSize) + 1
 		}
-		first := int(pc.Offset/l.PartSize) + 1
-		last := int((pc.Offset+pc.Length-1)/l.PartSize) + 1
 		must = append(must, probe{pc.Source, first})
 		if last != first {
 			must = append(must, probe{pc.Source, last})

@@ -71,8 +71,8 @@ def inject_builtin_mount_selected():
     built-in mount is the usenet backend."""
     def builtin_mount_selected():
         try:
-            from routes.mount_routes import builtin_selected
-            return builtin_selected()
+            from routes.mount_routes import mount_page_visible
+            return mount_page_visible()
         except Exception:
             return False
     return dict(builtin_mount_selected=builtin_mount_selected)

@@ -141,3 +141,69 @@ func TestPrewarmFetchesTheStartOnly(t *testing.T) {
 	}
 	t.Fatalf("prewarm did not fetch the start: %v", s.BodyOrder())
 }
+
+// A job migrated from cli_mount: its file is sliced out of "volume"
+// articles (a header in front, like a RAR member), served byte-exact from
+// the map, health-checked through the map, and its id and folder kept.
+func TestImportMappedFromCliMount(t *testing.T) {
+	s := nntptest.Start(t)
+	e := newEngine(t, s, func(c *Config) { c.ReadAhead = 2 })
+	want := data(11, 200_000)
+	volume := append([]byte("RAR-HEADER-1234567890"), want...) // 21-byte header
+	arts := nntptest.Post("vol", "show.part01.rar", volume, 64_000)
+	s.Add(arts...)
+	var segs []MappedSegment
+	var off int64
+	for i, a := range arts {
+		ds, n := int64(0), int64(64_000)
+		if i == 0 {
+			ds, n = 21, 64_000-21
+		}
+		if i == len(arts)-1 {
+			n = int64(len(volume)) - int64(i)*64_000
+		}
+		segs = append(segs, MappedSegment{ID: "<" + a.ID + ">", Start: off, End: off + n - 1, DataStart: ds})
+		off += n
+	}
+	j, err := e.ImportMapped("95af6933-9d46-487a-96a1-efac7d2b4113", "Show.S01E01 & Friends", "tv", []string{"x"},
+		[]MappedFileSpec{{Name: "Show.S01E01.mkv", Segments: segs}})
+	if err != nil || j.Status != store.Ready || j.ID != "95af6933-9d46-487a-96a1-efac7d2b4113" || j.Name != "Show.S01E01 & Friends" {
+		t.Fatalf("import: %+v %v", j, err)
+	}
+	if f, ok := e.Folder(AllFolder, "Show.S01E01 & Friends"); !ok || len(f.Entries) != 1 || f.Entries[0].Size != int64(len(want)) {
+		t.Fatalf("folder: %+v", f)
+	}
+	files, err := e.Files(j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, res, _ := e.Store.Get(j.ID)
+	r := files.Entry(res.Entries[0])
+	got := make([]byte, len(want))
+	if n, err := r.ReadAt(got, 0); n != len(want) || (err != nil && err.Error() != "EOF") || string(got) != string(want) {
+		t.Fatalf("full read: n=%d err=%v equal=%v", n, err, string(got) == string(want))
+	}
+	part := make([]byte, 5000)
+	if _, err := r.ReadAt(part, 63_970); err != nil || string(part) != string(want[63_970:68_970]) {
+		t.Fatalf("read across an article boundary: %v", err)
+	}
+	e.CheckHealth(j.ID, true)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if g, _, _ := e.Store.Get(j.ID); g.Health != nil && g.Health.Status == "healthy" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if g, _, _ := e.Store.Get(j.ID); g.Health == nil || g.Health.Status != "healthy" {
+		t.Fatalf("health through the map: %+v", g.Health)
+	}
+	if _, err := e.ImportMapped(j.ID, "again", "", nil, []MappedFileSpec{{Name: "a.mkv", Segments: segs}}); err == nil {
+		t.Fatal("duplicate id accepted")
+	}
+	gap := append([]MappedSegment(nil), segs...)
+	gap[1].Start++
+	if _, err := e.ImportMapped("b6f0c3a0-0000-4000-8000-000000000001", "Gap", "", nil, []MappedFileSpec{{Name: "a.mkv", Segments: gap}}); err == nil {
+		t.Fatal("non-contiguous map accepted")
+	}
+}

@@ -1,0 +1,268 @@
+"""
+Migrate from cli_mount to the built-in mount, side by side.
+
+  1. The built-in engine runs alongside cli_mount (Built-in Mount.run_alongside)
+     on its own mount path.
+  2. Import: every job cli_mount lists (GET /api/browse/nzbs: folder name +
+     job id) is added to the engine with the SAME id, folder and file names,
+     from cli_mount's own metadata (<data_path>/usenet/meta/<id>.meta, a
+     protobuf NZBProto). The engine reads files through cli_mount's segment
+     maps, so they are byte-identical and nothing is downloaded or
+     re-parsed. nzb:<id> references in cli_debrid stay valid.
+  3. Compare: a sample of files is read through both mounts (size + SHA-256
+     of their start, middle and end).
+  4. Switch: with cli_mount stopped, the engine takes over cli_mount's mount
+     path (so existing symlinks and Plex paths keep resolving) and becomes
+     the usenet backend. Rollback = switch back (cli_mount's URL/token are
+     kept, nothing on cli_mount is changed).
+"""
+
+import hashlib
+import logging
+import os
+import random
+import threading
+import time
+import uuid
+from typing import Callable, Dict, List, Optional, Tuple
+
+# ---- cli_mount metadata (protobuf NZBProto, decoded without a schema dep) ----
+
+
+def _varint(b: bytes, i: int) -> Tuple[int, int]:
+    r = s = 0
+    while True:
+        x = b[i]
+        i += 1
+        r |= (x & 0x7F) << s
+        s += 7
+        if x < 0x80:
+            return r, i
+
+
+def _fields(b: bytes) -> List[Tuple[int, object]]:
+    i, out = 0, []
+    while i < len(b):
+        key, i = _varint(b, i)
+        f, t = key >> 3, key & 7
+        if t == 0:
+            v, i = _varint(b, i)
+        elif t == 2:
+            n, i = _varint(b, i)
+            v = b[i:i + n]
+            i += n
+        elif t == 1:
+            v, i = b[i:i + 8], i + 8
+        elif t == 5:
+            v, i = b[i:i + 4], i + 4
+        else:
+            raise ValueError(f'unsupported protobuf wire type {t}')
+        out.append((f, v))
+    return out
+
+
+def parse_meta(data: bytes) -> dict:
+    """cli_mount's NZBProto -> {id, name, files: [{name, size, segments}],
+    skipped: [(name, why)]}. Segment fields follow cli_mount: start/end are
+    inclusive file offsets, data_start is where the file's bytes begin in
+    the decoded article."""
+    out = {'id': '', 'name': '', 'files': [], 'skipped': []}
+    for f, v in _fields(data):
+        if f == 1:
+            out['id'] = v.decode('utf-8', 'replace')
+        elif f == 2:
+            out['name'] = v.decode('utf-8', 'replace')
+        elif f == 9:
+            meta, segs = {}, []
+            for ff, vv in _fields(v):
+                if ff == 6:
+                    s = dict(_fields(vv))
+                    segs.append({'number': s.get(1, 0), 'id': (s.get(2) or b'').decode('utf-8', 'replace'),
+                                 'start': s.get(4, 0), 'end': s.get(5, 0), 'data_start': s.get(7, 0)})
+                else:
+                    meta[ff] = vv
+            name = (meta.get(2) or b'').decode('utf-8', 'replace')
+            if meta.get(10):
+                continue  # deleted from the job (repair cleanup)
+            if meta.get(15):
+                out['skipped'].append((name, 'encrypted archive (not supported by the built-in mount)'))
+                continue
+            if not segs:
+                out['skipped'].append((name, 'no articles'))
+                continue
+            segs.sort(key=lambda s: s['start'])
+            out['files'].append({'name': name, 'size': meta.get(4, 0), 'segments': segs})
+    return out
+
+
+def meta_dir(data_path: str) -> str:
+    for sub in ('usenet/meta', 'meta'):
+        p = os.path.join(data_path or '', sub)
+        if os.path.isdir(p):
+            return p
+    return os.path.join(data_path or '', 'usenet', 'meta')
+
+
+# ---- job runner (progress polled by the Mount page) -------------------------
+
+_jobs: Dict[str, dict] = {}
+_lock = threading.Lock()
+
+
+def _set(job_id: str, **kw):
+    with _lock:
+        _jobs[job_id].update(kw)
+
+
+def _add(job_id: str, key: str, n: int = 1):
+    with _lock:
+        _jobs[job_id][key] += n
+
+
+def _log(job_id: str, msg: str):
+    with _lock:
+        log = _jobs[job_id]['log']
+        log.append(msg)
+        del log[:-300]
+
+
+def status(job_id: str) -> dict:
+    with _lock:
+        return dict(_jobs.get(job_id) or {})
+
+
+def cancel(job_id: str) -> bool:
+    with _lock:
+        if job_id in _jobs:
+            _jobs[job_id]['cancel'] = True
+            return True
+    return False
+
+
+def start_import(source, engine, data_path: str, limit: int = 0) -> str:
+    """Import cli_mount's library into the engine in the background.
+    source: a CliMountClient; engine: a BuiltinClient."""
+    job_id = uuid.uuid4().hex[:12]
+    with _lock:
+        _jobs[job_id] = {'kind': 'import', 'status': 'starting', 'total': 0, 'done': 0, 'imported': 0,
+                         'already': 0, 'failed': 0, 'skipped_files': 0, 'complete': False, 'log': [], 'error': None}
+    threading.Thread(target=_run_import, args=(job_id, source, engine, data_path, limit),
+                     name='builtin-migrate', daemon=True).start()
+    return job_id
+
+
+def import_one(engine, entry: dict, mdir: str) -> Tuple[str, str, int]:
+    """(outcome, message, skipped files). outcome: imported/already/failed."""
+    jid, folder = entry.get('info_hash') or '', entry.get('name') or ''
+    if not jid or not folder:
+        return 'failed', f'{folder or jid}: missing name or id', 0
+    path = os.path.join(mdir, f'{jid}.meta')
+    try:
+        with open(path, 'rb') as f:
+            meta = parse_meta(f.read())
+    except FileNotFoundError:
+        return 'failed', f'{folder}: no cli_mount metadata ({path})', 0
+    except Exception as exc:
+        return 'failed', f'{folder}: unreadable metadata: {exc}', 0
+    if not meta['files']:
+        why = '; '.join(f'{n}: {w}' for n, w in meta['skipped']) or 'no files'
+        return 'failed', f'{folder}: nothing importable ({why})', len(meta['skipped'])
+    body = {'id': jid, 'name': folder, 'category': entry.get('category') or '',
+            'files': [{'name': f['name'], 'segments': [
+                {'id': s['id'], 'start': s['start'], 'end': s['end'], 'data_start': s['data_start']}
+                for s in f['segments']]} for f in meta['files']]}
+    code, resp = engine._call('POST', '/jobs/import', timeout=60, json=body)
+    if code == 201:
+        return 'imported', '', len(meta['skipped'])
+    if code == 409:
+        return 'already', '', 0
+    err = (resp or {}).get('error') if isinstance(resp, dict) else None
+    return 'failed', f'{folder}: engine said {code}: {err or "unreachable"}', len(meta['skipped'])
+
+
+def _run_import(job_id, source, engine, data_path, limit):
+    try:
+        mdir = meta_dir(data_path)
+        if not os.path.isdir(mdir):
+            _set(job_id, status='error', complete=True,
+                 error=f"cli_mount's metadata folder isn't visible here ({mdir}). Bind cli_mount's appdata into "
+                       f"cli_debrid and set Usenet Provider → cli_mount Data Path.")
+            return
+        entries = list(source.iter_library_nzbs())
+        if limit:
+            entries = entries[:limit]
+        if not entries:
+            _set(job_id, status='error', complete=True, error='cli_mount listed no jobs (is it running and reachable?)')
+            return
+        _set(job_id, status='running', total=len(entries))
+        _log(job_id, f'{len(entries)} job(s) listed by cli_mount; metadata from {mdir}')
+        for e in entries:
+            if status(job_id).get('cancel'):
+                _set(job_id, status='cancelled', complete=True)
+                return
+            outcome, msg, skipped = import_one(engine, e, mdir)
+            _add(job_id, outcome)
+            _add(job_id, 'done')
+            if skipped:
+                _add(job_id, 'skipped_files', skipped)
+            if msg:
+                _log(job_id, msg)
+        st = status(job_id)
+        _log(job_id, f"Done: {st['imported']} imported, {st['already']} already there, {st['failed']} failed"
+                     + (f", {st['skipped_files']} encrypted/empty file(s) left out" if st['skipped_files'] else ''))
+        _set(job_id, status='complete', complete=True)
+    except Exception as exc:
+        logging.exception('[builtin migrate] import failed')
+        _set(job_id, status='error', error=str(exc), complete=True)
+
+
+# ---- compare a sample through both mounts -----------------------------------
+
+def _digest(path: str, size: int) -> str:
+    h = hashlib.sha256()
+    chunk = 256 << 10
+    with open(path, 'rb') as f:
+        for off in sorted({0, max(0, size // 2 - chunk // 2), max(0, size - chunk)}):
+            f.seek(off)
+            h.update(f.read(chunk))
+    return h.hexdigest()[:16]
+
+
+def compare(engine, climount_root: str, builtin_root: str, sample: int = 10,
+            rng: Optional[random.Random] = None) -> dict:
+    """Read sample files through cli_mount's mount and the engine's mount
+    (<root>/<folder>/<file>) and compare size + hashes of 3 ranges."""
+    code, jobs = engine._call('GET', '/jobs', params={'status': 'ready'}, timeout=20)
+    jobs = jobs if code == 200 and isinstance(jobs, list) else []
+    (rng or random.Random()).shuffle(jobs)
+    rows, same = [], 0
+    for j in jobs[:sample]:
+        folder = j.get('name', '')
+        try:
+            names = sorted(os.listdir(os.path.join(builtin_root, folder)))
+        except OSError as exc:
+            rows.append({'folder': folder, 'file': '', 'ok': False, 'detail': f'built-in mount: {exc}'})
+            continue
+        if not names:
+            continue
+        name = names[0]
+        a, b = os.path.join(climount_root, folder, name), os.path.join(builtin_root, folder, name)
+        t0 = time.time()
+        try:
+            sa, sb = os.path.getsize(a), os.path.getsize(b)
+            ok = sa == sb and _digest(a, sa) == _digest(b, sb)
+            detail = 'identical' if ok else (f'size {sa} vs {sb}' if sa != sb else 'bytes differ')
+        except OSError as exc:
+            ok, detail = False, str(exc)
+        same += ok
+        rows.append({'folder': folder, 'file': name, 'ok': ok, 'detail': detail, 'seconds': round(time.time() - t0, 1)})
+    return {'checked': len(rows), 'identical': same, 'rows': rows}
+
+
+# ---- switch over / back ------------------------------------------------------
+
+def climount_mount_root(get_setting: Callable) -> str:
+    """cli_mount's mount as cli_debrid sees it (File Management's original
+    files path, minus __all__)."""
+    p = (get_setting('File Management', 'original_files_path', '') or '').rstrip('/\\')
+    return p[:-len('__all__')].rstrip('/\\') if p.endswith('__all__') else p

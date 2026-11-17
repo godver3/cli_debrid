@@ -40,6 +40,7 @@ func Handler(e *engine.Engine) http.Handler {
 	a := &api{e: e}
 	mux.HandleFunc("GET /status", a.status)
 	mux.HandleFunc("POST /jobs", a.submit)
+	mux.HandleFunc("POST /jobs/import", a.importMapped)
 	mux.HandleFunc("GET /jobs", a.list)
 	mux.HandleFunc("GET /jobs/{id}", a.get)
 	mux.HandleFunc("PATCH /jobs/{id}", a.patch)
@@ -279,6 +280,27 @@ func (a *api) changes(w http.ResponseWriter, r *http.Request) {
 		"jobs":    out,
 		"deleted": gone,
 	})
+}
+
+// importMapped adds a job migrated from cli_mount (its own segment maps).
+func (a *api) importMapped(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ID       string                  `json:"id"`
+		Name     string                  `json:"name"`
+		Category string                  `json:"category"`
+		Tags     []string                `json:"tags"`
+		Files    []engine.MappedFileSpec `json:"files"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 256<<20)).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	j, err := a.e.ImportMapped(body.ID, body.Name, body.Category, body.Tags, body.Files)
+	if err != nil {
+		storeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, a.render(j, false))
 }
 
 // shutdown stops the engine cleanly (unmount, then exit).

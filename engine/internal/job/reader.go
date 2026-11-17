@@ -10,9 +10,14 @@ import (
 	"github.com/godver3/cli_debrid/engine/internal/stream"
 )
 
-// Files holds an open stream.File per source of a built job.
+// sourceReader reads one source (a posted file, or a mapped one).
+type sourceReader interface {
+	ReadAtCtx(ctx context.Context, prio nntp.Priority, p []byte, off int64) (int, error)
+}
+
+// Files holds an open reader per source of a built job.
 type Files struct {
-	sources []*stream.File
+	sources []sourceReader
 }
 
 // Open prepares readers for a stored job. n must be the same NZB the job
@@ -22,6 +27,10 @@ func Open(res *Result, n *nzb.NZB, f stream.Fetcher, cache *stream.Cache, readAh
 	for _, s := range res.Sources {
 		if s.NZBIndex < 0 || s.NZBIndex >= len(n.Files) {
 			return nil, fmt.Errorf("job: source %q points at NZB file %d of %d", s.Name, s.NZBIndex, len(n.Files))
+		}
+		if len(s.Map) > 0 {
+			out.sources = append(out.sources, stream.OpenMapped(f, cache, n.Files[s.NZBIndex], s.Map, readAhead))
+			continue
 		}
 		out.sources = append(out.sources, stream.Open(f, cache, n.Files[s.NZBIndex], s.Layout, readAhead))
 	}

@@ -64,6 +64,19 @@ def selected(settings: dict = None) -> bool:
     return bool(up.get('enabled')) and (up.get('provider') or '').strip().lower() == 'builtin'
 
 
+def alongside(settings: dict = None) -> bool:
+    """True while migrating: the engine runs next to cli_mount (on its own
+    mount path) even though cli_mount is still the usenet backend."""
+    s = settings if settings is not None else _load_settings()
+    return bool((s.get('Built-in Mount') or {}).get('run_alongside'))
+
+
+def wanted(settings: dict = None) -> bool:
+    """Should the engine run: it is the backend, or a migration is staged."""
+    s = settings if settings is not None else _load_settings()
+    return selected(s) or alongside(s)
+
+
 def problems(settings: dict = None) -> list:
     """Reasons the engine can't run here (empty when it can)."""
     s = settings if settings is not None else _load_settings()
@@ -376,7 +389,7 @@ def sync(settings: dict = None) -> str:
     stop it: stopping the program, saving other settings or restarting the
     web app never touch the mount."""
     s = settings if settings is not None else _load_settings()
-    if not selected(s):
+    if not wanted(s):
         if state() in ('RUNNING', 'STARTING', 'BACKOFF'):
             control('stop')
             return 'stopped'

@@ -517,6 +517,16 @@ SETTINGS_SCHEMA = {
             "default": "",
             "sensitive": True
         },
+        "run_alongside": {
+            "type": "boolean",
+            "description": "Migration from cli_mount: run the built-in mount next to cli_mount (on its own mount path) while cli_mount is still the usenet backend. Set from the Mount page's Migrate tab.",
+            "default": False
+        },
+        "pre_migration_mount_path": {
+            "type": "string",
+            "description": "Migration from cli_mount: the built-in mount's path before it took over cli_mount's path (used when switching back).",
+            "default": ""
+        },
         "api_port": {
             "type": "integer",
             "description": "Built-in mount only. Local port of the engine's API (127.0.0.1 only). Change it only if it clashes.",
