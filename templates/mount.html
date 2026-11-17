@@ -32,6 +32,25 @@
 .mnt .btn:disabled{opacity:.5;cursor:default}
 .mnt .actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:6px 0 30px}
 .mnt .msg{font-size:13px}
+.mnt .tabs{display:flex;gap:4px;border-bottom:1px solid #333;margin-bottom:14px;flex-wrap:wrap}
+.mnt .tabs button{background:none;border:none;color:#aaa;padding:8px 14px;cursor:pointer;font-weight:600;border-bottom:2px solid transparent}
+.mnt .tabs button.on{color:#fff;border-bottom-color:#e8601c}
+.mnt .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+.mnt .toolbar input,.mnt .toolbar select{background:#111;border:1px solid #3d3d3d;color:#eee;border-radius:5px;padding:7px 9px}
+.mnt .toolbar input[type=search]{flex:1;min-width:180px}
+.mnt .btn.danger{background:#7a1f1f}
+.mnt .tbl{overflow-x:auto}
+.mnt .tbl td{vertical-align:top}
+.mnt .tbl .nm{max-width:520px;word-break:break-all}
+.mnt .tbl .err{color:#f08a8a;font-size:12px;margin-top:3px}
+.mnt .pill{font-size:11px;padding:2px 8px;border-radius:9px;border:1px solid #555;white-space:nowrap}
+.mnt .pill.ready,.mnt .pill.healthy{border-color:#2f9e6b;color:#8fdcb6}
+.mnt .pill.failed,.mnt .pill.broken{border-color:#a33;color:#f2a0a0}
+.mnt .pill.importing,.mnt .pill.queued,.mnt .pill.checking{border-color:#b8902b;color:#ecd08a}
+.mnt .rowbtn{background:#2a2a2a;border:1px solid #444;color:#ddd;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:12px;margin:1px}
+.mnt .pager{display:flex;justify-content:space-between;align-items:center;margin-top:8px;color:#999;font-size:13px}
+.mnt .crumbs a{color:#e8a06c;cursor:pointer;text-decoration:none}
+.mnt .link{color:#e8a06c;cursor:pointer}
 </style>
 {% endblock %}
 {% block content %}
@@ -44,12 +63,50 @@
   {% endif %}
   <div id="problems" class="bad" style="display:none"></div>
 
-  <div class="grid" id="tiles"></div>
+  <div class="tabs" id="mntTabs">
+    <button type="button" data-tab="overview" class="on">Overview</button>
+    <button type="button" data-tab="queue">Queue</button>
+    <button type="button" data-tab="browse">Browse</button>
+    <button type="button" data-tab="settings">Settings</button>
+  </div>
 
-  <div class="card"><h3>Usenet servers</h3><div class="body">
+  <div class="pane" data-pane="overview">
+  <div class="grid" id="tiles"></div>
+  <div class="card"><h3>Server connections</h3><div class="body">
     <table id="pools"><thead><tr><th>Server</th><th>Role</th><th>In use</th><th>Open</th><th>Waiting</th><th></th></tr></thead><tbody></tbody></table>
   </div></div>
+  </div>
 
+  <div class="pane" data-pane="queue" hidden>
+    <div class="toolbar">
+      <input id="qSearch" type="search" placeholder="Search jobs…">
+      <select id="qStatus"><option value="">All states</option><option value="ready">Ready</option><option value="importing">Importing</option><option value="queued">Queued / retrying</option><option value="failed">Failed</option></select>
+      <select id="qCategory"><option value="">All categories</option></select>
+      <select id="qSort">
+        <option value="added_desc">Date added (newest first)</option><option value="added_asc">Date added (oldest first)</option>
+        <option value="name_asc">Name (A-Z)</option><option value="name_desc">Name (Z-A)</option>
+        <option value="size_desc">Size (largest first)</option><option value="size_asc">Size (smallest first)</option>
+      </select>
+      <button type="button" class="btn sec" id="qRefresh">Refresh</button>
+      <button type="button" class="btn danger" id="qDeleteSel" hidden>Delete selected</button>
+    </div>
+    <div class="card"><div class="body tbl">
+      <table id="qTable"><thead><tr><th><input type="checkbox" id="qAll"></th><th>Name</th><th>State</th><th>Size</th><th>Category</th><th>Added</th><th>Health</th><th></th></tr></thead><tbody></tbody></table>
+      <div class="pager"><span id="qInfo"></span><span id="qPages"></span></div>
+    </div></div>
+  </div>
+
+  <div class="pane" data-pane="browse" hidden>
+    <div class="toolbar">
+      <span class="crumbs" id="bCrumbs"></span>
+      <input id="bSearch" type="search" placeholder="Search files…">
+    </div>
+    <div class="card"><div class="body tbl">
+      <table id="bTable"><thead><tr><th>Name</th><th>Size</th><th>Details</th><th></th></tr></thead><tbody></tbody></table>
+    </div></div>
+  </div>
+
+  <div class="pane" data-pane="settings" hidden>
   <form id="mntForm" autocomplete="off">
   <div class="card"><h3>Usenet servers</h3><div class="body">
     <p style="color:#8f8f8f;font-size:12px;margin-top:0">Tried top to bottom: when a server lacks an article the next one is asked. Servers marked <strong>Backup</strong> (block accounts) are asked last. Use the arrows to reorder. Leave a password empty to keep the saved one.</p>
@@ -79,6 +136,7 @@
     <button class="btn" id="saveBtn">Save</button>
     <button class="btn sec" id="restartBtn">Restart engine</button>
     <span class="msg" id="msg"></span>
+  </div>
   </div>
 </div>
 {% endblock %}
@@ -196,8 +254,139 @@
     setTimeout(refresh, 1500);
   };
 
+  // ---- tabs ---------------------------------------------------------------
+  let tab = 'overview';
+  function showTab(name) {
+    tab = name;
+    document.querySelectorAll('#mntTabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
+    document.querySelectorAll('.pane').forEach(p => { p.hidden = p.dataset.pane !== name; });
+    try { history.replaceState(null, '', '#' + name); } catch (e) {}
+    if (name === 'queue') loadJobs();
+    if (name === 'browse') renderBrowse();
+  }
+  document.querySelectorAll('#mntTabs button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
+
+  // ---- queue --------------------------------------------------------------
+  let jobs = [], page = 0;
+  const PER = 50;
+  const ago = t => { const d = (Date.now() - new Date(t)) / 1000; if (!t || isNaN(d)) return ''; if (d < 60) return 'just now'; if (d < 3600) return Math.floor(d / 60) + 'm ago'; if (d < 86400) return Math.floor(d / 3600) + 'h ago'; return Math.floor(d / 86400) + 'd ago'; };
+  const stateLabel = j => j.status === 'queued' && j.attempts ? 'retrying (' + j.attempts + ')' : j.status;
+  async function loadJobs() {
+    try {
+      const r = await fetch('{{ url_for("mount.jobs_list") }}');
+      const d = await r.json();
+      if (!d.success) { $('#qInfo').textContent = d.error || 'Could not load jobs'; jobs = []; renderJobs(); return; }
+      jobs = d.jobs || [];
+      const cats = [...new Set(jobs.map(j => j.category).filter(Boolean))].sort();
+      const sel = $('#qCategory'), keep = sel.value;
+      sel.innerHTML = '<option value="">All categories</option>' + cats.map(c => '<option>' + esc(c) + '</option>').join('');
+      sel.value = cats.includes(keep) ? keep : '';
+      renderJobs();
+      if (tab === 'browse') renderBrowse();
+    } catch (e) { $('#qInfo').textContent = 'Could not load jobs: ' + e; }
+  }
+  function filtered() {
+    const q = $('#qSearch').value.trim().toLowerCase(), st = $('#qStatus').value, cat = $('#qCategory').value, so = $('#qSort').value;
+    const out = jobs.filter(j => (!q || (j.name || '').toLowerCase().includes(q)) && (!st || j.status === st) && (!cat || j.category === cat));
+    const cmp = {added_desc: (a, b) => new Date(b.created_at) - new Date(a.created_at), added_asc: (a, b) => new Date(a.created_at) - new Date(b.created_at),
+                 name_asc: (a, b) => (a.name || '').localeCompare(b.name || ''), name_desc: (a, b) => (b.name || '').localeCompare(a.name || ''),
+                 size_desc: (a, b) => (b.size || 0) - (a.size || 0), size_asc: (a, b) => (a.size || 0) - (b.size || 0)}[so];
+    return out.sort(cmp);
+  }
+  function renderJobs() {
+    const list = filtered(), pages = Math.max(1, Math.ceil(list.length / PER));
+    page = Math.min(page, pages - 1);
+    const rows = list.slice(page * PER, page * PER + PER);
+    $('#qTable tbody').innerHTML = rows.length ? rows.map(j => {
+      const h = j.health ? j.health.status : '';
+      return '<tr data-id="' + esc(j.id) + '"><td><input type="checkbox" class="qSel"></td>' +
+        '<td class="nm"><span class="link" data-open="' + esc(j.id) + '">' + esc(j.name) + '</span>' + (j.error ? '<div class="err">' + esc(j.error) + '</div>' : '') + '</td>' +
+        '<td><span class="pill ' + esc(j.status) + '">' + esc(stateLabel(j)) + '</span></td>' +
+        '<td>' + (j.size ? fmtBytes(j.size) : '—') + '</td><td>' + esc(j.category || '—') + '</td>' +
+        '<td title="' + esc(j.created_at) + '">' + ago(j.created_at) + '</td>' +
+        '<td>' + (h ? '<span class="pill ' + esc(h) + '">' + esc(h) + '</span>' : '—') + '</td>' +
+        '<td style="white-space:nowrap">' + (j.status === 'failed' ? '<button class="rowbtn" data-act="retry">Retry</button>' : '') +
+        (j.status === 'ready' ? '<button class="rowbtn" data-act="check">Check health</button>' : '') +
+        '<button class="rowbtn" data-act="delete">Delete</button></td></tr>';
+    }).join('') : '<tr><td colspan="8" style="color:#888">No jobs' + (jobs.length ? ' match these filters' : ' yet') + '.</td></tr>';
+    $('#qInfo').textContent = list.length ? (page * PER + 1) + '–' + Math.min(list.length, page * PER + PER) + ' of ' + list.length : '';
+    $('#qPages').innerHTML = pages > 1 ? [...Array(pages).keys()].map(i => '<button class="rowbtn" data-page="' + i + '"' + (i === page ? ' style="border-color:#e8601c"' : '') + '>' + (i + 1) + '</button>').join('') : '';
+    $('#qAll').checked = false;
+    updateSel();
+  }
+  function updateSel() { $('#qDeleteSel').hidden = !document.querySelector('.qSel:checked'); }
+  async function del(ids) {
+    if (!ids.length || !confirm('Delete ' + ids.length + ' job(s) from the mount? Their files disappear (cli_debrid sees them as removed). This cannot be undone.')) return;
+    const r = await fetch('{{ url_for("mount.jobs_delete") }}', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ids})});
+    const d = await r.json();
+    if (!d.success) alert('Could not delete ' + d.failed.length + ' job(s).');
+    loadJobs();
+  }
+  ['#qSearch', '#qStatus', '#qCategory', '#qSort'].forEach(id => $(id).addEventListener('input', () => { page = 0; renderJobs(); }));
+  $('#qRefresh').onclick = loadJobs;
+  $('#qAll').onchange = e => { document.querySelectorAll('.qSel').forEach(c => { c.checked = e.target.checked; }); updateSel(); };
+  $('#qDeleteSel').onclick = () => del([...document.querySelectorAll('.qSel:checked')].map(c => c.closest('tr').dataset.id));
+  $('#qTable').addEventListener('change', e => { if (e.target.classList.contains('qSel')) updateSel(); });
+  $('#qTable').addEventListener('click', async e => {
+    const pg = e.target.closest('[data-page]');
+    if (pg) { page = +pg.dataset.page; renderJobs(); return; }
+    const open = e.target.closest('[data-open]');
+    if (open) { browseJob = open.dataset.open; showTab('browse'); return; }
+    const b = e.target.closest('[data-act]');
+    if (!b) return;
+    const id = b.closest('tr').dataset.id;
+    if (b.dataset.act === 'delete') return del([id]);
+    b.disabled = true;
+    const r = await fetch('/mount/api/jobs/' + encodeURIComponent(id) + '/' + b.dataset.act, {method: 'POST'});
+    const d = await r.json();
+    if (!d.success) alert(d.error || 'Failed');
+    else if (b.dataset.act === 'check') b.textContent = 'Checking…';
+    setTimeout(loadJobs, 1500);
+  });
+  $('#qPages').addEventListener('click', e => { const pg = e.target.closest('[data-page]'); if (pg) { page = +pg.dataset.page; renderJobs(); } });
+
+  // ---- browse -------------------------------------------------------------
+  let browseJob = null;
+  async function renderBrowse() {
+    const q = $('#bSearch').value.trim().toLowerCase();
+    const tb = $('#bTable tbody');
+    if (!browseJob) {
+      $('#bCrumbs').innerHTML = '<strong>__all__</strong>';
+      if (!jobs.length) { await loadJobs(); if (tab !== 'browse') return; }
+      const ready = jobs.filter(j => j.status === 'ready' && (!q || (j.name || '').toLowerCase().includes(q)))
+                        .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+      tb.innerHTML = ready.length ? ready.map(j => '<tr><td class="nm">📁 <span class="link" data-open="' + esc(j.id) + '">' + esc(j.name) + '</span></td><td>' + fmtBytes(j.size) +
+        '</td><td>' + esc(j.category || '') + '</td><td></td></tr>').join('') : '<tr><td colspan="4" style="color:#888">Empty folder.</td></tr>';
+      return;
+    }
+    const r = await fetch('/mount/api/jobs/' + encodeURIComponent(browseJob));
+    const d = await r.json();
+    if (!d.success) { browseJob = null; return renderBrowse(); }
+    const j = d.job;
+    $('#bCrumbs').innerHTML = '<a data-up="1">__all__</a> / <strong>' + esc(j.name) + '</strong>';
+    const broken = new Set(((j.health || {}).broken_files || []).map(b => b.file_name));
+    const hidden = new Set(j.hidden || []);
+    const ents = (j.entries || []).filter(e => !q || e.name.toLowerCase().includes(q));
+    tb.innerHTML = (ents.length ? ents.map(e => '<tr><td class="nm">🎞 ' + esc(e.name) + (hidden.has(e.name) ? ' <span class="pill">hidden by repair</span>' : '') +
+        (broken.has(e.name) ? ' <span class="pill broken">broken</span>' : '') + '</td><td>' + fmtBytes(e.size) + '</td><td style="color:#999;font-size:12px">' +
+        (e.from_archive ? 'inside ' + esc(e.from_archive) : 'plain file') + '</td><td><button class="rowbtn" data-copy="' + esc(e.path) + '">Copy path</button></td></tr>').join('')
+      : '<tr><td colspan="4" style="color:#888">No files.</td></tr>') +
+      ((j.failures || []).length ? '<tr><td colspan="4"><div class="err">Not streamable: ' + j.failures.map(f => esc(f.name) + ' (' + esc(f.error) + ')').join('; ') + '</div></td></tr>' : '');
+  }
+  $('#bSearch').addEventListener('input', renderBrowse);
+  $('#bCrumbs').addEventListener('click', e => { if (e.target.closest('[data-up]')) { browseJob = null; renderBrowse(); } });
+  $('#bTable').addEventListener('click', e => {
+    const open = e.target.closest('[data-open]');
+    if (open) { browseJob = open.dataset.open; $('#bSearch').value = ''; renderBrowse(); return; }
+    const c = e.target.closest('[data-copy]');
+    if (c) { navigator.clipboard && navigator.clipboard.writeText(c.dataset.copy); c.textContent = 'Copied'; setTimeout(() => { c.textContent = 'Copy path'; }, 1200); }
+  });
+
   refresh();
   setInterval(refresh, 4000);
+  setInterval(() => { if (tab === 'queue' && !document.hidden) loadJobs(); }, 10000);
+  const start = (location.hash || '').slice(1);
+  if (['queue', 'browse', 'settings'].includes(start)) showTab(start);
 })();
 </script>
 {% endblock %}

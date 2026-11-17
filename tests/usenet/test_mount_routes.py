@@ -97,6 +97,29 @@ class MountRoutesTests(unittest.TestCase):
         self.assertEqual(json.dumps(self.store), before)
         self.sync.assert_not_called()
 
+    def test_queue_actions_go_to_the_engine(self):
+        calls = []
+
+        class FakeClient:
+            def remove_nzb_exact(self, i):
+                calls.append(('del', i))
+                return i != 'stuck'
+
+            def _call(self, method, path, timeout=0, **kw):
+                calls.append((method, path))
+                return (202, {}) if path.endswith('/health') else (200, {})
+        with mock.patch.object(mr, '_engine', return_value=FakeClient()):
+            with Flask(__name__).test_request_context(json={'ids': ['a', 'stuck', '']}):
+                body = mr.jobs_delete().get_json()
+            self.assertEqual((body['deleted'], body['failed'], body['success']), (1, ['stuck'], False))
+            with Flask(__name__).test_request_context(method='POST'):
+                ok = mr.job_action('j1', 'check')
+                self.assertEqual((ok[1], ok[0].get_json()['success']), (200, True))
+                resp = mr.job_action('j1', 'rm -rf')
+            self.assertEqual(resp[1], 404)
+        self.assertIn(('POST', '/jobs/j1/health'), calls)
+        self.assertNotIn(('del', ''), calls)
+
     def test_unchanged_save_does_not_resync(self):
         code, body = self.save({'read_ahead_mb': 16})
         self.assertEqual((code, body['changed']), (200, []))

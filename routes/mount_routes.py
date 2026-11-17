@@ -241,6 +241,61 @@ def now_playing():
     return jsonify({'selected': True, 'sessions': sessions, 'open_files': len(streams)})
 
 
+# ---- Queue / Browse tabs (engine jobs, through cli_debrid) -----------------
+
+def _engine():
+    from usenet.builtin_client import BuiltinClient
+    return BuiltinClient()
+
+
+def _engine_unavailable():
+    return jsonify({'success': False, 'error': 'The mount engine is not running.'}), 503
+
+
+@mount_bp.route('/api/jobs')
+@admin_required
+def jobs_list():
+    code, body = _engine()._call('GET', '/jobs', timeout=10)
+    if code is None:
+        return _engine_unavailable()
+    return jsonify({'success': code == 200, 'jobs': body if isinstance(body, list) else []})
+
+
+@mount_bp.route('/api/jobs/<job_id>')
+@admin_required
+def job_detail(job_id):
+    code, body = _engine()._call('GET', f'/jobs/{job_id}', timeout=10)
+    if code is None:
+        return _engine_unavailable()
+    if code != 200:
+        return jsonify({'success': False, 'error': (body or {}).get('error', f'HTTP {code}')}), code
+    return jsonify({'success': True, 'job': body})
+
+
+@mount_bp.route('/api/jobs/delete', methods=['POST'])
+@admin_required
+def jobs_delete():
+    """Delete jobs from the mount (their files disappear). Like cli_mount's
+    queue delete: cli_debrid notices through the sync feed."""
+    ids = [str(i) for i in (request.get_json(silent=True) or {}).get('ids') or [] if i]
+    client = _engine()
+    failed = [i for i in ids if not client.remove_nzb_exact(i)]
+    return jsonify({'success': not failed, 'deleted': len(ids) - len(failed), 'failed': failed})
+
+
+@mount_bp.route('/api/jobs/<job_id>/<action>', methods=['POST'])
+@admin_required
+def job_action(job_id, action):
+    paths = {'retry': f'/jobs/{job_id}/retry', 'check': f'/jobs/{job_id}/health'}
+    if action not in paths:
+        return jsonify({'success': False, 'error': 'unknown action'}), 404
+    code, body = _engine()._call('POST', paths[action], timeout=15)
+    if code is None:
+        return _engine_unavailable()
+    ok = code in (200, 202)
+    return jsonify({'success': ok, **({} if ok else {'error': (body or {}).get('error', f'HTTP {code}')})}), (200 if ok else 400)
+
+
 @mount_bp.route('/api/state')
 @admin_required
 def engine_state():
