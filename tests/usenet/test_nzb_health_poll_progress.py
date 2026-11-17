@@ -73,10 +73,12 @@ class NzbHealthPollProgressTests(unittest.TestCase):
         ProgramRunner._nzb_provider_last_progress = None
         ProgramRunner._nzb_health_job_cursor = 0
         ProgramRunner._nzb_folder_wait_counts.clear()
+        ProgramRunner._nzb_folder_wait_since.clear()
         if hasattr(ProgramRunner, '_nzb_job_started_at'):
             ProgramRunner._nzb_job_started_at.clear()
 
     def tearDown(self):
+        ProgramRunner._nzb_folder_wait_since.clear()
         (ProgramRunner._nzb_health_last_duration, ProgramRunner._nzb_health_job_cursor, waits, started,
          ProgramRunner._nzb_provider_last_progress) = self._saved
         ProgramRunner._nzb_folder_wait_counts.clear()
@@ -202,6 +204,52 @@ class NzbHealthPollProgressTests(unittest.TestCase):
         with mock.patch.object(ProgramRunner, '_nzb_confirmed_complete', {}):
             self._tick(runner, client)
         self.assertLess(datetime.now() - ProgramRunner._nzb_provider_last_progress, timedelta(minutes=1))
+
+
+    # --- restart-safe folder / ghost waits ------------------------------------
+
+    def _expire_waits(self, jobs, ticks):
+        for j in jobs:
+            ProgramRunner._nzb_folder_wait_counts[j] = ticks
+            ProgramRunner._nzb_folder_wait_since[j] = 0.0  # started long ago
+
+    def test_job_dropped_from_queue_with_folder_is_not_a_ghost_after_restart(self):
+        # The confirmed-complete memory is empty after a restart and cli_mount has
+        # dropped the finished job from its queue; its folder is still there.
+        runner, _ = _runner(1)
+        client = _FakeClimountClient(progress=1.0, folder='Movie.0')
+        client.get_job_status = lambda job_id: {'state': 'completed', 'progress': 100, 'raw': {}}
+        self._expire_waits(['job0'], 10)
+        with mock.patch.object(ProgramRunner, '_nzb_confirmed_complete', {}):
+            self._assert_no_stall(runner, client)
+            self.assertEqual(ProgramRunner._nzb_confirmed_complete.get('job0'), 'Movie.0')
+
+    def test_folder_wait_needs_wall_clock_time_not_just_ticks(self):
+        runner, _ = _runner(1)
+        client = _FakeClimountClient(progress=1.0)
+        ProgramRunner._nzb_folder_wait_counts['job0'] = 50  # ticks alone are past the cap
+        with mock.patch('utilities.nzb_failure_cleanup.blacklist_and_cleanup_nzb_failure') as bl:
+            self._tick(runner, client)
+        bl.assert_not_called()
+
+    def test_mass_folder_timeout_with_no_folder_found_is_held(self):
+        runner, _ = _runner(4)
+        client = _FakeClimountClient(progress=1.0)
+        self._expire_waits([f'job{i}' for i in range(4)], 10)
+        with mock.patch('utilities.nzb_failure_cleanup.blacklist_and_cleanup_nzb_failure') as bl, \
+             self.assertLogs(level='WARNING') as logs:
+            self._tick(runner, client)
+        bl.assert_not_called()
+        self.assertTrue(any('holding them' in line for line in logs.output), logs.output)
+
+    def test_single_folder_timeout_still_fails(self):
+        runner, _ = _runner(1)
+        client = _FakeClimountClient(progress=1.0)
+        self._expire_waits(['job0'], 10)
+        with mock.patch('database.nzb_playback_repair.reject_active_candidate', return_value=False), \
+             mock.patch('utilities.nzb_failure_cleanup.blacklist_and_cleanup_nzb_failure') as bl:
+            self._tick(runner, client)
+        bl.assert_called()
 
 
 if __name__ == '__main__':

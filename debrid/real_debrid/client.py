@@ -23,6 +23,7 @@ from database.not_wanted_magnets import add_to_not_wanted
 from utilities.phalanx_db_cache_manager import PhalanxDBClassManager
 from utilities.settings import get_setting
 from .exceptions import RealDebridAuthError, RealDebridAPIError
+from . import blocked_hashes as rd_blocked_hashes
 
 # Import the new types and function from the .torrent module
 from .torrent import (
@@ -513,7 +514,13 @@ class RealDebridProvider(DebridProvider):
             
             if not hash_value:
                 logging.error("Could not extract hash from magnet link or torrent file")
-            
+
+            # RD refused this hash with 451 recently: answer the same way without
+            # another addMagnet call (each one counts toward RD's rate limit).
+            if hash_value and rd_blocked_hashes.is_blocked(hash_value):
+                logging.info(f"Real-Debrid blocked hash {hash_value} with 451 recently - not re-adding")
+                raise ProviderUnavailableError("Request failed: 451 Client Error: Unavailable For Legal Reasons (remembered)")
+
             # Handle torrent file upload
             if temp_file_path:
                 if not os.path.exists(temp_file_path):
@@ -523,7 +530,12 @@ class RealDebridProvider(DebridProvider):
                 # Add the torrent file directly
                 with open(temp_file_path, 'rb') as f:
                     file_content = f.read()
-                    result = make_request('PUT', '/torrents/addTorrent', self.api_key, data=file_content)
+                    try:
+                        result = make_request('PUT', '/torrents/addTorrent', self.api_key, data=file_content)
+                    except ProviderUnavailableError as e:
+                        if '451' in str(e) and hash_value:
+                            rd_blocked_hashes.mark_blocked(hash_value)
+                        raise
             # Handle magnet link only if no temp file was used
             elif magnet_link:
                 # Don't URL decode - requests library handles encoding for POST form data
@@ -532,7 +544,12 @@ class RealDebridProvider(DebridProvider):
                 # Add magnet link
                 logging.debug(f"Adding magnet with hash {hash_value[:16] if hash_value else 'unknown'}...")
                 data = {'magnet': magnet_link}
-                result = make_request('POST', '/torrents/addMagnet', self.api_key, data=data)
+                try:
+                    result = make_request('POST', '/torrents/addMagnet', self.api_key, data=data)
+                except ProviderUnavailableError as e:
+                    if '451' in str(e) and hash_value:
+                        rd_blocked_hashes.mark_blocked(hash_value)
+                    raise
             else:
                 logging.error("Neither magnet_link nor temp_file_path provided")
                 raise ValueError("Either magnet_link or temp_file_path must be provided")

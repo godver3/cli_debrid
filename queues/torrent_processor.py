@@ -183,6 +183,21 @@ class TorrentProcessor:
             )
             return direct_check, 'direct_check'
         
+    @staticmethod
+    def _resolved_hash_not_wanted(magnet: Optional[str], temp_file: Optional[str], item: Optional[Dict]) -> bool:
+        """True when a resolved magnet / .torrent file has a not-wanted info-hash."""
+        if (item or {}).get('disable_not_wanted_check'):
+            return False
+        try:
+            if magnet:
+                return is_magnet_not_wanted(magnet)
+            if temp_file:
+                hash_value = extract_hash_from_file(temp_file)
+                return bool(hash_value) and is_magnet_not_wanted(f'magnet:?xt=urn:btih:{hash_value.lower()}')
+        except Exception as e:
+            logging.debug(f"Not-wanted check on resolved hash failed: {e}")
+        return False
+
     def process_torrent(self, magnet_or_url: str) -> Tuple[Optional[str], Optional[str]]:
         """
         Process a magnet link or torrent URL
@@ -1551,7 +1566,16 @@ class TorrentProcessor:
                 if not magnet and not temp_file:
                     logging.warning(f"[{item_identifier}] [Result {idx}/{len(results)}] Failed to process magnet/torrent")
                     continue
-                    
+
+                # Scrape-time filtering only sees the indexer link. A Jackett
+                # download URL carries no hash, so the same torrent found
+                # through a second indexer slips past a not-wanted hash. Check
+                # again now that the link is resolved to a real hash.
+                if self._resolved_hash_not_wanted(magnet, temp_file, item):
+                    logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] Skipping {result_title!r}: "
+                                 f"its info-hash is in the not-wanted list (resolved from {original_link[:80]})")
+                    continue
+
                 logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] PHASE: Cache Check - Starting cache status check")
 
                 # Create a temporary item dict for passing to check_cache_status

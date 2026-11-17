@@ -84,6 +84,32 @@ class UsenetTasks:
             # placeholder rather than provider progress. Those waits have their own
             # tick caps; the download timeout must not read them as a stalled download.
             _placeholder_jobs = set()
+            # Jobs whose ghost / folder wait ran out this tick. Decided after all
+            # polls: when none of the finished jobs can find its folder, the mount
+            # or the provider API is down (or just restarted), not every job.
+            _wait_expired = {}
+            _wait_since = self._nzb_folder_wait_since
+            _now_mono = _time.monotonic()
+
+            def _wait_tick(job_id):
+                """Count one more wait tick; returns (ticks, seconds waited)."""
+                count = _job_folder_wait_counts.get(job_id, 0) + 1
+                _job_folder_wait_counts[job_id] = count
+                since = _wait_since.setdefault(job_id, _now_mono)
+                return count, _now_mono - since
+
+            def _find_folder(job_id):
+                items_for_job = _job_groups[job_id]
+                nzb_title = items_for_job[0].get('filled_by_file', '') or items_for_job[0].get('original_scraped_torrent_title', '')
+                try:
+                    result = _nzb_client.get_nzb_file_info(
+                        nzb_title or job_id, fast_check=True, include_size=True
+                    )
+                    if result:
+                        return result[0], result[2]
+                except Exception:
+                    pass
+                return None, None
 
             def _poll_job(job_id):
                 try:
@@ -119,35 +145,30 @@ class UsenetTasks:
                                 entry_name = self._nzb_confirmed_complete[job_id]
                                 progress = 100
                             else:
-                                _ghost_wait = _job_folder_wait_counts.get(job_id, 0) + 1
-                                _job_folder_wait_counts[job_id] = _ghost_wait
-                                if _ghost_wait >= 3:
-                                    logging.warning(f'[NZB] job {job_id} not in cli_mount queue after {_ghost_wait} ticks — treating as ghost')
-                                    _job_folder_wait_counts.pop(job_id, None)
+                                # The confirmed-complete memory is lost on restart, and the
+                                # provider drops finished jobs from its queue. A job whose
+                                # folder is there finished; it is not a ghost.
+                                entry_name, actual_file_size = _find_folder(job_id)
+                            if entry_name:
+                                progress = 100
+                            elif job_id not in self._nzb_confirmed_complete:
+                                _ghost_wait, _waited = _wait_tick(job_id)
+                                if _ghost_wait >= 3 and _waited >= self._NZB_GHOST_MIN_WAIT_SECONDS:
+                                    _wait_expired[job_id] = 'ghost'
                                     progress = -2
                                 else:
                                     logging.debug(f'[NZB] job {job_id} not in queue yet (tick {_ghost_wait}/3) — waiting')
                                     progress = 99
                                     _placeholder_jobs.add(job_id)
-                        if progress == 100:
-                            items_for_job = _job_groups[job_id]
-                            nzb_title = items_for_job[0].get('filled_by_file', '') or items_for_job[0].get('original_scraped_torrent_title', '')
-                            search_name = nzb_title or job_id
-                            try:
-                                result = _nzb_client.get_nzb_file_info(
-                                    search_name, fast_check=True, include_size=True
-                                )
-                                if result:
-                                    entry_name, _, actual_file_size = result
-                            except Exception:
-                                pass
+                        if progress == 100 and not entry_name:
+                            entry_name, actual_file_size = _find_folder(job_id)
                         if not entry_name and progress == 100:
-                            # Job completed (exists in queue) but folder not yet visible — wait up to max ticks.
-                            wait_count = _job_folder_wait_counts.get(job_id, 0) + 1
-                            _job_folder_wait_counts[job_id] = wait_count
-                            if wait_count >= _folder_wait_max:
-                                logging.warning(f'[NZB] job {job_id} folder never appeared after {wait_count} ticks — treating as broken')
-                                _job_folder_wait_counts.pop(job_id, None)
+                            # Job completed (exists in queue) but folder not yet visible. Wait
+                            # both a tick count and a wall-clock minimum: ticks alone ran out
+                            # together for every job right after a restart.
+                            wait_count, _waited = _wait_tick(job_id)
+                            if wait_count >= _folder_wait_max and _waited >= self._NZB_FOLDER_MIN_WAIT_SECONDS:
+                                _wait_expired[job_id] = 'folder'
                                 progress = -1
                             else:
                                 logging.debug(f'[NZB] job {job_id} complete but folder not found (tick {wait_count}/{_folder_wait_max}) — waiting')
@@ -155,6 +176,7 @@ class UsenetTasks:
                                 _placeholder_jobs.add(job_id)
                         elif progress == 100:
                             _job_folder_wait_counts.pop(job_id, None)
+                            _wait_since.pop(job_id, None)
                     return job_id, progress, entry_name, actual_file_size, None
                 except Exception as exc:
                     return job_id, None, None, None, exc
@@ -179,6 +201,32 @@ class UsenetTasks:
                                 _job_results[jid] = (prog, entry, actual_size, err)
                             except Exception:
                                 pass
+
+            # A run of expired waits with no finished job finding its folder this
+            # tick is the mount / provider API failing (or still starting after a
+            # restart). Failing them all blacklisted good releases in bulk, so hold
+            # them until some folder lookup works again.
+            if _wait_expired:
+                _folders_seen = any(prog == 100 and entry for prog, entry, _, _ in _job_results.values())
+                if len(_wait_expired) >= 2 and not _folders_seen:
+                    logging.warning(
+                        f'[NZB] {len(_wait_expired)} jobs ran out of wait at once and no finished job '
+                        f'found its folder — treating it as a mount/provider problem, holding them'
+                    )
+                    for _jid in _wait_expired:
+                        _p, _e, _a, _er = _job_results.get(_jid, (None, None, None, None))
+                        _job_results[_jid] = (99, _e, _a, _er)
+                        _placeholder_jobs.add(_jid)
+                else:
+                    for _jid, _why in _wait_expired.items():
+                        if _why == 'ghost':
+                            logging.warning(f'[NZB] job {_jid} not in the provider queue and no folder after '
+                                            f'{_job_folder_wait_counts.get(_jid, 0)} ticks — treating as ghost')
+                        else:
+                            logging.warning(f'[NZB] job {_jid} folder never appeared after '
+                                            f'{_job_folder_wait_counts.get(_jid, 0)} ticks — treating as broken')
+                        _job_folder_wait_counts.pop(_jid, None)
+                        _wait_since.pop(_jid, None)
 
             # Mark all completed entries as ready to move to Checking.
             # cli_mount's repair/health endpoint can stay in "repairing" indefinitely

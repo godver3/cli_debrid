@@ -59,6 +59,7 @@ def clear_nzb_job_health_cache(job_id: str) -> None:
         return
     ProgramRunner._nzb_confirmed_complete.pop(bare, None)
     ProgramRunner._nzb_folder_wait_counts.pop(bare, None)
+    ProgramRunner._nzb_folder_wait_since.pop(bare, None)
 
 
 # Set while the startup sync (queues/initialization.py) runs in its background
@@ -1502,6 +1503,9 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
     _NZB_HEALTH_SKIP_THRESHOLD = 20.0   # if last run took this long, skip next tick
     _nzb_folder_wait_counts: dict = {}   # job_id → consecutive ticks where folder not found
     _NZB_FOLDER_WAIT_MAX = 10            # after this many ticks (~100s) treat as broken
+    _NZB_FOLDER_MIN_WAIT_SECONDS = 300   # ...and at least this long since the wait started
+    _NZB_GHOST_MIN_WAIT_SECONDS = 120    # a job missing from the queue waits at least this long
+    _nzb_folder_wait_since: dict = {}    # job_id → monotonic time its ghost/folder wait started
     _nzb_health_triggered: dict = {}     # entry_name → tick count since trigger (0 = not yet triggered)
     _nzb_confirmed_complete: dict = {}   # job_id → entry_name for jobs confirmed complete+folder found
     _nzb_ghost_repeat_counts: dict = {}  # item_id → consecutive ghost-job cycles for this item
