@@ -98,6 +98,7 @@ func run(cfgPath string, noMount bool) error {
 	}()
 	log.Info("api listening", "addr", ln.Addr().String())
 
+	var mounted mount.Mounted
 	if !noMount {
 		if cfg.MountPath == "" {
 			return errors.New("mount_path is required (or run with --no-mount)")
@@ -113,13 +114,24 @@ func run(cfgPath string, noMount bool) error {
 			return fmt.Errorf("mount %s: %w", cfg.MountPath, err)
 		}
 		log.Info("mounted", "path", cfg.MountPath)
-		defer func() {
-			if err := m.Unmount(); err != nil {
-				log.Warn("unmount", "err", err)
-			}
-		}()
+		mounted = m
 	}
 
+	// Unmount first when told to stop: if the stop is cut short (a
+	// container being killed), a live API matters far less than leaving
+	// no dead mount behind.
+	unmount := func() {
+		if mounted == nil {
+			return
+		}
+		if err := mounted.Unmount(); err != nil {
+			log.Warn("unmount", "err", err)
+		} else {
+			log.Info("unmounted", "path", cfg.MountPath)
+		}
+		mounted = nil
+	}
+	defer unmount()
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	select {
@@ -127,6 +139,7 @@ func run(cfgPath string, noMount bool) error {
 	case <-e.ShutdownRequested():
 	}
 	log.Info("shutting down")
+	unmount()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(ctx)
