@@ -393,6 +393,11 @@ func (e *Engine) PreCache(jobID string, en job.Entry) {
 		wg.Add(1)
 		go func(off, l int64) {
 			defer wg.Done()
+			defer func() {
+				if p := recover(); p != nil {
+					e.log.Error("pre-cache crashed", "job", jobID, "file", en.Name, "panic", p)
+				}
+			}()
 			buf := make([]byte, l)
 			r.ReadAtCtx(ctx, nntp.Prefetch, buf, off) // errors surface on the real read
 		}(rg[0], rg[1])

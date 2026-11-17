@@ -8,12 +8,18 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/godver3/cli_debrid/engine/internal/nntp"
 )
 
 // RemoteChunk is the unit fetched from a debrid provider (one HTTP range).
-const RemoteChunk = 1 << 20
+// Fewer, larger ranges than usenet articles: debrid CDNs throttle and reset
+// connections when one file gets many small parallel requests.
+const RemoteChunk = 4 << 20
+
+// RemoteMaxConns caps parallel range requests per debrid file.
+const RemoteMaxConns = 4
 
 // LinkSource turns a file reference into a direct download URL. refresh
 // asks for a new link (the cached one expired or was refused).
@@ -46,9 +52,11 @@ func OpenRemote(links LinkSource, client *http.Client, cache *Cache, ref string,
 	}
 	r := &RemoteFile{ref: ref, size: size, links: links, cache: cache, client: client,
 		readAhead: ra.segments(RemoteChunk), prefetched: map[int]bool{}}
+	conns := RemoteMaxConns
 	if ra.MaxConns > 0 {
-		r.slots = make(chan struct{}, ra.MaxConns)
+		conns = min(conns, ra.MaxConns)
 	}
+	r.slots = make(chan struct{}, conns)
 	return r
 }
 
@@ -59,23 +67,56 @@ func (r *RemoteFile) chunkLen(i int) int64 {
 	return min(RemoteChunk, r.size-int64(i)*RemoteChunk)
 }
 
+// key names chunk i; the chunk size is part of it so chunks cached with
+// another size (an older version) are never mistaken for these.
+func (r *RemoteFile) key(i int) string {
+	return "remote:" + strconv.Itoa(RemoteChunk) + ":" + r.ref + ":" + strconv.Itoa(i)
+}
+
 func (r *RemoteFile) chunk(ctx context.Context, prio nntp.Priority, i int) ([]byte, error) {
-	key := "remote:" + r.ref + ":" + strconv.Itoa(i)
-	return r.cache.DoCtx(ctx, key, prio, func(ctx context.Context) ([]byte, error) {
+	data, err := r.fetchChunk(ctx, prio, i)
+	if err == nil && int64(len(data)) != r.chunkLen(i) {
+		return nil, fmt.Errorf("stream: chunk %d of %s has %d bytes, want %d", i, r.ref, len(data), r.chunkLen(i))
+	}
+	return data, err
+}
+
+func (r *RemoteFile) fetchChunk(ctx context.Context, prio nntp.Priority, i int) ([]byte, error) {
+	return r.cache.DoCtx(ctx, r.key(i), prio, func(ctx context.Context) ([]byte, error) {
 		start, n := int64(i)*RemoteChunk, r.chunkLen(i)
 		var last error
-		for attempt := 0; attempt < 2; attempt++ { // second try with a fresh link
-			url, err := r.links.Link(ctx, r.ref, attempt > 0)
+		relinked := false
+		for attempt := 0; attempt < 4; attempt++ {
+			url, err := r.links.Link(ctx, r.ref, false)
 			if err != nil {
 				return nil, fmt.Errorf("stream: link for %s: %w", r.ref, err)
 			}
+			// On the wire now: a live read for this chunk joins this fetch
+			// instead of downloading it a second time (found live: it halved
+			// debrid throughput).
+			nntp.FireAcquireHook(ctx)
 			data, status, err := r.get(ctx, url, start, n)
 			if err == nil {
 				return data, nil
 			}
 			last = err
-			if status == 0 || status >= 500 && status != 503 { // network trouble: no point re-linking
-				break
+			switch {
+			case status >= 400 && status < 500 || status == 503:
+				// The link expired or was refused: one fresh link, then give up.
+				if relinked {
+					return nil, last
+				}
+				relinked = true
+				if _, err := r.links.Link(ctx, r.ref, true); err != nil {
+					return nil, fmt.Errorf("stream: new link for %s: %w", r.ref, err)
+				}
+			default:
+				// Connection reset, timeout, 5xx: transient, retry after a pause.
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(time.Duration(250<<attempt) * time.Millisecond):
+				}
 			}
 		}
 		return nil, last
@@ -118,6 +159,11 @@ func (r *RemoteFile) ReadAtCtx(ctx context.Context, prio nntp.Priority, p []byte
 	if off >= r.size {
 		return 0, io.EOF
 	}
+	if prio == nntp.Live && r.readAhead > 0 {
+		// Start the next chunks now, not after this one arrives: over HTTP
+		// the gap between chunks would otherwise halve sequential speed.
+		r.startReadAhead(int(off/RemoteChunk) + 1)
+	}
 	n, last := 0, -1
 	for n < len(p) && off+int64(n) < r.size {
 		i := int((off + int64(n)) / RemoteChunk)
@@ -140,7 +186,7 @@ func (r *RemoteFile) ReadAtCtx(ctx context.Context, prio nntp.Priority, p []byte
 func (r *RemoteFile) startReadAhead(from int) {
 	total := int((r.size + RemoteChunk - 1) / RemoteChunk)
 	for i := from; i < from+r.readAhead && i < total; i++ {
-		if _, ok := r.cache.Get("remote:" + r.ref + ":" + strconv.Itoa(i)); ok {
+		if _, ok := r.cache.Get(r.key(i)); ok {
 			continue
 		}
 		r.mu.Lock()
@@ -150,7 +196,7 @@ func (r *RemoteFile) startReadAhead(from int) {
 		if started {
 			continue
 		}
-		if r.slots != nil {
+		{
 			select {
 			case r.slots <- struct{}{}:
 			default:
@@ -161,9 +207,8 @@ func (r *RemoteFile) startReadAhead(from int) {
 			}
 		}
 		go func(i int) {
-			if r.slots != nil {
-				defer func() { <-r.slots }()
-			}
+			defer func() { <-r.slots }()
+			defer func() { recover() }() // a background prefetch must never take the mount down
 			if _, err := r.chunk(context.Background(), nntp.Prefetch, i); err != nil {
 				r.mu.Lock()
 				delete(r.prefetched, i)

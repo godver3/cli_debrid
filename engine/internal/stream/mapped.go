@@ -162,6 +162,7 @@ func (m *MappedFile) startReadAhead(from int) {
 			if m.slots != nil {
 				defer func() { <-m.slots }()
 			}
+			defer func() { recover() }() // a background prefetch must never take the mount down
 			if _, err := m.segment(context.Background(), nntp.Prefetch, i); err != nil {
 				m.mu.Lock()
 				delete(m.prefetched, i)

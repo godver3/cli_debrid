@@ -57,6 +57,11 @@ func (e *Engine) Prewarm(jobID, file string, n int64) error {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
+				defer func() {
+					if p := recover(); p != nil {
+						e.log.Error("prewarm crashed", "job", jobID, "file", file, "panic", p)
+					}
+				}()
 				buf := make([]byte, chunk)
 				for off := range jobs {
 					r.ReadAtCtx(ctx, nntp.Prefetch, buf[:min(chunk, n-off)], off)

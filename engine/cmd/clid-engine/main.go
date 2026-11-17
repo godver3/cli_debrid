@@ -102,6 +102,9 @@ func run(cfgPath string, noMount bool) error {
 		if cfg.MountPath == "" {
 			return errors.New("mount_path is required (or run with --no-mount)")
 		}
+		// A dead mount left by a crashed engine makes the path unusable
+		// (even mkdir fails on it): clear it first.
+		mount.ClearStale(cfg.MountPath, log)
 		if err := prepareMountPath(cfg.MountPath); err != nil {
 			return err
 		}

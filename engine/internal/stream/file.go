@@ -232,6 +232,7 @@ func (r *File) startReadAhead(from int) {
 			if r.slots != nil {
 				defer func() { <-r.slots }()
 			}
+			defer func() { recover() }() // a background prefetch must never take the mount down
 			if _, err := r.segment(context.Background(), nntp.Prefetch, idx); err != nil {
 				// A failed prefetch may be retried by a later read-ahead.
 				r.mu.Lock()

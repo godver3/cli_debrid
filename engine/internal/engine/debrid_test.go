@@ -84,3 +84,40 @@ func TestDebridJobStreamsWithFreshLinks(t *testing.T) {
 		t.Fatal("invalid id accepted")
 	}
 }
+
+// A connection reset by the CDN (seen live from Real-Debrid on a far seek)
+// is retried, not turned into a read error, and needs no new link.
+func TestDebridRetriesResetConnections(t *testing.T) {
+	file := data(22, 5<<20)
+	var resets atomic.Int64
+	cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if resets.Add(1) <= 2 {
+			conn, _, _ := w.(http.Hijacker).Hijack()
+			conn.Close() // reset mid-request
+			return
+		}
+		var a, b int64
+		fmt.Sscanf(r.Header.Get("Range"), "bytes=%d-%d", &a, &b)
+		w.WriteHeader(http.StatusPartialContent)
+		w.Write(file[a : b+1])
+	}))
+	defer cdn.Close()
+	var links atomic.Int64
+	cb := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		links.Add(1)
+		json.NewEncoder(w).Encode(map[string]any{"url": cdn.URL + "/f", "expires_in": 3600})
+	}))
+	defer cb.Close()
+	s := nntptest.Start(t)
+	e := newEngine(t, s, func(c *Config) { c.LinkCallback, c.Token = cb.URL, "tok" })
+	j, _ := e.AddDebrid("rd-R1", "Reset", "", []DebridFile{{Name: "r.mkv", Size: int64(len(file)), Ref: "R1:1"}})
+	files, _ := e.Files(j.ID)
+	_, res, _ := e.Store.Get(j.ID)
+	buf := make([]byte, 1000)
+	if _, err := files.Entry(res.Entries[0]).ReadAt(buf, 4<<20+7); err != nil || !bytes.Equal(buf, file[4<<20+7:4<<20+1007]) {
+		t.Fatalf("read after resets: %v", err)
+	}
+	if links.Load() != 1 {
+		t.Fatalf("a reset should not cost a new link: %d link requests", links.Load())
+	}
+}
