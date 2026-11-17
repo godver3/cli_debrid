@@ -911,39 +911,11 @@ class CliMountClient:
             return {}
 
     def trigger_health_scan(self, full: bool = False, wait: bool = False, timeout: int = 300) -> bool:
-        """POST /api/repair/run?protocol=nzb to scan NZB entries.
-        full=True scans all files; full=False (default) only scans unchecked files.
-        wait=True blocks until the scan completes (up to timeout seconds)."""
+        """Scan NZB entries (POST /api/repair/run?protocol=nzb). See run_health_scan."""
         if not self.is_enabled():
             return False
         try:
-            import time as _t
-            params = 'protocol=nzb'
-            if full:
-                params += '&ignore_last_checked=true'
-            r = api.post(f'{self.base_url}/api/repair/run?{params}', headers=self._headers(), timeout=30)
-            if r.status_code not in (200, 202, 204):
-                return False
-            if not wait:
-                return True
-            # Poll until the run completes
-            run_id = (r.json() or {}).get('run_id', '')
-            if not run_id:
-                return True
-            deadline = _t.time() + timeout
-            while _t.time() < deadline:
-                _t.sleep(30)
-                try:
-                    sr = api.get(f'{self.base_url}/api/repair/runs/{run_id}', headers=self._headers(), timeout=10)
-                    if sr.status_code == 200:
-                        status = (sr.json() or {}).get('status', '')
-                        if status in ('completed', 'failed', 'error'):
-                            logging.info(f'[cli_mount] NZB health scan completed: status={status}')
-                            return True
-                except Exception:
-                    pass
-            logging.warning('[cli_mount] NZB health scan wait timed out')
-            return True
+            return self.run_health_scan('nzb', full=full, wait=wait, timeout=timeout, log_label='NZB')
         except Exception as exc:
             logging.warning(f'[cli_mount] trigger_health_scan error: {exc}')
             return False
@@ -963,6 +935,99 @@ class CliMountClient:
         except Exception as exc:
             logging.debug(f'[cli_mount] resolve_job_id error: {exc}')
         return ''
+
+    # ---- repair API (capability REPAIR_API) -------------------------------
+    # Thin wrappers over cli_mount's /api/repair/* and /api/browse/torrents.
+    # None of these raise: HTTP errors come back as a status code, transport
+    # errors as status None.
+
+    def _call(self, method: str, path: str, **kwargs):
+        """(status, parsed_json_or_None) for an authenticated cli_mount call."""
+        kwargs.setdefault('timeout', 15)
+        try:
+            r = getattr(api, method)(f'{self.base_url}{path}', headers=self._headers(), **kwargs)
+        except Exception as exc:
+            r = getattr(exc, 'response', None)
+            if r is None:
+                logging.debug(f'[cli_mount] {method.upper()} {path} error: {exc}')
+                return None, None
+        try:
+            body = r.json()
+        except Exception:
+            body = None
+        return r.status_code, body
+
+    def list_repair_health(self, timeout: int = 60) -> Optional[list]:
+        """Every health record (both protocols), or None when the call fails."""
+        status, body = self._call('get', '/api/repair/health', timeout=timeout)
+        if status != 200 or body is None:
+            if status is not None:
+                logging.warning(f'[cli_mount] /api/repair/health HTTP {status}')
+            return None
+        return self._parse_health_entries(body)
+
+    def delete_repair_health(self, entry_name: str) -> Optional[int]:
+        encoded = urllib.parse.quote(entry_name, safe='')
+        return self._call('delete', f'/api/repair/health/{encoded}', timeout=15)[0]
+
+    def recheck_entry_health(self, entry_name: str, timeout: int = 30) -> Optional[int]:
+        encoded = urllib.parse.quote(entry_name, safe='')
+        return self._call('post', f'/api/repair/health/{encoded}/check', timeout=timeout)[0]
+
+    def get_repair_status(self) -> Optional[dict]:
+        status, body = self._call('get', '/api/repair/status', timeout=10)
+        return body if status == 200 and isinstance(body, dict) else None
+
+    def stop_repair(self) -> Optional[int]:
+        return self._call('post', '/api/repair/stop', timeout=10)[0]
+
+    def sync_torrent(self, info_hash: str, rd_id: str = '') -> Optional[int]:
+        """POST /api/torrents/{hash}/sync (optionally pinned to a new RD torrent id)."""
+        return self._call('post', f'/api/torrents/{info_hash}/sync',
+                          params={'rdId': rd_id} if rd_id else None, timeout=15)[0]
+
+    def delete_mount_torrent(self, info_hash: str) -> Optional[int]:
+        return self._call('delete', f'/api/browse/torrents/{info_hash}', timeout=15)[0]
+
+    def iter_mount_torrents(self, page_size: int = 500, timeout: int = 30):
+        """Yield entries from /api/browse/torrents (only those present in the mount)."""
+        page = 1
+        while True:
+            status, body = self._call('get', '/api/browse/torrents',
+                                      params={'limit': page_size, 'page': page}, timeout=timeout)
+            if status != 200 or not isinstance(body, dict):
+                return
+            yield from body.get('entries', [])
+            if page >= body.get('total_pages', 1):
+                return
+            page += 1
+
+    def run_health_scan(self, protocol: str, full: bool = False, wait: bool = False,
+                        timeout: int = 300, log_label: str = '') -> bool:
+        """POST /api/repair/run?protocol=<nzb|torrent>, optionally waiting for it to finish.
+
+        full=True scans all files; full=False only scans unchecked ones.
+        """
+        params = {'protocol': protocol}
+        if full:
+            params['ignore_last_checked'] = 'true'
+        status, body = self._call('post', '/api/repair/run', params=params, timeout=30)
+        if status not in (200, 202, 204):
+            return False
+        if not wait:
+            return True
+        run_id = (body or {}).get('run_id', '') if isinstance(body, dict) else ''
+        if not run_id:
+            return True
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            time.sleep(30)
+            st, run = self._call('get', f'/api/repair/runs/{run_id}', timeout=10)
+            if st == 200 and isinstance(run, dict) and run.get('status') in ('completed', 'failed', 'error'):
+                logging.info(f'[cli_mount] {log_label or protocol} health scan completed: status={run.get("status")}')
+                return True
+        logging.warning(f'[cli_mount] {log_label or protocol} health scan wait timed out')
+        return True
 
     # ---- queue listing (capability QUEUE) ---------------------------------
 

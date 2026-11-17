@@ -20,8 +20,9 @@ DEBRID_SYNC = 'debrid_sync'      # sync_debrid_torrent
 EXACT_REMOVE = 'exact_remove'    # remove_nzb_exact (delete one job by hash, no name fallback)
 SIDECAR = 'sidecar'              # inject_sidecar_file
 QUEUE = 'queue'                  # iter_queue_jobs / find_job_hash_by_name / delete_queue_job / iter_library_nzbs
+REPAIR_API = 'repair_api'        # list/delete/recheck health records, repair runs, mount torrent browse/delete/sync
 
-ALL_CAPABILITIES = frozenset({RENAME, TAGS, CLI_IDS, DEBRID_SYNC, EXACT_REMOVE, SIDECAR, QUEUE})
+ALL_CAPABILITIES = frozenset({RENAME, TAGS, CLI_IDS, DEBRID_SYNC, EXACT_REMOVE, SIDECAR, QUEUE, REPAIR_API})
 
 
 # One method per capability, for clients that don't declare CAPABILITIES
@@ -34,6 +35,7 @@ _PROBE_METHOD = {
     EXACT_REMOVE: 'remove_nzb_exact',
     SIDECAR: 'inject_sidecar_file',
     QUEUE: 'iter_queue_jobs',
+    REPAIR_API: 'list_repair_health',
 }
 
 
@@ -91,6 +93,16 @@ class UsenetBackend(Protocol):
     def find_job_hash_by_name(self, name: str, page_size: int = 50, sort: bool = True) -> str: ...
     def delete_queue_job(self, info_hash: str) -> Optional[int]: ...
     def iter_library_nzbs(self, page_size: int = 100, timeout: int = 10): ...
+    def list_repair_health(self, timeout: int = 60) -> Optional[list]: ...
+    def delete_repair_health(self, entry_name: str) -> Optional[int]: ...
+    def recheck_entry_health(self, entry_name: str, timeout: int = 30) -> Optional[int]: ...
+    def get_repair_status(self) -> Optional[dict]: ...
+    def stop_repair(self) -> Optional[int]: ...
+    def sync_torrent(self, info_hash: str, rd_id: str = '') -> Optional[int]: ...
+    def delete_mount_torrent(self, info_hash: str) -> Optional[int]: ...
+    def iter_mount_torrents(self, page_size: int = 500, timeout: int = 30): ...
+    def run_health_scan(self, protocol: str, full: bool = False, wait: bool = False,
+                        timeout: int = 300, log_label: str = '') -> bool: ...
 
 
 class UnsupportedFeaturesMixin:
@@ -143,3 +155,30 @@ class UnsupportedFeaturesMixin:
 
     def iter_library_nzbs(self, page_size=100, timeout=10):
         return iter(())
+
+    def list_repair_health(self, timeout=60):
+        return None
+
+    def delete_repair_health(self, entry_name):
+        return None
+
+    def recheck_entry_health(self, entry_name, timeout=30):
+        return None
+
+    def get_repair_status(self):
+        return None
+
+    def stop_repair(self):
+        return None
+
+    def sync_torrent(self, info_hash, rd_id=''):
+        return None
+
+    def delete_mount_torrent(self, info_hash):
+        return None
+
+    def iter_mount_torrents(self, page_size=500, timeout=30):
+        return iter(())
+
+    def run_health_scan(self, protocol, full=False, wait=False, timeout=300, log_label=''):
+        return False
