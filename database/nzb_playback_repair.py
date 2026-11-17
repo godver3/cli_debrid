@@ -437,18 +437,11 @@ def reject_active_candidate(item_id, job_id, reason='candidate_failed'):
 
 
 def _mount_request(path, payload, timeout):
-    import requests
-    from utilities.settings import get_setting
-    base = get_setting('Usenet Provider', 'url', '').rstrip('/')
-    token = get_setting('Usenet Provider', 'api_token', '')
-    headers = {'Authorization': f'Bearer {token}'} if token else {}
+    """POST a playback-replacement call (path ends in /ack or /verify) to the
+    active backend. Returns (status, body, error); status 0 = no answer."""
     try:
-        response = requests.post(base + path, json=payload, headers=headers, timeout=timeout)
-        try:
-            body = response.json()
-        except Exception:
-            body = {}
-        return response.status_code, body, ''
+        client = __import__('usenet', fromlist=['get_usenet_client']).get_usenet_client()
+        return client.post_repair_replacement(path.rsplit('/', 1)[-1], payload, timeout=timeout)
     except Exception as exc:
         return 0, {}, str(exc)
 

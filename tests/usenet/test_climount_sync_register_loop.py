@@ -54,6 +54,11 @@ class FakeCliMount:
         self.entries[info_hash]["updated_at"] = time.time()
         return True
 
+    def fetch_sync_changes_page(self, page, limit, since_ts=0, timeout=60):
+        # cli_mount answers one page here; the fake has a single page.
+        url = f"{self.base_url}/api/sync/changes" + (f"?since={since_ts}" if since_ts else "")
+        return 200, self.changes(url)
+
     # GET /api/sync/changes?since=
     def changes(self, url):
         since = int(url.split("since=")[1]) if "since=" in url else 0

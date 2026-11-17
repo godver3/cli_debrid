@@ -26,6 +26,19 @@ class _Client:
     def _headers():
         return {'Authorization': 'Bearer test'}
 
+    def fetch_sync_changes_page(self, page, limit, since_ts=0, timeout=60):
+        # Same request CliMountClient.fetch_sync_changes_page sends, through the
+        # stubbed api tracker so each test's get() sees and answers it.
+        params = {'page': page, 'limit': limit}
+        if since_ts > 0:
+            params['since'] = since_ts
+        r = sys.modules['routes.api_tracker'].api.get(
+            f'{self.base_url}/api/sync/changes', params=params,
+            headers=self._headers(), timeout=timeout)
+        if r.status_code != 200:
+            return r.status_code, None
+        return r.status_code, r.json() or []
+
 
 class ClimountSyncPaginationTests(unittest.TestCase):
     def _modules(self, get):

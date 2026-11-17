@@ -21,8 +21,12 @@ EXACT_REMOVE = 'exact_remove'    # remove_nzb_exact (delete one job by hash, no 
 SIDECAR = 'sidecar'              # inject_sidecar_file
 QUEUE = 'queue'                  # iter_queue_jobs / find_job_hash_by_name / delete_queue_job / iter_library_nzbs
 REPAIR_API = 'repair_api'        # list/delete/recheck health records, repair runs, mount torrent browse/delete/sync
+STATS = 'stats'                  # get_debug_stats (pool use, active streams, mount detail)
+SYNC_FEED = 'sync_feed'          # fetch_sync_changes_page (entry changes since a timestamp)
+LOGS = 'logs'                    # fetch_logs / share_logs (the backend's own logs)
 
-ALL_CAPABILITIES = frozenset({RENAME, TAGS, CLI_IDS, DEBRID_SYNC, EXACT_REMOVE, SIDECAR, QUEUE, REPAIR_API})
+ALL_CAPABILITIES = frozenset({RENAME, TAGS, CLI_IDS, DEBRID_SYNC, EXACT_REMOVE, SIDECAR, QUEUE,
+                              REPAIR_API, STATS, SYNC_FEED, LOGS})
 
 
 # One method per capability, for clients that don't declare CAPABILITIES
@@ -36,6 +40,9 @@ _PROBE_METHOD = {
     SIDECAR: 'inject_sidecar_file',
     QUEUE: 'iter_queue_jobs',
     REPAIR_API: 'list_repair_health',
+    STATS: 'get_debug_stats',
+    SYNC_FEED: 'fetch_sync_changes_page',
+    LOGS: 'fetch_logs',
 }
 
 
@@ -93,7 +100,7 @@ class UsenetBackend(Protocol):
     def find_job_hash_by_name(self, name: str, page_size: int = 50, sort: bool = True) -> str: ...
     def delete_queue_job(self, info_hash: str) -> Optional[int]: ...
     def iter_library_nzbs(self, page_size: int = 100, timeout: int = 10): ...
-    def list_repair_health(self, timeout: int = 60) -> Optional[list]: ...
+    def list_repair_health(self, timeout: int = 60, status: str = '') -> Optional[list]: ...
     def delete_repair_health(self, entry_name: str) -> Optional[int]: ...
     def recheck_entry_health(self, entry_name: str, timeout: int = 30) -> Optional[int]: ...
     def get_repair_status(self) -> Optional[dict]: ...
@@ -103,6 +110,11 @@ class UsenetBackend(Protocol):
     def iter_mount_torrents(self, page_size: int = 500, timeout: int = 30): ...
     def run_health_scan(self, protocol: str, full: bool = False, wait: bool = False,
                         timeout: int = 300, log_label: str = '') -> bool: ...
+    def get_debug_stats(self, timeout: int = 10) -> Optional[dict]: ...
+    def post_repair_replacement(self, action: str, payload: dict, timeout: int = 20): ...
+    def fetch_sync_changes_page(self, page: int, limit: int, since_ts: int = 0, timeout: int = 60): ...
+    def fetch_logs(self, lines: int = 1000, level: str = 'all') -> dict: ...
+    def share_logs(self) -> str: ...
 
 
 class UnsupportedFeaturesMixin:
@@ -156,7 +168,7 @@ class UnsupportedFeaturesMixin:
     def iter_library_nzbs(self, page_size=100, timeout=10):
         return iter(())
 
-    def list_repair_health(self, timeout=60):
+    def list_repair_health(self, timeout=60, status=''):
         return None
 
     def delete_repair_health(self, entry_name):
@@ -182,3 +194,18 @@ class UnsupportedFeaturesMixin:
 
     def run_health_scan(self, protocol, full=False, wait=False, timeout=300, log_label=''):
         return False
+
+    def get_debug_stats(self, timeout=10):
+        return None
+
+    def post_repair_replacement(self, action, payload, timeout=20):
+        return 0, {}, 'not supported by this usenet backend'
+
+    def fetch_sync_changes_page(self, page, limit, since_ts=0, timeout=60):
+        return None, None
+
+    def fetch_logs(self, lines=1000, level='all'):
+        raise NotImplementedError('this usenet backend has no log API')
+
+    def share_logs(self):
+        raise NotImplementedError('this usenet backend has no log API')

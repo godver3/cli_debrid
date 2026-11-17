@@ -400,18 +400,16 @@ def api_active_files():
     Rclone mode: mount.detail.transferring from /debug/stats (name, bytes, size, speed, progress)
     """
     try:
-        import requests as _req
         from usenet.climount_client import get_climount_client
+        from usenet.base import supports, STATS
         dc = get_climount_client()
-        if not dc or not dc.is_enabled():
+        if not dc or not dc.is_enabled() or not supports(dc, STATS):
             return jsonify({'success': False, 'error': 'cli_mount not enabled'}), 400
 
-        base = dc.base_url.rstrip('/')
-        resp = _req.get(f'{base}/debug/stats', timeout=8)
-        if resp.status_code != 200:
-            return jsonify({'success': False, 'error': f'cli_mount stats returned {resp.status_code}'}), 502
+        data = dc.get_debug_stats(timeout=8)
+        if data is None:
+            return jsonify({'success': False, 'error': 'cli_mount stats unavailable'}), 502
 
-        data = resp.json()
         now = int(time.time())
 
         # DFS / WebDAV mode — active_streams

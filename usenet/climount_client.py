@@ -957,9 +957,10 @@ class CliMountClient:
             body = None
         return r.status_code, body
 
-    def list_repair_health(self, timeout: int = 60) -> Optional[list]:
-        """Every health record (both protocols), or None when the call fails."""
-        status, body = self._call('get', '/api/repair/health', timeout=timeout)
+    def list_repair_health(self, timeout: int = 60, status: str = '') -> Optional[list]:
+        """Health records (both protocols; optionally only ``status``), or None when the call fails."""
+        params = {'status': status} if status else None
+        status, body = self._call('get', '/api/repair/health', params=params, timeout=timeout)
         if status != 200 or body is None:
             if status is not None:
                 logging.warning(f'[cli_mount] /api/repair/health HTTP {status}')
@@ -1028,6 +1029,70 @@ class CliMountClient:
                 return True
         logging.warning(f'[cli_mount] {log_label or protocol} health scan wait timed out')
         return True
+
+    def post_repair_replacement(self, action: str, payload: dict, timeout: int = 20):
+        """POST /api/repair/replacements/<ack|verify>. Returns (status, body, error):
+        status 0 + error text when the request never got an answer."""
+        if action not in ('ack', 'verify'):
+            raise ValueError(f'unknown replacement action {action!r}')
+        try:
+            r = requests.post(f'{self.base_url}/api/repair/replacements/{action}', json=payload,
+                              headers=self._headers(), timeout=timeout)
+            try:
+                body = r.json()
+            except Exception:
+                body = {}
+            return r.status_code, body if isinstance(body, dict) else {}, ''
+        except Exception as exc:
+            return 0, {}, str(exc)
+
+    # ---- sync feed (capability SYNC_FEED) ---------------------------------
+
+    def fetch_sync_changes_page(self, page: int, limit: int, since_ts: int = 0, timeout: int = 60):
+        """GET /api/sync/changes for one page. Returns (status, payload); raises on
+        transport errors. payload is a list on legacy cli_mount, else a dict
+        with 'changes' and 'has_more'."""
+        params = {'page': page, 'limit': limit}
+        if since_ts > 0:
+            params['since'] = since_ts
+        r = api.get(f'{self.base_url}/api/sync/changes', params=params, headers=self._headers(), timeout=timeout)
+        if r.status_code != 200:
+            return r.status_code, None
+        return r.status_code, r.json() or []
+
+    # ---- logs (capability LOGS) -------------------------------------------
+
+    def fetch_logs(self, lines: int = 1000, level: str = 'all') -> dict:
+        """cli_mount's own recent log lines. Raises on any failure (callers show the message)."""
+        params = {'lines': lines}
+        if level != 'all':
+            params['level'] = level
+        r = api.get(f'{self.base_url}/api/logs', headers=self._headers(), params=params, timeout=15)
+        r.raise_for_status()
+        return r.json()
+
+    def share_logs(self) -> str:
+        """Ask cli_mount to collect and upload its logs; returns the share URL. Raises on failure."""
+        r = api.post(f'{self.base_url}/api/logs/share', headers=self._headers(), timeout=310)
+        r.raise_for_status()
+        url = (r.json() or {}).get('url')
+        if not url:
+            raise Exception('cli_mount did not return a share URL')
+        return url
+
+    # ---- stats (capability STATS) -----------------------------------------
+
+    def get_debug_stats(self, timeout: int = 10) -> Optional[dict]:
+        """cli_mount's GET /debug/stats (pool use, active streams, mount detail), or None."""
+        try:
+            r = requests.get(f'{self.base_url}/debug/stats', headers=self._headers(), timeout=timeout)
+            if r.status_code != 200:
+                return None
+            data = r.json()
+            return data if isinstance(data, dict) else None
+        except Exception as exc:
+            logging.debug(f'[cli_mount] /debug/stats fetch failed: {exc}')
+            return None
 
     # ---- queue listing (capability QUEUE) ---------------------------------
 
