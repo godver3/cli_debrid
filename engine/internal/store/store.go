@@ -32,11 +32,14 @@ const (
 
 // Job is a stored job's metadata.
 type Job struct {
-	ID        string         `json:"id"`
-	Name      string         `json:"name"`
-	Category  string         `json:"category"`
-	Status    string         `json:"status"`
-	Error     string         `json:"error,omitempty"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Category string `json:"category"`
+	Status   string `json:"status"`
+	Error    string `json:"error,omitempty"`
+	// Retryable marks failures that were not proof (network trouble):
+	// resubmitting later may work. Leftover-only or unusable NZBs are final.
+	Retryable bool           `json:"retryable,omitempty"`
 	Size      int64          `json:"size"` // sum of entry sizes once ready
 	Tags      []string       `json:"tags,omitempty"`
 	CLIIDs    map[string]int `json:"cli_ids,omitempty"` // entry name -> cli_debrid item id

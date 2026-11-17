@@ -73,6 +73,13 @@ func (s *Server) Drop(id string) {
 	s.drop[id] = true
 }
 
+// Undrop answers BODY for id normally again.
+func (s *Server) Undrop(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.drop, id)
+}
+
 // Remove makes an article answer 430.
 func (s *Server) Remove(id string) {
 	s.mu.Lock()

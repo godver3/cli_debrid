@@ -66,6 +66,10 @@ type Result struct {
 // instead of the real file.
 var ErrLeftoverOnly = errors.New("job: only leftovers are streamable, main content failed")
 
+// ErrInconclusive means the import failed for reasons that prove nothing
+// (provider unreachable, timeouts): trying again later may work.
+var ErrInconclusive = errors.New("job: import inconclusive")
+
 // ErrNothingStreamable means no file could be served at all.
 var ErrNothingStreamable = errors.New("job: nothing streamable")
 
@@ -246,6 +250,13 @@ func Build(ctx context.Context, f stream.Fetcher, cache *stream.Cache, n *nzb.NZ
 
 	sort.SliceStable(res.Entries, func(i, j int) bool { return res.Entries[i].Size > res.Entries[j].Size })
 	if len(res.Entries) == 0 {
+		// Proof (articles missing everywhere, bad archives) is final; a
+		// probe that failed for network reasons only means "not yet".
+		for _, p := range todo {
+			if p.err != nil && !nntp.IsNotFound(p.err) && !errors.Is(p.err, stream.ErrLayout) {
+				return res, fmt.Errorf("%w: %v", ErrInconclusive, p.err)
+			}
+		}
 		return res, ErrNothingStreamable
 	}
 	if LeftoverOnly(res.Entries[0].Size, failedArchive) {
