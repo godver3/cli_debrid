@@ -369,9 +369,9 @@ SETTINGS_SCHEMA = {
         },
         "provider": {
             "type": "string",
-            "description": "Which usenet backend to use: cli_mount, NzbDAV, or Zurg (Zurg 2.0's SABnzbd-compatible endpoint, or any other flat-layout SAB-emulation mount). Zurg reuses the NzbDAV submit/poll/health-check logic unchanged, but resolves the job folder directly under the mount root instead of walking a <category>/<job> subfolder layout — required because Zurg's mount stores content flat and has no per-category subdirectories.",
+            "description": "Which usenet backend to use: cli_mount, NzbDAV, Zurg (Zurg 2.0's SABnzbd-compatible endpoint, or any other flat-layout SAB-emulation mount), or builtin (cli_debrid's own optional mount engine, configured under Built-in Mount; the container needs /dev/fuse). Zurg reuses the NzbDAV submit/poll/health-check logic unchanged, but resolves the job folder directly under the mount root instead of walking a <category>/<job> subfolder layout — required because Zurg's mount stores content flat and has no per-category subdirectories.",
             "default": "climount",
-            "choices": ["climount", "nzbdav", "zurg"]
+            "choices": ["climount", "nzbdav", "zurg", "builtin"]
         },
         "owned_categories": {
             "type": "string",
@@ -387,6 +387,107 @@ SETTINGS_SCHEMA = {
             "type": "string",
             "description": "NzbDAV/Zurg only. Optional. Choose which categories you want and what they're named on your instance, as comma-separated bucket=name pairs, e.g. `movies=movies, shows=shows, movies_1080p=movies_1080p, shows_1080p=shows_1080p, fallback=__unplayable__`. Detected buckets you omit fall back to their parent (movies_2160p_remux → movies_2160p → movies), so items never land in a category that doesn't exist on your instance. Recognised buckets: movies, shows, movies_1080p, shows_1080p, movies_2160p, shows_2160p, movies_1080p_remux, movies_2160p_remux, anime_movies, anime_shows, music, and 'fallback'. Leave empty to use the full default taxonomy. The setup helper's required-category list and the repair scope follow this map automatically.",
             "default": ""
+        },
+    },
+    "Built-in Mount": {
+        "tab": "Required Settings",
+        "mount_path": {
+            "type": "string",
+            "description": "Built-in mount only (Usenet Provider = builtin). Where the engine mounts its files inside the container. Bind it with rshared propagation so Plex sees it, and point File Management's original files path at <mount_path>/__all__.",
+            "default": "/mnt/clid"
+        },
+        "cache_dir": {
+            "type": "string",
+            "description": "Built-in mount only. Folder for the engine's disk cache of downloaded articles. Use a dedicated folder: the engine evicts files in it.",
+            "default": "/user/cache/engine"
+        },
+        "cache_size_gb": {
+            "type": "integer",
+            "description": "Built-in mount only. Maximum size of the disk cache in GB (0 disables it).",
+            "default": 50
+        },
+        "read_ahead_segments": {
+            "type": "integer",
+            "description": "Built-in mount only. Articles fetched ahead of playback (about 0.7 MB each).",
+            "default": 8
+        },
+        "allow_other": {
+            "type": "boolean",
+            "description": "Built-in mount only. Let other users (Plex) read the mount. Needs user_allow_other in /etc/fuse.conf (set in the image).",
+            "default": True
+        },
+        "primary_host": {
+            "type": "string",
+            "description": "Built-in mount only. Your usenet provider's server, e.g. news.example.com.",
+            "default": ""
+        },
+        "primary_port": {
+            "type": "integer",
+            "description": "Built-in mount only. Server port (563 for SSL, 119 without).",
+            "default": 563
+        },
+        "primary_ssl": {
+            "type": "boolean",
+            "description": "Built-in mount only. Connect with SSL/TLS.",
+            "default": True
+        },
+        "primary_username": {
+            "type": "string",
+            "description": "Built-in mount only. Usenet account username.",
+            "default": ""
+        },
+        "primary_password": {
+            "type": "string",
+            "description": "Built-in mount only. Usenet account password.",
+            "default": "",
+            "sensitive": True
+        },
+        "primary_connections": {
+            "type": "integer",
+            "description": "Built-in mount only. Connections to open at most. Stay below your plan's limit if another app (cli_mount, a downloader) uses the same account.",
+            "default": 20
+        },
+        "backup_host": {
+            "type": "string",
+            "description": "Built-in mount only. Optional backup (block account) server, asked only when the primary lacks an article. Leave empty for none.",
+            "default": ""
+        },
+        "backup_port": {
+            "type": "integer",
+            "description": "Built-in mount only. Backup server port.",
+            "default": 563
+        },
+        "backup_ssl": {
+            "type": "boolean",
+            "description": "Built-in mount only. Connect to the backup with SSL/TLS.",
+            "default": True
+        },
+        "backup_username": {
+            "type": "string",
+            "description": "Built-in mount only. Backup account username.",
+            "default": ""
+        },
+        "backup_password": {
+            "type": "string",
+            "description": "Built-in mount only. Backup account password.",
+            "default": "",
+            "sensitive": True
+        },
+        "backup_connections": {
+            "type": "integer",
+            "description": "Built-in mount only. Backup connections at most.",
+            "default": 5
+        },
+        "api_port": {
+            "type": "integer",
+            "description": "Built-in mount only. Local port of the engine's API (127.0.0.1 only). Change it only if it clashes.",
+            "default": 8283
+        },
+        "api_token": {
+            "type": "string",
+            "description": "Built-in mount only. Shared secret between cli_debrid and the engine. Generated automatically when empty.",
+            "default": "",
+            "sensitive": True
         },
     },
     "TMDB": {

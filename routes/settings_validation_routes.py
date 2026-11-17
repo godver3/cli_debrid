@@ -277,13 +277,23 @@ def validate_trakt_credentials(client_id, client_secret):
         else:
             return False, f"Error validating Trakt credentials: {error_msg} - Please ensure your Client ID and Secret are correct"
 
-USENET_BACKEND_NAMES = {'climount': 'cli_mount', 'nzbdav': 'NzbDAV', 'zurg': 'Zurg'}
+USENET_BACKEND_NAMES = {'climount': 'cli_mount', 'nzbdav': 'NzbDAV', 'zurg': 'Zurg', 'builtin': 'Built-in mount'}
 
 
 def validate_usenet_provider(backend, url, token=''):
     """Check that the chosen usenet backend answers at url, and that the token works."""
     backend = (backend or 'climount').strip().lower()
     name = USENET_BACKEND_NAMES.get(backend, 'Usenet provider')
+    if backend == 'builtin':
+        # Runs inside this container; no URL. Report why it can't run, or
+        # whether its API answers.
+        from utilities import builtin_engine
+        issues = builtin_engine.problems()
+        if issues:
+            return False, "Built-in mount can't run: " + '; '.join(issues)
+        from usenet.builtin_client import BuiltinClient
+        ok, err = BuiltinClient().check_connectivity()
+        return (True, "Built-in mount engine is running") if ok else (False, f"Built-in mount engine: {err}")
     url = (url or '').strip().rstrip('/')
     if not url:
         return False, f"{name} URL is required"

@@ -43,7 +43,15 @@
                     <option value="climount" {% if usenet_backend == 'climount' %}selected{% endif %}>cli_mount (recommended)</option>
                     <option value="nzbdav" {% if usenet_backend == 'nzbdav' %}selected{% endif %}>NzbDAV</option>
                     <option value="zurg" {% if usenet_backend == 'zurg' %}selected{% endif %}>Zurg 2.0</option>
+                    <option value="builtin" {% if usenet_backend == 'builtin' %}selected{% endif %}>Built-in mount (beta)</option>
                 </select>
+                <div class="settings-description" id="builtin-note" style="display:none;">
+                    cli_debrid runs its own mount engine in this container, no separate app needed.
+                    After onboarding, enter your usenet server under Settings → Required → Built-in Mount.
+                    The container needs <code>devices: [/dev/fuse]</code> and <code>cap_add: [SYS_ADMIN]</code>,
+                    and its mount path (default <code>/mnt/clid</code>) bound with rshared propagation so Plex sees it.
+                </div>
+                <div id="usenet-external-fields">
                 <label for="usenet_url" class="onboarding-label">Mount URL: <button type="button" id="usenet-detect-btn" style="margin-left:6px;font-size:11px;padding:2px 8px;border-radius:4px;border:1px solid #555;background:#222;color:#ddd;cursor:pointer">Detect</button> <span id="usenet-detect-status" style="font-size:11px;color:#999"></span></label>
                 <div class="settings-description" id="usenet-url-hint"></div>
                 <input type="text" id="usenet_url" name="usenet_url" class="onboarding-input" value="{{ settings.get('Usenet Provider', {}).get('url', '') }}">
@@ -51,6 +59,9 @@
                 <div class="settings-description" id="usenet-token-hint"></div>
                 <div class="ob-inline">
                     <input type="text" id="usenet_api_token" name="usenet_api_token" class="onboarding-input" autocomplete="off" value="{{ settings.get('Usenet Provider', {}).get('api_token', '') }}">
+                </div>
+                </div>
+                <div class="ob-inline">
                     <button type="button" class="ob-test-btn" data-test="usenet">Test connection</button>
                 </div>
                 <div class="ob-test-result" data-result="usenet"></div>
@@ -970,6 +981,9 @@ document.addEventListener('DOMContentLoaded', function() {
             backend === 'climount' ? 'API Token (optional):' : 'SABnzbd API Key:';
         document.getElementById('usenet_url').placeholder = hints.placeholder;
         document.getElementById('nzbdav-helper-wrap').style.display = backend === 'nzbdav' ? 'block' : 'none';
+        const builtin = backend === 'builtin';
+        document.getElementById('usenet-external-fields').style.display = builtin ? 'none' : 'block';
+        document.getElementById('builtin-note').style.display = builtin ? 'block' : 'none';
     }
 
     useDebrid.addEventListener('change', updateProviderPanels);

@@ -8,6 +8,7 @@ to be slotted in without changing any call sites.
 Currently supported:
   - climount  (default; the original implementation)
   - nzbdav     (alternative; see nzbdav_client.py)
+  - builtin    (the optional built-in mount engine, engine/ + builtin_client.py)
   - zurg       (Zurg 2.0 / other flat-layout SAB-emulation mounts; reuses
                 nzbdav_client.py's submit/poll/health-check logic unchanged,
                 only the WebDAV browse helpers resolve folders differently —
@@ -54,6 +55,9 @@ UsenetClient = Union['CliMountClient', 'NzbdavClient']
 # CliMountClient at the legacy call sites.
 SAB_STYLE_PROVIDERS = ('nzbdav', 'zurg')
 
+# The optional built-in mount engine (usenet/builtin_client.py).
+BUILTIN_PROVIDER = 'builtin'
+
 
 def _get_provider_key() -> str:
     """Read the chosen provider from settings, defaulting to 'climount'.
@@ -66,12 +70,30 @@ def _get_provider_key() -> str:
     return (cfg.get('provider') or 'climount').strip().lower()
 
 
+def usenet_configured(get=None) -> bool:
+    """Usenet is enabled and has somewhere to send jobs: a URL for external
+    backends, or the built-in engine (which needs no URL).
+
+    get: the caller's own get_setting(section, key, default), so modules that
+    read settings through their own reference keep doing so.
+    """
+    get = get or get_setting
+    if not get('Usenet Provider', 'enabled', False):
+        return False
+    if (get('Usenet Provider', 'provider', '') or '').strip().lower() == BUILTIN_PROVIDER:
+        return True
+    return bool((get('Usenet Provider', 'url', '') or '').strip())
+
+
 def get_usenet_client():
     """Return the singleton client for whichever provider is configured."""
     provider = _get_provider_key()
     if provider in SAB_STYLE_PROVIDERS:
         from .nzbdav_client import get_nzbdav_client
         return get_nzbdav_client()
+    if provider == BUILTIN_PROVIDER:
+        from .builtin_client import get_builtin_client
+        return get_builtin_client()
     # default + 'climount'
     from .climount_client import get_climount_client
     return get_climount_client()
@@ -89,6 +111,7 @@ def get_usenet_provider_display_name() -> str:
         'climount': 'cli_mount',
         'nzbdav': 'NzbDAV',
         'zurg': 'Zurg',
+        'builtin': 'Built-in mount',
     }.get(provider, 'Usenet provider')
 
 
@@ -98,6 +121,9 @@ def reset_usenet_client() -> None:
     if provider in SAB_STYLE_PROVIDERS:
         from .nzbdav_client import reset_nzbdav_client
         reset_nzbdav_client()
+    elif provider == BUILTIN_PROVIDER:
+        from .builtin_client import reset_builtin_client
+        reset_builtin_client()
     else:
         from .climount_client import reset_climount_client
         reset_climount_client()
@@ -115,11 +141,14 @@ def is_nzb_job_alive(job_hash: str) -> bool:
     get_job_status() round-trip for them.
     """
     provider = _get_provider_key()
-    if provider in SAB_STYLE_PROVIDERS:
+    if provider in SAB_STYLE_PROVIDERS or provider == BUILTIN_PROVIDER:
         import logging
-        from .nzbdav_client import get_nzbdav_client
+        if provider == BUILTIN_PROVIDER:
+            from .climount_client import _was_recently_deleted_by_us
+            if _was_recently_deleted_by_us(job_hash):
+                return False
         try:
-            status = get_nzbdav_client().get_job_status(job_hash)
+            status = get_usenet_client().get_job_status(job_hash)
             return bool(status and status.get('raw'))
         except Exception as exc:
             logging.debug(f'[{provider}] is_nzb_job_alive check failed for {job_hash!r}: {exc}')

@@ -1997,6 +1997,16 @@ def update_settings():
                     reset_usenet_client()
                     logging.info("Usenet provider client reset complete")
 
+                    # Start, restart (config changed) or stop the optional
+                    # built-in mount engine to match the new settings.
+                    try:
+                        from utilities import builtin_engine
+                        from usenet.builtin_client import reset_builtin_client
+                        reset_builtin_client()
+                        logging.info(f"Built-in mount engine: {builtin_engine.sync()}")
+                    except Exception as engine_err:
+                        logging.warning(f"Built-in mount engine sync failed: {engine_err}")
+
                     from queues.queue_manager import QueueManager
                     QueueManager().reinitialize()
                     logging.info("QueueManager reinitialized")

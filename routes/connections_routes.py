@@ -586,9 +586,9 @@ def check_climount_connection():
     Uses the provider factory so NzbDAV is checked (and its ensure_categories()
     side-effect runs) when NzbDAV is the active provider.
     """
-    enabled = get_setting('Usenet Provider', 'enabled', default=False)
+    from usenet import usenet_configured
     url = get_setting('Usenet Provider', 'url', '').strip().rstrip('/')
-    if not enabled or not url:
+    if not usenet_configured(get_setting):
         return None
     try:
         from usenet import get_usenet_client, get_usenet_provider_display_name

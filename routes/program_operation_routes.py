@@ -877,7 +877,8 @@ def check_program_conditions():
 
     # Require at least one of: Debrid Provider OR Usenet Provider (cli_mount)
     debrid_ok = bool(get_setting('Debrid Provider', 'provider') and get_setting('Debrid Provider', 'api_key'))
-    usenet_ok = bool(get_setting('Usenet Provider', 'enabled') and get_setting('Usenet Provider', 'url'))
+    from usenet import usenet_configured
+    usenet_ok = usenet_configured(get_setting)
     if not debrid_ok and not usenet_ok:
         missing_fields.append("Debrid Provider or Usenet Provider")
 

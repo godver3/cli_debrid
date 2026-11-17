@@ -15,7 +15,7 @@ from .models import admin_required
 
 onboarding_bp = Blueprint('onboarding', __name__)
 
-USENET_BACKENDS = ('climount', 'nzbdav', 'zurg')
+USENET_BACKENDS = ('climount', 'nzbdav', 'zurg', 'builtin')
 # New configs get this placeholder debrid key; it doesn't mean debrid is set up.
 DEBRID_PLACEHOLDER_KEY = 'demo_key'
 
@@ -27,7 +27,8 @@ def _debrid_configured():
     return bool(get_setting('Debrid Provider', 'provider') and _real_debrid_key(load_config()))
 
 def _usenet_configured():
-    return bool(get_setting('Usenet Provider', 'enabled') and get_setting('Usenet Provider', 'url'))
+    from usenet import usenet_configured
+    return usenet_configured(get_setting)
 
 def _media_provider_configured():
     """Return True if either a debrid provider or usenet provider is configured."""
@@ -119,6 +120,16 @@ def _save_required_settings(form):
         usenet['provider'] = backend if backend in USENET_BACKENDS else 'climount'
         usenet['url'] = form.get('usenet_url', '').strip().rstrip('/')
         usenet['api_token'] = form.get('usenet_api_token', '').strip()
+        if usenet['provider'] == 'builtin':
+            # The engine runs in this container: no URL/token. Its files show
+            # under <mount_path>/__all__, which is the original-files path.
+            usenet['url'] = ''
+            usenet['api_token'] = ''
+            mount = (config.get('Built-in Mount', {}).get('mount_path') or '/mnt/clid').rstrip('/')
+            fm = config.setdefault('File Management', {})
+            if not (fm.get('original_files_path') or '').strip():
+                fm['original_files_path'] = f'{mount}/__all__'
+                config.setdefault('Plex', {})['mounted_file_location'] = f'{mount}/__all__'
 
     for section, field in (('TVDB', 'tvdb_api_key'), ('TMDB', 'tmdb_api_key')):
         if field in form:
@@ -605,10 +616,10 @@ def _onboarding_summary(config):
     providers = []
     if _real_debrid_key(config):
         providers.append(debrid.get('provider', 'RealDebrid'))
-    if usenet.get('enabled') and usenet.get('url'):
-        backend = (usenet.get('provider') or 'climount').lower()
-        providers.append({'climount': 'cli_mount', 'nzbdav': 'NzbDAV', 'zurg': 'Zurg'}.get(backend, backend)
-                         + ' (usenet)')
+    backend = (usenet.get('provider') or 'climount').lower()
+    if usenet.get('enabled') and (usenet.get('url') or backend == 'builtin'):
+        providers.append({'climount': 'cli_mount', 'nzbdav': 'NzbDAV', 'zurg': 'Zurg',
+                          'builtin': 'Built-in mount'}.get(backend, backend) + ' (usenet)')
     if mode == 'Symlinked/Local':
         if config.get('Debug', {}).get('emby_jellyfin_url'):
             media_server = 'Jellyfin / Emby'
@@ -681,8 +692,8 @@ def onboarding_health():
     if _real_debrid_key(config):
         add(f"Debrid ({debrid.get('provider', 'RealDebrid')})",
             *validate_debrid_api_key(_real_debrid_key(config), debrid.get('provider', 'RealDebrid')))
-    if usenet.get('enabled') and usenet.get('url'):
-        add('Usenet mount', *validate_usenet_provider(usenet.get('provider'), usenet['url'],
+    if usenet.get('enabled') and (usenet.get('url') or (usenet.get('provider') or '').lower() == 'builtin'):
+        add('Usenet mount', *validate_usenet_provider(usenet.get('provider'), usenet.get('url', ''),
                                                          usenet.get('api_token', '')))
     if not checks:
         add('Provider', False, 'No debrid or usenet provider is set up (step 2)')

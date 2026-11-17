@@ -1240,10 +1240,14 @@ def _provider_key() -> str:
 
 def get_climount_client():
     global _client_instance
-    from usenet import SAB_STYLE_PROVIDERS
-    if _provider_key() in SAB_STYLE_PROVIDERS:
+    from usenet import SAB_STYLE_PROVIDERS, BUILTIN_PROVIDER
+    key = _provider_key()
+    if key in SAB_STYLE_PROVIDERS:
         from .nzbdav_client import get_nzbdav_client
         return get_nzbdav_client()
+    if key == BUILTIN_PROVIDER:
+        from usenet.builtin_client import get_builtin_client
+        return get_builtin_client()
     if _client_instance is None:
         _client_instance = CliMountClient()
     return _client_instance
@@ -1300,7 +1304,10 @@ def is_nzb_job_alive(job_hash: str) -> bool:
 def reset_climount_client() -> None:
     global _client_instance
     _client_instance = None
-    from usenet import SAB_STYLE_PROVIDERS
+    from usenet import SAB_STYLE_PROVIDERS, BUILTIN_PROVIDER
+    if _provider_key() == BUILTIN_PROVIDER:
+        from usenet.builtin_client import reset_builtin_client
+        reset_builtin_client()
     if _provider_key() in SAB_STYLE_PROVIDERS:
         from .nzbdav_client import reset_nzbdav_client
         reset_nzbdav_client()

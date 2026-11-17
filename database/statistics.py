@@ -124,8 +124,8 @@ def resolve_stats_mode():
         return priority
     if not get_setting('Debrid Provider', 'api_key', default='').strip():
         return 'usenet'
-    if (get_setting('Usenet Provider', 'enabled', default=False)
-            and get_setting('Usenet Provider', 'url', default='').strip()):
+    from usenet import usenet_configured
+    if usenet_configured(get_setting):
         return 'combined'
     return 'debrid'
 
@@ -137,11 +137,9 @@ def _fetch_climount_debug_stats(timeout=10):
     need its own copy of the enabled/url/token/HTTP-error handling.
     """
     try:
-        _dcy_url = get_setting('Usenet Provider', 'url', default='').rstrip('/')
-        _dcy_enabled = get_setting('Usenet Provider', 'enabled', default=False)
-        if not (_dcy_enabled and _dcy_url):
+        from usenet import get_usenet_client, usenet_configured
+        if not usenet_configured(get_setting):
             return None
-        from usenet import get_usenet_client
         return get_usenet_client().get_debug_stats(timeout=timeout)
     except Exception as _exc:
         logging.debug(f"cli_mount /debug/stats fetch failed: {_exc}")
