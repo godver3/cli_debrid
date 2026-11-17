@@ -106,3 +106,31 @@ func TestExpireDropsOnlyStaleSegments(t *testing.T) {
 		t.Fatal("expiry 0 must mean off")
 	}
 }
+
+func TestPurgeAndCleanup(t *testing.T) {
+	dir := t.TempDir()
+	c, err := Open(dir, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Put("a", make([]byte, 1000))
+	c.Put("b", make([]byte, 1000))
+	c.Flush()
+	stray := filepath.Join(dir, "zz", "stray")
+	os.MkdirAll(filepath.Dir(stray), 0o755)
+	os.WriteFile(stray, []byte("x"), 0o644)
+	old := time.Now().Add(-time.Hour)
+	os.Chtimes(stray, old, old)
+	if _, n, _ := c.Cleanup(0); n != 1 {
+		t.Fatalf("stray files removed: %d", n)
+	}
+	if n, b := c.Purge(); n != 2 || b <= 0 {
+		t.Fatalf("purge %d %d", n, b)
+	}
+	if _, ok := c.Get("a"); ok {
+		t.Fatal("purged segment still served")
+	}
+	if n, b := c.Usage(); n != 0 || b != 0 {
+		t.Fatalf("usage after purge %d %d", n, b)
+	}
+}

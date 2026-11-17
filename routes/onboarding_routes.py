@@ -116,8 +116,8 @@ def _save_required_settings(form):
     usenet = config.setdefault('Usenet Provider', {})
     usenet['enabled'] = use_usenet
     if use_usenet:
-        backend = form.get('usenet_backend', 'climount').strip().lower()
-        usenet['provider'] = backend if backend in USENET_BACKENDS else 'climount'
+        backend = form.get('usenet_backend', 'builtin').strip().lower()
+        usenet['provider'] = backend if backend in USENET_BACKENDS else 'builtin'
         usenet['url'] = form.get('usenet_url', '').strip().rstrip('/')
         usenet['api_token'] = form.get('usenet_api_token', '').strip()
         if usenet['provider'] == 'builtin':
@@ -268,7 +268,7 @@ def onboarding_step(step):
         trakt_status = json.loads(check_trakt_auth_status().get_data(as_text=True))
         allow_windows_symlinks_value = config.get('Debug', {}).get('use_symlinks_on_windows', False)
         usenet = config.get('Usenet Provider', {})
-        usenet_backend = (usenet.get('provider') or 'climount').strip().lower()
+        usenet_backend = (usenet.get('provider') or 'builtin').strip().lower()
 
         return render_template('onboarding_step_2.html', 
                                current_step=step_num, 
@@ -281,7 +281,7 @@ def onboarding_step(step):
                                use_debrid=bool(_real_debrid_key(config)),
                                debrid_api_key=_real_debrid_key(config),
                                use_usenet=bool(usenet.get('enabled')),
-                               usenet_backend=usenet_backend if usenet_backend in USENET_BACKENDS else 'climount')
+                               usenet_backend=usenet_backend if usenet_backend in USENET_BACKENDS else 'builtin')
 
     elif step_num == 3:
         config = load_config()

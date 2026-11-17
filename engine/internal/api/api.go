@@ -49,6 +49,8 @@ func Handler(e *engine.Engine) http.Handler {
 	mux.HandleFunc("DELETE /jobs/{id}", a.del)
 	mux.HandleFunc("POST /jobs/{id}/retry", a.retry)
 	mux.HandleFunc("GET /tree", a.tree)
+	mux.HandleFunc("POST /cache/cleanup", a.cacheCleanup)
+	mux.HandleFunc("POST /cache/purge", a.cachePurge)
 	mux.HandleFunc("GET /protected", a.protectedGet)
 	mux.HandleFunc("POST /protected", a.protectedSet)
 	mux.HandleFunc("GET /tree/{top}", a.treeTop)
@@ -205,6 +207,14 @@ func (a *api) protectedSet(w http.ResponseWriter, r *http.Request) {
 
 func (a *api) protectedGet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, a.e.Protection())
+}
+
+func (a *api) cacheCleanup(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, a.e.RunCleanup())
+}
+
+func (a *api) cachePurge(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, a.e.PurgeCache())
 }
 
 // tree lists the mount's top folders with how many job folders each holds.
@@ -475,6 +485,7 @@ func (a *api) stats(w http.ResponseWriter, r *http.Request) {
 		"articles_missing": missing,
 		"mem_cache":        map[string]int64{"segments": int64(segs), "bytes": memBytes},
 	}
+	out["overview"] = a.e.Overview()
 	if a.e.Disk != nil {
 		files, used := a.e.Disk.Usage()
 		out["disk_cache"] = map[string]int64{"segments": int64(files), "bytes": used,

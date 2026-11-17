@@ -370,7 +370,7 @@ SETTINGS_SCHEMA = {
         "provider": {
             "type": "string",
             "description": "Which usenet backend to use: cli_mount, NzbDAV, Zurg (Zurg 2.0's SABnzbd-compatible endpoint, or any other flat-layout SAB-emulation mount), or builtin (cli_debrid's own optional mount engine, configured under Built-in Mount; the container needs /dev/fuse). Zurg reuses the NzbDAV submit/poll/health-check logic unchanged, but resolves the job folder directly under the mount root instead of walking a <category>/<job> subfolder layout — required because Zurg's mount stores content flat and has no per-category subdirectories.",
-            "default": "climount",
+            "default": "builtin",
             "choices": ["climount", "nzbdav", "zurg", "builtin"]
         },
         "owned_categories": {
@@ -524,6 +524,22 @@ SETTINGS_SCHEMA = {
         "umask": {
             "type": "string",
             "description": "Built-in mount only. UMASK: permission bits removed from the read-only files, in octal (e.g. 022; 027 hides files from other users). Empty = none.",
+            "default": ""
+        },
+        "allowed_extensions": {
+            "type": "string",
+            "description": "Built-in mount only. Allowed file extensions: only these files are listed in the mount (comma separated). Other files (nfo, samples' sidecars, subtitles) stay out of Plex's way. Empty = list everything.",
+            "default": "mkv,mp4,m4v,avi,mov,mpg,mpeg"
+        },
+        "deobfuscate_mode": {
+            "type": "string",
+            "description": "Built-in mount only. Deobfuscate mode: how new usenet imports name video files whose real name couldn't be found (PAR2 and yEnc names are always used first). A single video file always takes the job's name. Off keeps the posted names.",
+            "default": "season_ep",
+            "choices": ["season_ep", "index", "off"]
+        },
+        "virtual_folders": {
+            "type": "string",
+            "description": "Built-in mount only. Virtual folders: extra top folders listing the jobs that match their filters (cli_mount's custom folders), e.g. separate movies and shows folders for Plex libraries in Plex mode. Edit them on the Mount page.",
             "default": ""
         },
         "servers": {

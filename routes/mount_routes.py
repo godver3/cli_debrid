@@ -44,6 +44,7 @@ SECRET_KEYS = ('api_token',)
 GROUPS = [
     ('Mount', ['mount_path', 'allow_other', 'uid', 'gid', 'umask']),
     ('Debrid', ['debrid_streaming']),
+    ('Files', ['allowed_extensions', 'deobfuscate_mode']),
     ('Streaming', ['read_ahead_mb', 'max_connections_per_file', 'precache_mb', 'warm_connections',
                    'playback_reserve_percent', 'plex_playback_protection', 'buffer_memory_mb', 'idle_timeout_minutes']),
     ('Plex next-episode prewarm', ['plex_prewarm', 'prewarm_trigger_percent', 'prewarm_percent', 'prewarm_max_mb']),
@@ -65,7 +66,8 @@ LABELS = {
     'cache_size_gb': 'Disk cache size (GB)', 'cache_expiry_hours': 'Cache expiry (hours)',
     'cache_cleanup_minutes': 'Cache cleanup interval (minutes)', 'processing_connections': 'Processing connections per file',
     'processing_timeout_minutes': 'Processing timeout (minutes)', 'import_sample_percent': 'NZB import availability sample %',
-    'health_sample_percent': 'Repair availability sample %', 'debug_logging': 'Debug logging', 'api_port': 'Engine API port', 'api_token': 'Engine API token',
+    'health_sample_percent': 'Repair availability sample %', 'debug_logging': 'Debug logging',
+    'allowed_extensions': 'Allowed file extensions', 'deobfuscate_mode': 'Deobfuscate mode', 'api_port': 'Engine API port', 'api_token': 'Engine API token',
 }
 
 _sync_lock = threading.Lock()
@@ -112,18 +114,27 @@ def _public_settings() -> dict:
     cur, schema = _current(), _schema()
     out = {}
     for key, spec in schema.items():
-        if key == 'servers':
+        if key in ('servers', 'virtual_folders'):
             continue
         val = cur.get(key, spec.get('default'))
         if key in SECRET_KEYS:
             out[key] = ''
             out[key + '_set'] = bool(val)
         else:
+            if spec.get('choices') and val not in spec['choices']:
+                val = spec.get('default')
             out[key] = val
+    out['virtual_folders'] = [{'name': n, 'filters': [{'type': k, 'value': v} for k, v in f.items()]}
+                              for n, f in _virtual_folders(cur).items()]
     out['servers'] = [
         {**{k: v for k, v in s.items() if k != 'password'}, 'password': '', 'password_set': bool(s.get('password'))}
         for s in _servers(cur.get('servers')) if isinstance(s, dict)]
     return out
+
+
+def _virtual_folders(cur, strict=False):
+    from utilities.builtin_engine import virtual_folders
+    return virtual_folders(cur, strict=strict)
 
 
 def _coerce(key, spec, value):
@@ -138,7 +149,10 @@ def _coerce(key, spec, value):
         if v < 0:
             raise ValueError(f'{key} cannot be negative')
         return v
-    return '' if value is None else str(value).strip()
+    v = '' if value is None else str(value).strip()
+    if spec.get('choices') and v not in spec['choices']:
+        raise ValueError(f'{key} must be one of: ' + ', '.join(spec['choices']))
+    return v
 
 
 def _merge_servers(new_list, old_list) -> list:
@@ -229,6 +243,12 @@ def save_settings():
         for key, value in data.items():
             if key == 'servers':
                 updates[key] = json.dumps(_merge_servers(value, cur.get(key)))
+                continue
+            if key == 'virtual_folders':
+                rows = value if isinstance(value, list) else []
+                checked = _virtual_folders({'virtual_folders': rows}, strict=True)  # raises on bad rows
+                updates[key] = json.dumps([{'name': n, 'filters': [{'type': k, 'value': v} for k, v in f.items()]}
+                                           for n, f in checked.items()]) if checked else ''
                 continue
             spec = schema.get(key)
             if spec is None:
@@ -499,6 +519,18 @@ def start():
 def stop():
     from utilities import builtin_engine
     return jsonify({'success': True, 'result': builtin_engine.user_stop()})
+
+
+@mount_bp.route('/api/cache/<action>', methods=['POST'])
+@admin_required
+def cache_action(action):
+    """Run cleanup now, or purge the engine's caches (cli_mount's buttons)."""
+    if action not in ('cleanup', 'purge'):
+        return jsonify({'success': False, 'error': 'unknown action'}), 404
+    code, body = _engine()._call('POST', f'/cache/{action}', timeout=120)
+    if code is None:
+        return _engine_unavailable()
+    return jsonify({'success': code == 200, 'result': body}), (200 if code == 200 else 502)
 
 
 @mount_bp.route('/api/restart', methods=['POST'])

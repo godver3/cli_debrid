@@ -517,6 +517,15 @@ def merge_configs(base, overlay):
             base[key] = value
     return base
 
+# Settings whose default changed for new installs only: an existing config
+# that never stored the key keeps behaving as before. The built-in mount is
+# the default usenet backend for new installs; existing installs stay on
+# cli_mount unless the user picks otherwise.
+EXISTING_INSTALL_DEFAULTS = {
+    ('Usenet Provider', 'provider'): 'climount',
+}
+
+
 def ensure_settings_file():
     config_file_path = get_config_file_path()
     logging.debug(f"ensure_settings_file: Checking existence of {config_file_path}")
@@ -638,7 +647,8 @@ def ensure_settings_file():
                         # Ensure value_schema is a dict and has 'default'
                         if isinstance(value_schema, dict) and 'default' in value_schema:
                             if key != 'tab' and key not in config[section]:
-                                config[section][key] = value_schema.get('default')
+                                config[section][key] = EXISTING_INSTALL_DEFAULTS.get(
+                                    (section, key), value_schema.get('default'))
                                 config_updated = True
                                 logging.info(f"ensure_settings_file: Added new default setting ['{section}']['{key}'] = {value_schema.get('default')}")
 

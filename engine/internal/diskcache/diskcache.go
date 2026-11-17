@@ -242,3 +242,51 @@ func (c *Cache) Usage() (int, int64) {
 	defer c.mu.Unlock()
 	return c.ll.Len(), c.used
 }
+
+// Cleanup runs maintenance now: size eviction, expiry (maxAge > 0) and
+// removal of files the index doesn't know (interrupted writes, leftovers).
+// Returns segments expired, stray files removed and bytes freed.
+func (c *Cache) Cleanup(maxAge time.Duration) (expired, stray int, freed int64) {
+	c.mu.Lock()
+	before := c.used
+	c.evictLocked()
+	c.mu.Unlock()
+	expired = c.Expire(maxAge)
+	c.mu.Lock()
+	freed = before - c.used
+	known := make(map[string]bool, len(c.items))
+	for name := range c.items {
+		known[name] = true
+	}
+	c.mu.Unlock()
+	_ = filepath.WalkDir(c.dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if name := d.Name(); !known[name] {
+			if info, err := d.Info(); err == nil && time.Since(info.ModTime()) > time.Minute { // not a write in progress
+				if os.Remove(p) == nil {
+					stray++
+					freed += info.Size()
+				}
+			}
+		}
+		return nil
+	})
+	return expired, stray, freed
+}
+
+// Purge empties the disk cache. Readers that miss simply fetch again.
+// Returns segments removed and bytes freed.
+func (c *Cache) Purge() (int, int64) {
+	c.mu.Lock()
+	n, freed := c.ll.Len(), c.used
+	for name := range c.items {
+		os.Remove(c.path(name))
+	}
+	c.ll.Init()
+	c.items = map[string]*list.Element{}
+	c.used = 0
+	c.mu.Unlock()
+	return n, freed
+}

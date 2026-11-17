@@ -198,6 +198,9 @@ def build_config(settings: dict) -> dict:
         'link_callback': f"http://127.0.0.1:{os.environ.get('CLI_DEBRID_PORT', '5000')}/mount/internal/link",
         'precache_mb': max(0, num('precache_mb', 2)),
         'log_level': 'debug' if bm.get('debug_logging') else 'info',
+        'allowed_extensions': allowed_extensions(bm),
+        'deobfuscate_mode': {'season_ep': 'season_ep', 'index': 'index'}.get(str(bm.get('deobfuscate_mode', 'season_ep') or '').strip(), ''),
+        'virtual_folders': virtual_folders(bm),
         'plex_protection': bool(bm.get('plex_playback_protection', True)) and reserve_pct > 0,
         'max_conns_per_file': num('max_connections_per_file', 15),
         'parallel': max(1, num('processing_connections', 8)),
@@ -211,6 +214,71 @@ def build_config(settings: dict) -> dict:
         'umask': umask,
         'providers': providers,
     }
+
+
+DEFAULT_EXTENSIONS = 'mkv,mp4,m4v,avi,mov,mpg,mpeg'
+VIRTUAL_FILTER_TYPES = ['include', 'exclude', 'starts_with', 'ends_with', 'not_starts_with', 'not_ends_with',
+                        'regex', 'not_regex', 'exact_match', 'not_exact_match', 'size_gt', 'size_lt', 'last_added',
+                        'file_count_gt', 'file_count_lt', 'files_regex', 'not_files_regex', 'tags', 'not_tags',
+                        'category', 'not_category', 'protocol']
+RESERVED_FOLDERS = {'__all__', '__bad__', 'nzbs', 'torrents'}
+
+
+def allowed_extensions(bm: dict) -> list:
+    raw = bm.get('allowed_extensions', DEFAULT_EXTENSIONS)
+    raw = DEFAULT_EXTENSIONS if raw is None else str(raw)
+    out = []
+    for part in raw.replace(';', ',').replace(' ', ',').split(','):
+        ext = part.strip().lstrip('.').lower()
+        if ext and ext not in out:
+            out.append(ext)
+    return out
+
+
+def virtual_folders(bm: dict, strict: bool = False) -> dict:
+    """{folder: {filter: value}} from the stored JSON list
+    [{"name": .., "filters": [{"type": .., "value": ..}]}]. strict raises
+    ValueError on the first bad entry (saving); otherwise bad ones are dropped."""
+    import re
+    raw = bm.get('virtual_folders') or ''
+    try:
+        rows = json.loads(raw) if isinstance(raw, str) and raw.strip() else (raw if isinstance(raw, list) else [])
+    except ValueError:
+        if strict:
+            raise ValueError('virtual folders are not valid JSON')
+        rows = []
+    out = {}
+    for i, row in enumerate(rows if isinstance(rows, list) else []):
+        try:
+            name = str((row or {}).get('name') or '').strip()
+            if not name or '/' in name or '\\' in name or name in ('.', '..'):
+                raise ValueError(f'virtual folder {i + 1}: needs a plain folder name')
+            if name.lower() in RESERVED_FOLDERS:
+                raise ValueError(f'virtual folder "{name}": that name is used by the mount itself')
+            if name in out:
+                raise ValueError(f'virtual folder "{name}" is listed twice')
+            filters = {}
+            for f in (row.get('filters') or []):
+                kind, value = str(f.get('type') or ''), str(f.get('value') or '').strip()
+                if not kind and not value:
+                    continue
+                if kind not in VIRTUAL_FILTER_TYPES:
+                    raise ValueError(f'virtual folder "{name}": unknown filter "{kind}"')
+                if not value:
+                    raise ValueError(f'virtual folder "{name}": filter "{kind}" needs a value')
+                if 'regex' in kind:
+                    try:
+                        re.compile(value)
+                    except re.error as exc:
+                        raise ValueError(f'virtual folder "{name}": bad regex {value!r}: {exc}')
+                filters[kind] = value
+            if not filters:
+                raise ValueError(f'virtual folder "{name}": add at least one filter')
+            out[name] = filters
+        except (ValueError, AttributeError, TypeError) as exc:
+            if strict:
+                raise ValueError(str(exc))
+    return out
 
 
 def current_token() -> str:

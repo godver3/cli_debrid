@@ -94,6 +94,14 @@ type Config struct {
 	// playing (cli_debrid posts them to /protected); other mount reads
 	// (scanner, thumbnails, ffprobe) can't take it while one plays.
 	PlexProtection bool `json:"plex_protection"`
+	// AllowedExt: file extensions the mount shows (empty = all). Other
+	// files stay in the job (health, repair) but are not listed.
+	AllowedExt []string `json:"allowed_extensions"`
+	// DeobfuscateMode renames new imports' video files: "" off, "index",
+	// "season_ep" (cli_mount's modes).
+	DeobfuscateMode string `json:"deobfuscate_mode"`
+	// VirtualFolders: extra top folders of the jobs matching their filters.
+	VirtualFolders map[string]VirtualFolder `json:"virtual_folders"`
 	// RetryBackoff: waits before re-importing after an unproven failure
 	// (default 1m, 5m, 15m); once used up the job fails, still retryable.
 	RetryBackoff []time.Duration `json:"-"`
@@ -191,7 +199,9 @@ type Engine struct {
 	// rebuildMu serializes rebuildTree, so a slower rebuild can't install
 	// an older tree over a newer one.
 	rebuildMu sync.Mutex
-	protect   protection                    // Plex playback protection
+	protect   protection // Plex playback protection
+	started   time.Time
+	vfolders  []namedFolder                 // compiled VirtualFolders, by name
 	tree      map[string]map[string]*Folder // top folder -> folder name -> job folder
 	tops      []string                      // top folders in listing order
 
@@ -237,6 +247,8 @@ func New(cfg Config, log *slog.Logger) (*Engine, error) {
 		}
 		e.Cache.WithDisk(e.Disk)
 	}
+	e.started = time.Now()
+	e.vfolders = compileVirtualFolders(cfg.VirtualFolders, log)
 	e.ctx, e.cancel = context.WithCancel(context.Background())
 	for i := 0; i < cfg.ImportWorkers; i++ {
 		e.wg.Add(1)
@@ -364,6 +376,13 @@ func (e *Engine) importJob(id string) {
 		defer cancel()
 	}
 	res, err := job.Build(ctx, e.Client, e.Cache, parsed, job.Options{Parallel: e.cfg.Parallel})
+	if err == nil && e.cfg.DeobfuscateMode != "" {
+		if j, _, gerr := e.Store.Get(id); gerr == nil {
+			if n := Deobfuscate(res, e.cfg.DeobfuscateMode, j.Name); n > 0 {
+				e.log.Debug("import: renamed obfuscated files", "job", id, "files", n, "mode", e.cfg.DeobfuscateMode)
+			}
+		}
+	}
 	if err == nil && e.cfg.ImportSample > 0 {
 		err = e.importSample(ctx, parsed, res)
 	}
@@ -633,6 +652,9 @@ func (e *Engine) rebuildTree() {
 	for _, t := range fixedTops[1:] {
 		tree[t] = map[string]*Folder{}
 	}
+	for _, vf := range e.vfolders {
+		tree[vf.name] = map[string]*Folder{} // listed even when empty
+	}
 	var providers []string
 	for _, j := range jobs {
 		if j.Status != store.Ready {
@@ -651,6 +673,15 @@ func (e *Engine) rebuildTree() {
 				}
 			}
 			entries = visible
+		}
+		if len(e.cfg.AllowedExt) > 0 {
+			shown := entries[:0:0]
+			for _, en := range entries {
+				if extAllowed(e.cfg.AllowedExt, en.Name) {
+					shown = append(shown, en)
+				}
+			}
+			entries = shown
 		}
 		if len(entries) == 0 {
 			continue
@@ -676,11 +707,26 @@ func (e *Engine) rebuildTree() {
 		if j.Health != nil && j.Health.Status == health.Broken {
 			tree[BadFolder][name] = f
 		}
+		for _, vf := range e.vfolders {
+			if matches(vf.filters, j, f) {
+				tree[vf.name][name] = f
+			}
+		}
 	}
 	sort.Strings(providers)
 	e.treeMu.Lock()
 	e.tree = tree
-	e.tops = append(append([]string(nil), fixedTops...), providers...)
+	tops := append(append([]string(nil), fixedTops...), providers...)
+	for _, vf := range e.vfolders {
+		taken := false
+		for _, t := range tops {
+			taken = taken || t == vf.name
+		}
+		if !taken {
+			tops = append(tops, vf.name)
+		}
+	}
+	e.tops = tops
 	e.treeMu.Unlock()
 }
 

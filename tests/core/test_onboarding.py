@@ -122,7 +122,7 @@ class TestSaveRequiredSettings(unittest.TestCase):
         self.assertEqual((plex['url'], plex['token'], plex['movie_libraries']),
                          ('http://plex:32400', 'ptok', 'Movies,4K Movies'))
 
-    def test_unknown_usenet_backend_falls_back_to_climount(self):
+    def test_unknown_usenet_backend_falls_back_to_builtin(self):
         if _delegated_to_clean_interpreter(self):
             return
         routes = _routes()
@@ -131,7 +131,7 @@ class TestSaveRequiredSettings(unittest.TestCase):
                       'usenet_url': 'http://x:8282', 'file_collection_management': 'Plex'})
         with fake.patch(routes), mock.patch('usenet.reset_usenet_client'):
             routes._save_required_settings(form)
-        self.assertEqual(fake.config['Usenet Provider']['provider'], 'climount')
+        self.assertEqual(fake.config['Usenet Provider']['provider'], 'builtin')
 
 
 class TestNextStep(unittest.TestCase):

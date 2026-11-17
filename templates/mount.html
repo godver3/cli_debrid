@@ -73,6 +73,12 @@
 
   <div class="pane" data-pane="overview">
   <div class="grid" id="tiles"></div>
+  <div class="grid" id="tiles2"></div>
+  <div class="actions" style="margin:4px 0 14px">
+    <button type="button" class="btn sec" id="cleanupBtn" title="Apply the cache size limit and expiry now, remove stray cache files, close idle connections">Run cleanup</button>
+    <button type="button" class="btn danger" id="purgeBtn" title="Empty the memory and disk caches">Purge cache</button>
+    <span class="msg" id="cacheMsg"></span>
+  </div>
   <div class="card"><h3>Server connections</h3><div class="body">
     <div class="tbl"><table id="pools"><thead><tr><th>Server</th><th>Role</th><th>In use</th><th>Open</th><th>Waiting</th><th></th><th>Articles</th><th>Data</th><th>Missing</th><th>Errors</th><th>Avg fetch</th></tr></thead><tbody></tbody></table></div>
   </div></div>
@@ -150,6 +156,11 @@
     <div class="f">
       {% if spec.type == 'boolean' %}
       <label><input type="checkbox" name="{{ key }}" data-type="boolean"> {{ label }}</label>
+      {% elif spec.choices %}
+      <label for="m-{{ key }}">{{ label }}</label>
+      <select id="m-{{ key }}" name="{{ key }}" data-type="string">
+        {% for c in spec.choices %}<option value="{{ c }}">{{ {'season_ep': 'Season/Episode (S01E01...)', 'index': 'Index (Name - 01...)', 'off': 'Off'}.get(c, c) }}</option>{% endfor %}
+      </select>
       {% else %}
       <label for="m-{{ key }}">{{ label }}</label>
       <input id="m-{{ key }}" name="{{ key }}" data-type="{{ spec.type }}"
@@ -161,6 +172,11 @@
     {% endfor %}
   </div></div>
   {% endfor %}
+  <div class="card"><h3>Virtual folders</h3><div class="body">
+    <p style="color:#8f8f8f;font-size:12px;margin-top:0">Extra folders at the top of the mount, each listing the jobs that match <strong>all</strong> its filters (a name regex and a files regex together match either). Useful in Plex mode: point a Movies library at one folder and a TV library at another, e.g. <code>shows</code> with <em>regex</em> <code>(?i)S\d{2}(E\d{2})?|Season</code> and <code>movies</code> with <em>not_regex</em> the same. Sizes take 10GB / 500MB, last_added takes 7d / 12h, protocol takes usenet or debrid.</p>
+    <div id="vfolders"></div>
+    <button type="button" class="btn sec" id="addVf" style="margin-top:8px">Add virtual folder</button>
+  </div></div>
   </form>
 
   <div class="actions">
@@ -205,6 +221,36 @@
   }
   $('#addServer').onclick = () => { serverRow(); dirty = true; };
 
+  const VF_TYPES = ['regex', 'not_regex', 'include', 'exclude', 'starts_with', 'ends_with', 'not_starts_with', 'not_ends_with',
+    'exact_match', 'not_exact_match', 'files_regex', 'not_files_regex', 'size_gt', 'size_lt', 'last_added',
+    'file_count_gt', 'file_count_lt', 'category', 'not_category', 'tags', 'not_tags', 'protocol'];
+  function vfFilterRow(box, f) {
+    f = f || {type: 'regex', value: ''};
+    const row = document.createElement('div');
+    row.className = 'vff';
+    row.style.cssText = 'display:flex;gap:6px;margin-top:6px';
+    row.innerHTML = '<select class="vt" style="width:auto">' + VF_TYPES.map(t => '<option' + (t === f.type ? ' selected' : '') + '>' + t + '</option>').join('') + '</select>' +
+      '<input class="vv" value="' + esc(f.value) + '" placeholder="value" style="flex:1">' +
+      '<button type="button" class="btn sec" style="padding:4px 10px">✕</button>';
+    row.querySelector('button').onclick = () => { row.remove(); dirty = true; };
+    box.appendChild(row);
+  }
+  function vfRow(v) {
+    v = v || {name: '', filters: [{type: 'regex', value: ''}]};
+    const card = document.createElement('div');
+    card.className = 'vf';
+    card.style.cssText = 'border:1px solid #333;border-radius:6px;padding:8px 10px;margin-top:8px';
+    card.innerHTML = '<div style="display:flex;gap:6px;align-items:center"><input class="vn" value="' + esc(v.name) + '" placeholder="folder name, e.g. movies" style="flex:1">' +
+      '<button type="button" class="btn sec addf" style="padding:4px 10px">Add filter</button>' +
+      '<button type="button" class="btn sec rmv" style="padding:4px 10px">Remove folder</button></div><div class="vfl"></div>';
+    const box = card.querySelector('.vfl');
+    (v.filters || []).forEach(f => vfFilterRow(box, f));
+    card.querySelector('.addf').onclick = () => { vfFilterRow(box); dirty = true; };
+    card.querySelector('.rmv').onclick = () => { card.remove(); dirty = true; };
+    $('#vfolders').appendChild(card);
+  }
+  $('#addVf').onclick = () => { vfRow(); dirty = true; };
+
   function fill(settings) {
     form.querySelectorAll('[name]').forEach(el => {
       const v = settings[el.name];
@@ -214,6 +260,8 @@
     });
     $('#servers tbody').innerHTML = '';
     (settings.servers || []).forEach(serverRow);
+    $('#vfolders').innerHTML = '';
+    (settings.virtual_folders || []).forEach(vfRow);
   }
 
   function tile(k, v, cls) { return '<div class="tile"><div class="k">' + esc(k) + '</div><div class="v ' + (cls || '') + '">' + v + '</div></div>'; }
@@ -234,6 +282,20 @@
       tile('Missing articles', s ? String(s.articles_missing || 0) : '—', s && s.articles_missing ? 'mid' : '') +
       tile('Disk cache', dc ? fmtBytes(dc.bytes) + ' <span style="color:#888;font-size:.7em">' + (dc.hits || 0) + ' hits / ' + (dc.misses || 0) + ' misses</span>' : '—') +
       (st.last_sync && st.last_sync.result ? tile('Last apply', esc(st.last_sync.running ? 'applying…' : st.last_sync.result)) : '');
+    const o = s && s.overview;
+    const dur = sec => { sec = sec || 0; const d = Math.floor(sec / 86400), h = Math.floor(sec / 3600) % 24, m = Math.floor(sec / 60) % 60; return (d ? d + 'd ' : '') + (d || h ? h + 'h ' : '') + m + 'm'; };
+    $('#tiles2').innerHTML = o ? (
+      tile('Content', (o.content.jobs || 0) + ' folders · ' + fmtBytes(o.content.bytes || 0) +
+        ' <span style="color:#888;font-size:.7em">' + (o.content.usenet_jobs || 0) + ' usenet / ' + (o.content.debrid_jobs || 0) + ' debrid · ' + (o.content.files || 0) + ' files</span>') +
+      tile('Streams', (o.streams.open || 0) + ' open' + (o.streams.rate_bytes ? ' · ' + fmtBytes(o.streams.rate_bytes) + '/s' : '')) +
+      tile('Health', (o.health.healthy || 0) + ' healthy · ' + (o.health.broken || 0) + ' broken' +
+        ' <span style="color:#888;font-size:.7em">' + (o.health.unchecked || 0) + ' unchecked</span>', o.health.broken ? 'mid' : '') +
+      tile('Plex protection', !o.plex_protection.enabled ? 'off' : (o.plex_protection.active ? o.plex_protection.files.length + ' protected stream(s)' :
+        (o.plex_protection.poll_ok ? 'on · nothing playing' : 'on · ' + esc(o.plex_protection.error || 'waiting for Plex'))),
+        o.plex_protection.enabled && !o.plex_protection.poll_ok && o.plex_protection.error ? 'mid' : '') +
+      tile('Memory cache', fmtBytes((s.mem_cache || {}).bytes || 0) + ' <span style="color:#888;font-size:.7em">' + ((s.mem_cache || {}).segments || 0) + ' segments</span>') +
+      tile('Engine', 'up ' + dur(o.uptime_seconds) + ' <span style="color:#888;font-size:.7em">' + fmtBytes(o.runtime.heap_bytes || 0) + ' heap · ' + (o.runtime.goroutines || 0) + ' goroutines</span>')
+    ) : '';
     const pools = (s && s.pools) || (e && e.providers) || [];
     $('#pools tbody').innerHTML = pools.length ? pools.map(p => {
       const busy = Math.max(0, (p.open || 0) - (p.idle || 0));
@@ -260,6 +322,10 @@
       else if (el.dataset.type === 'integer') out[el.name] = el.value === '' ? 0 : parseInt(el.value, 10);
       else out[el.name] = el.value;
     });
+    out.virtual_folders = [...document.querySelectorAll('#vfolders .vf')].map(c => ({
+      name: c.querySelector('.vn').value.trim(),
+      filters: [...c.querySelectorAll('.vff')].map(r => ({type: r.querySelector('.vt').value, value: r.querySelector('.vv').value}))
+    })).filter(v => v.name || v.filters.some(f => f.value));
     out.servers = [...document.querySelectorAll('#servers tbody tr')].map(tr => {
       const s = {};
       tr.querySelectorAll('[data-k]').forEach(i => { s[i.dataset.k] = i.type === 'checkbox' ? i.checked : (i.type === 'number' ? parseInt(i.value || '0', 10) : i.value); });
@@ -280,6 +346,24 @@
     } catch (e) { $('#msg').textContent = 'Save failed: ' + e; }
     finally { btn.disabled = false; }
   };
+  async function cacheAction(action, btn) {
+    if (action === 'purge' && !confirm('Purge the cache? Everything cached is downloaded again when next read. Playback keeps working.')) return;
+    btn.disabled = true; $('#cacheMsg').textContent = action === 'purge' ? 'Purging…' : 'Running cleanup…';
+    try {
+      const r = await fetch('/mount/api/cache/' + action, {method: 'POST'});
+      const d = await r.json();
+      if (!d.success) { $('#cacheMsg').innerHTML = '<span class="no">' + esc(d.error || 'failed') + '</span>'; return; }
+      const x = d.result || {};
+      $('#cacheMsg').innerHTML = '<span class="ok">' + (action === 'purge'
+        ? 'Purged ' + fmtBytes((x.disk_bytes_freed || 0) + (x.memory_bytes_freed || 0)) + ' (' + (x.disk_segments_removed || 0) + ' disk segments).'
+        : 'Cleanup freed ' + fmtBytes(x.freed_bytes || 0) + ' (' + (x.expired_segments || 0) + ' expired, ' + (x.stray_files_removed || 0) + ' stray files).') + '</span>';
+      refresh();
+    } catch (e) { $('#cacheMsg').textContent = 'Failed: ' + e; }
+    finally { btn.disabled = false; }
+  }
+  $('#cleanupBtn').onclick = e => cacheAction('cleanup', e.currentTarget);
+  $('#purgeBtn').onclick = e => cacheAction('purge', e.currentTarget);
+
   $('#restartBtn').onclick = async () => {
     if (!confirm('Restart the mount engine? Anything playing from the mount will stop for a few seconds.')) return;
     $('#msg').textContent = 'Restarting…';

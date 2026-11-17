@@ -165,3 +165,15 @@ func (c *Cache) Started(key string) bool {
 	cl, ok := c.inflight[key]
 	return ok && cl.started.Load()
 }
+
+// Purge drops every cached segment from memory (fetches in flight finish
+// normally). Returns segments and bytes dropped.
+func (c *Cache) Purge() (int, int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n, b := c.ll.Len(), c.used
+	c.ll.Init()
+	c.items = map[string]*list.Element{}
+	c.used = 0
+	return n, b
+}

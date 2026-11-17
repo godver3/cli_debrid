@@ -40,10 +40,10 @@
             <div id="panel-usenet" style="display:none;">
                 <label for="usenet_backend" class="onboarding-label">Usenet Mount:</label>
                 <select id="usenet_backend" name="usenet_backend" class="onboarding-input">
-                    <option value="climount" {% if usenet_backend == 'climount' %}selected{% endif %}>cli_mount (external container, recommended)</option>
+                    <option value="builtin" {% if usenet_backend == 'builtin' %}selected{% endif %}>Built-in mount (recommended, no extra container)</option>
+                    <option value="climount" {% if usenet_backend == 'climount' %}selected{% endif %}>cli_mount (external container)</option>
                     <option value="nzbdav" {% if usenet_backend == 'nzbdav' %}selected{% endif %}>NzbDAV</option>
                     <option value="zurg" {% if usenet_backend == 'zurg' %}selected{% endif %}>Zurg 2.0</option>
-                    <option value="builtin" {% if usenet_backend == 'builtin' %}selected{% endif %}>Built-in mount (beta)</option>
                 </select>
                 <div class="settings-description" id="builtin-note" style="display:none;">
                     cli_debrid runs its own mount engine in this container, no separate app needed.
