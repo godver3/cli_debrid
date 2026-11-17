@@ -226,6 +226,17 @@ class EngineManagerTests(unittest.TestCase):
         self.assertEqual(self.be.sync(self.settings('climount')), 'stopped')
         self.assertIn(('stop', 'mount_engine'), self.calls)
 
+    def test_user_stop_survives_sync_until_start(self):
+        self.state = 'RUNNING'
+        self.assertEqual(self.be.user_stop(), 'stopped')
+        self.state = 'STOPPED'
+        self.calls.clear()
+        self.assertEqual(self.be.sync(self.settings()), 'stopped by user', 'startup/settings save keeps it stopped')
+        self.assertNotIn(('start', 'mount_engine'), self.calls)
+        self.assertTrue(os.path.exists(self.be.config_path()), 'config still written while stopped')
+        self.assertEqual(self.be.user_start(self.settings()), 'started')
+        self.assertFalse(self.be.stopped_by_user())
+
     def test_sync_reports_problems_instead_of_starting(self):
         self.problems.return_value = ['/dev/fuse is not available']
         self.assertTrue(self.be.sync(self.settings()).startswith('cannot start'))

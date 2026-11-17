@@ -203,8 +203,39 @@ def state() -> str:
     return 'UNKNOWN'
 
 
+def _stop_flag() -> str:
+    return os.path.join(_config_dir(), 'engine.stopped')
+
+
+def stopped_by_user() -> bool:
+    """True after the user pressed Stop on the mount; startup and settings
+    saves then leave it stopped until they press Start."""
+    return os.path.exists(_stop_flag())
+
+
+def user_stop() -> str:
+    os.makedirs(_config_dir(), exist_ok=True)
+    with open(_stop_flag(), 'w') as f:
+        f.write('stopped from the cli_debrid UI\n')
+    if state() in ('RUNNING', 'STARTING', 'BACKOFF'):
+        _supervisorctl('stop', PROGRAM)
+    return 'stopped'
+
+
+def user_start(settings: dict = None) -> str:
+    try:
+        os.unlink(_stop_flag())
+    except FileNotFoundError:
+        pass
+    return sync(settings)
+
+
 def sync(settings: dict = None) -> str:
-    """Bring the engine in line with the settings. Returns what happened."""
+    """Bring the engine in line with the settings. Returns what happened.
+
+    Only the mount's own settings (and selecting/deselecting it) restart or
+    stop it: stopping the program, saving other settings or restarting the
+    web app never touch the mount."""
     s = settings if settings is not None else _load_settings()
     if not selected(s):
         if state() in ('RUNNING', 'STARTING', 'BACKOFF'):
@@ -217,6 +248,10 @@ def sync(settings: dict = None) -> str:
             _supervisorctl('stop', PROGRAM)
         return 'cannot start: ' + '; '.join(issues)
     changed = write_config(build_config(s))
+    if stopped_by_user():
+        if state() in ('RUNNING', 'STARTING', 'BACKOFF'):
+            _supervisorctl('stop', PROGRAM)
+        return 'stopped by user'
     st = state()
     if st not in ('RUNNING', 'STARTING'):
         _supervisorctl('start', PROGRAM)

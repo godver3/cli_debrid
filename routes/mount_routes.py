@@ -156,6 +156,7 @@ def index():
 def status():
     from utilities import builtin_engine
     out = {'selected': builtin_selected(), 'state': builtin_engine.state(),
+           'stopped_by_user': builtin_engine.stopped_by_user(),
            'problems': builtin_engine.problems(), 'last_sync': dict(_last_sync),
            'settings': _public_settings(), 'engine': None, 'stats': None}
     if out['selected']:
@@ -204,6 +205,33 @@ def save_settings():
                     'applying': bool(changed and builtin_selected())})
 
 
+@mount_bp.route('/api/state')
+@admin_required
+def engine_state():
+    """Cheap state for the nav button."""
+    from utilities import builtin_engine
+    return jsonify({'selected': builtin_selected(), 'state': builtin_engine.state(),
+                    'stopped_by_user': builtin_engine.stopped_by_user()})
+
+
+@mount_bp.route('/api/start', methods=['POST'])
+@admin_required
+def start():
+    from utilities import builtin_engine
+    if not builtin_selected():
+        return jsonify({'success': False, 'error': 'The built-in mount is not the selected usenet backend.'}), 400
+    result = builtin_engine.user_start()
+    ok = not result.startswith('cannot start')
+    return jsonify({'success': ok, 'result': result, **({} if ok else {'error': result})}), (200 if ok else 400)
+
+
+@mount_bp.route('/api/stop', methods=['POST'])
+@admin_required
+def stop():
+    from utilities import builtin_engine
+    return jsonify({'success': True, 'result': builtin_engine.user_stop()})
+
+
 @mount_bp.route('/api/restart', methods=['POST'])
 @admin_required
 def restart():
@@ -213,6 +241,11 @@ def restart():
     issues = builtin_engine.problems()
     if issues:
         return jsonify({'success': False, 'error': '; '.join(issues)}), 400
+    try:  # an explicit restart also undoes an earlier Stop
+        import os
+        os.unlink(builtin_engine._stop_flag())
+    except FileNotFoundError:
+        pass
     builtin_engine.write_config(builtin_engine.build_config(builtin_engine._load_settings()))
     out = builtin_engine._supervisorctl('restart', builtin_engine.PROGRAM)
     return jsonify({'success': 'ERROR' not in out.upper(), 'output': out.strip()})
