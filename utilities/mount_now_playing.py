@@ -25,16 +25,21 @@ def plex_server(get_setting: Callable) -> tuple:
 
 
 def plex_sessions(url: str, token: str, timeout: float = 5) -> List[dict]:
+    return plex_sessions_checked(url, token, timeout)[0]
+
+
+def plex_sessions_checked(url: str, token: str, timeout: float = 5) -> tuple:
+    """(sessions, error): error is '' when Plex answered."""
     if not url or not token:
-        return []
+        return [], 'no Plex URL/token set'
     try:
         r = requests.get(f'{url}/status/sessions', headers={'X-Plex-Token': token, 'Accept': 'application/json'},
                          timeout=timeout)
         r.raise_for_status()
-        return (r.json().get('MediaContainer') or {}).get('Metadata') or []
+        return (r.json().get('MediaContainer') or {}).get('Metadata') or [], ''
     except Exception as exc:
         logging.debug(f'[now playing] Plex sessions failed: {exc}')
-        return []
+        return [], str(exc) or type(exc).__name__
 
 
 def _session_files(s: dict, lookup: Optional[Callable] = None) -> List[str]:
@@ -98,6 +103,35 @@ def match_stream(plex_file: str, streams: List[dict], mount_path: str) -> Option
     return None
 
 
+_CODECS = {'avc': 'H.264', 'hevc': 'HEVC', 'av1': 'AV1', 'xvid': 'XviD', 'mpeg': 'MPEG'}
+_NETWORKS = {'Amazon': 'AMZN', 'Netflix': 'NF', 'Disney': 'DSNP', 'Apple TV': 'ATVP', 'HBO Max': 'HMAX',
+             'Hulu': 'HULU', 'Paramount+': 'PMTP', 'Peacock': 'PCOK'}
+
+
+def scene_tags(release: str) -> List[str]:
+    """Short scene tags of a release name: 2160p, WEB-DL, AMZN, HEVC, DV, Atmos, 7.1, group..."""
+    if not release:
+        return []
+    try:
+        from PTT import parse_title
+        p = parse_title(release) or {}
+    except Exception:
+        return []
+    tags = [p.get('resolution'), p.get('quality'), _NETWORKS.get(p.get('network') or '', p.get('network'))]
+    tags += list(p.get('hdr') or [])
+    tags.append(_CODECS.get(p.get('codec') or '', (p.get('codec') or '').upper() or None))
+    tags.append(p.get('bit_depth'))
+    tags += list(p.get('audio') or [])[:2]
+    tags += list(p.get('channels') or [])[:1]
+    tags.append(p.get('group'))
+    out = []
+    for t in tags:
+        t = str(t or '').strip()
+        if t and t not in out:
+            out.append(t)
+    return out
+
+
 def _title(s: dict) -> tuple:
     if s.get('type') == 'episode':
         se = ''
@@ -134,6 +168,7 @@ def now_playing(sessions: List[dict], streams: List[dict], mount_path: str,
             'protocol': st.get('protocol') or 'usenet',
             'source': st.get('folder', ''),
             'file': st.get('file', ''),
+            'tags': scene_tags(st.get('folder') or st.get('file') or ''),
             'rate_bytes': int(st.get('rate_bytes') or 0),
             'bytes_read': int(st.get('bytes_read') or 0),
         })

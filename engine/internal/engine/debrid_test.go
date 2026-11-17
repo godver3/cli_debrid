@@ -52,7 +52,7 @@ func TestDebridJobStreamsWithFreshLinks(t *testing.T) {
 
 	s := nntptest.Start(t)
 	e := newEngine(t, s, func(c *Config) { c.LinkCallback, c.Token = cb.URL, "tok" })
-	j, err := e.AddDebrid("realdebrid-ABC123", "Movie.2024.1080p", "movies",
+	j, err := e.AddDebrid("realdebrid-ABC123", "Movie.2024.1080p", "movies", "",
 		[]DebridFile{{Name: "Movie.2024.1080p.mkv", Size: int64(len(file)), Ref: "ABC123:1"}})
 	if err != nil || j.Status != store.Ready || j.Protocol != ProtocolDebrid {
 		t.Fatalf("add: %+v %v", j, err)
@@ -79,7 +79,7 @@ func TestDebridJobStreamsWithFreshLinks(t *testing.T) {
 	if err := e.CheckHealth(j.ID, false); err == nil || !strings.Contains(err.Error(), "not a usenet job") {
 		t.Fatalf("health on a debrid job: %v", err)
 	}
-	if _, err := e.AddDebrid("bad id!", "x", "", []DebridFile{{Name: "a", Size: 1, Ref: "r"}}); err == nil {
+	if _, err := e.AddDebrid("bad id!", "x", "", "", []DebridFile{{Name: "a", Size: 1, Ref: "r"}}); err == nil {
 		t.Fatal("invalid id accepted")
 	}
 }
@@ -108,7 +108,7 @@ func TestDebridRetriesResetConnections(t *testing.T) {
 	defer cb.Close()
 	s := nntptest.Start(t)
 	e := newEngine(t, s, func(c *Config) { c.LinkCallback, c.Token = cb.URL, "tok" })
-	j, _ := e.AddDebrid("rd-R1", "Reset", "", []DebridFile{{Name: "r.mkv", Size: int64(len(file)), Ref: "R1:1"}})
+	j, _ := e.AddDebrid("rd-R1", "Reset", "", "rd", []DebridFile{{Name: "r.mkv", Size: int64(len(file)), Ref: "R1:1"}})
 	files, _ := e.Files(j.ID)
 	_, res, _ := e.Store.Get(j.ID)
 	buf := make([]byte, 1000)
@@ -131,4 +131,41 @@ func rangeOf(r *http.Request, size int) (int64, int64) {
 		}
 	}
 	return a, b
+}
+
+// The tree splits like cli_mount's: every job in __all__, usenet in nzbs,
+// debrid in torrents and in its provider's folder, broken jobs in __bad__.
+func TestTreeSplitsLikeCliMount(t *testing.T) {
+	s := nntptest.Start(t)
+	e := newEngine(t, s, nil)
+	if _, err := e.AddDebrid("rd-T1", "Show.S01", "tv", "", []DebridFile{{Name: "e1.mkv", Size: 10, Ref: "T1:1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.AddDebrid("x1", "Film", "movies", "torbox", []DebridFile{{Name: "f.mkv", Size: 10, Ref: "X:1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(e.TopFolders(), ","); got != "__all__,__bad__,torrents,nzbs,realdebrid,torbox" {
+		t.Fatalf("tops %s", got)
+	}
+	names := func(top string) string {
+		var out []string
+		for _, f := range e.Folders(top) {
+			out = append(out, f.Name)
+		}
+		return strings.Join(out, ",")
+	}
+	for top, want := range map[string]string{"__all__": "Film,Show.S01", "torrents": "Film,Show.S01", "nzbs": "",
+		"realdebrid": "Show.S01", "torbox": "Film", "__bad__": ""} {
+		if got := names(top); got != want {
+			t.Errorf("%s: got %q want %q", top, got, want)
+		}
+	}
+	e.MarkBroken("rd-T1", "e1.mkv", "test", "")
+	if got := names("__bad__"); got != "Show.S01" {
+		t.Errorf("__bad__ after MarkBroken: %q", got)
+	}
+	e.ClearHealth("rd-T1")
+	if got := names("__bad__"); got != "" {
+		t.Errorf("__bad__ after ClearHealth: %q", got)
+	}
 }

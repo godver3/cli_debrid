@@ -1070,6 +1070,9 @@
         .mount-now-playing .np-tag{font-size:.75em;padding:2px 7px;border-radius:9px;border:1px solid #555;white-space:nowrap}
         .mount-now-playing .np-tag.usenet{border-color:#3d7bd9;color:#8fb7f2}
         .mount-now-playing .np-tag.debrid{border-color:#2f9e6b;color:#8fdcb6}
+        .mount-now-playing .np-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+        .mount-now-playing .np-tags span{font-size:.7em;padding:1px 6px;border-radius:4px;background:rgba(255,255,255,.08);color:#ccc;white-space:nowrap}
+        .mount-now-playing .np-time{display:flex;justify-content:space-between;font-size:.75em;color:#9a9a9a;margin-top:3px;font-variant-numeric:tabular-nums}
         .mount-now-playing .np-side{text-align:right;font-size:.8em;color:#aaa;white-space:nowrap}
         </style>
         <script>
@@ -1077,6 +1080,10 @@
             var box = document.getElementById('mount_now_playing'), list = document.getElementById('mount_np_list');
             if (!box) return;
             function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+            function hms(ms) {
+                var t = Math.floor((ms || 0) / 1000), h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, sec = t % 60;
+                return (h ? h + ':' + (m < 10 ? '0' : '') : '') + m + ':' + (sec < 10 ? '0' : '') + sec;
+            }
             function mb(b) { return b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB/s' : (b / 1024).toFixed(0) + ' KB/s'; }
             function poll() {
                 if (document.hidden) return;
@@ -1088,7 +1095,10 @@
                         return '<div class="np-row"><div class="np-main">' +
                             '<div class="np-title">' + esc(s.title) + (s.subtitle ? ' <span style="font-weight:400;color:#bbb">' + esc(s.subtitle) + '</span>' : '') + '</div>' +
                             '<div class="np-sub">' + esc(s.user) + (s.player ? ' · ' + esc(s.player) : '') + ' · ' + esc(s.decision) + (s.state && s.state !== 'playing' ? ' · ' + esc(s.state) : '') + '</div>' +
-                            '<div class="np-bar"><i style="width:' + pct + '%"></i></div></div>' +
+                            ((s.tags || []).length ? '<div class="np-tags">' + s.tags.map(function (t) { return '<span>' + esc(t) + '</span>'; }).join('') + '</div>' : '') +
+                            '<div class="np-bar"><i style="width:' + pct + '%"></i></div>' +
+                            (s.duration_ms ? '<div class="np-time"><span>' + hms(s.position_ms) + ' / ' + hms(s.duration_ms) + '</span><span>' + Math.round(pct) + '%</span></div>' : '') +
+                            '</div>' +
                             '<div class="np-side"><span class="np-tag ' + esc(s.protocol) + '">' + (s.protocol === 'debrid' ? 'Debrid' : 'Usenet') + '</span>' +
                             (s.rate_bytes ? '<div style="margin-top:4px">' + mb(s.rate_bytes) + '</div>' : '') + '</div></div>';
                     }).join('');

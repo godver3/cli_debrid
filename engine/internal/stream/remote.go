@@ -165,7 +165,7 @@ func (r *RemoteFile) ReadAtCtx(ctx context.Context, prio nntp.Priority, p []byte
 	if off >= r.size {
 		return 0, io.EOF
 	}
-	if prio == nntp.Live {
+	if prio != nntp.Prefetch {
 		// Playback: sequential streams that start where the player reads
 		// (remote_stream.go). Chunk fetches below are for pre-cache/prewarm.
 		return r.readStream(ctx, p, off)
@@ -180,7 +180,7 @@ func (r *RemoteFile) ReadAtCtx(ctx context.Context, prio nntp.Priority, p []byte
 		n += copy(p[n:], data[off+int64(n)-int64(i)*RemoteChunk:])
 		last = i
 	}
-	if prio == nntp.Live && r.readAhead > 0 && last >= 0 {
+	if prio != nntp.Prefetch && r.readAhead > 0 && last >= 0 {
 		r.startReadAhead(last + 1)
 	}
 	if n < len(p) {

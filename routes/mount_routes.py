@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import threading
+from urllib.parse import quote
 
 from flask import Blueprint, jsonify, render_template, request
 
@@ -44,12 +45,12 @@ GROUPS = [
     ('Mount', ['mount_path', 'allow_other', 'uid', 'gid', 'umask']),
     ('Debrid', ['debrid_streaming']),
     ('Streaming', ['read_ahead_mb', 'max_connections_per_file', 'precache_mb', 'warm_connections',
-                   'playback_reserve_percent', 'buffer_memory_mb', 'idle_timeout_minutes']),
+                   'playback_reserve_percent', 'plex_playback_protection', 'buffer_memory_mb', 'idle_timeout_minutes']),
     ('Plex next-episode prewarm', ['plex_prewarm', 'prewarm_trigger_percent', 'prewarm_percent', 'prewarm_max_mb']),
     ('Disk cache', ['cache_dir', 'cache_size_gb', 'cache_expiry_hours', 'cache_cleanup_minutes']),
     ('Importing & health checks', ['processing_connections', 'processing_timeout_minutes',
                                    'import_sample_percent', 'health_sample_percent']),
-    ('Advanced', ['api_port', 'api_token']),
+    ('Advanced', ['debug_logging', 'api_port', 'api_token']),
 ]
 
 LABELS = {
@@ -59,11 +60,12 @@ LABELS = {
     'idle_timeout_minutes': 'Connection idle timeout (minutes)', 'precache_mb': 'Pre-cache on open (MB)',
     'warm_connections': 'Warm connections per server', 'debrid_streaming': 'Stream debrid torrents through this mount', 'plex_prewarm': 'Prewarm the next episode while one plays',
     'prewarm_trigger_percent': 'Start at (% watched)', 'prewarm_percent': 'Fetch (% of next episode)',
-    'prewarm_max_mb': 'Fetch at most (MB)', 'playback_reserve_percent': 'Playback connection reserve %', 'cache_dir': 'Cache directory',
+    'prewarm_max_mb': 'Fetch at most (MB)', 'playback_reserve_percent': 'Playback connection reserve %',
+    'plex_playback_protection': 'Plex playback protection (reserve only for what Plex is playing)', 'cache_dir': 'Cache directory',
     'cache_size_gb': 'Disk cache size (GB)', 'cache_expiry_hours': 'Cache expiry (hours)',
     'cache_cleanup_minutes': 'Cache cleanup interval (minutes)', 'processing_connections': 'Processing connections per file',
     'processing_timeout_minutes': 'Processing timeout (minutes)', 'import_sample_percent': 'NZB import availability sample %',
-    'health_sample_percent': 'Repair availability sample %', 'api_port': 'Engine API port', 'api_token': 'Engine API token',
+    'health_sample_percent': 'Repair availability sample %', 'debug_logging': 'Debug logging', 'api_port': 'Engine API port', 'api_token': 'Engine API token',
 }
 
 _sync_lock = threading.Lock()
@@ -290,6 +292,20 @@ def jobs_list():
     if code is None:
         return _engine_unavailable()
     return jsonify({'success': code == 200, 'jobs': body if isinstance(body, list) else []})
+
+
+@mount_bp.route('/api/tree')
+@mount_bp.route('/api/tree/<top>')
+@admin_required
+def tree(top=None):
+    """The mount's folders as the engine serves them (__all__, nzbs, torrents...)."""
+    path = '/tree' if top is None else f'/tree/{quote(top, safe="")}'
+    code, body = _engine()._call('GET', path, timeout=10)
+    if code is None:
+        return _engine_unavailable()
+    if code != 200:
+        return jsonify({'success': False, 'error': (body or {}).get('error', f'HTTP {code}')}), code
+    return jsonify({'success': True, ('tops' if top is None else 'folders'): body if isinstance(body, list) else []})
 
 
 @mount_bp.route('/api/jobs/<job_id>')

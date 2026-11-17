@@ -25,11 +25,46 @@ import (
 )
 
 // Top-level folders, matching cli_mount so existing symlinks keep resolving
-// after a migration: every job under __all__, usenet jobs also under nzbs.
+// after a migration: every job under __all__, usenet jobs also under nzbs,
+// debrid jobs also under torrents and under a folder named after their
+// provider (realdebrid, torbox...), and jobs with a proven-broken file also
+// under __bad__.
 const (
-	AllFolder = "__all__"
-	NZBFolder = "nzbs"
+	AllFolder     = "__all__"
+	BadFolder     = "__bad__"
+	TorrentFolder = "torrents"
+	NZBFolder     = "nzbs"
 )
+
+// fixedTops are always listed, even when empty, like cli_mount.
+var fixedTops = []string{AllFolder, BadFolder, TorrentFolder, NZBFolder}
+
+// providerFolder names the per-provider top folder of a debrid job.
+func providerFolder(j store.Job) string {
+	p := j.Provider
+	if p == "" { // registered before the provider was recorded: "<key>-<torrent id>"
+		if i := strings.Index(j.ID, "-"); i > 0 {
+			p = j.ID[:i]
+		}
+	}
+	switch strings.ToLower(p) {
+	case "", "debrid":
+		return ""
+	case "rd":
+		return "realdebrid"
+	case "tb":
+		return "torbox"
+	case "ad":
+		return "alldebrid"
+	}
+	p = strings.ToLower(cleanFolderName(p))
+	for _, t := range fixedTops {
+		if p == t {
+			return ""
+		}
+	}
+	return p
+}
 
 // Config is the engine's configuration.
 type Config struct {
@@ -55,6 +90,10 @@ type Config struct {
 	HealthWorkers int             `json:"health_workers"`         // jobs health-checked at once
 	Parallel      int             `json:"parallel"`               // probes per import
 	Providers     []nntp.Provider `json:"providers"`
+	// PlexProtection: the playback reserve is only for files Plex reports
+	// playing (cli_debrid posts them to /protected); other mount reads
+	// (scanner, thumbnails, ffprobe) can't take it while one plays.
+	PlexProtection bool `json:"plex_protection"`
 	// RetryBackoff: waits before re-importing after an unproven failure
 	// (default 1m, 5m, 15m); once used up the job fails, still retryable.
 	RetryBackoff []time.Duration `json:"-"`
@@ -149,7 +188,12 @@ type Engine struct {
 	open map[string]*job.Files // job id -> readers (built lazily)
 
 	treeMu sync.RWMutex
-	tree   map[string]map[string]*Folder // top folder -> folder name -> job folder
+	// rebuildMu serializes rebuildTree, so a slower rebuild can't install
+	// an older tree over a newer one.
+	rebuildMu sync.Mutex
+	protect   protection                    // Plex playback protection
+	tree      map[string]map[string]*Folder // top folder -> folder name -> job folder
+	tops      []string                      // top folders in listing order
 
 	healthSem chan struct{}
 	streams   streamTable
@@ -198,7 +242,8 @@ func New(cfg Config, log *slog.Logger) (*Engine, error) {
 		e.wg.Add(1)
 		go e.worker()
 	}
-	e.links = newCallbackLinks(cfg.LinkCallback, cfg.Token)
+	e.links = newCallbackLinks(cfg.LinkCallback, cfg.Token, log.With("component", "debrid"))
+	e.Client.SetLogger(log.With("component", "nntp"))
 	e.wg.Add(1)
 	go e.maintain()
 	e.Client.Warm(e.ctx)
@@ -210,6 +255,9 @@ func New(cfg Config, log *slog.Logger) (*Engine, error) {
 	e.rebuildTree()
 	return e, nil
 }
+
+// Logger is the engine's logger.
+func (e *Engine) Logger() *slog.Logger { return e.log }
 
 // Config returns the effective configuration.
 func (e *Engine) Config() Config { return e.cfg }
@@ -302,7 +350,7 @@ func (e *Engine) importJob(id string) {
 			time.AfterFunc(wait, func() { e.requeue(id) })
 			return
 		}
-		e.log.Warn("import failed", "job", id, "err", err, "retryable", retry)
+		e.log.Warn("import failed", "job", id, "name", j.Name, "err", err, "retryable", retry)
 	}
 	parsed, err := nzb.Parse(bytes.NewReader(data))
 	if err != nil {
@@ -334,6 +382,7 @@ func (e *Engine) importJob(id string) {
 		if res != nil && len(res.Failures) > 0 && !strings.Contains(err.Error(), res.Failures[0].Name) {
 			err = fmt.Errorf("%w (%s)", err, failureSummary(res.Failures))
 		}
+		e.logBuild(id, res, true)
 		fail(err)
 		return
 	}
@@ -343,6 +392,7 @@ func (e *Engine) importJob(id string) {
 	}
 	e.rebuildTree()
 	e.log.Info("imported", "job", id, "entries", len(res.Entries), "failures", len(res.Failures), "took", time.Since(start))
+	e.logBuild(id, res, false)
 }
 
 // requeue puts a still-queued job back on the import queue (unless it was
@@ -430,6 +480,24 @@ func (e *Engine) importSample(ctx context.Context, parsed *nzb.NZB, res *job.Res
 
 // failureSummary lists up to three per-file failures for the job error, so
 // a failed import says why without digging through logs.
+// logBuild logs what an import found: files left out (always, as warnings)
+// and, on failure or at debug level, the notes on every set and skip.
+func (e *Engine) logBuild(id string, res *job.Result, failed bool) {
+	if res == nil {
+		return
+	}
+	for _, f := range res.Failures {
+		e.log.Warn("import: file not streamable", "job", id, "file", f.Name, "size", f.Size, "err", f.Error)
+	}
+	for _, n := range res.Notes {
+		if failed {
+			e.log.Warn("import: "+n, "job", id)
+		} else {
+			e.log.Debug("import: "+n, "job", id)
+		}
+	}
+}
+
 func failureSummary(fs []job.Failure) string {
 	var parts []string
 	for i, f := range fs {
@@ -506,7 +574,14 @@ func (e *Engine) Files(id string) (*job.Files, error) {
 }
 
 // TopFolders lists the root of the mount.
-func (e *Engine) TopFolders() []string { return []string{AllFolder, NZBFolder} }
+func (e *Engine) TopFolders() []string {
+	e.treeMu.RLock()
+	defer e.treeMu.RUnlock()
+	if e.tops == nil {
+		return append([]string(nil), fixedTops...)
+	}
+	return append([]string(nil), e.tops...)
+}
 
 // Folders lists the job folders under a top folder.
 func (e *Engine) Folders(top string) []*Folder {
@@ -544,6 +619,8 @@ func (e *Engine) FolderPath(id string) string {
 // rebuildTree recomputes folder names from ready jobs. Names are unique:
 // a later job whose name is taken gets " (2)", " (3)"... in creation order.
 func (e *Engine) rebuildTree() {
+	e.rebuildMu.Lock()
+	defer e.rebuildMu.Unlock()
 	jobs := e.Store.List()
 	sort.Slice(jobs, func(a, b int) bool {
 		if !jobs[a].CreatedAt.Equal(jobs[b].CreatedAt) {
@@ -552,6 +629,11 @@ func (e *Engine) rebuildTree() {
 		return jobs[a].ID < jobs[b].ID
 	})
 	all := map[string]*Folder{}
+	tree := map[string]map[string]*Folder{AllFolder: all}
+	for _, t := range fixedTops[1:] {
+		tree[t] = map[string]*Folder{}
+	}
+	var providers []string
 	for _, j := range jobs {
 		if j.Status != store.Ready {
 			continue
@@ -577,10 +659,28 @@ func (e *Engine) rebuildTree() {
 		for n := 2; all[name] != nil; n++ {
 			name = fmt.Sprintf("%s (%d)", j.Name, n)
 		}
-		all[name] = &Folder{JobID: j.ID, Name: name, Entries: entries, ModTime: j.CreatedAt}
+		f := &Folder{JobID: j.ID, Name: name, Entries: entries, ModTime: j.CreatedAt}
+		all[name] = f
+		if j.Protocol == ProtocolDebrid {
+			tree[TorrentFolder][name] = f
+			if p := providerFolder(j); p != "" {
+				if tree[p] == nil {
+					tree[p] = map[string]*Folder{}
+					providers = append(providers, p)
+				}
+				tree[p][name] = f
+			}
+		} else {
+			tree[NZBFolder][name] = f
+		}
+		if j.Health != nil && j.Health.Status == health.Broken {
+			tree[BadFolder][name] = f
+		}
 	}
+	sort.Strings(providers)
 	e.treeMu.Lock()
-	e.tree = map[string]map[string]*Folder{AllFolder: all, NZBFolder: all}
+	e.tree = tree
+	e.tops = append(append([]string(nil), fixedTops...), providers...)
 	e.treeMu.Unlock()
 }
 
@@ -723,6 +823,7 @@ func (e *Engine) runCheck(id string, full bool) {
 		}
 		j.Health = &h
 	})
+	e.rebuildTree() // __bad__ follows health
 	e.log.Info("health checked", "job", id, "status", rep.Status, "checked", rep.Checked, "inconclusive", rep.Inconclusive)
 }
 
@@ -756,6 +857,7 @@ func (e *Engine) MarkBroken(id, file, detail, segment string) {
 		j.Health = &h
 	})
 	if err == nil {
+		e.rebuildTree()
 		e.log.Warn("file marked broken during playback", "job", id, "file", file, "detail", detail)
 	}
 }
@@ -763,6 +865,9 @@ func (e *Engine) MarkBroken(id, file, detail, segment string) {
 // ClearHealth drops a job's health record (after a repair replaced it).
 func (e *Engine) ClearHealth(id string) error {
 	_, err := e.Store.Update(id, func(j *store.Job) { j.Health = nil })
+	if err == nil {
+		e.rebuildTree()
+	}
 	return err
 }
 

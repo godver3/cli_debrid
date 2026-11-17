@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -17,6 +18,63 @@ type Client struct {
 	bytes    atomic.Int64
 	articles atomic.Int64
 	missing  atomic.Int64
+
+	log      *slog.Logger
+	logMu    sync.Mutex
+	lastLogs map[string]*logState // provider+kind -> throttle state
+}
+
+type logState struct {
+	at         time.Time
+	suppressed int
+}
+
+// problemEvery: the same provider problem is logged at most this often;
+// repeats in between are counted and reported with the next line.
+const problemEvery = 30 * time.Second
+
+// SetLogger turns on logging of provider problems (connect, login,
+// connection errors). Article-level answers are not logged.
+func (c *Client) SetLogger(log *slog.Logger) {
+	c.logMu.Lock()
+	c.log = log
+	c.lastLogs = map[string]*logState{}
+	c.logMu.Unlock()
+}
+
+func (c *Client) problem(provider, kind string, prio Priority, err error) {
+	c.logMu.Lock()
+	log := c.log
+	if log == nil {
+		c.logMu.Unlock()
+		return
+	}
+	key := provider + "\x00" + kind
+	st := c.lastLogs[key]
+	if st == nil {
+		st = &logState{}
+		c.lastLogs[key] = st
+	}
+	if !st.at.IsZero() && time.Since(st.at) < problemEvery {
+		st.suppressed++
+		c.logMu.Unlock()
+		return
+	}
+	repeats := st.suppressed
+	st.at, st.suppressed = time.Now(), 0
+	c.logMu.Unlock()
+	log.Warn("usenet provider problem", "provider", provider, "kind", kind, "err", err,
+		"class", prioName(prio), "repeats_since_last_log", repeats)
+}
+
+func prioName(p Priority) string {
+	switch p {
+	case Live:
+		return "playback"
+	case Read:
+		return "mount read"
+	}
+	return "background"
 }
 
 // NewClient builds a client. Primary providers keep their given order and
@@ -84,6 +142,7 @@ func (c *Client) attempt(ctx context.Context, prio Priority, id string,
 					return ctx.Err()
 				}
 				last = fmt.Errorf("%s: %w", pl.p.Name, err)
+				c.problem(pl.p.Name, "connect", prio, err)
 				break
 			}
 			acquired(ctx)
@@ -101,6 +160,7 @@ func (c *Client) attempt(ctx context.Context, prio Priority, id string,
 			case errors.Is(err, ErrAuth):
 				pl.discard(cn)
 				last = fmt.Errorf("%s: %w", pl.p.Name, err)
+				c.problem(pl.p.Name, "login", prio, err)
 				answered = true // retrying the same credentials won't help
 			default:
 				var pe *ProtocolError
@@ -109,6 +169,9 @@ func (c *Client) attempt(ctx context.Context, prio Priority, id string,
 					answered = true
 				} else {
 					pl.discard(cn)
+					if try > 0 { // the first failure is often just a stale idle connection
+						c.problem(pl.p.Name, "connection", prio, err)
+					}
 				}
 				last = fmt.Errorf("%s: %w", pl.p.Name, err)
 			}

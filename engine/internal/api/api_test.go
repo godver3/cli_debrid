@@ -384,3 +384,35 @@ func TestReplacementVerifyAndAck(t *testing.T) {
 		t.Fatalf("emptied job still there: %d", code)
 	}
 }
+
+func TestTreeListing(t *testing.T) {
+	h := newHarness(t)
+	var j jobOut
+	h.do("POST", "/jobs?name=Usenet.Movie", nzbXML(h.s, "t", file{Name: "u.mkv", Data: random(3, 70_000)}), &j)
+	h.waitDone(j.ID)
+	if code := h.do("POST", "/debrid/jobs", []byte(`{"id":"tb-9","name":"Debrid.Movie","provider":"tb","files":[{"name":"d.mkv","size":5,"ref":"9:1"}]}`), nil); code != 201 {
+		t.Fatalf("add debrid: %d", code)
+	}
+	var tops []struct {
+		Name  string `json:"name"`
+		Count int    `json:"count"`
+	}
+	h.do("GET", "/tree", nil, &tops)
+	got := map[string]int{}
+	for _, tp := range tops {
+		got[tp.Name] = tp.Count
+	}
+	if got["__all__"] != 2 || got["nzbs"] != 1 || got["torrents"] != 1 || got["torbox"] != 1 || got["__bad__"] != 0 {
+		t.Fatalf("tops %+v", tops)
+	}
+	var folders []struct {
+		Name  string `json:"name"`
+		JobID string `json:"job_id"`
+	}
+	if code := h.do("GET", "/tree/torbox", nil, &folders); code != 200 || len(folders) != 1 || folders[0].JobID != "tb-9" {
+		t.Fatalf("torbox: %d %+v", code, folders)
+	}
+	if code := h.do("GET", "/tree/nope", nil, nil); code != 404 {
+		t.Fatalf("unknown top: %d", code)
+	}
+}

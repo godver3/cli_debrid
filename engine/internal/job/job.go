@@ -79,6 +79,9 @@ type Result struct {
 	Sources  []Source  `json:"sources"`
 	Entries  []Entry   `json:"entries"`
 	Failures []Failure `json:"failures,omitempty"`
+	// Notes say what Build did with the NZB's files (sets found, files
+	// skipped and why), for logs and for "nothing streamable" errors.
+	Notes []string `json:"notes,omitempty"`
 }
 
 // ErrLeftoverOnly means only leftovers (sample, extras) were streamable
@@ -155,6 +158,8 @@ func Build(ctx context.Context, f stream.Fetcher, cache *stream.Cache, n *nzb.NZ
 	parallel(ctx, todo, opt.Parallel, probe)
 
 	res := &Result{}
+	note := func(format string, a ...any) { res.Notes = append(res.Notes, fmt.Sprintf(format, a...)) }
+	note("%d files in the NZB, %d PAR2 recovery volumes skipped", len(files), len(files)-len(todo))
 	// PAR2 index files (named *.par2 or recognised by magic) give real names.
 	var descs []par2.FileDesc
 	for _, p := range todo {
@@ -178,8 +183,13 @@ func Build(ctx context.Context, f stream.Fetcher, cache *stream.Cache, n *nzb.NZ
 			candFiles = append(candFiles, p)
 		}
 	}
+	renamed := 0
 	for i, name := range par2.Match(descs, cands) {
 		candFiles[i].name = name
+		renamed++
+	}
+	if len(descs) > 0 || renamed > 0 {
+		note("PAR2 index lists %d files, %d posted files renamed from it", len(descs), renamed)
 	}
 	// Without PAR2, a yEnc header name beats an obfuscated subject.
 	for _, p := range candFiles {
@@ -220,14 +230,22 @@ func Build(ctx context.Context, f stream.Fetcher, cache *stream.Cache, n *nzb.NZ
 		sourceOf[p.idx] = len(res.Sources) - 1
 		return len(res.Sources) - 1
 	}
+	skippedPar2 := 0
 	for _, p := range plain {
 		if strings.HasSuffix(strings.ToLower(p.name), ".par2") {
+			skippedPar2++
 			continue
 		}
 		res.Entries = append(res.Entries, Entry{Name: p.name, Size: p.layout.Size,
 			Pieces: []Piece{{Source: src(p), Offset: 0, Length: p.layout.Size}}})
 	}
 
+	if skippedPar2 > 0 {
+		note("%d other .par2 files skipped", skippedPar2)
+	}
+	if len(plain)-skippedPar2 > 0 {
+		note("%d plain files", len(plain)-skippedPar2)
+	}
 	var failedArchive int64 // largest failed archive content, for the leftover guard
 	addSet := func(label string, vols []*posted, set *archive.Set, err error) {
 		var total int64
@@ -235,10 +253,12 @@ func Build(ctx context.Context, f stream.Fetcher, cache *stream.Cache, n *nzb.NZ
 			total += v.layout.Size
 		}
 		if err != nil {
+			note("archive %s (%d volumes, %d bytes): %v", label, len(vols), total, err)
 			res.Failures = append(res.Failures, Failure{Name: label, Size: total, Error: err.Error()})
 			failedArchive = max(failedArchive, total)
 			return
 		}
+		note("archive %s: %d volumes, %d files inside", label, len(set.Volumes), len(set.Members))
 		byID := map[int]*posted{}
 		for _, v := range vols {
 			byID[v.idx] = v
@@ -311,7 +331,11 @@ func Build(ctx context.Context, f stream.Fetcher, cache *stream.Cache, n *nzb.NZ
 		}
 	}
 	if len(res.Entries) == 0 {
-		return res, ErrNothingStreamable
+		why := res.Notes
+		for _, f := range res.Failures {
+			why = append(why, f.Name+": "+f.Error)
+		}
+		return res, fmt.Errorf("%w (%s)", ErrNothingStreamable, strings.Join(why, "; "))
 	}
 	if LeftoverOnly(res.Entries[0].Size, failedArchive) {
 		return res, fmt.Errorf("%w: largest file %s is %d bytes, failed archive content %d bytes",

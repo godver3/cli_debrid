@@ -367,7 +367,7 @@
     const pg = e.target.closest('[data-page]');
     if (pg) { page = +pg.dataset.page; renderJobs(); return; }
     const open = e.target.closest('[data-open]');
-    if (open) { browseJob = open.dataset.open; showTab('browse'); return; }
+    if (open) { browseTop = '__all__'; browseJob = open.dataset.open; showTab('browse'); return; }
     const b = e.target.closest('[data-act]');
     if (!b) return;
     const id = b.closest('tr').dataset.id;
@@ -382,24 +382,48 @@
   $('#qPages').addEventListener('click', e => { const pg = e.target.closest('[data-page]'); if (pg) { page = +pg.dataset.page; renderJobs(); } });
 
   // ---- browse -------------------------------------------------------------
-  let browseJob = null;
+  // Same folders as the mount itself (and cli_mount): __all__, __bad__,
+  // torrents, nzbs and one per debrid provider.
+  let browseTop = null, browseJob = null;
+  const TOP_NOTES = {'__all__': 'everything', '__bad__': 'jobs with a broken file', 'torrents': 'debrid',
+                     'nzbs': 'usenet'};
+  function crumbs(parts) {
+    $('#bCrumbs').innerHTML = parts.map((p, i) => i === parts.length - 1 ? '<strong>' + esc(p[0]) + '</strong>'
+      : '<a data-up="' + p[1] + '">' + esc(p[0]) + '</a>').join(' / ');
+  }
   async function renderBrowse() {
     const q = $('#bSearch').value.trim().toLowerCase();
     const tb = $('#bTable tbody');
+    if (!browseTop) {
+      crumbs([['mount', 'root']]);
+      const r = await fetch('/mount/api/tree');
+      const d = await r.json().catch(() => ({}));
+      if (tab !== 'browse' || browseTop) return;
+      if (!d.success) { tb.innerHTML = '<tr><td colspan="4" style="color:#888">' + esc(d.error || 'The mount engine is not running.') + '</td></tr>'; return; }
+      tb.innerHTML = d.tops.filter(t => !q || t.name.toLowerCase().includes(q)).map(t =>
+        '<tr><td class="nm">📁 <span class="link" data-top="' + esc(t.name) + '">' + esc(t.name) + '</span></td><td>' +
+        t.count + ' folder' + (t.count === 1 ? '' : 's') + '</td><td style="color:#999;font-size:12px">' +
+        esc(TOP_NOTES[t.name] || 'debrid provider') + '</td><td></td></tr>').join('');
+      return;
+    }
     if (!browseJob) {
-      $('#bCrumbs').innerHTML = '<strong>__all__</strong>';
-      if (!jobs.length) { await loadJobs(); if (tab !== 'browse') return; }
-      const ready = jobs.filter(j => j.status === 'ready' && (!q || (j.name || '').toLowerCase().includes(q)))
-                        .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-      tb.innerHTML = ready.length ? ready.map(j => '<tr><td class="nm">📁 <span class="link" data-open="' + esc(j.id) + '">' + esc(j.name) + '</span></td><td>' + fmtBytes(j.size) +
-        '</td><td>' + esc(j.category || '') + '</td><td></td></tr>').join('') : '<tr><td colspan="4" style="color:#888">Empty folder.</td></tr>';
+      crumbs([['mount', 'root'], [browseTop, 'top']]);
+      const top = browseTop;
+      const r = await fetch('/mount/api/tree/' + encodeURIComponent(top));
+      const d = await r.json().catch(() => ({}));
+      if (tab !== 'browse' || browseTop !== top || browseJob) return;
+      if (!d.success) { browseTop = null; return renderBrowse(); }
+      const list = d.folders.filter(f => !q || f.name.toLowerCase().includes(q)).sort((a, b) => a.name.localeCompare(b.name));
+      tb.innerHTML = list.length ? list.map(f => '<tr><td class="nm">📁 <span class="link" data-open="' + esc(f.job_id) + '">' + esc(f.name) +
+        '</span></td><td>' + fmtBytes(f.size) + '</td><td style="color:#999;font-size:12px">' + f.files + ' file' + (f.files === 1 ? '' : 's') +
+        '</td><td></td></tr>').join('') : '<tr><td colspan="4" style="color:#888">Empty folder.</td></tr>';
       return;
     }
     const r = await fetch('/mount/api/jobs/' + encodeURIComponent(browseJob));
     const d = await r.json();
     if (!d.success) { browseJob = null; return renderBrowse(); }
     const j = d.job;
-    $('#bCrumbs').innerHTML = '<a data-up="1">__all__</a> / <strong>' + esc(j.name) + '</strong>';
+    crumbs([['mount', 'root'], [browseTop, 'top'], [j.name, 'job']]);
     const broken = new Set(((j.health || {}).broken_files || []).map(b => b.file_name));
     const hidden = new Set(j.hidden || []);
     const ents = (j.entries || []).filter(e => !q || e.name.toLowerCase().includes(q));
@@ -410,8 +434,17 @@
       ((j.failures || []).length ? '<tr><td colspan="4"><div class="err">Not streamable: ' + j.failures.map(f => esc(f.name) + ' (' + esc(f.error) + ')').join('; ') + '</div></td></tr>' : '');
   }
   $('#bSearch').addEventListener('input', renderBrowse);
-  $('#bCrumbs').addEventListener('click', e => { if (e.target.closest('[data-up]')) { browseJob = null; renderBrowse(); } });
+  $('#bCrumbs').addEventListener('click', e => {
+    const up = e.target.closest('[data-up]');
+    if (!up) return;
+    if (up.dataset.up === 'root') browseTop = null;
+    browseJob = null;
+    $('#bSearch').value = '';
+    renderBrowse();
+  });
   $('#bTable').addEventListener('click', e => {
+    const top = e.target.closest('[data-top]');
+    if (top) { browseTop = top.dataset.top; browseJob = null; $('#bSearch').value = ''; renderBrowse(); return; }
     const open = e.target.closest('[data-open]');
     if (open) { browseJob = open.dataset.open; $('#bSearch').value = ''; renderBrowse(); return; }
     const c = e.target.closest('[data-copy]');

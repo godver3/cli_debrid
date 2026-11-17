@@ -117,7 +117,7 @@ def sync_once(engine, provs: Optional[List] = None) -> Dict[str, int]:
                 continue
             folder, files = found
             files = unique_names([f for f in files if int(f.get('size') or 0) > 0])
-            body = {'id': jid, 'name': folder, 'files': [
+            body = {'id': jid, 'name': folder, 'provider': key, 'files': [
                 {'name': f['name'], 'size': int(f['size']), 'ref': f"{key}:{t['id']}:{f['file_id']}"} for f in files]}
             c, resp = engine._call('POST', '/debrid/jobs', timeout=30, json=body)
             if c == 201:

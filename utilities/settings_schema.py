@@ -431,6 +431,16 @@ SETTINGS_SCHEMA = {
             "description": "Built-in mount only. Playback connection reserve: % of each server's connections that only playback may use; read-ahead, imports and health checks never take them (at least 1 when set; 0 = off).",
             "default": 10
         },
+        "debug_logging": {
+            "type": "boolean",
+            "description": "Built-in mount only. Debug logging: the engine also logs every debrid link fetch, refused API call and what each import found in the NZB (archive sets, skipped files). Problems are always logged; turn this on while chasing one.",
+            "default": False
+        },
+        "plex_playback_protection": {
+            "type": "boolean",
+            "description": "Built-in mount only. Plex playback protection: the playback connection reserve is only for files Plex reports playing (checked every 10 s). Plex scans, thumbnails and intro detection can't take it while someone watches. Needs your Plex URL and token; if Plex can't be reached, every read is treated as playback, as without this.",
+            "default": True
+        },
         "debrid_streaming": {
             "type": "boolean",
             "description": "Built-in mount only. Stream your debrid account's finished torrents through the built-in mount too (Real-Debrid and TorBox), next to usenet: the mount mirrors the account like cli_mount or Zurg did.",

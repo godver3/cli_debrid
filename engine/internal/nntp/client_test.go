@@ -207,6 +207,58 @@ func TestPlaybackReserve(t *testing.T) {
 	}
 }
 
+// An unconfirmed mount read (Read) goes ahead of queued prefetches but,
+// like them, can't use the playback reserve.
+func TestReadClassOutsideReserveAheadOfPrefetch(t *testing.T) {
+	var arts []nntptest.Article
+	for _, id := range []string{"hold", "p1", "read", "live"} {
+		arts = append(arts, nntptest.Post(id, id, awkward(100), 100)...)
+	}
+	s := nntptest.Start(t, arts...)
+	s.SetDelay(200 * time.Millisecond)
+	p := provider(s, "a", 2)
+	p.Reserve = 1
+	c, _ := NewClient([]Provider{p})
+	defer c.Close()
+	var wg sync.WaitGroup
+	fetch := func(id string, prio Priority) {
+		defer wg.Done()
+		if _, _, err := c.Body(context.Background(), prio, id+".1@test"); err != nil {
+			t.Errorf("%s: %v", id, err)
+		}
+	}
+	wg.Add(3)
+	go fetch("hold", Prefetch) // takes the one non-reserved connection
+	time.Sleep(50 * time.Millisecond)
+	go fetch("p1", Prefetch)
+	time.Sleep(30 * time.Millisecond)
+	go fetch("read", Read) // queued too: the free connection is the reserve
+	time.Sleep(50 * time.Millisecond)
+	if pools, _, _, _ := c.Stats(); pools[0].Open-pools[0].Idle != 1 {
+		t.Fatalf("Read must not take the reserved connection: %+v", pools[0])
+	}
+	start := time.Now()
+	wg.Add(1)
+	fetch("live", Live)
+	if took := time.Since(start); took > 350*time.Millisecond {
+		t.Fatalf("live read waited %v for the reserve", took)
+	}
+	wg.Wait()
+	order := s.BodyOrder()
+	ri, pi := -1, -1
+	for i, id := range order {
+		switch id {
+		case "read.1@test":
+			ri = i
+		case "p1.1@test":
+			pi = i
+		}
+	}
+	if ri < 0 || pi < 0 || ri > pi {
+		t.Fatalf("BODY order %v: the Read must be served before the queued prefetch", order)
+	}
+}
+
 func TestReserveNeverStarvesASingleConnection(t *testing.T) {
 	s := nntptest.Start(t, nntptest.Post("x", "x", awkward(100), 100)...)
 	p := provider(s, "a", 1)

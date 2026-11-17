@@ -70,5 +70,14 @@ class NowPlayingTests(unittest.TestCase):
         self.assertEqual((r['title'], r['subtitle'], r['decision']), ('Show', 'S02E05 · Pilot', 'transcode'))
 
 
+class SceneTagTests(unittest.TestCase):
+    def test_release_tags(self):
+        self.assertEqual(np.scene_tags('The.Matrix.1999.2160p.UHD.BluRay.REMUX.DV.HDR10.HEVC.TrueHD.Atmos.7.1-SPiRiT'),
+                         ['2160p', 'BluRay REMUX', 'DV', 'HDR', 'HEVC', '10bit', 'Atmos', 'TrueHD', '7.1', 'SPiRiT'])
+        self.assertEqual(np.scene_tags('Abbott.Elementary.S05E03.1080p.AMZN.WEB-DL.DDP5.1.H.264-Kitsune'),
+                         ['1080p', 'WEB-DL', 'AMZN', 'H.264', 'Dolby Digital Plus', '5.1', 'Kitsune'])
+        self.assertEqual(np.scene_tags(''), [])
+
+
 if __name__ == '__main__':
     unittest.main()

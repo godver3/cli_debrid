@@ -46,9 +46,9 @@ func (h *openFile) readAt(ctx context.Context, dest []byte, off int64) (int, err
 	if off >= h.r.Size() {
 		return 0, nil
 	}
-	n, err := h.r.ReadAtCtx(ctx, nntp.Live, dest, off)
+	n, err := h.r.ReadAtCtx(ctx, h.e.ReadPriority(h.jobID, h.name), dest, off)
 	if err != nil && n < len(dest) && off+int64(n) < h.r.Size() {
-		h.log.Warn("read failed", "file", h.name, "offset", off, "len", len(dest), "err", err,
+		h.log.Warn("read failed", "job", h.jobID, "file", h.name, "size", h.r.Size(), "offset", off, "len", len(dest), "err", err,
 			"missing", nntp.IsNotFound(err))
 		if nntp.IsNotFound(err) {
 			// Proof the file can't play: hand it to cli_debrid's repair.

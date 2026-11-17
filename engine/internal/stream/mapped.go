@@ -124,7 +124,7 @@ func (m *MappedFile) ReadAtCtx(ctx context.Context, prio nntp.Priority, p []byte
 		n += copy(p[n:], data[off+int64(n)-m.segs[i].Start:])
 		last = i
 	}
-	if prio == nntp.Live && m.readAhead > 0 && last >= 0 {
+	if prio != nntp.Prefetch && m.readAhead > 0 && last >= 0 {
 		m.startReadAhead(last + 1)
 	}
 	if n < len(p) {

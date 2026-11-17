@@ -42,7 +42,9 @@ type Job struct {
 	Retryable bool `json:"retryable,omitempty"`
 	Attempts  int  `json:"attempts,omitempty"` // imports retried after unproven failures
 	// Protocol is "debrid" for debrid jobs ("" = usenet).
-	Protocol  string         `json:"protocol,omitempty"`
+	Protocol string `json:"protocol,omitempty"`
+	// Provider of a debrid job (rd, tb...): its folder next to torrents/.
+	Provider  string         `json:"provider,omitempty"`
 	Size      int64          `json:"size"` // sum of entry sizes once ready
 	Tags      []string       `json:"tags,omitempty"`
 	CLIIDs    map[string]int `json:"cli_ids,omitempty"` // entry name -> cli_debrid item id

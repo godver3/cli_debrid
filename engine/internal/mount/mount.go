@@ -4,7 +4,7 @@
 // filesystem:
 //
 //	<mount>/__all__/<job folder>/<file>
-//	<mount>/nzbs/<job folder>/<file>
+//	<mount>/{nzbs,torrents,__bad__,<provider>}/<job folder>/<file>
 //
 // The tree is looked up live from the engine, so new and deleted jobs
 // show up without remounting.

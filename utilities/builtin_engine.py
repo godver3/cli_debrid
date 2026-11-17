@@ -197,6 +197,8 @@ def build_config(settings: dict) -> dict:
         # Debrid streaming: the engine asks cli_debrid (this host) for links.
         'link_callback': f"http://127.0.0.1:{os.environ.get('CLI_DEBRID_PORT', '5000')}/mount/internal/link",
         'precache_mb': max(0, num('precache_mb', 2)),
+        'log_level': 'debug' if bm.get('debug_logging') else 'info',
+        'plex_protection': bool(bm.get('plex_playback_protection', True)) and reserve_pct > 0,
         'max_conns_per_file': num('max_connections_per_file', 15),
         'parallel': max(1, num('processing_connections', 8)),
         'import_timeout_seconds': num('processing_timeout_minutes', 5) * 60,

@@ -22,6 +22,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -47,6 +48,10 @@ func Handler(e *engine.Engine) http.Handler {
 	mux.HandleFunc("PATCH /jobs/{id}", a.patch)
 	mux.HandleFunc("DELETE /jobs/{id}", a.del)
 	mux.HandleFunc("POST /jobs/{id}/retry", a.retry)
+	mux.HandleFunc("GET /tree", a.tree)
+	mux.HandleFunc("GET /protected", a.protectedGet)
+	mux.HandleFunc("POST /protected", a.protectedSet)
+	mux.HandleFunc("GET /tree/{top}", a.treeTop)
 	mux.HandleFunc("GET /changes", a.changes)
 	mux.HandleFunc("GET /stats", a.stats)
 	mux.HandleFunc("GET /streams", a.streams)
@@ -61,10 +66,54 @@ func Handler(e *engine.Engine) http.Handler {
 	mux.HandleFunc("DELETE /jobs/{id}/health", a.healthClear)
 	mux.HandleFunc("POST /replacements/verify", a.verify)
 	mux.HandleFunc("POST /replacements/ack", a.ack)
-	return a.auth(mux)
+	return a.logged(a.auth(mux))
 }
 
 type api struct{ e *engine.Engine }
+
+// statusRecorder keeps a response's status and the start of an error body.
+type statusRecorder struct {
+	http.ResponseWriter
+	code int
+	body []byte
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	s.code = code
+	s.ResponseWriter.WriteHeader(code)
+}
+
+func (s *statusRecorder) Write(b []byte) (int, error) {
+	if s.code == 0 {
+		s.code = http.StatusOK
+	}
+	if s.code >= 400 && len(s.body) < 300 {
+		s.body = append(s.body, b[:min(len(b), 300-len(s.body))]...)
+	}
+	return s.ResponseWriter.Write(b)
+}
+
+// logged logs failed API calls: server errors as warnings, refusals (bad
+// request, not found...) at debug level, so a failing cli_debrid call can
+// be traced from the engine's side.
+func (a *api) logged(next http.Handler) http.Handler {
+	log := a.e.Logger().With("component", "api")
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w}
+		next.ServeHTTP(rec, r)
+		if rec.code < 400 {
+			return
+		}
+		attrs := []any{"method", r.Method, "path", r.URL.Path, "status", rec.code,
+			"err", strings.TrimSpace(string(rec.body)), "took", time.Since(start).Round(time.Millisecond)}
+		if rec.code >= 500 {
+			log.Warn("api call failed", attrs...)
+		} else {
+			log.Debug("api call refused", attrs...)
+		}
+	})
+}
 
 func (a *api) auth(next http.Handler) http.Handler {
 	token := a.e.Config().Token
@@ -137,6 +186,67 @@ func (a *api) render(j store.Job, detail bool) jobOut {
 		}
 	}
 	return out
+}
+
+// protectedSet takes one Plex poll: the mount files Plex reports playing.
+func (a *api) protectedSet(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		OK    bool                   `json:"ok"`
+		Error string                 `json:"error"`
+		Files []engine.ProtectedFile `json:"files"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	a.e.SetProtected(body.Files, body.OK, body.Error)
+	writeJSON(w, http.StatusOK, a.e.Protection())
+}
+
+func (a *api) protectedGet(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, a.e.Protection())
+}
+
+// tree lists the mount's top folders with how many job folders each holds.
+func (a *api) tree(w http.ResponseWriter, r *http.Request) {
+	type top struct {
+		Name  string `json:"name"`
+		Count int    `json:"count"`
+	}
+	out := []top{}
+	for _, t := range a.e.TopFolders() {
+		out = append(out, top{Name: t, Count: len(a.e.Folders(t))})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// treeTop lists the job folders under one top folder, as the mount shows them.
+func (a *api) treeTop(w http.ResponseWriter, r *http.Request) {
+	top := r.PathValue("top")
+	known := false
+	for _, t := range a.e.TopFolders() {
+		known = known || t == top
+	}
+	if !known {
+		writeErr(w, http.StatusNotFound, fmt.Errorf("no top folder %q", top))
+		return
+	}
+	type folderOut struct {
+		Name    string    `json:"name"`
+		JobID   string    `json:"job_id"`
+		Size    int64     `json:"size"`
+		Files   int       `json:"files"`
+		ModTime time.Time `json:"mod_time"`
+	}
+	out := []folderOut{}
+	for _, f := range a.e.Folders(top) {
+		var size int64
+		for _, en := range f.Entries {
+			size += en.Size
+		}
+		out = append(out, folderOut{Name: f.Name, JobID: f.JobID, Size: size, Files: len(f.Entries), ModTime: f.ModTime})
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (a *api) status(w http.ResponseWriter, r *http.Request) {
@@ -289,13 +399,14 @@ func (a *api) addDebrid(w http.ResponseWriter, r *http.Request) {
 		ID       string              `json:"id"`
 		Name     string              `json:"name"`
 		Category string              `json:"category"`
+		Provider string              `json:"provider"`
 		Files    []engine.DebridFile `json:"files"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 16<<20)).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	j, err := a.e.AddDebrid(body.ID, body.Name, body.Category, body.Files)
+	j, err := a.e.AddDebrid(body.ID, body.Name, body.Category, body.Provider, body.Files)
 	if err != nil {
 		storeErr(w, err)
 		return

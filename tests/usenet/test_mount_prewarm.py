@@ -97,5 +97,54 @@ class PrewarmTests(unittest.TestCase):
         self.assertEqual(self._run(500)[1], [])
 
 
+
+class ProtectClient(FakeClient):
+    def __init__(self, streams):
+        super().__init__()
+        self.streams = streams
+        self.posted = []
+
+    def get_streams(self):
+        return self.streams
+
+    def set_protected(self, files, ok, error=''):
+        self.posted.append((files, ok, error))
+        return True
+
+
+class PlexProtectionTests(unittest.TestCase):
+    STREAMS = [{'job_id': 'j1', 'folder': 'Show.S01E01.1080p', 'file': 'Show.S01E01.1080p.mkv'},
+               {'job_id': 'j2', 'folder': 'Other', 'file': 'other.mkv'}]  # e.g. the Plex scanner
+
+    def setUp(self):
+        mp._protect_state['last'] = None
+
+    def test_only_files_plex_plays_are_protected(self):
+        c = ProtectClient(self.STREAMS)
+        with mock.patch.object(mp.np, 'plex_sessions_checked', return_value=([session(100)], '')):
+            mp.protect_once(c, settings)
+        self.assertEqual(c.posted, [([{'job_id': 'j1', 'file': 'Show.S01E01.1080p.mkv'}], True, '')])
+
+    def test_failed_plex_poll_is_posted_as_failed(self):
+        c = ProtectClient(self.STREAMS)
+        with mock.patch.object(mp.np, 'plex_sessions_checked', return_value=([], 'timeout')), \
+             self.assertLogs(level='WARNING'):
+            mp.protect_once(c, settings)
+        self.assertEqual(c.posted, [([], False, 'timeout')])
+
+    def test_nothing_open_skips_plex(self):
+        c = ProtectClient([])
+        with mock.patch.object(mp.np, 'plex_sessions_checked') as plex:
+            mp.protect_once(c, settings)
+        plex.assert_not_called()
+        self.assertEqual(c.posted, [([], True, '')])
+
+    def test_disabled_posts_nothing(self):
+        c = ProtectClient(self.STREAMS)
+        off = lambda *a, **k: {'plex_playback_protection': False} if a == ('Built-in Mount',) else settings(*a, **k)
+        self.assertIsNone(mp.protect_once(c, off))
+        self.assertEqual(c.posted, [])
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -159,7 +159,7 @@ func (r *File) ReadAtCtx(ctx context.Context, prio nntp.Priority, p []byte, off 
 		off += int64(c)
 		last = idx
 	}
-	if prio == nntp.Live && r.readAhead > 0 && last >= 0 {
+	if prio != nntp.Prefetch && r.readAhead > 0 && last >= 0 {
 		r.startReadAhead(last + 1)
 	}
 	if n < len(p) {

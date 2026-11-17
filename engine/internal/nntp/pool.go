@@ -8,11 +8,15 @@ import (
 )
 
 // Priority orders waiters for a connection. Live reads (a player waiting on
-// bytes) always get the next free connection before any prefetch.
+// bytes) always get the next free connection before any prefetch. Read is
+// a mount read Plex has not confirmed as playback (scanner, thumbnails,
+// ffprobe) while Plex playback protection is on: it goes ahead of prefetch
+// but, like prefetch, may not use the playback reserve.
 type Priority int
 
 const (
 	Prefetch Priority = iota
+	Read
 	Live
 )
 
@@ -22,7 +26,7 @@ type pool struct {
 	mu      sync.Mutex
 	idle    []*conn
 	open    int
-	queues  [2][]chan *slot // indexed by Priority
+	queues  [3][]chan *slot // indexed by Priority
 	closed  bool
 	warming int // dials in progress for MinIdle
 
@@ -147,9 +151,9 @@ func (pl *pool) passOn(s *slot) {
 	defer pl.mu.Unlock()
 	for prio := Live; prio >= Prefetch; prio-- {
 		if q := pl.queues[prio]; len(q) > 0 {
-			// The slot being passed is still counted busy; a prefetch
+			// The slot being passed is still counted busy; a non-live
 			// waiter may only keep it outside the playback reserve.
-			if prio == Prefetch && !pl.prefetchMayTake(pl.open-len(pl.idle)-1) {
+			if prio != Live && !pl.prefetchMayTake(pl.open-len(pl.idle)-1) {
 				break
 			}
 			ch := q[0]
@@ -238,5 +242,5 @@ func (pl *pool) shutdown() {
 func (pl *pool) stats() (int, int, int) {
 	pl.mu.Lock()
 	defer pl.mu.Unlock()
-	return pl.open, len(pl.idle), len(pl.queues[Live]) + len(pl.queues[Prefetch])
+	return pl.open, len(pl.idle), len(pl.queues[Live]) + len(pl.queues[Read]) + len(pl.queues[Prefetch])
 }

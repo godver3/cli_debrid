@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -98,8 +99,11 @@ func TestMountServesJobsThroughFUSE(t *testing.T) {
 	}
 	defer srv.Unmount()
 
-	if got := names(t, dir); len(got) != 2 || got[0] != "__all__" || got[1] != "nzbs" {
+	if got := strings.Join(names(t, dir), ","); got != "__all__,__bad__,nzbs,torrents" {
 		t.Fatalf("root %v", got)
+	}
+	if got := names(t, filepath.Join(dir, "torrents")); len(got) != 0 {
+		t.Fatalf("usenet job listed under torrents: %v", got)
 	}
 	path := filepath.Join(dir, "__all__", "Movie.2024", "Movie.2024.mkv")
 	got, err := os.ReadFile(path)

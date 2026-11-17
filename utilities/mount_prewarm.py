@@ -1,5 +1,11 @@
 """
-Plex next-episode prewarm for the built-in mount (cli_mount's feature).
+Plex next-episode prewarm and Plex playback protection for the built-in
+mount (both cli_mount features), from one Plex sessions poller.
+
+Protection: every 10 s the mount files Plex reports playing are posted to
+the engine, which keeps the playback reserve for them alone while they
+play. A failed Plex poll is posted as such, and the engine then treats
+every read as playback again.
 
 Every 20 s, Plex sessions streaming from the mount are checked. Once an
 episode passes the trigger point (default 70%), the next episode's first
@@ -19,7 +25,8 @@ import requests
 
 from utilities import mount_now_playing as np
 
-POLL_SECONDS = 20
+POLL_SECONDS = 20          # prewarm
+PROTECT_SECONDS = 10       # playback protection (engine forgets a set after 45 s)
 REMEMBER_SECONDS = 6 * 3600
 
 _done = {}  # next episode ratingKey -> time prewarmed
@@ -121,14 +128,63 @@ def check_once(client, get_setting: Callable, now: Optional[float] = None) -> li
     return out
 
 
+_protect_state = {'last': None}  # last posted (ok, files) - logged on change only
+
+
+def protect_once(client, get_setting: Callable) -> Optional[list]:
+    """One playback-protection poll. Returns the protected files posted,
+    or None when protection is off / nothing was posted."""
+    bm = get_setting('Built-in Mount') or {}
+    if not bm.get('plex_playback_protection', True):
+        return None
+    streams = client.get_streams()
+    if not streams:
+        files, ok, err = [], True, ''  # nothing open: no need to ask Plex
+    else:
+        url, token = np.plex_server(get_setting)
+        sessions, err = np.plex_sessions_checked(url, token)
+        ok = not err
+        lookup = np.metadata_lookup(url, token) if ok else None
+        files, seen = [], set()
+        for s in sessions:
+            for f in np._session_files(s, lookup):
+                st = np.match_stream(f, streams, client.mount_path)
+                if st and (st.get('job_id'), st.get('file')) not in seen:
+                    seen.add((st.get('job_id'), st.get('file')))
+                    files.append({'job_id': st.get('job_id'), 'file': st.get('file')})
+                    break
+    if not client.set_protected(files, ok, err):
+        return None
+    state = (ok, tuple(sorted((f['job_id'], f['file']) for f in files)))
+    if state != _protect_state['last']:
+        _protect_state['last'] = state
+        if not ok:
+            logging.warning(f'[mount protection] Plex poll failed ({err}) - every mount read counts as playback until it works')
+        elif files:
+            logging.info(f"[mount protection] reserve kept for {len(files)} Plex stream(s): "
+                         + ', '.join(f['file'] for f in files))
+        else:
+            logging.debug('[mount protection] nothing playing from the mount')
+    return files
+
+
 def _loop(get_setting: Callable):
     from usenet.builtin_client import BuiltinClient
+    last_prewarm = 0.0
     while True:
-        time.sleep(POLL_SECONDS)
+        time.sleep(PROTECT_SECONDS)
         try:
             up = get_setting('Usenet Provider') or {}
-            if up.get('enabled') and (up.get('provider') or '').strip().lower() == 'builtin':
-                check_once(BuiltinClient(), get_setting)
+            if not (up.get('enabled') and (up.get('provider') or '').strip().lower() == 'builtin'):
+                continue
+            client = BuiltinClient()
+            try:
+                protect_once(client, get_setting)
+            except Exception as exc:
+                logging.debug(f'[mount protection] poll failed: {exc}')
+            if time.monotonic() - last_prewarm >= POLL_SECONDS:
+                last_prewarm = time.monotonic()
+                check_once(client, get_setting)
         except Exception as exc:
             logging.debug(f'[prewarm] poll failed: {exc}')
 

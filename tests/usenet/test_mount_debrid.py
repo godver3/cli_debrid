@@ -60,7 +60,7 @@ class MountDebridTests(unittest.TestCase):
         self.assertEqual(out, {'added': 1, 'removed': 1, 'skipped': 0, 'errors': 0})
         self.assertEqual(p.asked, ['A'], 'unfinished and already-mounted torrents are not asked')
         post = [c for c in eng.calls if c[0] == 'POST'][0]
-        self.assertEqual(post[1:], ('/debrid/jobs', {'id': 'rd-A', 'name': 'Movie.2024', 'files': [
+        self.assertEqual(post[1:], ('/debrid/jobs', {'id': 'rd-A', 'name': 'Movie.2024', 'provider': 'rd', 'files': [
             {'name': 'Movie.2024.mkv', 'size': 10, 'ref': 'rd:A:1'}]}))
         self.assertIn(('DELETE', '/jobs/rd-OLD', None), eng.calls)
         self.assertNotIn(('DELETE', '/jobs/usenetjob', None), eng.calls)
