@@ -209,17 +209,16 @@ _status: Dict = {'synced_at': 0.0, 'pending': 0, 'skipped': 0, 'held_removals': 
 
 def engine_holds_debrid(get_setting) -> bool:
     """The built-in mount (not cli_mount/Zurg) serves the debrid torrents:
-    it is in use and debrid streaming is on. Debrid repair then goes to it."""
+    whenever it is in use, it streams the debrid account too. Debrid repair
+    then goes to it."""
     from utilities import builtin_engine
     bm = get_setting('Built-in Mount') or {}
-    return builtin_engine.selected({'Usenet Provider': get_setting('Usenet Provider') or {}, 'Built-in Mount': bm}) \
-        and bool(bm.get('debrid_streaming', True))
+    return builtin_engine.selected({'Usenet Provider': get_setting('Usenet Provider') or {}, 'Built-in Mount': bm})
 
 
 def needed(get_setting) -> bool:
     """Does Switch have to wait for the debrid mirror?"""
-    bm = get_setting('Built-in Mount') or {}
-    return bool(bm.get('debrid_streaming', True)) and bool(providers())
+    return bool(providers())
 
 
 def status() -> Dict:
@@ -353,8 +352,7 @@ def _enabled(get_setting) -> bool:
     settings = {'Usenet Provider': get_setting('Usenet Provider') or {}, 'Built-in Mount': bm}
     # Also while staged next to cli_mount: Switch needs the debrid library
     # in place before the engine takes over the mount path.
-    return (builtin_engine.selected(settings) or builtin_engine.alongside(settings)) \
-        and bool(bm.get('debrid_streaming', True))
+    return builtin_engine.selected(settings) or builtin_engine.alongside(settings)
 
 
 def _loop(get_setting):

@@ -225,6 +225,37 @@ class SelectionTests(unittest.TestCase):
             self.assertEqual(be.problems(debrid_only), [], 'no news server needed for debrid alone')
             self.assertTrue(any('usenet server' in p for p in be.problems(usenet)))
 
+    def test_picking_the_builtin_mount_always_streams_debrid(self):
+        """No separate debrid-streaming switch: an old config's stored
+        debrid_streaming=False no longer turns the mirror off."""
+        cfgs = {
+            'usenet builtin': {'Usenet Provider': {'enabled': True, 'provider': 'builtin'},
+                               'Built-in Mount': {'debrid_streaming': False}},
+            'debrid only': {'Usenet Provider': {'enabled': False}, 'Built-in Mount': {'enabled': True}},
+            'staged next to cli_mount': {'Usenet Provider': {'enabled': True, 'provider': 'climount'},
+                                         'Built-in Mount': {'run_alongside': True}},
+        }
+        for name, cfg in cfgs.items():
+            get = lambda section, *a, **k: cfg.get(section)
+            self.assertTrue(md._enabled(get), name)
+        get = lambda section, *a, **k: cfgs['usenet builtin'].get(section)
+        self.assertTrue(md.engine_holds_debrid(get))
+        off = {'Usenet Provider': {'enabled': True, 'provider': 'climount'}, 'Built-in Mount': {}}
+        self.assertFalse(md._enabled(lambda section, *a, **k: off.get(section)), 'cli_mount users are left alone')
+        with mock.patch.object(md, 'providers', return_value=[object()]):
+            self.assertTrue(md.needed(get))
+
+    def test_mount_page_has_no_debrid_switches(self):
+        # Read from the source: importing routes alone hits an unrelated
+        # circular import (debrid <-> database.statistics).
+        import ast
+        src = os.path.join(os.path.dirname(__file__), '..', '..', 'routes', 'mount_routes.py')
+        tree = ast.parse(open(src).read())
+        groups = next(ast.literal_eval(n.value) for n in tree.body
+                      if isinstance(n, ast.Assign) and getattr(n.targets[0], 'id', '') == 'GROUPS')
+        keys = {k for _, ks in groups for k in ks}
+        self.assertFalse(keys & {'enabled', 'debrid_streaming'})
+
     def test_webdav_needs_a_login(self):
         from utilities import builtin_engine as be
         self.assertEqual(be.webdav_config({'webdav_enabled': True}), {'webdav_listen': ''})

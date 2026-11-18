@@ -43,7 +43,6 @@ SECTION = 'Built-in Mount'
 SECRET_KEYS = ('api_token', 'webdav_password')
 GROUPS = [
     ('Mount', ['mount_path', 'allow_other', 'uid', 'gid', 'umask']),
-    ('Debrid', ['enabled', 'debrid_streaming']),
     ('WebDAV share', ['webdav_enabled', 'webdav_port', 'webdav_username', 'webdav_password']),
     ('Files', ['allowed_extensions', 'deobfuscate_mode']),
     ('Streaming', ['read_ahead_mb', 'max_connections_per_file', 'precache_mb', 'warm_connections',
@@ -60,8 +59,7 @@ LABELS = {
     'gid': 'Group ID (GID)', 'umask': 'UMASK', 'read_ahead_mb': 'Read ahead (MB)',
     'max_connections_per_file': 'Max connections per file', 'buffer_memory_mb': 'Buffer memory (MB)',
     'idle_timeout_minutes': 'Connection idle timeout (minutes)', 'precache_mb': 'Pre-cache on open (MB)',
-    'warm_connections': 'Warm connections per server', 'debrid_streaming': 'Stream debrid torrents through this mount',
-    'enabled': 'Run the built-in mount for debrid (without usenet)', 'webdav_enabled': 'Share the mount over WebDAV',
+    'warm_connections': 'Warm connections per server', 'webdav_enabled': 'Share the mount over WebDAV',
     'webdav_port': 'WebDAV port', 'webdav_username': 'WebDAV username', 'webdav_password': 'WebDAV password', 'plex_prewarm': 'Prewarm the next episode while one plays',
     'prewarm_trigger_percent': 'Start at (% watched)', 'prewarm_percent': 'Fetch (% of next episode)',
     'prewarm_max_mb': 'Fetch at most (MB)', 'playback_reserve_percent': 'Playback connection reserve %',

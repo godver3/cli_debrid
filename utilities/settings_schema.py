@@ -395,7 +395,7 @@ SETTINGS_SCHEMA = {
         "tab": "Required Settings",
         "enabled": {
             "type": "boolean",
-            "description": "Run the built-in mount for your debrid account even when usenet isn't set to the built-in mount (debrid-only setups). Onboarding turns this on when you pick Built-in as the mount tool. Usenet Provider = builtin always runs it.",
+            "description": "Set by onboarding (Mount tool = Built-in mount): run the built-in mount for a debrid-only setup. Not shown in Settings. Usenet Provider = builtin always runs it, and whenever it runs it streams your debrid account too.",
             "default": False
         },
         "mount_path": {
@@ -446,11 +446,6 @@ SETTINGS_SCHEMA = {
         "plex_playback_protection": {
             "type": "boolean",
             "description": "Built-in mount only. Plex playback protection: the playback connection reserve is only for files Plex reports playing (checked every 10 s). Plex scans, thumbnails and intro detection can't take it while someone watches. Needs your Plex URL and token; if Plex can't be reached, every read is treated as playback, as without this.",
-            "default": True
-        },
-        "debrid_streaming": {
-            "type": "boolean",
-            "description": "Built-in mount only. Stream your debrid account's finished torrents through the built-in mount too (Real-Debrid, TorBox, AllDebrid, Premiumize, Debrid-Link and HighWay), next to usenet: the mount mirrors the account like cli_mount or Zurg did.",
             "default": True
         },
         "webdav_enabled": {
