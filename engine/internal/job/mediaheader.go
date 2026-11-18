@@ -45,3 +45,9 @@ func isoBoxHeader(head []byte) bool {
 	}
 	return true
 }
+
+// MediaHeaderLen is how many bytes MediaHeaderValid needs.
+const MediaHeaderLen = mediaHeaderLen
+
+// MediaHeaderValid is mediaHeaderValid for health checks.
+func MediaHeaderValid(name string, head []byte) bool { return mediaHeaderValid(name, head) }

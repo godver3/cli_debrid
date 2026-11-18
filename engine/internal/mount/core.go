@@ -53,14 +53,20 @@ func (h *openFile) readAt(ctx context.Context, dest []byte, off int64) (int, err
 	if err != nil && n < len(dest) && off+int64(n) < h.r.Size() {
 		h.log.Warn("read failed", "job", h.jobID, "file", h.name, "size", h.r.Size(), "offset", off, "len", len(dest), "err", err,
 			"missing", nntp.IsNotFound(err))
-		if nntp.IsNotFound(err) {
+		var dead *stream.DeadFileError
+		switch {
+		case nntp.IsNotFound(err):
 			// Proof the file can't play: hand it to cli_debrid's repair.
 			seg := ""
 			var se *stream.SegmentError
 			if errors.As(err, &se) {
 				seg = se.ID
 			}
-			h.e.MarkBroken(h.jobID, h.name, "article missing on every provider during playback", seg)
+			h.e.MarkBroken(h.jobID, h.name, engine.ReasonSegmentMissing, "article missing on every provider during playback", seg)
+		case errors.As(err, &dead):
+			// The debrid service said the file is gone (the same answer
+			// cli_mount's repair sweep counts as broken).
+			h.e.MarkBroken(h.jobID, h.name, dead.Reason, dead.Detail, "")
 		}
 		return 0, ErrIO
 	}

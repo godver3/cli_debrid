@@ -149,6 +149,7 @@ func TestImportMappedFromCliMount(t *testing.T) {
 	s := nntptest.Start(t)
 	e := newEngine(t, s, func(c *Config) { c.ReadAhead = 2 })
 	want := data(11, 200_000)
+	copy(want, []byte{0x1A, 0x45, 0xDF, 0xA3})                 // a real MKV start: health checks read the header
 	volume := append([]byte("RAR-HEADER-1234567890"), want...) // 21-byte header
 	arts := nntptest.Post("vol", "show.part01.rar", volume, 64_000)
 	s.Add(arts...)

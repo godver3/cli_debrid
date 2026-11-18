@@ -33,3 +33,12 @@ func TestJobNZBIsHandedOut(t *testing.T) {
 		t.Fatalf("without the token: %v %v", resp.StatusCode, err)
 	}
 }
+
+func TestDebridJobKeepsItsTorrentHash(t *testing.T) {
+	h := newHarness(t)
+	body := []byte(`{"id":"rd-ABC","name":"Movie","provider":"rd","hash":"ABCDEF0123","files":[{"name":"m.mkv","size":10,"ref":"rd:ABC:1"}]}`)
+	var j jobOut
+	if code := h.do("POST", "/debrid/jobs", body, &j); code != 201 || j.Hash != "abcdef0123" {
+		t.Fatalf("%d %+v", code, j)
+	}
+}

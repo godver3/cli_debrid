@@ -76,9 +76,6 @@ func TestDebridJobStreamsWithFreshLinks(t *testing.T) {
 	if served.Load() != before || !bytes.Equal(part, file[2<<20+5:2<<20+1005]) {
 		t.Fatal("a re-read should come from the cache")
 	}
-	if err := e.CheckHealth(j.ID, false); err == nil || !strings.Contains(err.Error(), "not a usenet job") {
-		t.Fatalf("health on a debrid job: %v", err)
-	}
 	if _, err := e.AddDebrid("bad id!", "x", "", "", []DebridFile{{Name: "a", Size: 1, Ref: "r"}}); err == nil {
 		t.Fatal("invalid id accepted")
 	}
@@ -160,7 +157,7 @@ func TestTreeSplitsLikeCliMount(t *testing.T) {
 			t.Errorf("%s: got %q want %q", top, got, want)
 		}
 	}
-	e.MarkBroken("rd-T1", "e1.mkv", "test", "")
+	e.MarkBroken("rd-T1", "e1.mkv", ReasonHosterGone, "test", "")
 	if got := names("__bad__"); got != "Show.S01" {
 		t.Errorf("__bad__ after MarkBroken: %q", got)
 	}

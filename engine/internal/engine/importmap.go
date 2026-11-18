@@ -69,10 +69,9 @@ func (e *Engine) ImportMapped(id, name, category string, tags []string, files []
 	if err != nil {
 		return store.Job{}, err
 	}
-	if j, err = e.Store.SetResult(id, res); err != nil {
+	if j, err = e.publish(id, res); err != nil {
 		e.Store.Delete(id)
 		return store.Job{}, err
 	}
-	e.rebuildTree()
 	return j, nil
 }

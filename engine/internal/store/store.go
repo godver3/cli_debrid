@@ -44,7 +44,10 @@ type Job struct {
 	// Protocol is "debrid" for debrid jobs ("" = usenet).
 	Protocol string `json:"protocol,omitempty"`
 	// Provider of a debrid job (rd, tb...): its folder next to torrents/.
-	Provider  string         `json:"provider,omitempty"`
+	Provider string `json:"provider,omitempty"`
+	// Hash is a debrid job's torrent info hash (cli_debrid's repair finds
+	// library items by it).
+	Hash      string         `json:"hash,omitempty"`
 	Size      int64          `json:"size"` // sum of entry sizes once ready
 	Tags      []string       `json:"tags,omitempty"`
 	CLIIDs    map[string]int `json:"cli_ids,omitempty"` // entry name -> cli_debrid item id
@@ -145,10 +148,35 @@ func Open(dir string) (*Store, error) {
 		var r job.Result
 		if err := readJSON(s.path(j.ID, "result.json"), &r); err == nil {
 			s.results[j.ID] = &r
+		} else if j.Status == Ready && j.Protocol != "debrid" {
+			lostResult(&j, err, s.now()) // debrid: the engine drops it and the mirror adds it back
 		}
 	}
 	_ = readJSON(filepath.Join(dir, "deleted.json"), &s.deleted)
 	return s, nil
+}
+
+// lostResult: a ready job whose file map (result.json) can't be read has
+// nothing to stream. Like cli_mount's lost or corrupt segment map, that is
+// reported as broken (written atomically, so never a write in progress) so
+// cli_debrid's repair replaces it, instead of the job silently vanishing
+// from the mount.
+func lostResult(j *Job, err error, now time.Time) {
+	reason := "usenet_manifest_invalid"
+	var names []string
+	for n := range j.CLIIDs {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		names = []string{j.Name}
+	}
+	h := Health{Status: "broken", CheckedAt: now}
+	for _, n := range names {
+		h.Broken = append(h.Broken, BrokenFile{Name: n, Reason: reason, Detail: "file map unreadable: " + err.Error(),
+			Via: "check", At: now})
+	}
+	j.Health = &h
 }
 
 func (s *Store) path(id, name string) string { return filepath.Join(s.dir, "jobs", id, name) }
@@ -202,12 +230,26 @@ func (s *Store) Update(id string, fn func(*Job)) (Job, error) {
 
 // SetResult stores an import result and marks the job ready.
 func (s *Store) SetResult(id string, r *job.Result) (Job, error) {
-	if err := writeJSON(s.path(id, "result.json"), r); err != nil {
+	if err := s.StoreResult(id, r); err != nil {
 		return Job{}, err
+	}
+	return s.MarkReady(id, r)
+}
+
+// StoreResult saves an import result without changing the job's status
+// (the engine places the folder first, then calls MarkReady).
+func (s *Store) StoreResult(id string, r *job.Result) error {
+	if err := writeJSON(s.path(id, "result.json"), r); err != nil {
+		return err
 	}
 	s.mu.Lock()
 	s.results[id] = r
 	s.mu.Unlock()
+	return nil
+}
+
+// MarkReady marks a job with a stored result ready.
+func (s *Store) MarkReady(id string, r *job.Result) (Job, error) {
 	var size int64
 	for _, e := range r.Entries {
 		size += e.Size

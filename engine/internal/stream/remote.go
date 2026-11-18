@@ -21,6 +21,22 @@ const RemoteChunk = 4 << 20
 // RemoteMaxConns caps parallel range requests per debrid file.
 const RemoteMaxConns = 4
 
+// DeadFileError is the debrid service's proof that a file is gone (the
+// same answers cli_mount's repair counts as broken: hoster unavailable,
+// file removed, no link). Only this marks a debrid file broken; timeouts
+// and other errors never do.
+type DeadFileError struct {
+	Reason string // cli_mount reason code, e.g. hoster_unavailable
+	Detail string
+}
+
+func (e *DeadFileError) Error() string {
+	if e.Detail != "" {
+		return "debrid file gone (" + e.Reason + "): " + e.Detail
+	}
+	return "debrid file gone (" + e.Reason + ")"
+}
+
 // LinkSource turns a file reference into a direct download URL. refresh
 // asks for a new link (the cached one expired or was refused).
 type LinkSource interface {

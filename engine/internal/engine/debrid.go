@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/godver3/cli_debrid/engine/internal/health"
 	"github.com/godver3/cli_debrid/engine/internal/job"
 	"github.com/godver3/cli_debrid/engine/internal/store"
 	"github.com/godver3/cli_debrid/engine/internal/stream"
@@ -55,11 +56,10 @@ func (e *Engine) AddDebrid(id, name, category, provider string, files []DebridFi
 	if err != nil {
 		return store.Job{}, err
 	}
-	if j, err = e.Store.SetResult(id, res); err != nil {
+	if j, err = e.publish(id, res); err != nil {
 		e.Store.Delete(id)
 		return store.Job{}, err
 	}
-	e.rebuildTree()
 	return j, nil
 }
 
@@ -115,8 +115,15 @@ func (c *callbackLinks) Link(ctx context.Context, ref string, refresh bool) (str
 		URL       string `json:"url"`
 		ExpiresIn int    `json:"expires_in"`
 		Error     string `json:"error"`
+		Dead      bool   `json:"dead"`
+		Reason    string `json:"reason"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || resp.StatusCode != http.StatusOK || out.URL == "" {
+	decErr := json.NewDecoder(resp.Body).Decode(&out)
+	if resp.StatusCode == http.StatusGone && decErr == nil && out.Dead && out.Reason != "" {
+		c.log.Warn("debrid file gone", "ref", ref, "reason", out.Reason, "err", out.Error)
+		return "", &stream.DeadFileError{Reason: out.Reason, Detail: out.Error}
+	}
+	if decErr != nil || resp.StatusCode != http.StatusOK || out.URL == "" {
 		if out.Error == "" {
 			out.Error = fmt.Sprintf("HTTP %d", resp.StatusCode)
 		}
@@ -132,4 +139,39 @@ func (c *callbackLinks) Link(ctx context.Context, ref string, refresh bool) (str
 	c.cache[ref] = cachedLink{url: out.URL, expires: time.Now().Add(ttl)}
 	c.mu.Unlock()
 	return out.URL, nil
+}
+
+// Check asks cli_debrid whether a debrid file still exists, by the same
+// rules cli_mount's repair sweep uses per provider. state is healthy,
+// broken or unknown; only broken is proof.
+func (c *callbackLinks) Check(ctx context.Context, ref string) (state, reason string, err error) {
+	if c.url == "" {
+		return "", "", errors.New("no link callback configured")
+	}
+	checkURL := strings.TrimSuffix(c.url, "/link") + "/check"
+	body, _ := json.Marshal(map[string]any{"ref": ref})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, checkURL, bytes.NewReader(body))
+	if err != nil {
+		return "", "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return "", "", fmt.Errorf("cli_debrid unreachable: %w", err)
+	}
+	defer resp.Body.Close()
+	var out struct {
+		State  string `json:"state"`
+		Reason string `json:"reason"`
+		Error  string `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || resp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("check: HTTP %d %s", resp.StatusCode, out.Error)
+	}
+	switch out.State {
+	case health.Healthy, health.Broken:
+		return out.State, out.Reason, nil
+	}
+	return "unknown", out.Reason, nil
 }

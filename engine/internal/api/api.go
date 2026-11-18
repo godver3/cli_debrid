@@ -478,6 +478,7 @@ func (a *api) addDebrid(w http.ResponseWriter, r *http.Request) {
 		Name     string              `json:"name"`
 		Category string              `json:"category"`
 		Provider string              `json:"provider"`
+		Hash     string              `json:"hash"`
 		Files    []engine.DebridFile `json:"files"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 16<<20)).Decode(&body); err != nil {
@@ -488,6 +489,11 @@ func (a *api) addDebrid(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		storeErr(w, err)
 		return
+	}
+	if h := strings.ToLower(strings.TrimSpace(body.Hash)); h != "" {
+		if j2, err := a.e.Store.Update(j.ID, func(s *store.Job) { s.Hash = h }); err == nil {
+			j = j2
+		}
 	}
 	writeJSON(w, http.StatusCreated, a.render(j, false))
 }
@@ -580,7 +586,7 @@ func (a *api) healthList(w http.ResponseWriter, r *http.Request) {
 
 func (a *api) healthRun(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	writeJSON(w, http.StatusAccepted, a.e.StartHealthRun(truthy(q.Get("full")), truthy(q.Get("ignore_last_checked"))))
+	writeJSON(w, http.StatusAccepted, a.e.StartHealthRun(truthy(q.Get("full")), truthy(q.Get("ignore_last_checked")), q.Get("protocol")))
 }
 
 func (a *api) healthRunStatus(w http.ResponseWriter, r *http.Request) {

@@ -92,3 +92,33 @@ func TestChangesAndTombstones(t *testing.T) {
 		t.Fatalf("expired tombstone kept: %+v", gone)
 	}
 }
+
+// A ready job whose result.json is lost or corrupt stays listed and is
+// reported broken (cli_mount's usenet_manifest_invalid), not dropped.
+func TestLostResultIsReportedBroken(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, err := s.Create(Job{ID: "lost-1", Name: "Movie", CLIIDs: map[string]int{"Movie.mkv": 7}}, []byte("<nzb/>"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Update(j.ID, func(j *Job) { j.Status = Ready }); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "jobs", j.ID, "result.json"), []byte("{trunc"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s2, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, res, err := s2.Get(j.ID)
+	if err != nil || res != nil || got.Health == nil || got.Health.Status != "broken" ||
+		len(got.Health.Broken) != 1 || got.Health.Broken[0].Name != "Movie.mkv" ||
+		got.Health.Broken[0].Reason != "usenet_manifest_invalid" {
+		t.Fatalf("%+v %v %v", got.Health, res, err)
+	}
+}

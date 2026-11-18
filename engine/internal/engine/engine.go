@@ -86,7 +86,7 @@ type Config struct {
 	FileConns     int             `json:"max_conns_per_file"`     // prefetches at once per open file (0 = no cap)
 	ImportTimeout int             `json:"import_timeout_seconds"` // per import; a timeout is retryable, never final
 	ImportSample  float64         `json:"import_sample_percent"`  // % of articles checked before a job is ready (0 = off)
-	HealthSample  float64         `json:"health_sample_percent"`  // % checked by health checks (0 = 2%, max 30 per file)
+	HealthSample  float64         `json:"health_sample_percent"`  // % checked by health checks (0 = 10%, as cli_mount)
 	IdleTimeout   int             `json:"idle_timeout_seconds"`   // close NNTP connections unused this long (default 300)
 	CacheExpiry   int             `json:"cache_expiry_seconds"`   // drop disk cache entries unused this long (0 = only by size)
 	LinkCallback  string          `json:"link_callback"`          // cli_debrid URL that hands out debrid download links
@@ -147,14 +147,18 @@ func (c Config) readAhead() stream.ReadAhead {
 	return stream.ReadAhead{Segments: c.ReadAhead, Bytes: int64(c.ReadAheadMB) << 20, MaxConns: c.FileConns}
 }
 
-// healthOptions turns a sample percentage into health.Options; a
-// percentage the user set is not capped per file.
+// DefaultHealthSample is cli_mount's repair availability sample (10% of
+// each file's articles, no cap), so a check proves as much as cli_mount's.
+const DefaultHealthSample = 10
+
+// healthOptions turns a sample percentage into health.Options (never
+// capped per file, like cli_mount).
 func healthOptions(percent float64, full bool) health.Options {
 	if full || percent >= 100 {
 		return health.Options{Full: true}
 	}
 	if percent <= 0 {
-		return health.Options{} // built-in default: 2%, at most 30 per file
+		percent = DefaultHealthSample
 	}
 	return health.Options{SampleRate: percent / 100, Max: 1 << 30}
 }
@@ -269,6 +273,12 @@ func New(cfg Config, log *slog.Logger) (*Engine, error) {
 	for _, j := range st.List() {
 		if j.Status == store.Queued {
 			e.queue <- j.ID
+		}
+		// A debrid job whose file map can't be read is dropped: the account
+		// mirror adds the torrent back with fresh file references.
+		if _, res, _ := st.Get(j.ID); j.Status == store.Ready && j.Protocol == ProtocolDebrid && res == nil {
+			log.Warn("debrid job's file map is unreadable; removing it so the account sync re-adds it", "job", j.ID, "name", j.Name)
+			_ = st.Delete(j.ID)
 		}
 	}
 	e.rebuildTree()
@@ -412,11 +422,10 @@ func (e *Engine) importJob(id string) {
 		fail(err)
 		return
 	}
-	if _, err := e.Store.SetResult(id, res); err != nil {
+	if _, err := e.publish(id, res); err != nil {
 		fail(err)
 		return
 	}
-	e.rebuildTree()
 	e.log.Info("imported", "job", id, "entries", len(res.Entries), "failures", len(res.Failures), "took", time.Since(start))
 	e.logBuild(id, res, false)
 }
@@ -713,7 +722,26 @@ func (e *Engine) FolderPath(id string) string {
 // name it was first given (store.Job.Folder); a new job whose name is
 // taken gets " (2)", " (3)"... Names stay put when other jobs come and go,
 // so a symlink never ends up on another job's files.
-func (e *Engine) rebuildTree() {
+func (e *Engine) rebuildTree() { e.rebuildTreeWith("") }
+
+// publish stores a job's result, puts its folder in the tree, and only then
+// marks it ready: whoever sees "ready" (cli_debrid) also finds its folder,
+// under its final name ("Name (2)" when "Name" is taken).
+func (e *Engine) publish(id string, res *job.Result) (store.Job, error) {
+	if err := e.Store.StoreResult(id, res); err != nil {
+		return store.Job{}, err
+	}
+	e.rebuildTreeWith(id)
+	j, err := e.Store.MarkReady(id, res)
+	if err != nil {
+		return store.Job{}, err
+	}
+	e.rebuildTree() // virtual folders may match on readiness-dependent fields
+	return j, nil
+}
+
+// rebuildTreeWith rebuilds the tree treating job "becoming" as ready.
+func (e *Engine) rebuildTreeWith(becoming string) {
 	e.rebuildMu.Lock()
 	defer e.rebuildMu.Unlock()
 	jobs := e.Store.List()
@@ -747,7 +775,7 @@ func (e *Engine) rebuildTree() {
 	}
 	var show []placed
 	for _, j := range jobs {
-		if j.Status != store.Ready {
+		if j.Status != store.Ready && j.ID != becoming {
 			continue
 		}
 		_, res, err := e.Store.Get(j.ID)
@@ -923,9 +951,6 @@ func (e *Engine) CheckHealth(id string, full bool) error {
 	if j.Status != store.Ready || res == nil {
 		return ErrNotReady
 	}
-	if j.Protocol == ProtocolDebrid {
-		return ErrNotUsenet // article checks don't apply; a dead debrid link shows on read
-	}
 	if j.Health != nil && j.Health.Status == "checking" {
 		return nil // already running
 	}
@@ -942,7 +967,11 @@ func (e *Engine) CheckHealth(id string, full bool) error {
 	e.wg.Add(1)
 	go func() {
 		defer e.wg.Done()
-		e.runCheck(id, full)
+		if j.Protocol == ProtocolDebrid {
+			e.runDebridCheck(id)
+		} else {
+			e.runCheck(id, full)
+		}
 	}()
 	return nil
 }
@@ -973,12 +1002,22 @@ func (e *Engine) runCheck(id string, full bool) {
 		}
 		return
 	}
+	// cli_mount's sweep also reads each media file's first bytes: a wrong
+	// container header proves the file can't play even with every article
+	// there (archive volumes stitched in the wrong order).
+	badHeader := e.headerCheck(id, res, rep)
 	now := time.Now()
 	e.Store.Update(id, func(j *store.Job) {
 		h := store.Health{Status: rep.Status, CheckedAt: now, Inconclusive: rep.Inconclusive}
 		for _, f := range rep.Broken() {
 			h.Broken = append(h.Broken, store.BrokenFile{Name: f.Name, Reason: ReasonSegmentMissing,
 				Detail: f.Reason, Segment: f.Segment, Via: "check", At: now})
+		}
+		for _, b := range badHeader {
+			if !hasBroken(h.Broken, b.Name) {
+				h.Broken = append(h.Broken, b)
+			}
+			h.Status = health.Broken
 		}
 		// Proof from playback stays unless this check covered the same
 		// article conclusively (it would then be listed above again).
@@ -993,7 +1032,11 @@ func (e *Engine) runCheck(id string, full bool) {
 		j.Health = &h
 	})
 	e.rebuildTree() // __bad__ follows health
-	e.log.Info("health checked", "job", id, "status", rep.Status, "checked", rep.Checked, "inconclusive", rep.Inconclusive)
+	status := rep.Status
+	if len(badHeader) > 0 {
+		status = health.Broken
+	}
+	e.log.Info("health checked", "job", id, "status", status, "checked", rep.Checked, "inconclusive", rep.Inconclusive)
 }
 
 func hasBroken(list []store.BrokenFile, name string) bool {
@@ -1009,9 +1052,16 @@ func hasBroken(list []store.BrokenFile, name string) bool {
 // article missing on every provider; cli_debrid's playback repair acts on it.
 const ReasonSegmentMissing = "usenet_segment_missing"
 
+// More cli_mount reason codes cli_debrid's repair acts on.
+const (
+	ReasonHeaderInvalid   = "media_header_invalid"    // usenet file starts with the wrong container header
+	ReasonManifestInvalid = "usenet_manifest_invalid" // the job's saved file map can't be read
+	ReasonHosterGone      = "hoster_unavailable"      // debrid: the service says the file is gone
+)
+
 // MarkBroken records a file proven unplayable during playback (an article
 // every provider answered missing for). detail is free text for logs/UI.
-func (e *Engine) MarkBroken(id, file, detail, segment string) {
+func (e *Engine) MarkBroken(id, file, reason, detail, segment string) {
 	_, err := e.Store.Update(id, func(j *store.Job) {
 		h := store.Health{Status: health.Broken}
 		if j.Health != nil {
@@ -1021,13 +1071,13 @@ func (e *Engine) MarkBroken(id, file, detail, segment string) {
 		if hasBroken(h.Broken, file) {
 			return
 		}
-		h.Broken = append(h.Broken, store.BrokenFile{Name: file, Reason: ReasonSegmentMissing, Detail: detail,
+		h.Broken = append(h.Broken, store.BrokenFile{Name: file, Reason: reason, Detail: detail,
 			Segment: segment, Via: "playback", At: time.Now()})
 		j.Health = &h
 	})
 	if err == nil {
 		e.rebuildTree()
-		e.log.Warn("file marked broken during playback", "job", id, "file", file, "detail", detail)
+		e.log.Warn("file marked broken during playback", "job", id, "file", file, "reason", reason, "detail", detail)
 	}
 }
 
@@ -1038,6 +1088,16 @@ func (e *Engine) ClearHealth(id string) error {
 		e.rebuildTree()
 	}
 	return err
+}
+
+func protocolMatches(scope, jobProtocol string) bool {
+	switch strings.ToLower(scope) {
+	case "nzb", "usenet":
+		return jobProtocol != ProtocolDebrid
+	case "torrent", "debrid":
+		return jobProtocol == ProtocolDebrid
+	}
+	return true
 }
 
 // HealthRun is the state of a sweep over all ready jobs.
@@ -1053,7 +1113,9 @@ type HealthRun struct {
 
 // StartHealthRun checks every ready job (only those not checked in a week
 // unless ignoreLastChecked). One run at a time; returns the current run.
-func (e *Engine) StartHealthRun(full, ignoreLastChecked bool) HealthRun {
+// protocol limits the run like cli_mount's protocol scope: "nzb" (usenet),
+// "torrent" (debrid) or "" for both.
+func (e *Engine) StartHealthRun(full, ignoreLastChecked bool, protocol string) HealthRun {
 	e.runMu.Lock()
 	if e.run != nil && e.run.Status == "running" {
 		r := *e.run
@@ -1062,7 +1124,7 @@ func (e *Engine) StartHealthRun(full, ignoreLastChecked bool) HealthRun {
 	}
 	var ids []string
 	for _, j := range e.Store.List() {
-		if j.Status != store.Ready || j.Protocol == ProtocolDebrid {
+		if j.Status != store.Ready || !protocolMatches(protocol, j.Protocol) {
 			continue
 		}
 		if !ignoreLastChecked && j.Health != nil && time.Since(j.Health.CheckedAt) < staleAfter {
