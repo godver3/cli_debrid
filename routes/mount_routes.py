@@ -207,7 +207,13 @@ def index():
     groups = [(title, [(k, schema[k], LABELS.get(k) or k.split('_', 1)[-1].replace('_', ' ').capitalize())
                        for k in keys if k in schema]) for title, keys in GROUPS]
     return render_template('mount.html', groups=groups, selected=builtin_selected(),
-                           servers_help=schema.get('servers', {}).get('description', ''))
+                           servers_help=schema.get('servers', {}).get('description', ''),
+                           default_vfolders=_default_vfolders())
+
+
+def _default_vfolders():
+    from utilities.content_routing import DEFAULT_VIRTUAL_FOLDERS
+    return DEFAULT_VIRTUAL_FOLDERS
 
 
 @mount_bp.route('/api/status')

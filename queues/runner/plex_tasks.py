@@ -40,6 +40,41 @@ def _category_folder_paths(base_path, folder_names, filename):
     return found
 
 
+_TYPED_FOLDER_HINTS = {
+    'episode': ('shows', 'tv shows', 'tv', 'series'),
+    'movie': ('movies', 'films', 'movie'),
+}
+_MOUNT_SYSTEM_FOLDERS = {'__all__', '__bad__', 'nzbs', 'torrents'}
+
+
+def _typed_mount_path(raw_loc, item_type):
+    """Turn <mount>/__all__/<rest> into the typed folder that really holds the
+    file (e.g. <mount>/shows/<rest> or the built-in mount's "TV Shows"). The
+    folder names are the mount's own, so check which sibling has the file,
+    preferring the usual names for the item type. Falls back to the old fixed
+    movies/shows rewrite when none does (or the mount can't be listed)."""
+    base, rest = raw_loc.split('/__all__/', 1)
+    hints = _TYPED_FOLDER_HINTS['episode' if item_type == 'episode' else 'movie']
+    other = _TYPED_FOLDER_HINTS['movie' if item_type == 'episode' else 'episode']
+    try:
+        tops = [t for t in os.listdir(base) if t.lower() not in _MOUNT_SYSTEM_FOLDERS]
+    except OSError:
+        tops = []
+
+    def rank(name):
+        low = name.lower()
+        if low in hints:
+            return 0
+        return 2 if low in other else 1
+    for top in sorted(tops, key=rank):
+        if rank(top) == 2:
+            break
+        candidate = f'{base}/{top}/{rest}'
+        if os.path.exists(candidate):
+            return candidate
+    return f"{base}/{'shows' if item_type == 'episode' else 'movies'}/{rest}"
+
+
 class PlexTasks:
     def task_plex_full_scan(self):
         from queues.run_program import backfill_resolution_from_stored_paths, get_and_add_all_collected_from_plex  # defined there; imported when called
@@ -738,9 +773,7 @@ class PlexTasks:
                             # Never store __all__ paths — replace with typed folder (movies/shows).
                             _raw_loc = _plex_location or actual_file_path
                             if _raw_loc and '/__all__/' in _raw_loc:
-                                _typed = 'shows' if item_dict.get('type') == 'episode' else 'movies'
-                                _mount_base = _raw_loc.split('/__all__/')[0]
-                                _raw_loc = _raw_loc.replace('/__all__/', f'/{_typed}/', 1)
+                                _raw_loc = _typed_mount_path(_raw_loc, item_dict.get('type'))
                             _location_to_store = _raw_loc
                             if _location_to_store:
                                 if _plex_rating_key:

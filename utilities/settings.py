@@ -523,6 +523,9 @@ def merge_configs(base, overlay):
 # cli_mount unless the user picks otherwise.
 EXISTING_INSTALL_DEFAULTS = {
     ('Usenet Provider', 'provider'): 'climount',
+    # New installs get Movies + TV Shows virtual folders; existing configs
+    # that never had the key keep an unchanged mount.
+    ('Built-in Mount', 'virtual_folders'): '',
 }
 
 

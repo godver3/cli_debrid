@@ -1,6 +1,9 @@
 package engine
 
 import (
+	"encoding/json"
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -92,4 +95,50 @@ func TestVirtualFoldersAndAllowedExt(t *testing.T) {
 		t.Fatalf("allowed extensions: %+v", f.Entries)
 	}
 	_ = store.Ready
+}
+
+// The default Movies / TV Shows folders cli_debrid writes for new installs
+// (utilities/content_routing.py, cli_docs Content routing) must compile in
+// RE2 and put every release in exactly one of the two.
+func TestDefaultVirtualFoldersPartition(t *testing.T) {
+	raw, err := os.ReadFile("testdata/default_virtual_folders.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vfs map[string]VirtualFolder
+	if err := json.Unmarshal(raw, &vfs); err != nil {
+		t.Fatal(err)
+	}
+	s := nntptest.Start(t)
+	e := newEngine(t, s, func(c *Config) { c.VirtualFolders = vfs })
+	cases := []struct {
+		job, file, want string
+	}{
+		{"Show.Name.S01E05.1080p.WEB-DL", "Show.Name.S01E05.mkv", "TV Shows"},
+		{"Show.Name.S02.1080p.BluRay", "a.mkv", "TV Shows"},
+		{"Show Name Season 3 Complete", "a.mkv", "TV Shows"},
+		{"[Group] Anime Title - 12 [1080p]", "a.mkv", "TV Shows"},
+		{"Daily.Show.2024.05.17.720p", "a.mkv", "TV Shows"},
+		{"obfuscated8f3k2j", "Show.Name.S03E02.mkv", "TV Shows"},
+		{"The.Matrix.1999.1080p.BluRay.x264", "The.Matrix.1999.mkv", "Movies"},
+		{"Blade Runner 2049 (2017) 2160p", "movie.mkv", "Movies"},
+		{"Se7en.1995.REMASTERED.1080p", "Se7en.mkv", "Movies"},
+	}
+	for i, c := range cases {
+		e.AddDebrid(fmt.Sprintf("rd-%d", i), c.job, "", "rd", []DebridFile{{Name: c.file, Size: 5, Ref: fmt.Sprintf("%d:1", i)}})
+	}
+	in := func(top, name string) bool {
+		for _, f := range e.Folders(top) {
+			if f.Name == name {
+				return true
+			}
+		}
+		return false
+	}
+	for _, c := range cases {
+		tv, mv := in("TV Shows", c.job), in("Movies", c.job)
+		if tv == mv || (c.want == "TV Shows") != tv {
+			t.Errorf("%q: tv=%v movies=%v want %s", c.job, tv, mv, c.want)
+		}
+	}
 }
