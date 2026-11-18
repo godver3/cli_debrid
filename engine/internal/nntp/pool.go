@@ -206,14 +206,15 @@ func (pl *pool) closeIdle(maxIdle time.Duration) {
 }
 
 // warm dials connections until MinIdle are open (idle or busy), so a new
-// session doesn't pay for the handshake. Failures are left for next time.
-func (pl *pool) warm(ctx context.Context) {
+// session doesn't pay for the handshake. A failure stops this round (the
+// next warm or read tries again) and is returned for the caller to report.
+func (pl *pool) warm(ctx context.Context) error {
 	want := min(pl.p.MinIdle, pl.p.MaxConns)
 	for {
 		pl.mu.Lock()
 		if pl.closed || pl.open+pl.warming >= want || pl.open >= pl.p.MaxConns {
 			pl.mu.Unlock()
-			return
+			return nil
 		}
 		pl.open++
 		pl.warming++
@@ -224,8 +225,9 @@ func (pl *pool) warm(ctx context.Context) {
 		pl.mu.Unlock()
 		if err != nil {
 			pl.drop()
+			pl.errors.Add(1)
 			pl.lastErr.Store(err.Error())
-			return
+			return err
 		}
 		pl.release(c)
 	}

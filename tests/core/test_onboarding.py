@@ -129,9 +129,42 @@ class TestSaveRequiredSettings(unittest.TestCase):
         fake = _FakeConfig({})
         form = _Form({'use_debrid': 'off', 'use_usenet': 'on', 'usenet_backend': 'sabnzbd',
                       'usenet_url': 'http://x:8282', 'file_collection_management': 'Plex'})
-        with fake.patch(routes), mock.patch('usenet.reset_usenet_client'):
+        with fake.patch(routes), mock.patch('usenet.reset_usenet_client'), \
+                mock.patch('utilities.builtin_engine.sync', return_value='started') as sync:
             routes._save_required_settings(form)
         self.assertEqual(fake.config['Usenet Provider']['provider'], 'builtin')
+        sync.assert_called_once()  # engine started for step 6's check
+
+    def test_builtin_server_fields_fill_the_first_mount_server(self):
+        if _delegated_to_clean_interpreter(self):
+            return
+        import json
+        routes = _routes()
+        fake = _FakeConfig({'Built-in Mount': {'servers': json.dumps([
+            {'host': 'old.example', 'port': 563, 'ssl': True, 'username': 'u', 'password': 'secret', 'connections': 10},
+            {'host': 'fill.example', 'port': 119, 'ssl': False, 'username': 'f', 'password': 'fp', 'connections': 5,
+             'backup': True}])}})
+        base = {'use_debrid': 'off', 'use_usenet': 'on', 'usenet_backend': 'builtin', 'file_collection_management': 'Plex'}
+        with fake.patch(routes), mock.patch('usenet.reset_usenet_client'), \
+                mock.patch('utilities.builtin_engine.sync', return_value='started'):
+            # same host + user, blank password: the saved password is kept
+            routes._save_required_settings(_Form({**base, 'bm_host': 'old.example', 'bm_port': '563', 'bm_ssl': 'on',
+                                                  'bm_username': 'u', 'bm_password': '', 'bm_connections': '30'}))
+            rows = json.loads(fake.config['Built-in Mount']['servers'])
+            self.assertEqual([(r['host'], r['password'], r['connections']) for r in rows],
+                             [('old.example', 'secret', 30), ('fill.example', 'fp', 5)])
+            self.assertTrue(rows[1]['backup'])
+            # new server replaces the first; SSL unchecked is saved as off
+            routes._save_required_settings(_Form({**base, 'bm_host': 'news.new', 'bm_port': '119',
+                                                  'bm_username': 'n', 'bm_password': 'np', 'bm_connections': '8'}))
+            rows = json.loads(fake.config['Built-in Mount']['servers'])
+            self.assertEqual((rows[0]['host'], rows[0]['ssl'], rows[0]['password'], len(rows)), ('news.new', False, 'np', 2))
+            self.assertEqual(fake.config['File Management']['original_files_path'], '/mnt/clid/__all__')
+            with self.assertRaises(ValueError):
+                routes._save_required_settings(_Form({**base, 'bm_host': 'x', 'bm_port': 'abc'}))
+        first = routes._builtin_first_server(fake.config)
+        self.assertEqual((first['host'], first['password_set']), ('news.new', True))
+        self.assertNotIn('password', first)
 
 
 class TestNextStep(unittest.TestCase):

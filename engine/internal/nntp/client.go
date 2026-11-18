@@ -244,7 +244,12 @@ type PoolStats struct {
 // Warm tops every provider up to its MinIdle connections.
 func (c *Client) Warm(ctx context.Context) {
 	for _, pl := range c.pools {
-		go pl.warm(ctx)
+		go func() {
+			// Wrong login, host or port shows up here first, before any read.
+			if err := pl.warm(ctx); err != nil && ctx.Err() == nil {
+				c.problem(pl.p.Name, "warm", Prefetch, err)
+			}
+		}()
 	}
 }
 

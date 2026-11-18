@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"math/rand"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -294,3 +296,36 @@ func TestWarmKeepsMinIdleOpen(t *testing.T) {
 		t.Fatal("warming must not fetch anything")
 	}
 }
+
+// A wrong login shows up at warm-up: counted, logged and in Stats, so the
+// UI's health check can say why nothing connects.
+func TestWarmReportsLoginFailure(t *testing.T) {
+	s := nntptest.Start(t)
+	s.SetAuth("u", "right")
+	p := provider(s, "a", 4)
+	p.MinIdle, p.Username, p.Password = 2, "u", "wrong"
+	c, _ := NewClient([]Provider{p})
+	defer c.Close()
+	var buf syncBuf
+	c.SetLogger(slog.New(slog.NewTextHandler(&buf, nil)))
+	c.Warm(context.Background())
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && !strings.Contains(buf.String(), "kind=warm") {
+		time.Sleep(10 * time.Millisecond)
+	}
+	pools, _, _, _ := c.Stats()
+	if pools[0].Open != 0 || pools[0].Errors == 0 || pools[0].LastError == "" {
+		t.Fatalf("stats after failed warm: %+v", pools[0])
+	}
+	if !strings.Contains(buf.String(), "usenet provider problem") {
+		t.Fatalf("not logged: %q", buf.String())
+	}
+}
+
+type syncBuf struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuf) Write(p []byte) (int, error) { s.mu.Lock(); defer s.mu.Unlock(); return s.b.Write(p) }
+func (s *syncBuf) String() string              { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }

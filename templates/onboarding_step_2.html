@@ -21,7 +21,7 @@
                 </label>
                 <label class="ob-choice">
                     <input type="checkbox" id="use_usenet" name="use_usenet" {% if use_usenet %}checked{% endif %}>
-                    <span>Usenet<small>cli_mount, NzbDAV or Zurg 2.0</small></span>
+                    <span>Usenet<small>Built-in mount, cli_mount, NzbDAV or Zurg 2.0</small></span>
                 </label>
             </div>
 
@@ -45,11 +45,29 @@
                     <option value="nzbdav" {% if usenet_backend == 'nzbdav' %}selected{% endif %}>NzbDAV</option>
                     <option value="zurg" {% if usenet_backend == 'zurg' %}selected{% endif %}>Zurg 2.0</option>
                 </select>
-                <div class="settings-description" id="builtin-note" style="display:none;">
+                <div id="builtin-note" style="display:none;">
+                <div class="settings-description">
                     cli_debrid runs its own mount engine in this container, no separate app needed.
-                    After onboarding, enter your usenet server under Settings → Required → Built-in Mount.
                     The container needs <code>devices: [/dev/fuse]</code> and <code>cap_add: [SYS_ADMIN]</code>,
                     and its mount path (default <code>/mnt/clid</code>) bound with rshared propagation so Plex sees it.
+                    Enter your usenet server below; add more servers (backups, fill servers) later on the <strong>Mount</strong> page.
+                </div>
+                <label for="bm_host" class="onboarding-label">Usenet server:</label>
+                <div class="settings-description">From your usenet provider, e.g. <code>news.example.com</code>. Not your indexer.</div>
+                <input type="text" id="bm_host" name="bm_host" class="onboarding-input" autocomplete="off" value="{{ builtin_server.host }}" placeholder="news.example.com">
+                <div class="ob-inline">
+                    <div style="flex:1"><label for="bm_port" class="onboarding-label">Port:</label>
+                    <input type="number" id="bm_port" name="bm_port" class="onboarding-input" value="{{ builtin_server.port }}"></div>
+                    <div style="flex:1"><label for="bm_connections" class="onboarding-label">Connections:</label>
+                    <input type="number" id="bm_connections" name="bm_connections" class="onboarding-input" min="1" value="{{ builtin_server.connections }}"></div>
+                    <div style="flex:1"><label class="onboarding-label" for="bm_ssl">SSL:</label>
+                    <input type="checkbox" id="bm_ssl" name="bm_ssl" {% if builtin_server.ssl %}checked{% endif %}></div>
+                </div>
+                <div class="settings-description">Usually 563 with SSL. Connections: what your plan allows (often 20–50); leave a few free if you also download elsewhere.</div>
+                <label for="bm_username" class="onboarding-label">Username:</label>
+                <input type="text" id="bm_username" name="bm_username" class="onboarding-input" autocomplete="off" value="{{ builtin_server.username }}">
+                <label for="bm_password" class="onboarding-label">Password:</label>
+                <input type="password" id="bm_password" name="bm_password" class="onboarding-input" autocomplete="new-password" value="" placeholder="{{ 'unchanged' if builtin_server.password_set else '' }}">
                 </div>
                 <div id="usenet-external-fields">
                 <label for="usenet_url" class="onboarding-label">Mount URL: <button type="button" id="usenet-detect-btn" style="margin-left:6px;font-size:11px;padding:2px 8px;border-radius:4px;border:1px solid #555;background:#222;color:#ddd;cursor:pointer">Detect</button> <span id="usenet-detect-status" style="font-size:11px;color:#999"></span></label>
@@ -80,6 +98,7 @@
             </div>
             <label for="mount_tool" class="onboarding-label">Mount tool:</label>
             <select id="mount_tool" class="onboarding-input">
+                <option value="builtin">Built-in mount (this container)</option>
                 <option value="climount">cli_mount (debrid + usenet, recommended)</option>
                 <option value="decypharr">Decypharr</option>
                 <option value="zurg">Zurg + rclone</option>
@@ -991,22 +1010,25 @@ document.addEventListener('DOMContentLoaded', function() {
         updateProviderPanels();
         if (useUsenet.checked) {
             // Point the mount picker at the matching tool.
-            mountTool.value = usenetBackend.value === 'nzbdav' ? 'nzbdav'
-                : usenetBackend.value === 'zurg' ? 'zurg' : 'climount';
+            mountTool.value = toolForBackend(usenetBackend.value);
+            syncBuiltinPath();
             updateMountHint();
         }
     });
     usenetBackend.addEventListener('change', () => {
         updateProviderPanels();
-        mountTool.value = usenetBackend.value === 'nzbdav' ? 'nzbdav'
-            : usenetBackend.value === 'zurg' ? 'zurg' : 'climount';
+        mountTool.value = toolForBackend(usenetBackend.value);
+        syncBuiltinPath();
         updateMountHint();
     });
 
     // --- Mount -------------------------------------------------------------------
     const mountTool = document.getElementById('mount_tool');
     const mountPath = document.getElementById('original_files_path');
+    const BUILTIN_ALL = {{ builtin_all_path | tojson }};
+    const SCHEMA_DEFAULT_PATH = '/mnt/zurg/__all__';
     const MOUNT_HINTS = {
+        builtin: ['The built-in mount runs in this container; cli_debrid reads its files from its mount path plus /__all__.', BUILTIN_ALL],
         climount: ['cli_mount\'s mount path as cli_debrid sees it, plus /__all__. Debrid and usenet files both show up there.', '/mnt/cli_mount/__all__'],
         decypharr: ['Decypharr\'s mount folder for your debrid service, ending in /__all__.', '/mnt/decypharr/__all__'],
         zurg: ['Your rclone mount of Zurg, ending in /__all__.', '/mnt/zurg/__all__'],
@@ -1014,7 +1036,21 @@ document.addEventListener('DOMContentLoaded', function() {
         other: ['The folder where your debrid/usenet files appear inside cli_debrid\'s container.', ''],
     };
 
+    function toolForBackend(backend) {
+        return {nzbdav: 'nzbdav', zurg: 'zurg', builtin: 'builtin'}[backend] || 'climount';
+    }
+
+    // The built-in mount's path is known exactly: fill it in when the field
+    // is empty or still the untouched default, and clear it again when the
+    // user moves to another tool. A path the user typed is never replaced.
+    function syncBuiltinPath() {
+        const v = (mountPath.value || '').trim();
+        if (mountTool.value === 'builtin' && (!v || v === SCHEMA_DEFAULT_PATH)) mountPath.value = BUILTIN_ALL;
+        else if (mountTool.value !== 'builtin' && v === BUILTIN_ALL) mountPath.value = '';
+    }
+
     function guessMountTool() {
+        if (useUsenet.checked && usenetBackend.value === 'builtin') return 'builtin';
         const path = (mountPath.value || '').toLowerCase();
         for (const tool of ['zurg', 'decypharr', 'nzbdav', 'climount']) {
             if (path.includes(tool)) return tool;
@@ -1030,7 +1066,8 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     mountTool.value = guessMountTool();
-    mountTool.addEventListener('change', updateMountHint);
+    syncBuiltinPath();
+    mountTool.addEventListener('change', () => { syncBuiltinPath(); updateMountHint(); });
     updateMountHint();
     updateProviderPanels();
 

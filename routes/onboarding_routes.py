@@ -131,7 +131,9 @@ def _save_required_settings(form):
             if not (fm.get('original_files_path') or '').strip():
                 fm['original_files_path'] = f'{mount}/__all__'
                 config.setdefault('Plex', {})['mounted_file_location'] = f'{mount}/__all__'
+            _save_builtin_server(config, form)
 
+    builtin_selected = use_usenet and usenet.get('provider') == 'builtin'
     for section, field in (('TVDB', 'tvdb_api_key'), ('TMDB', 'tmdb_api_key')):
         if field in form:
             config.setdefault(section, {})['api_key'] = form.get(field, '').strip()
@@ -152,6 +154,51 @@ def _save_required_settings(form):
             reset_usenet_client()
         except Exception as e:
             logging.debug(f"Could not reset usenet client after onboarding save: {e}")
+        if builtin_selected:
+            # Start (or restart) the engine with the server just entered,
+            # before the page validates, so the check sees the new server.
+            try:
+                from utilities import builtin_engine
+                logging.info(f"Built-in mount after onboarding save: {builtin_engine.sync()}")
+            except Exception as e:
+                logging.debug(f"Could not start the built-in mount after onboarding save: {e}")
+
+
+def _builtin_first_server(config):
+    """The first built-in mount server for step 2's fields (no password)."""
+    from routes.mount_routes import _servers
+    rows = [r for r in _servers((config.get('Built-in Mount') or {}).get('servers')) if isinstance(r, dict)]
+    first = rows[0] if rows else {}
+    return {'host': first.get('host', ''), 'port': first.get('port') or 563,
+            'connections': first.get('connections') or 20, 'ssl': bool(first.get('ssl', True)),
+            'username': first.get('username', ''), 'password_set': bool(first.get('password'))}
+
+
+def _builtin_all_path(config):
+    from utilities.builtin_engine import mount_path
+    return mount_path(config.get('Built-in Mount') or {}).rstrip('/') + '/__all__'
+
+
+def _save_builtin_server(config, form):
+    """Step 2's server fields become (or replace) the first server in the
+    Mount page's list; other servers are kept. An empty password keeps the
+    saved one. Raises ValueError on bad input."""
+    from routes.mount_routes import _merge_servers, _servers
+    host = form.get('bm_host', '').strip()
+    if not host:
+        return
+    bm = config.setdefault('Built-in Mount', {})
+    old = [r for r in _servers(bm.get('servers')) if isinstance(r, dict)]
+    try:
+        port = int(form.get('bm_port') or 563)
+        conns = int(form.get('bm_connections') or 20)
+    except ValueError:
+        raise ValueError('Usenet server port and connections must be numbers')
+    first = {'host': host, 'port': port, 'ssl': form.get('bm_ssl') in ('on', 'true', '1', True),
+             'username': form.get('bm_username', '').strip(), 'password': form.get('bm_password', ''),
+             'connections': conns, 'backup': bool(old[0].get('backup')) if old else False}
+    bm['servers'] = json.dumps(_merge_servers([first] + old[1:], old))
+
 
 def get_next_onboarding_step():
     """The first onboarding step that still needs doing, so a returning user resumes there."""
@@ -281,7 +328,9 @@ def onboarding_step(step):
                                use_debrid=bool(_real_debrid_key(config)),
                                debrid_api_key=_real_debrid_key(config),
                                use_usenet=bool(usenet.get('enabled')),
-                               usenet_backend=usenet_backend if usenet_backend in USENET_BACKENDS else 'builtin')
+                               usenet_backend=usenet_backend if usenet_backend in USENET_BACKENDS else 'builtin',
+                               builtin_server=_builtin_first_server(config),
+                               builtin_all_path=_builtin_all_path(config))
 
     elif step_num == 3:
         config = load_config()
