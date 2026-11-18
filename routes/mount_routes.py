@@ -421,6 +421,21 @@ def internal_check():
 
 # ---- Migrate from cli_mount -------------------------------------------------
 
+def _import_space() -> dict:
+    """Where imported jobs go, and how much more the disk cache may still
+    grow (it can share that disk)."""
+    from utilities import builtin_engine
+    cfg = builtin_engine.build_config(builtin_engine._load_settings())
+    used = 0
+    try:
+        code, st = _engine()._call('GET', '/stats', timeout=5)
+        used = int(((st or {}).get('disk_cache') or {}).get('bytes') or 0) if code == 200 else 0
+    except Exception:
+        pass
+    return {'data_dir': cfg['data_dir'], 'cache_dir': cfg['cache_dir'],
+            'cache_left': max(0, int(cfg.get('cache_bytes') or 0) - used)}
+
+
 def _climount_source():
     from usenet.climount_client import CliMountClient
     return CliMountClient()
@@ -438,7 +453,16 @@ def migrate_status():
     except OSError:
         metas = 0
     root = bm.climount_mount_root(get_setting)
+    space = None
+    if metas:
+        try:
+            sp = _import_space()
+            sizes = bm.meta_sizes(mdir)
+            space = bm.space_plan(sorted(sizes), sizes, sp['data_dir'], sp['cache_dir'], sp['cache_left'])
+        except Exception as exc:
+            logging.debug(f'[mount] import space estimate failed: {exc}')
     return jsonify({
+        'space': space,
         'provider': (up.get('provider') or 'climount'),
         'climount_url': up.get('url') or '',
         'alongside': bool((get_setting('Built-in Mount') or {}).get('run_alongside')),
@@ -489,7 +513,10 @@ def migrate_alongside():
 @admin_required
 def migrate_import():
     from utilities import builtin_migrate as bm
-    limit = int((request.get_json(silent=True) or {}).get('limit') or 0)
+    try:
+        limit = max(0, int((request.get_json(silent=True) or {}).get('limit') or 0))
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': 'Jobs to import must be a whole number (0 = all).'}), 400
     data_path = (get_setting('Usenet Provider') or {}).get('data_path') or ''
     # Same repair standards as cli_mount: carry its repair settings over.
     copied = bm.climount_repair_settings(data_path)
@@ -497,7 +524,7 @@ def migrate_import():
         set_setting(SECTION, key, value)
     if copied:
         _sync_in_background()
-    job = bm.start_import(_climount_source(), _engine(), data_path, limit=limit)
+    job = bm.start_import(_climount_source(), _engine(), data_path, limit=limit, space=_import_space())
     return jsonify({'success': True, 'job': job, 'copied_settings': copied})
 
 

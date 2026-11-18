@@ -127,6 +127,10 @@
     </div></div>
     <div class="card"><h3>2. Import cli_mount's library</h3><div class="body">
       <p class="d" style="color:#8f8f8f;font-size:13px;margin-top:0">Reads cli_mount's job list and its saved file maps (no usenet traffic). Safe to run again: jobs already imported are skipped. Encrypted archives can't be imported.</p>
+      <div class="f" style="margin-bottom:8px"><label for="mgLimit" style="font-weight:600;font-size:13px">Jobs to import</label>
+        <input type="number" id="mgLimit" min="0" step="1" value="0" style="width:120px;background:#111;border:1px solid #3d3d3d;color:#eee;border-radius:5px;padding:6px 8px">
+        <span style="color:#8f8f8f;font-size:12px">0 = all. Start with a few hundred to try it; running Import again carries on and skips jobs already imported.</span></div>
+      <div id="mgSpace" style="font-size:13px;margin-bottom:10px"></div>
       <button class="btn" id="mgImport">Import</button> <button class="btn sec" id="mgCancel" hidden>Cancel</button>
       <div id="mgProgress" style="margin-top:10px"></div>
       <pre id="mgLog" style="max-height:220px;overflow:auto;background:#111;border:1px solid #333;border-radius:6px;padding:8px;font-size:12px;white-space:pre-wrap" hidden></pre>
@@ -583,6 +587,12 @@
         mg.debrid.synced_at ? 'Debrid: ' + (mg.debrid.pending || 0) + ' torrent(s) still being added' + (mg.debrid.errors ? ' (' + mg.debrid.errors + ' error(s) in the last pass)' : '')
                             : 'Debrid: not listed yet (starts once the built-in mount runs alongside)') : '') +
       (mg.program_running ? '<div style="color:#8f8f8f">The program is running: stop it before switching back.</div>' : '');
+    const sp = mg.space, gb = n => (n / 1073741824).toFixed(1) + ' GB';
+    $('#mgSpace').innerHTML = !sp ? '' : (sp.fits
+      ? '<span class="ok">✔</span> Importing all ' + sp.jobs + ' jobs needs about ' + gb(sp.needed) + '; ' + gb(sp.room) + ' can be used on the engine\'s disk.'
+      : '<span class="mid">⚠</span> Importing all ' + sp.jobs + ' jobs needs about ' + gb(sp.needed) + ', but only ' + gb(sp.room) +
+        ' can be used on the engine\'s disk (' + gb(sp.free) + ' free, ' + gb(sp.margin) + ' kept free' +
+        (sp.cache_reserved ? ', ' + gb(sp.cache_reserved) + ' for the disk cache' : '') + '). About ' + sp.fits_jobs + ' fit: Import stops before the disk fills.');
     $('#mgAlong').textContent = mg.alongside ? 'Stop running alongside' : 'Start alongside';
     $('#mgAlong').disabled = mg.provider === 'builtin';
     $('#mgBack').disabled = mg.provider !== 'builtin';
@@ -606,8 +616,10 @@
   }
   $('#mgImport').onclick = async () => {
     $('#mgImport').disabled = true;
-    const r = await fetch('/mount/api/migrate/import', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+    const limit = Math.max(0, parseInt($('#mgLimit').value, 10) || 0);
+    const r = await fetch('/mount/api/migrate/import', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({limit})});
     const d = await r.json();
+    if (!d.success) { $('#mgProgress').innerHTML = '<span class="no">' + esc(d.error || 'Import failed to start') + '</span>'; $('#mgImport').disabled = false; return; }
     mgJob = d.job; $('#mgCancel').hidden = false;
     pollImport(); mgTimer = setInterval(pollImport, 1500);
   };

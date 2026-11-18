@@ -6,6 +6,7 @@ import os
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -224,3 +225,70 @@ class RepairSettingsTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class SpaceTests(unittest.TestCase):
+    """A big library must not fill the disk cli_debrid's database is on."""
+
+    def _usage(self, free, total=100 << 30):
+        from collections import namedtuple
+        return namedtuple('U', 'total used free')(total, total - free, free)
+
+    def test_plan_counts_factor_margin_and_cache(self):
+        sizes = {'a': 1 << 30, 'b': 1 << 30, 'c': 1 << 30}
+        with tempfile.TemporaryDirectory() as d, \
+                unittest.mock.patch('shutil.disk_usage', return_value=self._usage(10 << 30)):
+            p = bm.space_plan(['a', 'b', 'c'], sizes, os.path.join(d, 'engine'))  # dir not created yet
+            self.assertEqual(p['needed'], int(3 * 1.5 * (1 << 30)))
+            self.assertEqual(p['margin'], 5 << 30)  # 5% of 100 GB > 2 GB floor
+            self.assertEqual((p['room'], p['fits'], p['fits_jobs']), (5 << 30, True, 3))
+            # The disk cache on the same disk may still grow 2 GB: only 2 jobs fit.
+            p = bm.space_plan(['a', 'b', 'c'], sizes, d, cache_dir=os.path.join(d, 'cache'), cache_left=2 << 30)
+            self.assertEqual((p['cache_reserved'], p['fits'], p['fits_jobs']), (2 << 30, False, 2))
+
+    def _run(self, free, limit=0, n=3):
+        with tempfile.TemporaryDirectory() as d:
+            mdir = os.path.join(d, 'usenet', 'meta')
+            os.makedirs(mdir)
+            entries = []
+            for i in range(n):
+                jid = f'job{i}'
+                with open(os.path.join(mdir, jid + '.meta'), 'wb') as f:
+                    f.write(META)
+                entries.append({'name': f'Folder {i}', 'info_hash': jid})
+
+            class Source:
+                def iter_library_nzbs(self):
+                    return iter(entries)
+            eng = FakeEngine()
+            with unittest.mock.patch('shutil.disk_usage', side_effect=free):
+                jid = bm.start_import(Source(), eng, d, limit=limit, space={'data_dir': d})
+                for _ in range(200):
+                    if bm.status(jid).get('complete'):
+                        break
+                    import time
+                    time.sleep(0.01)
+            return bm.status(jid), eng
+
+    def test_refuses_before_importing_when_it_does_not_fit(self):
+        st, eng = self._run(lambda p: self._usage(0))
+        self.assertEqual(st['status'], 'error')
+        self.assertIn('Not enough disk space', st['error'])
+        self.assertIn('import at most 0 job(s)', st['error'])
+        self.assertEqual(eng.posts, [], 'nothing imported')
+
+    def test_imports_when_it_fits_and_honours_the_job_count(self):
+        st, eng = self._run(lambda p: self._usage(50 << 30), limit=2)
+        self.assertEqual((st['status'], st['imported'], len(eng.posts)), ('complete', 2, 2))
+
+    def test_stops_midway_when_the_disk_fills(self):
+        calls = {'n': 0}
+
+        def usage(p):
+            calls['n'] += 1
+            return self._usage(50 << 30 if calls['n'] == 1 else 0)
+        with unittest.mock.patch.object(bm, 'SPACE_RECHECK_EVERY', 2):
+            st, eng = self._run(usage, n=5)
+        self.assertEqual(st['status'], 'error')
+        self.assertIn('Stopped after 2 job(s)', st['error'])
+        self.assertEqual(len(eng.posts), 2, 'jobs imported before the stop are kept')
