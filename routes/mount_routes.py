@@ -51,7 +51,7 @@ GROUPS = [
     ('Plex next-episode prewarm', ['plex_prewarm', 'prewarm_trigger_percent', 'prewarm_percent', 'prewarm_max_mb']),
     ('Disk cache', ['cache_dir', 'cache_size_gb', 'cache_expiry_hours', 'cache_cleanup_minutes']),
     ('Importing & health checks', ['processing_connections', 'processing_timeout_minutes',
-                                   'import_sample_percent', 'health_sample_percent']),
+                                   'import_sample_percent', 'health_sample_percent', 'media_probe']),
     ('Advanced', ['debug_logging', 'api_port', 'api_token']),
 ]
 
@@ -69,7 +69,8 @@ LABELS = {
     'cache_size_gb': 'Disk cache size (GB)', 'cache_expiry_hours': 'Cache expiry (hours)',
     'cache_cleanup_minutes': 'Cache cleanup interval (minutes)', 'processing_connections': 'Processing connections per file',
     'processing_timeout_minutes': 'Processing timeout (minutes)', 'import_sample_percent': 'NZB import availability sample %',
-    'health_sample_percent': 'Repair availability sample %', 'debug_logging': 'Debug logging',
+    'health_sample_percent': 'Repair availability sample %', 'media_probe': 'Check playability with ffprobe',
+    'debug_logging': 'Debug logging',
     'allowed_extensions': 'Allowed file extensions', 'deobfuscate_mode': 'Deobfuscate mode', 'api_port': 'Engine API port', 'api_token': 'Engine API token',
 }
 
@@ -490,8 +491,14 @@ def migrate_import():
     from utilities import builtin_migrate as bm
     limit = int((request.get_json(silent=True) or {}).get('limit') or 0)
     data_path = (get_setting('Usenet Provider') or {}).get('data_path') or ''
+    # Same repair standards as cli_mount: carry its repair settings over.
+    copied = bm.climount_repair_settings(data_path)
+    for key, value in copied.items():
+        set_setting(SECTION, key, value)
+    if copied:
+        _sync_in_background()
     job = bm.start_import(_climount_source(), _engine(), data_path, limit=limit)
-    return jsonify({'success': True, 'job': job})
+    return jsonify({'success': True, 'job': job, 'copied_settings': copied})
 
 
 @mount_bp.route('/api/migrate/job/<job_id>')

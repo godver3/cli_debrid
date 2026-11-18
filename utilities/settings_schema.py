@@ -529,6 +529,11 @@ SETTINGS_SCHEMA = {
             "description": "Built-in mount only. Repair availability sample %: share of each file's articles checked by health checks (0 = cli_mount's default, 10% with no cap per file; 100 = every article). Health checks also read each video file's first bytes: a wrong container header marks it broken, as cli_mount does.",
             "default": 0
         },
+        "media_probe": {
+            "type": "boolean",
+            "description": "Built-in mount only. Health checks also open each video file with ffprobe, like cli_mount's 'media probe' repair option: a file ffprobe can't open, or one with no audio or video stream, is marked broken for repair. Reads up to 5 MB per file per check. Replacements are always checked this way.",
+            "default": False
+        },
         "idle_timeout_minutes": {
             "type": "integer",
             "description": "Built-in mount only. Connection idle timeout: minutes to keep unused usenet connections open before closing them.",

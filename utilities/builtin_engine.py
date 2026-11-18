@@ -223,6 +223,7 @@ def build_config(settings: dict) -> dict:
         'import_timeout_seconds': num('processing_timeout_minutes', 5) * 60,
         'import_sample_percent': min(100, num('import_sample_percent', 1)),
         'health_sample_percent': min(100, num('health_sample_percent', 0)),
+        'media_probe': bool(bm.get('media_probe', False)),
         'idle_timeout_seconds': max(1, num('idle_timeout_minutes', 5)) * 60,
         'allow_other': bool(bm.get('allow_other', True)),
         'uid': ident('uid', 'PUID'),

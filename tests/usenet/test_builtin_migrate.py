@@ -210,5 +210,17 @@ class CompareTests(unittest.TestCase):
         self.assertIn('not in cli_mount under this name', rows['Renamed']['detail'])
 
 
+class RepairSettingsTests(unittest.TestCase):
+    def test_copies_cli_mounts_repair_standards(self):
+        import json
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, 'config'))
+            with open(os.path.join(d, 'config', 'config.json'), 'w') as f:
+                json.dump({'repair': {'media_probe_usenet': True},
+                           'usenet': {'availability_sample_percent': 10, 'import_availability_sample_percent': 0}}, f)
+            self.assertEqual(bm.climount_repair_settings(d), {'media_probe': True, 'health_sample_percent': 10})
+            self.assertEqual(bm.climount_repair_settings(os.path.join(d, 'nowhere')), {})
+
+
 if __name__ == '__main__':
     unittest.main()

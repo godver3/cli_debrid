@@ -111,6 +111,33 @@ def meta_dir(data_path: str) -> str:
     return os.path.join(data_path or '', 'usenet', 'meta')
 
 
+def climount_repair_settings(data_path: str) -> Dict[str, object]:
+    """cli_mount's repair standards as Built-in Mount settings, from its
+    config.json when it is visible next to its data (empty when not): the
+    ffprobe check (repair.media_probe_usenet) and the availability samples."""
+    import json
+    for cand in ('config.json', os.path.join('config', 'config.json'), os.path.join('..', 'config', 'config.json')):
+        p = os.path.join(data_path or '', cand)
+        try:
+            with open(p) as f:
+                cfg = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(cfg, dict):
+            continue
+        out: Dict[str, object] = {}
+        rep, use = cfg.get('repair') or {}, cfg.get('usenet') or {}
+        if isinstance(rep.get('media_probe_usenet'), bool):
+            out['media_probe'] = rep['media_probe_usenet']
+        for src, dst in (('availability_sample_percent', 'health_sample_percent'),
+                         ('import_availability_sample_percent', 'import_sample_percent')):
+            v = use.get(src)
+            if isinstance(v, int) and 0 < v <= 100:
+                out[dst] = v
+        return out
+    return {}
+
+
 # ---- job runner (progress polled by the Mount page) -------------------------
 
 _jobs: Dict[str, dict] = {}
