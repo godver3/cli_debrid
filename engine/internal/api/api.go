@@ -49,6 +49,7 @@ func Handler(e *engine.Engine) http.Handler {
 	mux.HandleFunc("GET /jobs/{id}", a.get)
 	mux.HandleFunc("PATCH /jobs/{id}", a.patch)
 	mux.HandleFunc("DELETE /jobs/{id}", a.del)
+	mux.HandleFunc("GET /jobs/{id}/nzb", a.nzb)
 	mux.HandleFunc("POST /jobs/{id}/retry", a.retry)
 	mux.HandleFunc("GET /jobs/{id}/sidecars", a.sidecarList)
 	mux.HandleFunc("PUT /jobs/{id}/sidecars/{name}", a.sidecarPut)
@@ -362,6 +363,27 @@ func (a *api) patch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, a.render(j, true))
+}
+
+// nzb hands out a usenet job's stored NZB (moving a library back to
+// cli_mount re-submits it there under the same id).
+func (a *api) nzb(w http.ResponseWriter, r *http.Request) {
+	j, _, err := a.e.Store.Get(r.PathValue("id"))
+	if err != nil {
+		storeErr(w, err)
+		return
+	}
+	if j.Protocol == engine.ProtocolDebrid {
+		writeErr(w, http.StatusConflict, fmt.Errorf("job %s is a debrid job: it has no NZB", j.ID))
+		return
+	}
+	data, err := a.e.Store.NZB(j.ID)
+	if err != nil {
+		storeErr(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-nzb")
+	w.Write(data)
 }
 
 func (a *api) del(w http.ResponseWriter, r *http.Request) {

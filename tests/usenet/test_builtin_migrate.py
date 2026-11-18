@@ -105,5 +105,110 @@ class MigrateTests(unittest.TestCase):
         self.assertEqual(bm.climount_mount_root(get), '/media/x/mnt')
 
 
+class _Resp:
+    def __init__(self, code, body=None, content=b''):
+        self.status_code, self._body, self.content = code, body, content
+        self.text = str(body)
+
+    def json(self):
+        if self._body is None:
+            raise ValueError('no json')
+        return self._body
+
+
+class _Engine:
+    base_url = 'http://engine'
+
+    def __init__(self, jobs):
+        self.jobs = jobs
+
+    def _headers(self):
+        return {}
+
+    def _call(self, method, path, **kw):
+        return 200, self.jobs
+
+
+class _Target:
+    base_url = 'http://climount'
+
+    def __init__(self, have):
+        self.have = have
+
+    def _headers(self):
+        return {}
+
+    def iter_library_nzbs(self):
+        return [{'info_hash': h} for h in self.have]
+
+
+class CopyBackTests(unittest.TestCase):
+    JID = '95af6933-9d46-487a-96a1-efac7d2b4113'
+
+    def _run(self, jobs, have, post):
+        from unittest import mock
+        import requests
+        sent = []
+
+        def fake_post(url, headers=None, files=None, timeout=0):
+            sent.append(files)
+            return post(files)
+        with mock.patch.object(requests, 'get', return_value=_Resp(200, content=b'<nzb/>')), \
+                mock.patch.object(requests, 'post', side_effect=fake_post), \
+                mock.patch.object(bm.time, 'sleep'):
+            jid = bm.start_export(_Engine(jobs), _Target(have))
+            for _ in range(200):
+                if bm.status(jid).get('complete'):
+                    break
+                import time as _t
+                _t.sleep(0.01)
+        return bm.status(jid), sent
+
+    def test_copies_only_usenet_jobs_cli_mount_lacks_with_same_id_and_folder(self):
+        jobs = [{'id': self.JID, 'name': 'Movie', 'folder': 'Movie (2)', 'category': 'movies', 'protocol': ''},
+                {'id': 'old-1', 'name': 'Old', 'protocol': ''},
+                {'id': 'rd-9', 'name': 'Torrent', 'protocol': 'debrid'}]
+        st, sent = self._run(jobs, {'old-1'}, lambda f: _Resp(200, [{'id': f['id'][1], 'status': 'started'}]))
+        self.assertEqual((st['status'], st['imported'], st['already'], st['failed']), ('complete', 1, 1, 0))
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(sent[0]['id'], (None, self.JID))
+        self.assertEqual(sent[0]['nzbFiles'][0], 'Movie (2).nzb', 'the folder name, not the job name')
+        self.assertEqual(sent[0]['downloadFolder'], (None, 'movies'))
+
+    def test_stops_when_cli_mount_ignores_the_id(self):
+        jobs = [{'id': self.JID, 'name': 'A', 'protocol': ''},
+                {'id': '0f0f0f0f-0000-4000-8000-000000000002', 'name': 'B', 'protocol': ''}]
+        st, sent = self._run(jobs, set(), lambda f: _Resp(200, [{'id': 'something-else'}]))
+        self.assertEqual(st['status'], 'error')
+        self.assertIn("doesn't keep job ids", st['error'])
+        self.assertEqual(len(sent), 1, 'stopped after the first mismatch')
+
+    def test_rejections_are_failures_not_aborts(self):
+        jobs = [{'id': self.JID, 'name': 'A', 'protocol': ''}]
+        st, _ = self._run(jobs, set(), lambda f: _Resp(200, [{'status': 'error', 'error': 'a job with id x already exists'}]))
+        self.assertEqual((st['status'], st['failed']), ('complete', 1))
+        self.assertIn('already exists', '\n'.join(st['log']))
+
+
+class CompareTests(unittest.TestCase):
+    def test_debrid_folders_are_checked_by_name_and_size_without_reading(self):
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+            for root in (a, b):
+                os.makedirs(os.path.join(root, 'Torrent'))
+                with open(os.path.join(root, 'Torrent', 'x.mkv'), 'wb') as f:
+                    f.write(b'z' * 10)
+            os.makedirs(os.path.join(b, 'Renamed'))
+            open(os.path.join(b, 'Renamed', 'y.mkv'), 'wb').close()
+            eng = _Engine([{'id': 'rd-1', 'name': 'Torrent', 'protocol': 'debrid'},
+                           {'id': 'rd-2', 'name': 'Renamed', 'protocol': 'debrid'}])
+            with mock.patch.object(bm, '_digest', side_effect=AssertionError('debrid files must not be read')):
+                out = bm.compare(eng, a, b)
+        rows = {r['folder']: r for r in out['rows']}
+        self.assertTrue(rows['Torrent']['ok'])
+        self.assertFalse(rows['Renamed']['ok'])
+        self.assertIn('not in cli_mount under this name', rows['Renamed']['detail'])
+
+
 if __name__ == '__main__':
     unittest.main()

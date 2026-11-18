@@ -425,7 +425,31 @@ def migrate_status():
         'climount_root_mounted': bool(root) and os.path.ismount(root),
         'builtin_root': _engine().mount_path,
         'pre_migration_mount_path': (get_setting('Built-in Mount') or {}).get('pre_migration_mount_path') or '',
+        'debrid_needed': _debrid_needed(),
+        'debrid': _debrid_status(),
+        'program_running': _program_running(),
     })
+
+
+def _debrid_needed() -> bool:
+    try:
+        from utilities import mount_debrid
+        return mount_debrid.needed(get_setting)
+    except Exception:
+        return False
+
+
+def _debrid_status() -> dict:
+    from utilities import mount_debrid
+    return mount_debrid.status()
+
+
+def _program_running() -> bool:
+    try:
+        from routes.program_operation_routes import program_is_running
+        return bool(program_is_running())
+    except Exception:
+        return False
 
 
 @mount_bp.route('/api/migrate/alongside', methods=['POST'])
@@ -485,6 +509,14 @@ def migrate_switch():
         return jsonify({'success': False, 'error': "cli_mount's mount path isn't known (File Management → original files path)."}), 400
     if os.path.ismount(root):
         return jsonify({'success': False, 'error': f'{root} is still mounted: stop the cli_mount container first, then switch.'}), 409
+    if _debrid_needed():
+        st = _debrid_status()
+        if not st.get('synced_at') or not st.get('complete'):
+            left = st.get('pending') or 0
+            why = (f'{left} debrid torrent(s) are still being added to the built-in mount'
+                   if st.get('synced_at') else 'the built-in mount has not listed your debrid account(s) yet')
+            return jsonify({'success': False, 'error': f'Not yet: {why}. Their folders would be missing after the '
+                            'switch. Keep it running alongside and try again in a few minutes.'}), 409
     cur = (get_setting('Built-in Mount') or {}).get('mount_path') or '/mnt/clid'
     if cur.rstrip('/') != root.rstrip('/'):
         set_setting(SECTION, 'pre_migration_mount_path', cur)
@@ -498,12 +530,30 @@ def migrate_switch():
 @mount_bp.route('/api/migrate/rollback', methods=['POST'])
 @admin_required
 def migrate_rollback():
-    """Back to cli_mount: the engine stops (unmounting cli_mount's path)."""
+    """Back to cli_mount. The engine stays up on its own path (alongside)
+    so the jobs added since the switch can be copied back."""
+    if _program_running():
+        return jsonify({'success': False, 'error': 'Stop the program first (the mount keeps running). Its queue '
+                        "checks would take jobs that aren't in cli_mount yet for dead ones."}), 409
     prev = (get_setting('Built-in Mount') or {}).get('pre_migration_mount_path') or '/mnt/clid'
     set_setting('Usenet Provider', 'provider', 'climount')
     set_setting(SECTION, 'mount_path', prev)
+    set_setting(SECTION, 'run_alongside', True)
     _sync_in_background()
-    return jsonify({'success': True, 'message': 'Switched back to cli_mount. Start the cli_mount container again.'})
+    return jsonify({'success': True, 'message': f'Switched back. The built-in mount moves to {prev}. Start the '
+                    'cli_mount container, press Copy back, and start the program when it has finished.'})
+
+
+@mount_bp.route('/api/migrate/export', methods=['POST'])
+@admin_required
+def migrate_export():
+    """Copy the engine's usenet jobs cli_mount lacks back to cli_mount."""
+    from utilities import builtin_migrate as bm
+    if (get_setting('Usenet Provider') or {}).get('provider') == 'builtin':
+        return jsonify({'success': False, 'error': 'Switch back to cli_mount first.'}), 409
+    limit = int((request.get_json(silent=True) or {}).get('limit') or 0)
+    job = bm.start_export(_engine(), _climount_source(), limit=limit)
+    return jsonify({'success': True, 'job': job})
 
 
 @mount_bp.route('/api/state')

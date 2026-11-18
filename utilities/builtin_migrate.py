@@ -13,8 +13,16 @@ Migrate from cli_mount to the built-in mount, side by side.
      of their start, middle and end).
   4. Switch: with cli_mount stopped, the engine takes over cli_mount's mount
      path (so existing symlinks and Plex paths keep resolving) and becomes
-     the usenet backend. Rollback = switch back (cli_mount's URL/token are
-     kept, nothing on cli_mount is changed).
+     the usenet backend. Debrid torrents aren't imported: the engine mirrors
+     the debrid accounts itself, and Switch waits until that has caught up.
+  5. Switch back: with the program stopped (its queue checks would take
+     jobs missing from cli_mount for dead ones), cli_mount becomes the
+     backend again and the engine keeps running on its own path. Copy back
+     then re-submits every usenet job cli_mount doesn't have (added since
+     the switch) with the SAME id and folder name, from the NZB the engine
+     stored. cli_mount re-imports it; nothing is downloaded but article
+     checks. Then the program can be started again.
+Nothing is moved or deleted on either side: every step copies.
 """
 
 import hashlib
@@ -216,6 +224,110 @@ def _run_import(job_id, source, engine, data_path, limit):
         _set(job_id, status='error', error=str(exc), complete=True)
 
 
+# ---- copy back: built-in mount -> cli_mount --------------------------------
+
+def start_export(engine, target, limit: int = 0) -> str:
+    """Re-submit the engine's usenet jobs cli_mount lacks, in the background.
+    engine: a BuiltinClient; target: a CliMountClient."""
+    job_id = uuid.uuid4().hex[:12]
+    with _lock:
+        _jobs[job_id] = {'kind': 'export', 'status': 'starting', 'total': 0, 'done': 0, 'imported': 0,
+                         'already': 0, 'failed': 0, 'skipped_files': 0, 'complete': False, 'log': [], 'error': None}
+    threading.Thread(target=_run_export, args=(job_id, engine, target, limit),
+                     name='builtin-copy-back', daemon=True).start()
+    return job_id
+
+
+def _engine_nzb(engine, jid: str) -> Optional[bytes]:
+    import requests
+    try:
+        r = requests.get(f'{engine.base_url}/jobs/{jid}/nzb', headers=engine._headers(), timeout=60)
+    except Exception as exc:
+        logging.debug(f'[builtin migrate] NZB of {jid}: {exc}')
+        return None
+    return r.content if r.status_code == 200 and r.content else None
+
+
+class IdNotKept(Exception):
+    """cli_mount gave the job a new id: it predates the id field."""
+
+
+def export_one(engine, target, job: dict) -> Tuple[str, str]:
+    """(outcome, message) for one engine job. outcome: imported/failed."""
+    import requests
+    jid = job.get('id') or ''
+    folder = job.get('folder') or job.get('name') or jid
+    data = _engine_nzb(engine, jid)
+    if not data:
+        return 'failed', f'{folder}: the built-in mount has no NZB for it'
+    fields = {'arr': (None, 'cli_debrid'), 'id': (None, jid),
+              'nzbFiles': (f'{folder}.nzb', data, 'application/x-nzb')}
+    if job.get('category'):
+        fields['downloadFolder'] = (None, job['category'])
+    try:
+        r = requests.post(f'{target.base_url}/api/add', headers=target._headers(), files=fields, timeout=120)
+    except Exception as exc:
+        return 'failed', f'{folder}: cli_mount unreachable: {exc}'
+    if r.status_code != 200:
+        return 'failed', f'{folder}: cli_mount said HTTP {r.status_code}: {r.text[:200]}'
+    try:
+        res = r.json()
+    except ValueError:
+        res = None
+    first = res[0] if isinstance(res, list) and res and isinstance(res[0], dict) else {}
+    if first.get('status') == 'error':
+        return 'failed', f"{folder}: {first.get('error') or 'rejected'}"
+    got = str(first.get('id') or first.get('nzo_id') or '')
+    if got and got != jid:
+        raise IdNotKept(f'{folder}: cli_mount gave it id {got} instead of {jid}')
+    return 'imported', ''
+
+
+def _run_export(job_id, engine, target, limit):
+    try:
+        try:
+            have = {e.get('info_hash') for e in target.iter_library_nzbs()}
+        except Exception as exc:
+            _set(job_id, status='error', complete=True, error=f'cli_mount unreachable: {exc}')
+            return
+        code, jobs = engine._call('GET', '/jobs', params={'status': 'ready'}, timeout=30)
+        if code != 200 or not isinstance(jobs, list):
+            _set(job_id, status='error', complete=True, error='the built-in mount is not answering (is it running?)')
+            return
+        usenet = [j for j in jobs if j.get('protocol') != 'debrid']
+        todo = [j for j in usenet if j.get('id') not in have]
+        todo.sort(key=lambda j: j.get('created_at') or '')
+        if limit:
+            todo = todo[:limit]
+        _set(job_id, status='running', total=len(todo), already=len(usenet) - len(todo))
+        _log(job_id, f'{len(usenet)} usenet job(s) on the built-in mount, {len(usenet) - len(todo)} already in '
+                     f'cli_mount, {len(todo)} to copy back')
+        for j in todo:
+            if status(job_id).get('cancel'):
+                _set(job_id, status='cancelled', complete=True)
+                return
+            try:
+                outcome, msg = export_one(engine, target, j)
+            except IdNotKept as exc:
+                _log(job_id, str(exc))
+                _set(job_id, status='error', complete=True,
+                     error="This cli_mount doesn't keep job ids yet, so cli_debrid's records wouldn't match. "
+                           "Update cli_mount (needs the 'id' field of /api/add) and run Copy back again; "
+                           "remove the one job it just added from cli_mount first.")
+                return
+            _add(job_id, outcome)
+            _add(job_id, 'done')
+            if msg:
+                _log(job_id, msg)
+            time.sleep(0.2)  # cli_mount imports each one (article checks)
+        st = status(job_id)
+        _log(job_id, f"Done: {st['imported']} copied back, {st['already']} already in cli_mount, {st['failed']} failed")
+        _set(job_id, status='complete', complete=True)
+    except Exception as exc:
+        logging.exception('[builtin migrate] copy back failed')
+        _set(job_id, status='error', error=str(exc), complete=True)
+
+
 # ---- compare a sample through both mounts -----------------------------------
 
 def _digest(path: str, size: int) -> str:
@@ -231,13 +343,19 @@ def _digest(path: str, size: int) -> str:
 def compare(engine, climount_root: str, builtin_root: str, sample: int = 10,
             rng: Optional[random.Random] = None) -> dict:
     """Read sample files through cli_mount's mount and the engine's mount
-    (<root>/<folder>/<file>) and compare size + hashes of 3 ranges."""
+    (<root>/<folder>/<file>) and compare size + hashes of 3 ranges. Debrid
+    folders are compared by name and size only: reading them would ask the
+    debrid service for links twice (AllDebrid suspends accounts for that)."""
     code, jobs = engine._call('GET', '/jobs', params={'status': 'ready'}, timeout=20)
     jobs = jobs if code == 200 and isinstance(jobs, list) else []
     (rng or random.Random()).shuffle(jobs)
+    usenet = [j for j in jobs if j.get('protocol') != 'debrid']
+    debrid = [j for j in jobs if j.get('protocol') == 'debrid']
+    pick = usenet[:sample] + debrid[:sample]
     rows, same = [], 0
-    for j in jobs[:sample]:
-        folder = j.get('name', '')
+    for j in pick:
+        folder = j.get('folder') or j.get('name', '')
+        is_debrid = j.get('protocol') == 'debrid'
         try:
             names = sorted(os.listdir(os.path.join(builtin_root, folder)))
         except OSError as exc:
@@ -250,10 +368,14 @@ def compare(engine, climount_root: str, builtin_root: str, sample: int = 10,
         t0 = time.time()
         try:
             sa, sb = os.path.getsize(a), os.path.getsize(b)
-            ok = sa == sb and _digest(a, sa) == _digest(b, sb)
-            detail = 'identical' if ok else (f'size {sa} vs {sb}' if sa != sb else 'bytes differ')
+            if is_debrid:
+                ok = sa == sb
+                detail = 'same name and size (debrid: not read)' if ok else f'size {sa} vs {sb}'
+            else:
+                ok = sa == sb and _digest(a, sa) == _digest(b, sb)
+                detail = 'identical' if ok else (f'size {sa} vs {sb}' if sa != sb else 'bytes differ')
         except OSError as exc:
-            ok, detail = False, str(exc)
+            ok, detail = False, ('not in cli_mount under this name: ' if is_debrid else '') + str(exc)
         same += ok
         rows.append({'folder': folder, 'file': name, 'ok': ok, 'detail': detail, 'seconds': round(time.time() - t0, 1)})
     return {'checked': len(rows), 'identical': same, 'rows': rows}

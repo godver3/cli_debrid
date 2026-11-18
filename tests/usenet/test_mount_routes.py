@@ -142,5 +142,62 @@ class MountRoutesTests(unittest.TestCase):
         self.sync.assert_not_called()
 
 
+    def _post(self, fn, payload=None):
+        with Flask(__name__).test_request_context(json=payload or {}):
+            resp = fn()
+        r = resp[0] if isinstance(resp, tuple) else resp
+        return (resp[1] if isinstance(resp, tuple) else 200), r.get_json()
+
+    def _switch_ready(self, debrid_needed, debrid_status):
+        self.store['Usenet Provider']['provider'] = 'climount'
+        self.store['File Management'] = {'original_files_path': '/mnt/climount/__all__'}
+        return mock.patch.multiple(mr, _debrid_needed=mock.Mock(return_value=debrid_needed),
+                                   _debrid_status=mock.Mock(return_value=debrid_status))
+
+    def test_switch_waits_for_the_debrid_mirror(self):
+        with self._switch_ready(True, {'synced_at': 1.0, 'complete': False, 'pending': 120}), \
+                mock.patch.object(mr.os.path, 'ismount', return_value=False):
+            code, body = self._post(mr.migrate_switch)
+        self.assertEqual(code, 409)
+        self.assertIn('120 debrid torrent(s)', body['error'])
+        self.assertEqual(self.store['Usenet Provider']['provider'], 'climount', 'nothing switched')
+        with self._switch_ready(True, {'synced_at': 0, 'complete': False}), \
+                mock.patch.object(mr.os.path, 'ismount', return_value=False):
+            self.assertEqual(self._post(mr.migrate_switch)[0], 409, 'never listed yet')
+        with self._switch_ready(True, {'synced_at': 1.0, 'complete': True}), \
+                mock.patch.object(mr.os.path, 'ismount', return_value=False):
+            code, body = self._post(mr.migrate_switch)
+        self.assertEqual((code, self.store['Usenet Provider']['provider']), (200, 'builtin'))
+        self.assertEqual(self.store['Built-in Mount']['mount_path'], '/mnt/climount')
+
+    def test_switch_without_debrid_does_not_wait(self):
+        with self._switch_ready(False, {}), mock.patch.object(mr.os.path, 'ismount', return_value=False):
+            self.assertEqual(self._post(mr.migrate_switch)[0], 200)
+
+    def test_switch_back_needs_the_program_stopped_and_keeps_the_engine_up(self):
+        self.store['Built-in Mount'].update(mount_path='/mnt/climount', pre_migration_mount_path='/mnt/clid')
+        with mock.patch.object(mr, '_program_running', return_value=True):
+            code, body = self._post(mr.migrate_rollback)
+        self.assertEqual(code, 409)
+        self.assertEqual(self.store['Usenet Provider']['provider'], 'builtin')
+        with mock.patch.object(mr, '_program_running', return_value=False):
+            code, body = self._post(mr.migrate_rollback)
+        self.assertEqual(code, 200)
+        self.assertEqual(self.store['Usenet Provider']['provider'], 'climount')
+        self.assertEqual(self.store['Built-in Mount']['mount_path'], '/mnt/clid')
+        self.assertTrue(self.store['Built-in Mount']['run_alongside'], 'engine stays up for Copy back')
+
+    def test_copy_back_only_after_switching_back(self):
+        code, body = self._post(mr.migrate_export)
+        self.assertEqual(code, 409)
+        self.store['Usenet Provider']['provider'] = 'climount'
+        from utilities import builtin_migrate as bm
+        with mock.patch.object(bm, 'start_export', return_value='abc') as st, \
+                mock.patch.object(mr, '_engine'), mock.patch.object(mr, '_climount_source'):
+            code, body = self._post(mr.migrate_export)
+        self.assertEqual((code, body['job']), (200, 'abc'))
+        st.assert_called_once()
+
+
 if __name__ == '__main__':
     unittest.main()
