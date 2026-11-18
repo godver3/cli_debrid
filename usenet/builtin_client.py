@@ -121,11 +121,18 @@ class BuiltinClient(UnsupportedFeaturesMixin):
         code, body = self._call('GET', '/jobs', params={'status': status} if status else None)
         return body if code == 200 and isinstance(body, list) else []
 
-    def _job_by_folder(self, folder: str) -> Optional[dict]:
+    def _usenet_jobs(self, status: str = '') -> List[dict]:
+        """NZB jobs only. The engine also holds the debrid account's torrents
+        (protocol "debrid"); cli_mount's queue and NZB library never list
+        those, and the usenet code paths that read these listings would
+        otherwise store a debrid job id as an NZB id ("nzb:rd-<id>")."""
+        return [j for j in self._jobs(status) if j.get('protocol') != 'debrid']
+
+    def _job_by_folder(self, folder: str, usenet_only: bool = False) -> Optional[dict]:
         folder = (folder or '').strip()
         if not folder:
             return None
-        for j in self._jobs():
+        for j in (self._usenet_jobs() if usenet_only else self._jobs()):
             if _folder(j) == folder or (j.get('name') or '').strip() == folder:
                 return j
         return None
@@ -217,7 +224,7 @@ class BuiltinClient(UnsupportedFeaturesMixin):
                 _mark_deleted(info_hash)
                 return True
         if entry_name:
-            job = self._job_by_folder(entry_name)
+            job = self._job_by_folder(entry_name, usenet_only=True)
             if job is None:
                 return True
             code, _ = self._call('DELETE', f'/jobs/{job["id"]}')
@@ -242,7 +249,7 @@ class BuiltinClient(UnsupportedFeaturesMixin):
     # ---- files (shared selection logic from CliMountClient) -----------------
 
     def _find_nzb_folder(self, job_norm: str, original_name: str = '', fast_check: bool = False) -> Optional[str]:
-        jobs = [j for j in self._jobs('ready') if _folder(j)]
+        jobs = [j for j in self._usenet_jobs('ready') if _folder(j)]
         if original_name:
             for j in jobs:
                 if _folder(j) == original_name or j.get('name') == original_name:
@@ -257,7 +264,7 @@ class BuiltinClient(UnsupportedFeaturesMixin):
         return None
 
     def _list_nzb_folder_files(self, folder_name: str) -> list:
-        job = self._job_by_folder(folder_name)
+        job = self._job_by_folder(folder_name, usenet_only=True)
         if not job:
             return []
         code, body = self._call('GET', f'/jobs/{job["id"]}')
@@ -324,7 +331,7 @@ class BuiltinClient(UnsupportedFeaturesMixin):
     def iter_queue_jobs(self, search: str = '', page_size: int = 50, sort: bool = True,
                         timeout: int = 10, retries: int = 1) -> Iterator[dict]:
         needle = (search or '').lower()
-        for j in self._jobs():
+        for j in self._usenet_jobs():
             name = _folder(j) or j.get('name', '')
             if needle and needle not in name.lower() and needle not in j.get('id', '').lower():
                 continue
@@ -349,7 +356,7 @@ class BuiltinClient(UnsupportedFeaturesMixin):
         return code
 
     def iter_library_nzbs(self, page_size: int = 100, timeout: int = 10) -> Iterator[dict]:
-        for j in self._jobs('ready'):
+        for j in self._usenet_jobs('ready'):
             if _folder(j):
                 yield {'name': _folder(j), 'is_dir': True}
 
@@ -421,14 +428,14 @@ class BuiltinClient(UnsupportedFeaturesMixin):
         return counts
 
     def trigger_health_check(self, entry_name: str) -> bool:
-        job = self._job_by_folder(entry_name)
+        job = self._job_by_folder(entry_name, usenet_only=True)
         if not job:
             return False
         code, _ = self._call('POST', f'/jobs/{job["id"]}/health')
         return code == 202
 
     def poll_health_result(self, entry_name: str) -> Optional[str]:
-        job = self._job_by_folder(entry_name)
+        job = self._job_by_folder(entry_name, usenet_only=True)
         if not job:
             return None
         code, body = self._call('GET', f'/jobs/{job["id"]}/health', timeout=4)
@@ -636,14 +643,31 @@ class BuiltinClient(UnsupportedFeaturesMixin):
         for j in body.get('jobs') or []:
             if j.get('status') != 'ready' or not _folder(j):
                 continue
-            changes.append({
-                'info_hash': j['id'], 'protocol': 'nzb', 'provider_id': f'nzb:{j["id"]}',
+            entry = {
                 'folder_name': _folder(j), 'original_filename': j.get('name', ''),
                 'files': [{'name': e['name'], 'size': e.get('size', 0)} for e in j.get('entries') or []],
                 'file_count': len(j.get('entries') or []), 'cli_debrid_ids': j.get('cli_ids') or {},
                 'bad': False, 'complete': True,
-            })
+            }
+            if j.get('protocol') == 'debrid':
+                # cli_mount's torrent entry: the torrent hash, and the
+                # provider's own torrent id (what cli_debrid stores in
+                # filled_by_torrent_id) - never "nzb:<job id>".
+                entry.update(info_hash=(j.get('hash') or '').lower(), protocol='torrent',
+                             provider_id=_debrid_torrent_id(j))
+            else:
+                entry.update(info_hash=j['id'], protocol='nzb', provider_id=f'nzb:{j["id"]}')
+            changes.append(entry)
         return 200, {'changes': changes, 'has_more': False}
+
+
+def _debrid_torrent_id(job: dict) -> str:
+    """The provider's torrent id inside a debrid job id ("<key>-<torrent id>",
+    see utilities.mount_debrid._job_id)."""
+    jid, key = job.get('id') or '', job.get('provider') or ''
+    if key and jid.startswith(key + '-'):
+        return jid[len(key) + 1:]
+    return ''
 
 
 def _mark_deleted(job_id: str) -> None:

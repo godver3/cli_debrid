@@ -140,6 +140,46 @@ class BuiltinClientTests(unittest.TestCase):
                          ('nzb:j1', 'Show.S01E01', 'nzb', {'Show.S01E01.mkv': 42}))
         self.assertEqual(self.c.fetch_sync_changes_page(2, 500)[1]['changes'], [])
 
+    def _with_debrid_job(self):
+        dj = {'id': 'rd-LQL6O4QJXWDRK', 'name': 'The Rings Of Power Season 2', 'status': 'ready',
+              'protocol': 'debrid', 'provider': 'rd', 'hash': 'ABCDEF0123456789ABCDEF0123456789ABCDEF01',
+              'path': '/mnt/clid/__all__/The Rings Of Power Season 2',
+              'entries': [{'name': 'LotR The Rings Of Power S02E05.mp4', 'size': 2000}]}
+        self.engine.routes[('GET', '/jobs')] = _Resp(200, [JOB, dj])
+        self.engine.routes[('GET', '/changes')] = _Resp(200, {'now': 1, 'jobs': [JOB, dj], 'deleted': []})
+        return dj
+
+    def test_sync_feed_reports_debrid_jobs_as_torrents(self):
+        """2026-11-18 test stack: debrid jobs went out as protocol nzb with
+        provider_id "nzb:rd-<id>", and climount_sync wrote that onto the
+        debrid items' filled_by_torrent_id (and nulled their magnet)."""
+        self._with_debrid_job()
+        changes = {c['folder_name']: c for c in self.c.fetch_sync_changes_page(1, 500)[1]['changes']}
+        tor = changes['The Rings Of Power Season 2']
+        self.assertEqual((tor['protocol'], tor['provider_id'], tor['info_hash']),
+                         ('torrent', 'LQL6O4QJXWDRK', 'abcdef0123456789abcdef0123456789abcdef01'))
+        self.assertEqual((changes['Show.S01E01']['protocol'], changes['Show.S01E01']['provider_id']), ('nzb', 'nzb:j1'))
+
+        from usenet.climount_sync import _build_update
+        sets, params = _build_update(tor)
+        self.assertIn('LQL6O4QJXWDRK', params)
+        self.assertFalse(any('nzb:' in str(p) for p in params))
+        self.assertFalse(any('filled_by_magnet' in s for s in sets), 'a debrid item keeps its magnet')
+
+    def test_usenet_listings_leave_out_debrid_jobs(self):
+        self._with_debrid_job()
+        self.assertEqual([j['info_hash'] for j in self.c.iter_queue_jobs()], ['j1'])
+        self.assertEqual(self.c.find_job_hash_by_name('The Rings Of Power Season 2'), '')
+        self.assertEqual([e['name'] for e in self.c.iter_library_nzbs()], ['Show.S01E01'])
+        self.assertIsNone(self.c._find_nzb_folder('theringsofpowerseason2', 'The Rings Of Power Season 2'))
+        self.assertFalse(self.c.trigger_health_check('The Rings Of Power Season 2'))
+        self.assertTrue(self.c.remove_nzb('', entry_name='The Rings Of Power Season 2'))
+        self.assertFalse([c for c in self.engine.calls if c[0] in ('DELETE', 'POST')],
+                         'usenet paths never touch the debrid job')
+        # Debrid repair still reaches it by folder.
+        self.engine.routes[('DELETE', '/jobs/rd-LQL6O4QJXWDRK/health')] = _Resp(204)
+        self.assertEqual(self.c.delete_repair_health('The Rings Of Power Season 2'), 200)
+
     def test_debug_stats_shape(self):
         st = self.c.get_debug_stats()
         self.assertEqual(st['usenet']['pool'], {'active': 3, 'idle': 2, 'max_connections': 25})
