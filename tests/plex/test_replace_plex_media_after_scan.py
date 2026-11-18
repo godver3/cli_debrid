@@ -6,6 +6,7 @@ import sys
 import unittest
 from types import SimpleNamespace
 from unittest import mock
+from tests._patching import patch_in_package
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
@@ -49,9 +50,9 @@ class RemoveReplacedPlexMediaTests(unittest.TestCase):
                     ('File Management', 'plex_url_for_symlink'): 'http://plex:32400',
                     ('File Management', 'plex_token_for_symlink'): 'tok'}
         clock = {'t': 0.0}
-        with mock.patch.object(pf, 'get_setting', lambda s, k, default=None: settings.get((s, k), default)), \
+        with patch_in_package(pf, 'get_setting', lambda s, k, default=None: settings.get((s, k), default)), \
              mock.patch.object(pf.plexapi.server, 'PlexServer', return_value=plex), \
-             mock.patch.object(pf, 'remove_file_from_plex', return_value=True) as remove, \
+             patch_in_package(pf, 'remove_file_from_plex', return_value=True) as remove, \
              mock.patch.object(pf.time, 'time', lambda: clock['t']), \
              mock.patch.object(pf.time, 'sleep', lambda s: clock.__setitem__('t', clock['t'] + s)):
             ok = pf.remove_replaced_plex_media_after_scan('Spider-Man', NEW, [OLD], timeout=timeout, interval=10)

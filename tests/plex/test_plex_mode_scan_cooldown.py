@@ -16,12 +16,13 @@ for _var in ('USER_CONFIG', 'USER_DB_CONTENT', 'USER_LOGS'):
 
 import database  # noqa: F401  (app import order; avoids a debrid<->routes cycle)
 from utilities import plex_functions as pf
+from tests._patching import patch_in_package
 
 PATH = '/cli_mnt/Movies/Pinocchio.2019.UHD.BluRay.2160p-FraMeSToR'
 
 
 def _mode(mode):
-    return mock.patch.object(pf, 'get_setting', lambda section, key, *a, **k: mode)
+    return patch_in_package(pf, 'get_setting', lambda section, key, *a, **k: mode)
 
 
 class TestPlexModeScanCooldown(unittest.TestCase):

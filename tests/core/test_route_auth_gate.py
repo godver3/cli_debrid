@@ -11,6 +11,7 @@ import os
 import sys
 import unittest
 from unittest import mock
+from tests._patching import patch_in_package
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -183,7 +184,7 @@ class AdminTests(_BlueprintTestCase):
 
     def test_admin_reads_scraper_settings(self):
         import routes.settings_routes as settings
-        with mock.patch.object(settings, 'load_config', return_value={'Scrapers': {'Jackett': {'api': 'k'}}}):
+        with patch_in_package(settings, 'load_config', return_value={'Scrapers': {'Jackett': {'api': 'k'}}}):
             resp = self._client().get('/settings/api/scrapers')
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.get_json(), {'Jackett': {'api': 'k'}})
@@ -202,7 +203,7 @@ class CollectEnabledNotificationsTests(unittest.TestCase):
             'no_url': {'type': 'Discord', 'enabled': True, 'webhook_url': ''},
             'off': {'type': 'NTFY', 'enabled': False, 'host': 'h', 'topic': 't'},
         }}
-        with mock.patch.object(settings, 'load_config', return_value=config):
+        with patch_in_package(settings, 'load_config', return_value=config):
             enabled = notifications.get_enabled_notifications()
         self.assertEqual(list(enabled), ['discord'])
         self.assertIn('notify_on', enabled['discord'])
