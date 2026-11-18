@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/Tensai75/nzbparser"
@@ -24,10 +26,15 @@ type File struct {
 	Poster   string
 	Groups   []string
 	Segments []Segment // sorted by Number, unique, gaps possible
-	// Total is the segment count the poster announced (or the highest
-	// number seen). Missing lists numbers in 1..Total absent from Segments.
+	// Total is the highest segment number the NZB lists. Missing lists
+	// numbers in 1..Total absent from Segments. The yEnc header of the first
+	// article (stream.Probe) is what proves a file's real segment count.
 	Total   int
 	Missing []int
+	// Announced is the "yEnc (1/N)" count from the subject, for reference
+	// only: obfuscating posters fill it (and the [x/y] file counter) with
+	// random numbers, so it can't decide anything.
+	Announced int
 }
 
 // Complete reports whether every segment 1..Total is listed.
@@ -55,7 +62,9 @@ func Parse(r io.Reader) (*NZB, error) {
 			Name:    strings.TrimSpace(f.Filename),
 			Poster:  f.Poster,
 			Groups:  f.Groups,
-			Total:   f.TotalSegments,
+		}
+		if n, ok := announcedSegments(f.Subject); ok {
+			file.Announced = n
 		}
 		if file.Name == "" {
 			file.Name = strings.TrimSpace(f.Subject)
@@ -75,9 +84,7 @@ func Parse(r io.Reader) (*NZB, error) {
 		if len(file.Segments) == 0 {
 			continue
 		}
-		if last := file.Segments[len(file.Segments)-1].Number; last > file.Total {
-			file.Total = last
-		}
+		file.Total = file.Segments[len(file.Segments)-1].Number
 		for n := 1; n <= file.Total; n++ {
 			if !have[n] {
 				file.Missing = append(file.Missing, n)
@@ -89,4 +96,16 @@ func Parse(r io.Reader) (*NZB, error) {
 		return nil, fmt.Errorf("nzb: no files with segments")
 	}
 	return out, nil
+}
+
+var yencCount = regexp.MustCompile(`(?i)yEnc\s*\((\d+)/(\d+)\)`)
+
+// announcedSegments reads N from a subject's "yEnc (1/N)".
+func announcedSegments(subject string) (int, bool) {
+	m := yencCount.FindStringSubmatch(subject)
+	if m == nil {
+		return 0, false
+	}
+	n, err := strconv.Atoi(m[2])
+	return n, err == nil && n > 0
 }

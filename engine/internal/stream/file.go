@@ -81,8 +81,10 @@ func Probe(ctx context.Context, f Fetcher, cache *Cache, file nzb.File) (Layout,
 	if l.Size <= 0 || l.PartSize <= 0 {
 		return Layout{}, fmt.Errorf("%w: %s: no usable yEnc size (size=%d part=%d)", ErrLayout, file.Name, l.Size, l.PartSize)
 	}
+	// The yEnc header is real data; the subject's "(1/N)" isn't (see
+	// nzb.File.Announced). A shorter NZB is missing its tail segments.
 	if want := int((l.Size + l.PartSize - 1) / l.PartSize); want != file.Total {
-		return Layout{}, fmt.Errorf("%w: %s: %d bytes in %d-byte parts needs %d segments, NZB has %d",
+		return Layout{}, fmt.Errorf("%w: %s: %d bytes in %d-byte parts needs %d segments, NZB lists %d",
 			ErrLayout, file.Name, l.Size, l.PartSize, want, file.Total)
 	}
 	return l, nil

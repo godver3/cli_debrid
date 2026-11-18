@@ -38,11 +38,29 @@ func TestParse(t *testing.T) {
 	if len(f.Segments) != 3 || f.Segments[0].ID != "a1@x" || f.Segments[1].ID != "a2@x" {
 		t.Fatalf("segments %+v", f.Segments)
 	}
-	if f.Total != 4 || len(f.Missing) != 1 || f.Missing[0] != 3 || f.Complete() {
-		t.Fatalf("total %d missing %v", f.Total, f.Missing)
+	if f.Total != 4 || f.Announced != 4 || len(f.Missing) != 1 || f.Missing[0] != 3 || f.Complete() {
+		t.Fatalf("total %d announced %d missing %v", f.Total, f.Announced, f.Missing)
 	}
 	if n.Files[1].Name != "no quotes here" || !n.Files[1].Complete() {
 		t.Fatalf("second file %+v", n.Files[1])
+	}
+}
+
+// Obfuscated posts announce random counts: "yEnc (1/148)" on a file whose
+// NZB lists segments 1..137 (Shawshank HiDt). The listed segments decide.
+func TestParseIgnoresAnnouncedCount(t *testing.T) {
+	n, err := Parse(strings.NewReader(`<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
+ <file poster="p" date="1" subject="X [7/10] &quot;x.part02.rar&quot; yEnc (1/5)">
+  <groups><group>a.b</group></groups>
+  <segments><segment bytes="9" number="1">c1@x</segment><segment bytes="9" number="2">c2@x</segment></segments>
+ </file>
+</nzb>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := n.Files[0]
+	if f.Total != 2 || f.Announced != 5 || !f.Complete() {
+		t.Fatalf("total %d announced %d missing %v", f.Total, f.Announced, f.Missing)
 	}
 }
 
