@@ -488,10 +488,10 @@ class RealDebridProvider(DebridProvider):
         """Get stored torrent title for a cached hash"""
         return self._cached_torrent_titles.get(hash_value)
 
-    def list_active_torrents(self) -> List[Dict]:
-        """List all active torrents"""
+    def list_active_torrents(self, strict: bool = False) -> List[Dict]:
+        """List all active torrents (strict: raise if a page fails)"""
         from .torrent import list_active_torrents
-        return list_active_torrents(self.api_key)
+        return list_active_torrents(self.api_key, strict=strict)
 
     def add_torrent(self, magnet_link: Optional[str], temp_file_path: Optional[str] = None) -> Optional[str]:
         """Add a torrent to Real-Debrid"""

@@ -49,6 +49,9 @@ class IsolatedLinkCache(unittest.TestCase):
     """Each test gets its own on-disk link cache."""
 
     def setUp(self):
+        md._missing.clear()
+        md._skipped.clear()
+        md._mass_warned.clear()
         self._dir = tempfile.TemporaryDirectory()
         path = os.path.join(self._dir.name, 'mount_links.json')
         self._patch = mock.patch.object(md, '_cache_path', return_value=path)
@@ -75,8 +78,13 @@ class MountDebridTests(IsolatedLinkCache):
         eng = FakeEngine([{'id': 'rd-OLD', 'protocol': 'debrid'}, {'id': 'rd-C', 'protocol': 'debrid'},
                           {'id': 'usenetjob', 'protocol': ''}])
         out = md.sync_once(eng, [p])
-        self.assertEqual(out, {'added': 1, 'removed': 1, 'skipped': 0, 'errors': 0})
+        self.assertEqual(out, {'added': 1, 'removed': 0, 'skipped': 0, 'errors': 0, 'pending': 0, 'held_removals': 0},
+                         'one listing without a torrent is not enough to remove it')
         self.assertEqual(p.asked, ['A'], 'unfinished and already-mounted torrents are not asked')
+        self.assertNotIn(('DELETE', '/jobs/rd-OLD', None), eng.calls)
+        eng.jobs.append({'id': 'rd-A', 'protocol': 'debrid'})
+        out = md.sync_once(eng, [p])
+        self.assertEqual((out['added'], out['removed']), (0, 1))
         post = [c for c in eng.calls if c[0] == 'POST'][0]
         self.assertEqual(post[1:], ('/debrid/jobs', {'id': 'rd-A', 'name': 'Movie.2024', 'provider': 'rd', 'files': [
             {'name': 'Movie.2024.mkv', 'size': 10, 'ref': 'rd:A:1'}]}))
@@ -87,6 +95,61 @@ class MountDebridTests(IsolatedLinkCache):
         eng = FakeEngine([{'id': 'rd-A', 'protocol': 'debrid'}])
         md.sync_once(eng, [FakeProvider([], {})])
         self.assertFalse([c for c in eng.calls if c[0] == 'DELETE'])
+
+    def test_failed_listing_page_removes_nothing(self):
+        class Strict(FakeProvider):
+            def list_active_torrents(self, strict=False):
+                if strict:
+                    raise RuntimeError('page 2: 429')
+                return self.torrents[:1]
+        Strict.__name__ = 'RealDebridProvider'
+        eng = FakeEngine([{'id': f'rd-{i}', 'protocol': 'debrid'} for i in range(5)])
+        p = Strict([{'id': '0', 'status': 'downloaded'}], {})
+        for _ in range(3):
+            out = md.sync_once(eng, [p])
+        self.assertEqual(out['errors'], 1)
+        self.assertFalse([c for c in eng.calls if c[0] == 'DELETE'])
+        self.assertFalse(md.status()['complete'])
+
+    def test_back_on_the_account_resets_the_miss_count(self):
+        eng = FakeEngine([{'id': 'rd-A', 'protocol': 'debrid'}, {'id': 'rd-B', 'protocol': 'debrid'}])
+        with_a = FakeProvider([{'id': 'A', 'status': 'downloaded'}, {'id': 'B', 'status': 'downloaded'}], {})
+        without_a = FakeProvider([{'id': 'B', 'status': 'downloaded'}], {})
+        for p in (without_a, with_a, without_a):
+            md.sync_once(eng, [p])
+        self.assertFalse([c for c in eng.calls if c[0] == 'DELETE'], 'misses must be in a row')
+
+    def test_mass_removal_is_held(self):
+        eng = FakeEngine([{'id': f'rd-{i}', 'protocol': 'debrid'} for i in range(100)])
+        p = FakeProvider([{'id': str(i), 'status': 'downloaded'} for i in range(50)], {})  # half the account vanished
+        with mock.patch.object(md.time, 'time', return_value=1000.0):
+            md.sync_once(eng, [p])
+            out = md.sync_once(eng, [p])
+        self.assertEqual((out['removed'], out['held_removals']), (0, 50))
+        with mock.patch.object(md.time, 'time', return_value=1000.0 + md.MASS_HOLD_SECONDS + 1):
+            out = md.sync_once(eng, [p])
+        self.assertEqual(out['removed'], 50, 'still missing after the hold: removed')
+
+    def test_backlog_is_reported_and_budgeted(self):
+        torrents = [{'id': str(i), 'status': 'downloaded'} for i in range(7)]
+        files = {str(i): (f'T{i}', [{'name': 'a.mkv', 'size': 1, 'file_id': '1'}]) for i in range(7)}
+        p = FakeProvider(torrents, files)
+        eng = FakeEngine([])
+        out = md.sync_once(eng, [p], budget=5)
+        self.assertEqual((out['added'], out['pending']), (5, 2))
+        self.assertFalse(md.status()['complete'])
+        eng.jobs = [{'id': f'rd-{i}', 'protocol': 'debrid'} for i in range(5)]
+        out = md.sync_once(eng, [p], budget=5)
+        self.assertEqual((out['added'], out['pending']), (2, 0))
+        self.assertTrue(md.status()['complete'])
+
+    def test_declined_torrents_are_not_asked_every_pass(self):
+        p = FakeProvider([{'id': 'X', 'status': 'downloaded'}], {})  # mount_files -> None (RD archive link)
+        eng = FakeEngine([])
+        md.sync_once(eng, [p])
+        md.sync_once(eng, [p])
+        self.assertEqual(p.asked, ['X'])
+        self.assertTrue(md.status()['complete'], 'a declined torrent is not pending')
 
     def test_link_routes_to_provider(self):
         with mock.patch.object(md, 'providers', return_value=[FakeProvider([], {})]):

@@ -157,31 +157,110 @@ def _finished(t: dict) -> bool:
     return st in ('downloaded', 'cached', 'completed', 'torrentstatus.cached') or st.endswith('cached')
 
 
-def sync_once(engine, provs: Optional[List] = None) -> Dict[str, int]:
-    """Mirror the debrid accounts into the engine. Returns counts."""
+# ---- removal safety ----------------------------------------------------------
+#
+# The mount mirrors the account, so a torrent missing from a listing is
+# removed. A listing can come back short (a failed page, an API hiccup), and
+# removing on one listing would pull good files out from under Plex and the
+# symlinks. So a torrent is removed only when MISS_PASSES listings in a row
+# don't have it, and a pass that would remove an unusual share of a
+# provider's torrents is held (logged) until the same torrents have been
+# missing for MASS_HOLD_SECONDS.
+
+MISS_PASSES = 2
+MASS_MIN = 10           # more removals than this in one pass...
+MASS_SHARE = 0.10       # ...and more than this share of the provider's torrents
+MASS_HOLD_SECONDS = 6 * 3600
+SKIP_RETRY_SECONDS = 3600  # torrents mount_files declined are retried this often
+
+_missing: Dict[str, Dict] = {}   # job id -> {'count': passes missing, 'since': first missed}
+_skipped: Dict[str, float] = {}  # job id -> when mount_files declined it
+_mass_warned: Dict[str, float] = {}
+_status: Dict = {'synced_at': 0.0, 'pending': 0, 'skipped': 0, 'held_removals': 0, 'complete': False,
+                 'errors': 0, 'providers': 0}
+
+
+def needed(get_setting) -> bool:
+    """Does Switch have to wait for the debrid mirror?"""
+    bm = get_setting('Built-in Mount') or {}
+    return bool(bm.get('debrid_streaming', True)) and bool(providers())
+
+
+def status() -> Dict:
+    """Last sync's state: pending = finished torrents not on the mount yet."""
+    with _lock:
+        return dict(_status)
+
+
+def _list(p) -> List[Dict]:
+    """The provider's full torrent list; raises if it may be incomplete."""
+    try:
+        return p.list_active_torrents(strict=True) or []
+    except TypeError:
+        return p.list_active_torrents() or []
+
+
+def _removals(key: str, have: set, on_account: set, now: float) -> List[str]:
+    """Job ids of this provider safe to remove now."""
+    mine = {h for h in have if h.startswith(key + '-')}
+    gone = mine - on_account
+    for jid in list(_missing):
+        if jid.startswith(key + '-') and jid not in gone:
+            _missing.pop(jid, None)  # back on the account, or already removed
+    ready = []
+    for jid in gone:
+        m = _missing.setdefault(jid, {'count': 0, 'since': now})
+        m['count'] += 1
+        if m['count'] >= MISS_PASSES:
+            ready.append(jid)
+    if len(ready) > MASS_MIN and len(ready) > MASS_SHARE * len(mine):
+        oldest = min(_missing[j]['since'] for j in ready)
+        if now - oldest < MASS_HOLD_SECONDS:
+            if now - _mass_warned.get(key, 0) > 3600:
+                _mass_warned[key] = now
+                logging.warning(f'[mount debrid] {key}: {len(ready)} of {len(mine)} torrents are missing from the '
+                                f'account listing; holding their removal from the mount (a short listing would '
+                                f'otherwise pull them from Plex). They are removed if still missing after '
+                                f'{MASS_HOLD_SECONDS // 3600}h.')
+            return []
+    return sorted(ready)
+
+
+def sync_once(engine, provs: Optional[List] = None, budget: int = ADD_PER_PASS) -> Dict[str, int]:
+    """Mirror the debrid accounts into the engine. Returns counts; pending
+    is finished torrents still to add (more passes needed)."""
     provs = providers() if provs is None else provs
-    out = {'added': 0, 'removed': 0, 'skipped': 0, 'errors': 0}
+    out = {'added': 0, 'removed': 0, 'skipped': 0, 'errors': 0, 'pending': 0, 'held_removals': 0}
     if not provs:
         return out
     code, jobs = engine._call('GET', '/jobs', timeout=20)
     if code != 200 or not isinstance(jobs, list):
+        out['errors'] += 1
         return out
     have = {j['id'] for j in jobs if j.get('protocol') == 'debrid'}
-    budget = ADD_PER_PASS
+    now = time.time()
+    complete = True
     for p in provs:
         key = provider_key(p)
         try:
-            torrents = p.list_active_torrents() or []
+            torrents = _list(p)
         except Exception as exc:
-            logging.warning(f'[mount debrid] listing {key} failed: {exc}')
+            logging.warning(f'[mount debrid] listing {key} failed (nothing removed this pass): {exc}')
             out['errors'] += 1
+            complete = False
             continue
         if not torrents:
             continue  # never empty the mount because a listing came back empty
         on_account = {_job_id(key, str(t.get('id'))) for t in torrents if t.get('id')}
         for t in torrents:
             jid = _job_id(key, str(t.get('id')))
-            if jid in have or not _finished(t) or budget <= 0:
+            if jid in have or not _finished(t):
+                continue
+            if now - _skipped.get(jid, 0) < SKIP_RETRY_SECONDS:
+                out['skipped'] += 1
+                continue
+            if budget <= 0:
+                out['pending'] += 1
                 continue
             budget -= 1
             try:
@@ -189,8 +268,10 @@ def sync_once(engine, provs: Optional[List] = None) -> Dict[str, int]:
             except Exception as exc:
                 logging.debug(f'[mount debrid] {key} {t.get("id")}: {exc}')
                 out['errors'] += 1
+                out['pending'] += 1
                 continue
             if not found:
+                _skipped[jid] = now
                 out['skipped'] += 1
                 continue
             folder, files = found
@@ -200,28 +281,56 @@ def sync_once(engine, provs: Optional[List] = None) -> Dict[str, int]:
             c, resp = engine._call('POST', '/debrid/jobs', timeout=30, json=body)
             if c == 201:
                 out['added'] += 1
+                _skipped.pop(jid, None)
             elif c != 409:
                 out['errors'] += 1
+                out['pending'] += 1
                 logging.warning(f'[mount debrid] engine refused {folder}: {c} {resp}')
-        for jid in sorted(h for h in have if h.startswith(key + '-') and h not in on_account):
+        ready = _removals(key, have, on_account, now)
+        out['held_removals'] += sum(1 for j, m in _missing.items()
+                                    if j.startswith(key + '-') and m['count'] >= MISS_PASSES and j not in ready)
+        for jid in ready:
             if engine._call('DELETE', f'/jobs/{jid}', timeout=20)[0] in (204, 404):
                 out['removed'] += 1
+                _missing.pop(jid, None)
                 forget_links(f"{key}:{jid[len(key) + 1:]}:")
     if out['added'] or out['removed']:
-        logging.info(f"[mount debrid] synced: {out['added']} added, {out['removed']} removed")
+        logging.info(f"[mount debrid] synced: {out['added']} added, {out['removed']} removed"
+                     + (f", {out['pending']} still to add" if out['pending'] else ''))
+    with _lock:
+        _status.update(synced_at=now, pending=out['pending'], skipped=out['skipped'],
+                       held_removals=out['held_removals'], errors=out['errors'], providers=len(provs),
+                       complete=complete and out['pending'] == 0)
     return out
+
+
+#: First pass soon after start; while torrents are still waiting to be
+#: added, the next pass follows quickly (each provider client keeps its own
+#: API rate limit), so a large account fills in minutes, not hours.
+FIRST_SYNC_SECONDS = 15
+BACKLOG_SECONDS = 5
+
+
+def _enabled(get_setting) -> bool:
+    from utilities import builtin_engine
+    bm = get_setting('Built-in Mount') or {}
+    settings = {'Usenet Provider': get_setting('Usenet Provider') or {}, 'Built-in Mount': bm}
+    # Also while staged next to cli_mount: Switch needs the debrid library
+    # in place before the engine takes over the mount path.
+    return (builtin_engine.selected(settings) or builtin_engine.alongside(settings)) \
+        and bool(bm.get('debrid_streaming', True))
 
 
 def _loop(get_setting):
     from usenet.builtin_client import BuiltinClient
+    wait = FIRST_SYNC_SECONDS
     while True:
-        time.sleep(SYNC_SECONDS)
+        time.sleep(wait)
+        wait = SYNC_SECONDS
         try:
-            from utilities import builtin_engine
-            bm = get_setting('Built-in Mount') or {}
-            if builtin_engine.selected({'Usenet Provider': get_setting('Usenet Provider') or {}, 'Built-in Mount': bm}) \
-                    and bm.get('debrid_streaming', True):
-                sync_once(BuiltinClient())
+            if _enabled(get_setting):
+                if sync_once(BuiltinClient()).get('pending'):
+                    wait = BACKLOG_SECONDS
         except Exception as exc:
             logging.debug(f'[mount debrid] sync failed: {exc}')
 
