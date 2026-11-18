@@ -174,6 +174,7 @@ func (e *Engine) maintain() {
 		case <-t.C:
 			e.Client.CloseIdle(idle)
 			e.Client.Warm(e.ctx)
+			e.trimOpen(time.Now())
 			if e.Disk != nil && expiry > 0 && time.Since(lastExpire) >= time.Duration(e.cfg.CacheCleanup)*time.Second {
 				if n := e.Disk.Expire(expiry); n > 0 {
 					e.log.Debug("disk cache expired", "segments", n)
@@ -199,7 +200,7 @@ type Engine struct {
 	wg     sync.WaitGroup
 
 	mu   sync.Mutex
-	open map[string]*job.Files // job id -> readers (built lazily)
+	open map[string]*openJob // job id -> readers (built lazily, dropped when idle)
 
 	treeMu sync.RWMutex
 	// rebuildMu serializes rebuildTree, so a slower rebuild can't install
@@ -245,7 +246,7 @@ func New(cfg Config, log *slog.Logger) (*Engine, error) {
 	}
 	e := &Engine{cfg: cfg, log: log, Client: client, Store: st,
 		Cache: stream.NewCache(cfg.MemCacheBytes),
-		queue: make(chan string, 4096), open: map[string]*job.Files{},
+		queue: make(chan string, 4096), open: map[string]*openJob{},
 		healthSem: make(chan struct{}, cfg.HealthWorkers), stopReq: make(chan struct{})}
 	if cfg.CacheDir != "" && cfg.CacheBytes > 0 {
 		if e.Disk, err = diskcache.Open(cfg.CacheDir, cfg.CacheBytes); err != nil {
@@ -562,11 +563,14 @@ func (e *Engine) Rename(id, name string) (store.Job, error) {
 }
 
 // Files returns readers for a ready job, building them on first use.
+// Built readers hold the job's parsed NZB (every article id), so they are
+// kept only while in use: see trimOpen.
 func (e *Engine) Files(id string) (*job.Files, error) {
 	e.mu.Lock()
-	if fs, ok := e.open[id]; ok {
+	if oj, ok := e.open[id]; ok {
+		oj.used = time.Now()
 		e.mu.Unlock()
-		return fs, nil
+		return oj.fs, nil
 	}
 	e.mu.Unlock()
 	j, res, err := e.Store.Get(id)
@@ -591,12 +595,75 @@ func (e *Engine) Files(id string) (*job.Files, error) {
 		return nil, err
 	}
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	if prev, ok := e.open[id]; ok {
-		return prev, nil
+		prev.used = time.Now()
+		e.mu.Unlock()
+		return prev.fs, nil
 	}
-	e.open[id] = fs
+	e.open[id] = &openJob{fs: fs, used: time.Now()}
+	over := len(e.open) > maxOpenJobs
+	e.mu.Unlock()
+	if over {
+		e.trimOpen(time.Now())
+	}
 	return fs, nil
+}
+
+// openJob is a job's built readers and when they were last asked for.
+type openJob struct {
+	fs   *job.Files
+	used time.Time
+}
+
+const (
+	// openJobIdle: built readers not asked for this long are dropped (a
+	// Plex scan or health sweep opens every job once; without this the
+	// parsed NZBs of the whole library would stay in memory).
+	openJobIdle = 2 * time.Minute
+	// maxOpenJobs caps built readers of jobs with no open file.
+	maxOpenJobs = 64
+)
+
+// trimOpen drops built readers of jobs with no open file on the mount that
+// are idle, or the least recently used ones over maxOpenJobs. A reader a
+// handle still holds keeps working (it holds its own reference); the next
+// open just builds a fresh one.
+func (e *Engine) trimOpen(now time.Time) int {
+	active := e.streamJobs()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	type cand struct {
+		id   string
+		used time.Time
+	}
+	var keep []cand
+	dropped := 0
+	for id, oj := range e.open {
+		if active[id] {
+			continue
+		}
+		if now.Sub(oj.used) >= openJobIdle {
+			delete(e.open, id)
+			dropped++
+			continue
+		}
+		keep = append(keep, cand{id, oj.used})
+	}
+	if extra := len(e.open) - maxOpenJobs; extra > 0 && len(keep) > 0 {
+		sort.Slice(keep, func(a, b int) bool { return keep[a].used.Before(keep[b].used) })
+		for _, c := range keep[:min(extra, len(keep))] {
+			delete(e.open, c.id)
+			dropped++
+		}
+	}
+	return dropped
+}
+
+// OpenJobs is how many jobs have built readers (for stats and tests).
+func (e *Engine) OpenJobs() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return len(e.open)
 }
 
 // TopFolders lists the root of the mount.
@@ -642,8 +709,10 @@ func (e *Engine) FolderPath(id string) string {
 	return ""
 }
 
-// rebuildTree recomputes folder names from ready jobs. Names are unique:
-// a later job whose name is taken gets " (2)", " (3)"... in creation order.
+// rebuildTree recomputes the tree from ready jobs. A job keeps the folder
+// name it was first given (store.Job.Folder); a new job whose name is
+// taken gets " (2)", " (3)"... Names stay put when other jobs come and go,
+// so a symlink never ends up on another job's files.
 func (e *Engine) rebuildTree() {
 	e.rebuildMu.Lock()
 	defer e.rebuildMu.Unlock()
@@ -662,7 +731,21 @@ func (e *Engine) rebuildTree() {
 	for _, vf := range e.vfolders {
 		tree[vf.name] = map[string]*Folder{} // listed even when empty
 	}
-	var providers []string
+	// Names held by jobs that have one, shown right now or not (a job
+	// hidden for a while gets its own name back).
+	held := map[string]string{}
+	for _, j := range jobs {
+		if keepsFolder(j) {
+			if _, taken := held[j.Folder]; !taken {
+				held[j.Folder] = j.ID
+			}
+		}
+	}
+	type placed struct {
+		j       store.Job
+		entries []job.Entry
+	}
+	var show []placed
 	for _, j := range jobs {
 		if j.Status != store.Ready {
 			continue
@@ -693,10 +776,31 @@ func (e *Engine) rebuildTree() {
 		if len(entries) == 0 {
 			continue
 		}
-		name := j.Name
-		for n := 2; all[name] != nil; n++ {
-			name = fmt.Sprintf("%s (%d)", j.Name, n)
+		show = append(show, placed{j, entries})
+	}
+	names := make(map[string]string, len(show)) // job id -> folder name
+	for _, p := range show {
+		if keepsFolder(p.j) && held[p.j.Folder] == p.j.ID {
+			names[p.j.ID] = p.j.Folder
 		}
+	}
+	var assigned []store.Job
+	for _, p := range show {
+		if _, ok := names[p.j.ID]; ok {
+			continue
+		}
+		name := p.j.Name
+		for n := 2; held[name] != ""; n++ {
+			name = fmt.Sprintf("%s (%d)", p.j.Name, n)
+		}
+		held[name] = p.j.ID
+		names[p.j.ID] = name
+		p.j.Folder, p.j.FolderBase = name, p.j.Name
+		assigned = append(assigned, p.j)
+	}
+	var providers []string
+	for _, sh := range show {
+		j, entries, name := sh.j, sh.entries, names[sh.j.ID]
 		f := &Folder{JobID: j.ID, Name: name, Entries: entries, ModTime: j.CreatedAt}
 		all[name] = f
 		if j.Protocol == ProtocolDebrid {
@@ -720,6 +824,13 @@ func (e *Engine) rebuildTree() {
 			}
 		}
 	}
+	for _, j := range assigned {
+		folder, base := j.Folder, j.FolderBase
+		if _, err := e.Store.Update(j.ID, func(s *store.Job) { s.Folder, s.FolderBase = folder, base }); err != nil &&
+			!errors.Is(err, store.ErrNotFound) {
+			e.log.Warn("folder name not saved", "job", j.ID, "folder", folder, "err", err)
+		}
+	}
 	sort.Strings(providers)
 	e.treeMu.Lock()
 	e.tree = tree
@@ -735,6 +846,11 @@ func (e *Engine) rebuildTree() {
 	}
 	e.tops = tops
 	e.treeMu.Unlock()
+}
+
+// keepsFolder: the job has a saved folder name still made from its name.
+func keepsFolder(j store.Job) bool {
+	return j.Folder != "" && j.FolderBase == j.Name
 }
 
 // uniqueEntries makes file names unique within a folder ("x.mkv",

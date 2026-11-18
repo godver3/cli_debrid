@@ -54,6 +54,12 @@ type Job struct {
 	// Hidden lists entry names removed by repair cleanup: the rest of the
 	// job (other episodes of a pack) stays visible.
 	Hidden []string `json:"hidden,omitempty"`
+	// Folder is the job's folder name on the mount once it was given one
+	// ("Name" or "Name (2)" when another job had the name first), and
+	// FolderBase the Name it was made from. Kept so a folder never changes
+	// name (symlinks point at it) until the job is renamed.
+	Folder     string `json:"folder,omitempty"`
+	FolderBase string `json:"folder_base,omitempty"`
 }
 
 // Health is the latest health record of a job, for cli_debrid's repair.

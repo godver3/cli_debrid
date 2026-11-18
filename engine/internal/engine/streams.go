@@ -90,6 +90,18 @@ func (e *Engine) CloseStream(id uint64) {
 	t.mu.Unlock()
 }
 
+// streamJobs is the set of jobs with a file open on the mount.
+func (e *Engine) streamJobs() map[string]bool {
+	t := &e.streams
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := make(map[string]bool, len(t.m))
+	for _, st := range t.m {
+		out[st.s.JobID] = true // JobID never changes after OpenStream
+	}
+	return out
+}
+
 // Streams lists open files, most recently read first. A file not read for
 // a while reports no rate (paused or merely open).
 func (e *Engine) Streams() []Stream {
