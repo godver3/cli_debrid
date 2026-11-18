@@ -329,3 +329,16 @@ type syncBuf struct {
 
 func (s *syncBuf) Write(p []byte) (int, error) { s.mu.Lock(); defer s.mu.Unlock(); return s.b.Write(p) }
 func (s *syncBuf) String() string              { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }
+
+// A debrid-only engine has no news server: fetches must never be "proof"
+// that an article is missing.
+func TestNoProvidersIsNeverProof(t *testing.T) {
+	c, err := NewClient(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = c.Body(context.Background(), Live, "x@y")
+	if err == nil || IsNotFound(err) || !errors.Is(err, ErrNoProviders) {
+		t.Fatalf("want inconclusive ErrNoProviders, got %v", err)
+	}
+}

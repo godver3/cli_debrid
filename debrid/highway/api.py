@@ -7,6 +7,7 @@ documented at https://cloud.high-way.me/docs/openapi/highway-transfers.yaml:
 - GET  ?service=torrent&check=<h1>,<h2>      cache check, up to 100 hashes
 - GET  ?service=torrent                      list of the account's torrents
 - GET  ?id=<id>&service=torrent              one torrent with its files
+- GET  ?id=<id>&service=torrent&file=<fid>   one file with a fresh download_url
 - POST magnet=<magnet> or file=<.torrent>    add (known content is linked at once)
 - DELETE ?id=<id>&service=torrent            remove from the account
 """
@@ -105,6 +106,11 @@ def get_all_torrents(api_key: str) -> List[Dict]:
 
 def get_torrent(api_key: str, transfer_id: str) -> Dict:
     return make_request('GET', api_key, params={'id': transfer_id, 'service': 'torrent'})
+
+
+def get_file(api_key: str, transfer_id: str, file_id: str) -> Dict:
+    """One file of a torrent with a freshly signed download_url."""
+    return make_request('GET', api_key, params={'id': transfer_id, 'service': 'torrent', 'file': file_id})
 
 
 def add_magnet(api_key: str, magnet: str) -> Dict:

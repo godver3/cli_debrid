@@ -7,6 +7,8 @@ require (
 	github.com/Tensai75/rapidyenc v0.0.1
 	github.com/hanwen/go-fuse/v2 v2.8.0
 	github.com/javi11/sevenzip v1.6.2-0.20251026160715-ca961b7f1239
+	github.com/winfsp/cgofuse v1.6.0
+	golang.org/x/net v0.43.0
 )
 
 require (
@@ -19,9 +21,7 @@ require (
 	github.com/pierrec/lz4/v4 v4.1.22 // indirect
 	github.com/spf13/afero v1.11.0 // indirect
 	github.com/ulikunitz/xz v0.5.15 // indirect
-	github.com/winfsp/cgofuse v1.6.0 // indirect
 	go4.org v0.0.0-20200411211856-f5505b9728dd // indirect
-	golang.org/x/net v0.43.0 // indirect
 	golang.org/x/sync v0.16.0 // indirect
 	golang.org/x/sys v0.35.0 // indirect
 	golang.org/x/text v0.28.0 // indirect

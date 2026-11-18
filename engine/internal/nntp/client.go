@@ -78,11 +78,9 @@ func prioName(p Priority) string {
 }
 
 // NewClient builds a client. Primary providers keep their given order and
-// are always tried before any backup.
+// are always tried before any backup. A client with no providers is
+// allowed (a debrid-only mount): every fetch fails inconclusively.
 func NewClient(providers []Provider) (*Client, error) {
-	if len(providers) == 0 {
-		return nil, ErrNoProviders
-	}
 	ps := append([]Provider(nil), providers...)
 	sort.SliceStable(ps, func(i, j int) bool { return !ps[i].Backup && ps[j].Backup })
 	c := &Client{}
@@ -129,6 +127,10 @@ func (e *InconclusiveError) Unwrap() error { return e.Last }
 // is an InconclusiveError, because that provider might have had it.
 func (c *Client) attempt(ctx context.Context, prio Priority, id string,
 	fn func(*conn) (found bool, err error)) error {
+	if len(c.pools) == 0 {
+		// Never proof: with no provider nothing was asked.
+		return &InconclusiveError{ID: id, Last: ErrNoProviders}
+	}
 	notFound := 0
 	var last error
 	for _, pl := range c.pools {

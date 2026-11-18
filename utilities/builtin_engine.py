@@ -58,10 +58,17 @@ def _load_settings() -> dict:
         return {}
 
 
-def selected(settings: dict = None) -> bool:
+def usenet_selected(settings: dict = None) -> bool:
     """True when the user picked the built-in mount as the usenet backend."""
     up = (settings if settings is not None else _load_settings()).get('Usenet Provider') or {}
     return bool(up.get('enabled')) and (up.get('provider') or '').strip().lower() == 'builtin'
+
+
+def selected(settings: dict = None) -> bool:
+    """True when the built-in mount is in use: the usenet backend, or turned
+    on for debrid alone (Built-in Mount.enabled)."""
+    s = settings if settings is not None else _load_settings()
+    return usenet_selected(s) or bool((s.get('Built-in Mount') or {}).get('enabled'))
 
 
 def alongside(settings: dict = None) -> bool:
@@ -77,9 +84,9 @@ def wanted(settings: dict = None) -> bool:
     return selected(s) or alongside(s)
 
 
-def problems(settings: dict = None) -> list:
-    """Reasons the engine can't run here (empty when it can)."""
-    s = settings if settings is not None else _load_settings()
+def host_problems() -> list:
+    """Reasons this container/machine can't run the engine at all (no
+    settings involved): missing binary, /dev/fuse or WinFsp."""
     out = []
     if not (os.path.isfile(ENGINE_BIN) if IS_WINDOWS else os.access(ENGINE_BIN, os.X_OK)):
         out.append(f'engine binary missing ({ENGINE_BIN}); this build has no built-in mount')
@@ -88,9 +95,18 @@ def problems(settings: dict = None) -> list:
             out.append('WinFsp is not installed: get it from https://winfsp.dev (the built-in mount uses it on Windows)')
     elif not os.path.exists('/dev/fuse'):
         out.append('/dev/fuse is not available: add `devices: [/dev/fuse]` and `cap_add: [SYS_ADMIN]` to the container')
+    return out
+
+
+def problems(settings: dict = None) -> list:
+    """Reasons the engine can't run here (empty when it can)."""
+    s = settings if settings is not None else _load_settings()
+    out = host_problems()
     bm = s.get('Built-in Mount') or {}
+    if bm.get('webdav_enabled') and not (str(bm.get('webdav_username') or '').strip() and bm.get('webdav_password')):
+        out.append('WebDAV share is on but has no username/password (Mount page → WebDAV share); it stays off')
     try:
-        if not servers(bm):
+        if not servers(bm) and (usenet_selected(s) or alongside(s)):
             out.append('no usenet server set (Mount page → Usenet servers)')
     except ValueError as exc:
         out.append(f'usenet servers: {exc}')
@@ -213,7 +229,16 @@ def build_config(settings: dict) -> dict:
         'gid': ident('gid', 'PGID'),
         'umask': umask,
         'providers': providers,
+        **webdav_config(bm),
     }
+
+
+def webdav_config(bm: dict) -> dict:
+    """The engine's WebDAV share settings (off unless enabled with a login)."""
+    user, pw = str(bm.get('webdav_username') or '').strip(), str(bm.get('webdav_password') or '')
+    if not bm.get('webdav_enabled') or not user or not pw:
+        return {'webdav_listen': ''}
+    return {'webdav_listen': f"0.0.0.0:{_int(bm.get('webdav_port'), 8284)}", 'webdav_user': user, 'webdav_password': pw}
 
 
 DEFAULT_EXTENSIONS = 'mkv,mp4,m4v,avi,mov,mpg,mpeg'

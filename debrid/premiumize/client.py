@@ -450,6 +450,47 @@ class PremiumizeProvider(DebridProvider):
             logger.error(f"Premiumize get_torrent_info error for {torrent_id}: {e}")
             return None
 
+    # ---- built-in mount ---------------------------------------------------
+
+    supports_mount_links = True
+    MOUNT_LINK_TTL = 24 * 3600  # PM links die after about a day; re-minted from the item id
+
+    def _mount_folder_files(self, folder_id: str, prefix: str = '', depth: int = 0) -> List[Dict]:
+        resp = self._req('GET', '/folder/list', params={'id': folder_id})
+        if not resp or resp.get('status') == 'error':
+            return []
+        out = []
+        for item in resp.get('content') or []:
+            name = item.get('name', '')
+            path = f'{prefix}/{name}' if prefix else name
+            if item.get('type') == 'file' and item.get('id'):
+                out.append({'name': path, 'size': int(item.get('size', 0) or 0), 'file_id': str(item['id'])})
+            elif item.get('type') == 'folder' and item.get('id') and depth < 3:
+                out.extend(self._mount_folder_files(str(item['id']), path, depth + 1))  # season folders
+        return out
+
+    def mount_files(self, torrent_id: str) -> Optional[Tuple[str, List[Dict]]]:
+        raw = next((t for t in self._list_transfers_raw() if str(t.get('id', '')) == str(torrent_id)), None)
+        if not raw or (raw.get('status') or '').lower() not in ('finished', 'seeding'):
+            return None
+        name = raw.get('name') or str(torrent_id)
+        if raw.get('file_id'):
+            det = self._req('GET', '/item/details', params={'id': raw['file_id']})
+            if not det or det.get('status') == 'error':
+                return None
+            return name, [{'name': det.get('name') or name, 'size': int(det.get('size', 0) or 0), 'file_id': str(raw['file_id'])}]
+        if raw.get('folder_id'):
+            files = self._mount_folder_files(str(raw['folder_id']))
+            return (name, files) if files else None
+        return None
+
+    def mount_link(self, torrent_id: str, file_id: str) -> Tuple[str, int]:
+        det = self._req('GET', '/item/details', params={'id': file_id})
+        url = (det or {}).get('link') if (det or {}).get('status') != 'error' else None
+        if not url:
+            raise ValueError(f'Premiumize gave no download link for {torrent_id}/{file_id}')
+        return url, self.MOUNT_LINK_TTL
+
     def get_torrent_info_with_status(self, torrent_id: str) -> TorrentInfoStatus:
         try:
             info = self.get_torrent_info(torrent_id)

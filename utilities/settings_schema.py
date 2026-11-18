@@ -393,6 +393,11 @@ SETTINGS_SCHEMA = {
     },
     "Built-in Mount": {
         "tab": "Required Settings",
+        "enabled": {
+            "type": "boolean",
+            "description": "Run the built-in mount for your debrid account even when usenet isn't set to the built-in mount (debrid-only setups). Onboarding turns this on when you pick Built-in as the mount tool. Usenet Provider = builtin always runs it.",
+            "default": False
+        },
         "mount_path": {
             "type": "string",
             "description": "Built-in mount only (Usenet Provider = builtin). Where the engine mounts its files inside the container. Bind it with rshared propagation so Plex sees it, and point File Management's original files path at <mount_path>/__all__.",
@@ -445,8 +450,29 @@ SETTINGS_SCHEMA = {
         },
         "debrid_streaming": {
             "type": "boolean",
-            "description": "Built-in mount only. Stream your debrid account's finished torrents through the built-in mount too (Real-Debrid and TorBox), next to usenet: the mount mirrors the account like cli_mount or Zurg did.",
+            "description": "Built-in mount only. Stream your debrid account's finished torrents through the built-in mount too (Real-Debrid, TorBox, AllDebrid, Premiumize, Debrid-Link and HighWay), next to usenet: the mount mirrors the account like cli_mount or Zurg did.",
             "default": True
+        },
+        "webdav_enabled": {
+            "type": "boolean",
+            "description": "Built-in mount only. Also share the mount over WebDAV (read-only), for a media server on another machine (mount it there with rclone) or Windows without WinFsp. Needs a username and password, and the port published in docker-compose.",
+            "default": False
+        },
+        "webdav_port": {
+            "type": "integer",
+            "description": "Built-in mount only. Port of the WebDAV share (on all interfaces).",
+            "default": 8284
+        },
+        "webdav_username": {
+            "type": "string",
+            "description": "Built-in mount only. WebDAV username.",
+            "default": ""
+        },
+        "webdav_password": {
+            "type": "string",
+            "description": "Built-in mount only. WebDAV password.",
+            "default": "",
+            "sensitive": True
         },
         "plex_prewarm": {
             "type": "boolean",

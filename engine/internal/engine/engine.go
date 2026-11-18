@@ -56,6 +56,12 @@ func providerFolder(j store.Job) string {
 		return "torbox"
 	case "ad":
 		return "alldebrid"
+	case "pm":
+		return "premiumize"
+	case "dl":
+		return "debridlink"
+	case "hw":
+		return "highway"
 	}
 	p = strings.ToLower(cleanFolderName(p))
 	for _, t := range fixedTops {
@@ -537,6 +543,7 @@ func (e *Engine) Delete(id string) error {
 	e.mu.Lock()
 	delete(e.open, id)
 	e.mu.Unlock()
+	e.deleteSidecars(id)
 	e.rebuildTree()
 	return nil
 }

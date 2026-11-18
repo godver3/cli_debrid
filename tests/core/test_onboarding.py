@@ -167,6 +167,61 @@ class TestSaveRequiredSettings(unittest.TestCase):
         self.assertNotIn('password', first)
 
 
+class TestBuiltinMountTool(unittest.TestCase):
+    def test_debrid_only_builtin_turns_the_engine_on_and_off(self):
+        if _delegated_to_clean_interpreter(self):
+            return
+        routes = _routes()
+        fake = _FakeConfig({})
+        base = {'use_debrid': 'on', 'use_usenet': 'off', 'debrid_api_key': 'k', 'file_collection_management': 'Plex'}
+        with fake.patch(routes), mock.patch('utilities.builtin_engine.sync', return_value='started') as sync:
+            routes._save_required_settings(_Form({**base, 'mount_tool': 'builtin', 'original_files_path': ''}))
+            self.assertTrue(fake.config['Built-in Mount']['enabled'])
+            self.assertEqual(fake.config['File Management']['original_files_path'], '/mnt/clid/__all__')
+            self.assertFalse(fake.config['Usenet Provider']['enabled'])
+            sync.assert_called_once()
+            # picking another tool turns it off again (and syncs, which stops it)
+            routes._save_required_settings(_Form({**base, 'mount_tool': 'zurg', 'original_files_path': '/mnt/zurg/__all__'}))
+            self.assertFalse(fake.config['Built-in Mount']['enabled'])
+            self.assertEqual(sync.call_count, 2)
+
+
+class TestHealthBuiltinDebridOnly(unittest.TestCase):
+    def test_health_reports_engine_and_host_paths(self):
+        if _delegated_to_clean_interpreter(self):
+            return
+        routes = _routes()
+        from flask import Flask
+        from routes import models
+        from routes import settings_validation_routes as svr
+        from utilities import builtin_engine, path_checks
+        config = {'Debrid Provider': {'provider': 'RealDebrid', 'api_key': 'k'},
+                  'Usenet Provider': {'enabled': False}, 'Built-in Mount': {'enabled': True},
+                  'File Management': {'file_collection_management': 'Plex', 'original_files_path': '/mnt/clid/__all__'},
+                  'Plex': {'url': 'http://plex:32400', 'token': 't'}}
+        admin = SimpleNamespace(is_authenticated=True, role='admin')
+        states = iter(['STARTING', 'RUNNING'])
+        app = Flask(__name__)
+        with app.test_request_context('/onboarding/health'), \
+                mock.patch.object(models, 'is_user_system_enabled', return_value=False), \
+                mock.patch.object(models, 'current_user', admin), \
+                mock.patch.object(routes, 'load_config', return_value=config), \
+                mock.patch.object(svr, 'validate_debrid_api_key', return_value=(True, 'ok')), \
+                mock.patch.object(svr, 'check_mount_path', return_value=(True, 'ok', False)), \
+                mock.patch.object(svr, 'validate_plex_settings', return_value=(True, 'ok')), \
+                mock.patch.object(builtin_engine, 'problems', return_value=[]), \
+                mock.patch.object(builtin_engine, 'state', side_effect=lambda: next(states, 'RUNNING')), \
+                mock.patch.object(routes.time, 'sleep'), \
+                mock.patch.object(path_checks, 'onboarding_checks',
+                                  return_value=[('Plex sees the mount', (False, 'Plex sees nothing', False))]) as pcs:
+            body = routes.onboarding_health().get_json()
+        rows = {c['name']: c for c in body['checks']}
+        self.assertTrue(rows['Built-in mount']['valid'])
+        self.assertEqual(rows['Built-in mount']['message'], 'Running')
+        self.assertFalse(rows['Plex sees the mount']['valid'])
+        self.assertEqual(pcs.call_args[0][1], '/mnt/clid')
+
+
 class TestNextStep(unittest.TestCase):
     def _next_step(self, config):
         routes = _routes()

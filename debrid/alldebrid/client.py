@@ -970,6 +970,35 @@ class AllDebridProvider(DebridProvider):
                 self.update_status(torrent_id, TorrentStatus.ERROR)
             return None
 
+    # ---- built-in mount ---------------------------------------------------
+
+    supports_mount_links = True
+    #: AllDebrid unlocked links stay valid for days; cli_mount keeps them 48h.
+    #: Every unlock counts against AD's "links without download" heuristic,
+    #: so mount_debrid caches them on disk for this long.
+    MOUNT_LINK_TTL = 48 * 3600
+
+    def mount_files(self, torrent_id: str) -> Optional[Tuple[str, List[Dict]]]:
+        info = self.get_torrent_info(torrent_id)  # 30-min file-list cache for ready magnets
+        if not info or info.get('status') != 'downloaded':
+            return None
+        # The file ref is AD's locker link: unlocking it later needs no
+        # second /magnet/files call.
+        files = [{'name': f.get('path') or f.get('name') or '', 'size': int(f.get('bytes') or 0), 'file_id': f['link']}
+                 for f in info.get('files') or [] if f.get('link')]
+        if not files:
+            return None
+        return info.get('filename') or str(torrent_id), files
+
+    def mount_link(self, torrent_id: str, file_id: str) -> Tuple[str, int]:
+        if not str(file_id).startswith('http'):
+            raise ValueError(f'AllDebrid file ref for {torrent_id} is not a link')
+        out = make_request('GET', '/v4/link/unlock', self.api_key, params={'link': file_id}, use_query_auth=True)
+        url = ((out or {}).get('data') or {}).get('link')
+        if not url:
+            raise ValueError(f'AllDebrid gave no download link for {torrent_id}: {(out or {}).get("error")}')
+        return url, self.MOUNT_LINK_TTL
+
     def get_torrent_info_with_status(self, torrent_id: str) -> TorrentInfoStatus:
         """Get detailed information about a torrent, including fetch status."""
         try:

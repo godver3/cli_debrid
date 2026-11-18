@@ -21,7 +21,7 @@ import (
 
 // Start mounts the engine at dir with WinFsp.
 func Start(e *engine.Engine, dir string, opt Options, log *slog.Logger) (Mounted, error) {
-	fsys := &cgoFS{e: e, opt: opt, log: log, files: map[uint64]*openFile{}, ready: make(chan struct{})}
+	fsys := &cgoFS{e: e, opt: opt, log: log, files: map[uint64]*openFile{}, sidecars: map[uint64]*sidecarWriter{}, ready: make(chan struct{})}
 	host := fuse.NewFileSystemHost(fsys)
 	host.SetCapReaddirPlus(true)
 	host.SetCapCaseInsensitive(true) // Windows paths are case-insensitive
@@ -60,9 +60,10 @@ type cgoFS struct {
 	ready chan struct{}
 	once  sync.Once
 
-	mu    sync.Mutex
-	next  uint64
-	files map[uint64]*openFile
+	mu       sync.Mutex
+	next     uint64
+	files    map[uint64]*openFile
+	sidecars map[uint64]*sidecarWriter // handles of sidecars opened for writing
 }
 
 func (f *cgoFS) Init() { f.once.Do(func() { close(f.ready) }) }
@@ -94,10 +95,96 @@ func (f *cgoFS) Getattr(path string, st *fuse.Stat_t, fh uint64) int {
 		f.fill(st, true, 0, time.Time{})
 	case kindFolder:
 		f.fill(st, true, 0, r.folder.ModTime)
+		st.Mode = fuse.S_IFDIR | (0o755 &^ f.opt.Umask) // sidecars can be saved here
 	case kindFile:
 		f.fill(st, false, r.entry.Size, r.folder.ModTime)
+	case kindSidecar:
+		size := r.sidecar.Size
+		if w := f.writer(fh); w != nil {
+			size = w.size()
+		}
+		f.fill(st, false, size, r.sidecar.ModTime)
+		st.Mode = fuse.S_IFREG | (0o644 &^ f.opt.Umask)
 	default:
 		return -fuse.ENOENT
+	}
+	return 0
+}
+
+func (f *cgoFS) writer(fh uint64) *sidecarWriter {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.sidecars[fh]
+}
+
+func (f *cgoFS) addWriter(w *sidecarWriter) uint64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.next++
+	f.sidecars[f.next] = w
+	return f.next
+}
+
+// Create makes a subtitle sidecar in a job folder; nothing else is writable.
+func (f *cgoFS) Create(path string, flags int, mode uint32) (int, uint64) {
+	r := resolve(f.e, path)
+	if r.kind == kindSidecar {
+		return f.Open(path, flags|fuse.O_TRUNC)
+	}
+	if r.kind != kindNone || r.folder == nil || !engine.IsSidecarName(r.name) {
+		return -fuse.EROFS, ^uint64(0)
+	}
+	w := newSidecarWriter(f.e, r.folder.JobID, r.name, true)
+	if err := w.commit(); err != nil {
+		f.log.Warn("sidecar create failed", "job", r.folder.JobID, "file", r.name, "err", err)
+		return -fuse.EIO, ^uint64(0)
+	}
+	return 0, f.addWriter(w)
+}
+
+func (f *cgoFS) Write(path string, buf []byte, off int64, fh uint64) int {
+	w := f.writer(fh)
+	if w == nil {
+		return -fuse.EROFS
+	}
+	n, err := w.writeAt(buf, off)
+	if err != nil {
+		return -fuse.EFBIG
+	}
+	return n
+}
+
+func (f *cgoFS) Truncate(path string, size int64, fh uint64) int {
+	if w := f.writer(fh); w != nil {
+		w.truncate(size)
+		return 0
+	}
+	r := resolve(f.e, path)
+	if r.kind != kindSidecar {
+		return -fuse.EROFS
+	}
+	w := newSidecarWriter(f.e, r.folder.JobID, r.sidecar.Name, false)
+	w.truncate(size)
+	if w.commit() != nil {
+		return -fuse.EIO
+	}
+	return 0
+}
+
+func (f *cgoFS) Flush(path string, fh uint64) int {
+	if w := f.writer(fh); w != nil && w.commit() != nil {
+		return -fuse.EIO
+	}
+	return 0
+}
+
+func (f *cgoFS) Unlink(path string) int {
+	r := resolve(f.e, path)
+	if r.kind != kindSidecar {
+		return -fuse.EROFS
+	}
+	if f.e.DeleteSidecar(r.folder.JobID, r.sidecar.Name) != nil {
+		return -fuse.EIO
 	}
 	return 0
 }
@@ -141,6 +228,13 @@ func (f *cgoFS) Readdir(path string, fill func(string, *fuse.Stat_t, int64) bool
 				break
 			}
 		}
+		for _, sc := range f.e.Sidecars(r.folder.JobID) {
+			st := &fuse.Stat_t{}
+			f.fill(st, false, sc.Size, sc.ModTime)
+			if !fill(sc.Name, st, 0) {
+				break
+			}
+		}
 	default:
 		return -fuse.ENOENT
 	}
@@ -148,10 +242,16 @@ func (f *cgoFS) Readdir(path string, fill func(string, *fuse.Stat_t, int64) bool
 }
 
 func (f *cgoFS) Open(path string, flags int) (int, uint64) {
+	r := resolve(f.e, path)
+	if r.kind == kindSidecar {
+		if flags&(fuse.O_WRONLY|fuse.O_RDWR) != 0 {
+			return 0, f.addWriter(newSidecarWriter(f.e, r.folder.JobID, r.sidecar.Name, flags&fuse.O_TRUNC != 0))
+		}
+		return 0, ^uint64(0) - 1 // reads go straight to disk
+	}
 	if flags&(fuse.O_WRONLY|fuse.O_RDWR) != 0 {
 		return -fuse.EROFS, ^uint64(0)
 	}
-	r := resolve(f.e, path)
 	if r.kind != kindFile {
 		return -fuse.ENOENT, ^uint64(0)
 	}
@@ -168,10 +268,20 @@ func (f *cgoFS) Open(path string, flags int) (int, uint64) {
 }
 
 func (f *cgoFS) Read(path string, buf []byte, off int64, fh uint64) int {
+	if w := f.writer(fh); w != nil {
+		return w.readAt(buf, off)
+	}
 	f.mu.Lock()
 	of := f.files[fh]
 	f.mu.Unlock()
 	if of == nil {
+		if r := resolve(f.e, path); r.kind == kindSidecar {
+			n, err := readSidecar(f.e, r.folder.JobID, r.sidecar.Name, buf, off)
+			if err != nil {
+				return -fuse.EIO
+			}
+			return n
+		}
 		return -fuse.EBADF
 	}
 	n, err := of.readAt(context.Background(), buf, off)
@@ -184,8 +294,13 @@ func (f *cgoFS) Read(path string, buf []byte, off int64, fh uint64) int {
 func (f *cgoFS) Release(path string, fh uint64) int {
 	f.mu.Lock()
 	of := f.files[fh]
+	w := f.sidecars[fh]
 	delete(f.files, fh)
+	delete(f.sidecars, fh)
 	f.mu.Unlock()
+	if w != nil && w.commit() != nil {
+		return -fuse.EIO
+	}
 	if of != nil {
 		of.close()
 	}

@@ -127,10 +127,21 @@ New to cli_debrid? Start with the **[Getting Started guide](https://godver3.gith
 
 ### Quick Start (Docker)
 
-The easiest setup is cli_debrid and **[cli_mount](https://github.com/mash2k3/decypharr/tree/dev)** together in one compose file. cli_mount mounts your debrid and Usenet files, and cli_debrid finds it on its own during onboarding.
+The easiest setup is a single container: cli_debrid with its **built-in mount**, which streams your debrid account and your Usenet server itself. Onboarding sets it up and checks at the end that cli_debrid and your media server see the same folders.
 
 ```bash
-# Linux with Docker Engine. Create the shared folders once:
+# Linux with Docker Engine
+mkdir -p ${HOME}/cli_debrid && cd ${HOME}/cli_debrid
+curl -o docker-compose.yml https://raw.githubusercontent.com/godver3/cli_debrid/dev/docker-compose.builtin.yml
+docker compose up -d
+```
+
+Then open cli_debrid at `http://your-server-ip:5000` and follow the onboarding wizard. Keep **Built-in mount** as the mount tool; it fills in `/mnt/clid/__all__`. Give your media server the same folders at the same paths: `/mnt/clid` (with `:rslave` if it runs in Docker) and, for Symlink mode, `/mnt/symlinks`. The compose file has a Plex service you can uncomment. The [built-in mount guide](https://godver3.github.io/cli_docs/integrations/builtin-mount/) covers the settings, WebDAV for a media server on another machine, and moving over from cli_mount.
+
+**Prefer a separate mount container?** [docker-compose.cli_mount.yml](https://raw.githubusercontent.com/godver3/cli_debrid/dev/docker-compose.cli_mount.yml) runs cli_debrid and **[cli_mount](https://github.com/mash2k3/decypharr/tree/dev)** together:
+
+```bash
+# Create the shared folders once:
 sudo mkdir -p /mnt/cli_mount /mnt/symlinks
 sudo chown 1000:1000 /mnt/cli_mount
 
@@ -138,8 +149,6 @@ mkdir -p ${HOME}/cli_debrid && cd ${HOME}/cli_debrid
 curl -o docker-compose.yml https://raw.githubusercontent.com/godver3/cli_debrid/dev/docker-compose.cli_mount.yml
 docker compose up -d
 ```
-
-Then:
 
 1. Open cli_mount at `http://your-server-ip:8282` and add your debrid account and/or Usenet server. When the setup wizard asks, set the **Download Folder** to `/app/downloads`, the **Mount Path** to `/mnt/cli_mount` and the **Cache Directory** to `/app/cache`.
 2. Open cli_debrid at `http://your-server-ip:5000` and follow the onboarding wizard. Choose **cli_mount** as the mount tool, with the mount path `/mnt/cli_mount/__all__`. If you use Usenet, click **Detect** next to the mount URL; it finds `http://cli_mount:8282`. After onboarding, **Settings → Required → Usenet Mount → Detect** also fills in cli_mount's data path (`/climount_data`), which turns on backups of cli_mount's databases.
@@ -152,11 +161,12 @@ Each image tag works on both AMD64 and ARM64:
 - **Dev (recommended)**: `godver3/cli_debrid:dev` (also `:latest`)
 - **Main**: `godver3/cli_debrid:main`
 
-You'll also need a mount for your debrid and/or Usenet files. cli_debrid works best with **[cli_mount](https://github.com/mash2k3/decypharr/tree/dev)**, mash2k3's fork of Decypharr built alongside cli_debrid. It handles debrid and Usenet in one container and talks to cli_debrid directly for repairs and imports.
+cli_debrid needs a mount for your debrid and/or Usenet files: its own built-in mount, or a separate one. **[cli_mount](https://github.com/mash2k3/decypharr/tree/dev)** is mash2k3's fork of Decypharr built alongside cli_debrid; it handles debrid and Usenet in its own container and talks to cli_debrid directly for repairs and imports.
 
 | Mount | Debrid | Usenet | Notes |
 |---|---|---|---|
-| [cli_mount](https://github.com/mash2k3/decypharr/tree/dev) ([setup](https://godver3.github.io/cli_docs/integrations/cli_mount/)) | ✓ | ✓ | **Recommended.** All-in-one, built for cli_debrid |
+| [Built-in mount](https://godver3.github.io/cli_docs/integrations/builtin-mount/) | ✓ | ✓ | **Easiest.** Runs inside cli_debrid, no extra container |
+| [cli_mount](https://github.com/mash2k3/decypharr/tree/dev) ([setup](https://godver3.github.io/cli_docs/integrations/cli_mount/)) | ✓ | ✓ | All-in-one in its own container, built for cli_debrid |
 | [Decypharr](https://godver3.github.io/cli_docs/integrations/decypharr/) | ✓ | | All-in-one debrid mount |
 | [Zurg](https://godver3.github.io/cli_docs/integrations/zurg/) + rclone | ✓ | ✓ (Zurg 2.0) | Long-standing Real-Debrid favourite |
 
@@ -167,7 +177,7 @@ You'll also need a mount for your debrid and/or Usenet files. cli_debrid works b
 - **Installing:** [Docker](https://godver3.github.io/cli_docs/installation/docker/), [Unraid](https://godver3.github.io/cli_docs/installation/unraid/), [Portainer/Dockge](https://godver3.github.io/cli_docs/installation/portainer-dockge/), [Proxmox](https://godver3.github.io/cli_docs/installation/proxmox/), [TrueNAS](https://godver3.github.io/cli_docs/installation/truenas/), [Ubuntu](https://godver3.github.io/cli_docs/installation/ubuntu/), [Windows](https://godver3.github.io/cli_docs/installation/windows/), [Updating](https://godver3.github.io/cli_docs/installation/updating/)
 - **Configuring:** [Required](https://godver3.github.io/cli_docs/configuration/required/), [Content Sources](https://godver3.github.io/cli_docs/configuration/content-sources/), [Scrapers](https://godver3.github.io/cli_docs/configuration/scrapers/), [Versions](https://godver3.github.io/cli_docs/configuration/versions/), [Users](https://godver3.github.io/cli_docs/configuration/manage-users/), [Notifications](https://godver3.github.io/cli_docs/configuration/notifications/)
 - **Scrapers:** [Torrentio](https://godver3.github.io/cli_docs/scrapers/torrentio/), [Jackett](https://godver3.github.io/cli_docs/scrapers/jackett/), [Prowlarr](https://godver3.github.io/cli_docs/scrapers/prowlarr/), [Zilean](https://godver3.github.io/cli_docs/scrapers/zilean/), [Nyaa](https://godver3.github.io/cli_docs/scrapers/nyaa/), [MediaFusion](https://godver3.github.io/cli_docs/scrapers/mediafusion/), [AIOStreams](https://godver3.github.io/cli_docs/scrapers/aiostreams/), [Newznab](https://godver3.github.io/cli_docs/scrapers/newznab/)
-- **Integrations:** [cli_mount](https://godver3.github.io/cli_docs/integrations/cli_mount/), [Decypharr](https://godver3.github.io/cli_docs/integrations/decypharr/), [Zurg](https://godver3.github.io/cli_docs/integrations/zurg/), [Plex](https://godver3.github.io/cli_docs/integrations/plex/), [Jellyfin](https://godver3.github.io/cli_docs/integrations/jellyfin/), [Seerr](https://godver3.github.io/cli_docs/integrations/seerr/)
+- **Integrations:** [Built-in mount](https://godver3.github.io/cli_docs/integrations/builtin-mount/), [cli_mount](https://godver3.github.io/cli_docs/integrations/cli_mount/), [Decypharr](https://godver3.github.io/cli_docs/integrations/decypharr/), [Zurg](https://godver3.github.io/cli_docs/integrations/zurg/), [Plex](https://godver3.github.io/cli_docs/integrations/plex/), [Jellyfin](https://godver3.github.io/cli_docs/integrations/jellyfin/), [Seerr](https://godver3.github.io/cli_docs/integrations/seerr/)
 - **Features:** [Library](https://godver3.github.io/cli_docs/features/library/), [Queues](https://godver3.github.io/cli_docs/features/queues/), [Upgrade Hub](https://godver3.github.io/cli_docs/features/upgrade-hub/), [Discover](https://godver3.github.io/cli_docs/features/discover/), [Overlays](https://godver3.github.io/cli_docs/features/overlays/), [Plex Collections](https://godver3.github.io/cli_docs/features/plex-collections/), [Debrid Manager](https://godver3.github.io/cli_docs/features/debrid-manager/), [Scraper Tester](https://godver3.github.io/cli_docs/features/scraper-tester/), [Automation](https://godver3.github.io/cli_docs/features/automation/), [Tools](https://godver3.github.io/cli_docs/features/tools/), [Maintenance](https://godver3.github.io/cli_docs/features/maintenance/)
 - **Troubleshooting:** [FAQ](https://godver3.github.io/cli_docs/faq/)
 

@@ -33,6 +33,10 @@ type fileConfig struct {
 	GID        uint32 `json:"gid"`
 	Umask      uint32 `json:"umask"`
 	LogLevel   string `json:"log_level"`
+	// Read-only WebDAV share of the same tree ("" = off), e.g. "0.0.0.0:8284".
+	WebDAVListen   string `json:"webdav_listen"`
+	WebDAVUser     string `json:"webdav_user"`
+	WebDAVPassword string `json:"webdav_password"`
 }
 
 // prepareMountPath: Linux mounts over an existing folder; WinFsp wants a
@@ -97,6 +101,24 @@ func run(cfgPath string, noMount bool) error {
 		}
 	}()
 	log.Info("api listening", "addr", ln.Addr().String())
+
+	if cfg.WebDAVListen != "" {
+		if cfg.WebDAVUser == "" || cfg.WebDAVPassword == "" {
+			log.Warn("webdav not started: set webdav_user and webdav_password")
+		} else if dl, err := net.Listen("tcp", cfg.WebDAVListen); err != nil {
+			log.Error("webdav listen", "addr", cfg.WebDAVListen, "err", err)
+		} else {
+			dav := &http.Server{Handler: mount.WebDAVHandler(e, mount.WebDAVOptions{User: cfg.WebDAVUser, Password: cfg.WebDAVPassword}, log.With("component", "webdav")),
+				ReadHeaderTimeout: 10 * time.Second}
+			go func() {
+				if err := dav.Serve(dl); err != nil && !errors.Is(err, http.ErrServerClosed) {
+					log.Error("webdav stopped", "err", err)
+				}
+			}()
+			defer dav.Close()
+			log.Info("webdav listening", "addr", dl.Addr().String())
+		}
+	}
 
 	var mounted mount.Mounted
 	if !noMount {

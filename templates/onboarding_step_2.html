@@ -97,7 +97,7 @@
                 <a href="https://godver3.github.io/cli_docs/getting-started/mount/" target="_blank" rel="noopener">mount setup guide</a>.
             </div>
             <label for="mount_tool" class="onboarding-label">Mount tool:</label>
-            <select id="mount_tool" class="onboarding-input">
+            <select id="mount_tool" name="mount_tool" class="onboarding-input">
                 <option value="builtin">Built-in mount (this container)</option>
                 <option value="climount">cli_mount (debrid + usenet, recommended)</option>
                 <option value="decypharr">Decypharr</option>
@@ -105,6 +105,11 @@
                 <option value="nzbdav">NzbDAV + rclone</option>
                 <option value="other">Something else</option>
             </select>
+            <div id="builtin-host-problems" class="settings-description" style="display:none; color: var(--warning-color, #e0a800);">
+                <b>The built-in mount can't run in this container yet:</b>
+                <ul>{% for p in builtin_host_problems %}<li>{{ p }}</li>{% endfor %}</ul>
+                Use the built-in compose file (<code>docker-compose.builtin.yml</code>), which already has these lines, or pick another mount tool.
+            </div>
             <label for="original_files_path" class="onboarding-label">Mount Path:</label>
             <div class="settings-description" id="mount-path-hint"></div>
             <div class="ob-inline">
@@ -1049,17 +1054,29 @@ document.addEventListener('DOMContentLoaded', function() {
         else if (mountTool.value !== 'builtin' && v === BUILTIN_ALL) mountPath.value = '';
     }
 
+    const BUILTIN_ENABLED = {{ builtin_enabled | tojson }};
+    const BUILTIN_HOST_OK = {{ (not builtin_host_problems) | tojson }};
+
     function guessMountTool() {
         if (useUsenet.checked && usenetBackend.value === 'builtin') return 'builtin';
+        if (BUILTIN_ENABLED) return 'builtin';
         const path = (mountPath.value || '').toLowerCase();
+        if (path && BUILTIN_ALL && path === BUILTIN_ALL.toLowerCase()) return 'builtin';
         for (const tool of ['zurg', 'decypharr', 'nzbdav', 'climount']) {
             if (path.includes(tool)) return tool;
         }
         if (useUsenet.checked && usenetBackend.value !== 'climount') return usenetBackend.value;
-        return path ? 'other' : 'climount';
+        // Fresh install: the built-in mount when this container can run it.
+        return path ? 'other' : (BUILTIN_HOST_OK ? 'builtin' : 'climount');
+    }
+
+    function updateBuiltinProblems() {
+        document.getElementById('builtin-host-problems').style.display =
+            (mountTool.value === 'builtin' && !BUILTIN_HOST_OK) ? '' : 'none';
     }
 
     function updateMountHint() {
+        updateBuiltinProblems();
         const [hint, example] = MOUNT_HINTS[mountTool.value] || MOUNT_HINTS.other;
         document.getElementById('mount-path-hint').textContent = hint + (example ? ` Example: ${example}` : '');
         mountPath.placeholder = example;

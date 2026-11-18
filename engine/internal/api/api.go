@@ -16,6 +16,8 @@
 //	POST   /replacements/verify    {cli_debrid_id, info_hash}: is the replacement playable?
 //	POST   /replacements/ack       {entry_name, file_name, info_hash, cli_debrid_id, reason}:
 //	                               remove one old broken file (cli_mount-compatible shapes)
+//	GET    /jobs/{id}/sidecars     subtitle sidecars saved in the job's folder
+//	PUT|DELETE /jobs/{id}/sidecars/{name}   save (raw body) / remove one
 package api
 
 import (
@@ -48,6 +50,9 @@ func Handler(e *engine.Engine) http.Handler {
 	mux.HandleFunc("PATCH /jobs/{id}", a.patch)
 	mux.HandleFunc("DELETE /jobs/{id}", a.del)
 	mux.HandleFunc("POST /jobs/{id}/retry", a.retry)
+	mux.HandleFunc("GET /jobs/{id}/sidecars", a.sidecarList)
+	mux.HandleFunc("PUT /jobs/{id}/sidecars/{name}", a.sidecarPut)
+	mux.HandleFunc("DELETE /jobs/{id}/sidecars/{name}", a.sidecarDel)
 	mux.HandleFunc("GET /tree", a.tree)
 	mux.HandleFunc("POST /cache/cleanup", a.cacheCleanup)
 	mux.HandleFunc("POST /cache/purge", a.cachePurge)
@@ -362,6 +367,47 @@ func (a *api) patch(w http.ResponseWriter, r *http.Request) {
 func (a *api) del(w http.ResponseWriter, r *http.Request) {
 	if err := a.e.Delete(r.PathValue("id")); err != nil {
 		storeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *api) sidecarList(w http.ResponseWriter, r *http.Request) {
+	if _, _, err := a.e.Store.Get(r.PathValue("id")); err != nil {
+		storeErr(w, err)
+		return
+	}
+	list := a.e.Sidecars(r.PathValue("id"))
+	if list == nil {
+		list = []engine.Sidecar{}
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+func (a *api) sidecarPut(w http.ResponseWriter, r *http.Request) {
+	data, err := io.ReadAll(io.LimitReader(r.Body, engine.MaxSidecarBytes+1))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := a.e.PutSidecar(r.PathValue("id"), r.PathValue("name"), data); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			storeErr(w, err)
+		} else {
+			writeErr(w, http.StatusBadRequest, err)
+		}
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *api) sidecarDel(w http.ResponseWriter, r *http.Request) {
+	if err := a.e.DeleteSidecar(r.PathValue("id"), r.PathValue("name")); err != nil {
+		if errors.Is(err, engine.ErrNotSidecar) {
+			writeErr(w, http.StatusBadRequest, err)
+		} else {
+			writeErr(w, http.StatusNotFound, err)
+		}
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

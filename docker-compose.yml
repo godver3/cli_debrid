@@ -11,21 +11,10 @@ services:
       - /host/location/config:/user/config
       - /host/location/logs:/user/logs
       - /mnt:/mnt
-      # Built-in mount (optional, Usenet Provider = builtin): uncomment these,
-      # the devices/cap_add/security_opt block below, and give Plex the same
-      # host folder. rshared lets the engine's FUSE mount show on the host.
-      # - /host/location/clid:/mnt/clid:rshared
-      # - /host/location/cache:/user/cache
-    # devices:
-    #   - /dev/fuse
-    # cap_add:
-    #   - SYS_ADMIN
-    # security_opt:
-    #   - apparmor:unconfined
+    # For an existing mount (Zurg, Decypharr, cli_mount, NzbDAV...). To use
+    # cli_debrid's built-in mount instead, start from docker-compose.builtin.yml.
     environment:
       - TZ=America/Edmonton
-    # Time to shut down cleanly (the built-in mount unmounts) before Docker kills it.
-    stop_grace_period: 40s
     restart: unless-stopped
     tty: true
     stdin_open: true

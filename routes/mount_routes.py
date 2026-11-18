@@ -40,10 +40,11 @@ def _start_background(state):
         logging.warning(f'Mount debrid sync not started: {exc}')
 
 SECTION = 'Built-in Mount'
-SECRET_KEYS = ('api_token',)
+SECRET_KEYS = ('api_token', 'webdav_password')
 GROUPS = [
     ('Mount', ['mount_path', 'allow_other', 'uid', 'gid', 'umask']),
-    ('Debrid', ['debrid_streaming']),
+    ('Debrid', ['enabled', 'debrid_streaming']),
+    ('WebDAV share', ['webdav_enabled', 'webdav_port', 'webdav_username', 'webdav_password']),
     ('Files', ['allowed_extensions', 'deobfuscate_mode']),
     ('Streaming', ['read_ahead_mb', 'max_connections_per_file', 'precache_mb', 'warm_connections',
                    'playback_reserve_percent', 'plex_playback_protection', 'buffer_memory_mb', 'idle_timeout_minutes']),
@@ -59,7 +60,9 @@ LABELS = {
     'gid': 'Group ID (GID)', 'umask': 'UMASK', 'read_ahead_mb': 'Read ahead (MB)',
     'max_connections_per_file': 'Max connections per file', 'buffer_memory_mb': 'Buffer memory (MB)',
     'idle_timeout_minutes': 'Connection idle timeout (minutes)', 'precache_mb': 'Pre-cache on open (MB)',
-    'warm_connections': 'Warm connections per server', 'debrid_streaming': 'Stream debrid torrents through this mount', 'plex_prewarm': 'Prewarm the next episode while one plays',
+    'warm_connections': 'Warm connections per server', 'debrid_streaming': 'Stream debrid torrents through this mount',
+    'enabled': 'Run the built-in mount for debrid (without usenet)', 'webdav_enabled': 'Share the mount over WebDAV',
+    'webdav_port': 'WebDAV port', 'webdav_username': 'WebDAV username', 'webdav_password': 'WebDAV password', 'plex_prewarm': 'Prewarm the next episode while one plays',
     'prewarm_trigger_percent': 'Start at (% watched)', 'prewarm_percent': 'Fetch (% of next episode)',
     'prewarm_max_mb': 'Fetch at most (MB)', 'playback_reserve_percent': 'Playback connection reserve %',
     'plex_playback_protection': 'Plex playback protection (reserve only for what Plex is playing)', 'cache_dir': 'Cache directory',
@@ -84,9 +87,11 @@ def mount_page_visible() -> bool:
 
 
 def builtin_selected() -> bool:
+    """The built-in mount is in use (usenet backend, or debrid-only)."""
     try:
-        up = get_setting('Usenet Provider') or {}
-        return bool(up.get('enabled')) and (up.get('provider') or '').strip().lower() == 'builtin'
+        from utilities import builtin_engine
+        return builtin_engine.selected({'Usenet Provider': get_setting('Usenet Provider') or {},
+                                        'Built-in Mount': get_setting('Built-in Mount') or {}})
     except Exception:
         return False
 
@@ -380,9 +385,10 @@ def internal_link():
     auth = request.headers.get('Authorization', '')
     if not token or auth != f'Bearer {token}' or request.remote_addr not in ('127.0.0.1', '::1'):
         return jsonify({'error': 'forbidden'}), 403
-    ref = str((request.get_json(silent=True) or {}).get('ref') or '')
+    body = request.get_json(silent=True) or {}
+    ref = str(body.get('ref') or '')
     try:
-        url, ttl = mount_debrid.link(ref)
+        url, ttl = mount_debrid.link(ref, refresh=bool(body.get('refresh')))
     except Exception as exc:
         logging.warning(f'[mount debrid] no link for {ref}: {exc}')
         return jsonify({'error': str(exc)}), 502

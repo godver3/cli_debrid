@@ -270,6 +270,27 @@ class HighwayProvider(DebridProvider):
         status = self.get_torrent_info_with_status(torrent_id)
         return status.data if status.status == TorrentFetchStatus.OK else None
 
+    # ---- built-in mount ---------------------------------------------------
+
+    supports_mount_links = True
+    MOUNT_LINK_TTL = 23 * 3600  # signed links; cli_mount caps them at 23h
+
+    def mount_files(self, torrent_id: str) -> Optional[Tuple[str, List[Dict]]]:
+        info = self.get_torrent_info(torrent_id)
+        if not info or info.get('status') != 'downloaded':
+            return None
+        files = [{'name': f.get('path') or '', 'size': int(f.get('bytes') or 0), 'file_id': str(f['id'])}
+                 for f in info.get('files') or [] if f.get('id') is not None and not f.get('partial')]
+        return (info.get('filename') or str(torrent_id), files) if files else None
+
+    def mount_link(self, torrent_id: str, file_id: str) -> Tuple[str, int]:
+        transfer_id, _ = self._split_id(torrent_id)
+        res = hw.get_file(self.api_key, transfer_id, file_id)
+        url = (res.get('file') or {}).get('download_url')
+        if not url:
+            raise ValueError(f'HighWay gave no download link for {torrent_id}/{file_id}')
+        return url, self.MOUNT_LINK_TTL
+
     def get_torrent_info_with_status(self, torrent_id: str) -> TorrentInfoStatus:
         transfer_id, hash_value = self._split_id(torrent_id)
         try:

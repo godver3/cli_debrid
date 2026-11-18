@@ -459,6 +459,17 @@ def download_subtitles_for_video(video_path, rating_key=None, name_hint=None):
                     except Exception as e:
                         logging.error(f"Failed to save subtitle {symlink_srt}: {e}")
                 else:
+                    # The built-in mount takes subtitles as ordinary file
+                    # writes into job folders, so an unwritable folder there
+                    # is a real error: cli_mount's API won't help.
+                    try:
+                        from utilities import builtin_engine as _be
+                        if _be.selected():
+                            logging.warning(f"[subs] {base_name}: {symlink_dir} is not writable "
+                                            "(built-in mount: is the engine running?); subtitle not saved")
+                            continue
+                    except Exception:
+                        pass
                     # Fallback: cli_mount sidecar injection
                     try:
                         from usenet.climount_client import get_climount_client

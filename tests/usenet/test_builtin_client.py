@@ -8,7 +8,6 @@ is the chosen backend. The engine itself is tested in engine/ (Go).
 import json
 import os
 import sys
-import types
 import unittest
 from unittest import mock
 

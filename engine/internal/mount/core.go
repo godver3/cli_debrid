@@ -3,8 +3,11 @@ package mount
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
+	"os"
 	"strings"
+	"sync"
 
 	"github.com/godver3/cli_debrid/engine/internal/engine"
 	"github.com/godver3/cli_debrid/engine/internal/job"
@@ -76,13 +79,16 @@ const (
 	kindTop
 	kindFolder
 	kindFile
+	kindSidecar
 )
 
 type resolved struct {
-	kind   int
-	top    string
-	folder *engine.Folder
-	entry  job.Entry
+	kind    int
+	top     string
+	folder  *engine.Folder
+	entry   job.Entry
+	sidecar engine.Sidecar
+	name    string // last path element as given (for creating a sidecar)
 }
 
 // resolve maps "/__all__/<folder>/<file>" (either slash) to the tree.
@@ -122,7 +128,11 @@ func resolve(e *engine.Engine, p string) resolved {
 			return resolved{kind: kindFile, top: parts[0], folder: f, entry: en}
 		}
 	}
-	return resolved{}
+	if sc, ok := e.Sidecar(f.JobID, parts[2], true); ok {
+		return resolved{kind: kindSidecar, top: parts[0], folder: f, sidecar: sc, name: sc.Name}
+	}
+	// Not there: callers creating a sidecar need the folder and the name.
+	return resolved{folder: f, top: parts[0], name: parts[2]}
 }
 
 func foldCase(e *engine.Engine, top, name string) *engine.Folder {
@@ -132,4 +142,103 @@ func foldCase(e *engine.Engine, top, name string) *engine.Folder {
 		}
 	}
 	return nil
+}
+
+// ---- sidecar writes (subtitles saved into the mount) -----------------------
+
+// sidecarWriter buffers one sidecar being written; commit stores it.
+type sidecarWriter struct {
+	mu    sync.Mutex
+	e     *engine.Engine
+	jobID string
+	name  string
+	buf   []byte
+	dirty bool
+}
+
+// newSidecarWriter starts from the stored file unless trunc is set.
+func newSidecarWriter(e *engine.Engine, jobID, name string, trunc bool) *sidecarWriter {
+	w := &sidecarWriter{e: e, jobID: jobID, name: name, dirty: trunc}
+	if !trunc {
+		if p, err := e.SidecarPath(jobID, name); err == nil {
+			w.buf, _ = os.ReadFile(p)
+		}
+	}
+	return w
+}
+
+func (w *sidecarWriter) writeAt(data []byte, off int64) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	end := off + int64(len(data))
+	if off < 0 || end > engine.MaxSidecarBytes {
+		return 0, ErrIO
+	}
+	if end > int64(len(w.buf)) {
+		w.buf = append(w.buf, make([]byte, end-int64(len(w.buf)))...)
+	}
+	copy(w.buf[off:], data)
+	w.dirty = true
+	return len(data), nil
+}
+
+func (w *sidecarWriter) readAt(dest []byte, off int64) int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if off >= int64(len(w.buf)) {
+		return 0
+	}
+	return copy(dest, w.buf[off:])
+}
+
+func (w *sidecarWriter) truncate(size int64) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if size < 0 || size > engine.MaxSidecarBytes {
+		return
+	}
+	if size <= int64(len(w.buf)) {
+		w.buf = w.buf[:size]
+	} else {
+		w.buf = append(w.buf, make([]byte, size-int64(len(w.buf)))...)
+	}
+	w.dirty = true
+}
+
+func (w *sidecarWriter) size() int64 {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return int64(len(w.buf))
+}
+
+// commit stores the file if it changed (called on flush and release).
+func (w *sidecarWriter) commit() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.dirty {
+		return nil
+	}
+	if err := w.e.PutSidecar(w.jobID, w.name, w.buf); err != nil {
+		return err
+	}
+	w.dirty = false
+	return nil
+}
+
+// readSidecar reads a stored sidecar from disk.
+func readSidecar(e *engine.Engine, jobID, name string, dest []byte, off int64) (int, error) {
+	p, err := e.SidecarPath(jobID, name)
+	if err != nil {
+		return 0, err
+	}
+	f, err := os.Open(p)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	n, err := f.ReadAt(dest, off)
+	if errors.Is(err, io.EOF) {
+		err = nil
+	}
+	return n, err
 }

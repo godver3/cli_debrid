@@ -193,3 +193,50 @@ func TestMountServesJobsThroughFUSE(t *testing.T) {
 		t.Fatalf("deleted job still visible: %v", err)
 	}
 }
+
+// Subtitles can be saved into a job folder through the mount (cli_debrid's
+// subtitle downloader, Bazarr); nothing else can be written.
+func TestMountSidecarWrites(t *testing.T) {
+	fuseAvailable(t)
+	movie := random(5, 200_000)
+	e, _ := readyEngine(t, movie)
+	dir := t.TempDir()
+	srv, err := Mount(e, dir, Options{UID: uint32(os.Getuid()), GID: uint32(os.Getgid())}, nil)
+	if err != nil {
+		t.Skipf("mount not permitted here: %v", err)
+	}
+	defer srv.Unmount()
+	folder := filepath.Join(dir, "__all__", "Movie")
+	srt := filepath.Join(folder, "Movie.en.srt")
+
+	if err := syscall.Access(folder, 2 /* W_OK */); err != nil {
+		t.Fatalf("job folder not writable: %v", err)
+	}
+	if err := os.WriteFile(srt, []byte("first version, longer"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(srt, []byte("second"), 0o644); err != nil { // O_TRUNC rewrite
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(srt); err != nil || string(got) != "second" {
+		t.Fatalf("read back %q, %v", got, err)
+	}
+	if got := strings.Join(names(t, folder), ","); got != "Movie.en.srt,Movie.mkv" {
+		t.Fatalf("listing %s", got)
+	}
+	if err := os.WriteFile(filepath.Join(folder, "notes.txt"), []byte("x"), 0o644); !errors.Is(err, syscall.EROFS) {
+		t.Fatalf("non-subtitle create: %v", err)
+	}
+	if _, err := os.OpenFile(filepath.Join(folder, "Movie.mkv"), os.O_WRONLY, 0); !errors.Is(err, syscall.EROFS) {
+		t.Fatalf("write-open of a streamed file: %v", err)
+	}
+	if err := os.Remove(filepath.Join(folder, "Movie.mkv")); !errors.Is(err, syscall.EROFS) {
+		t.Fatalf("delete of a streamed file: %v", err)
+	}
+	if err := os.Remove(srt); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(names(t, folder), ","); got != "Movie.mkv" {
+		t.Fatalf("after delete %s", got)
+	}
+}
