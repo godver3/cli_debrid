@@ -320,3 +320,11 @@ func acquirePureGoDecoder(r io.Reader) *Decoder {
 	yd.Reader = newPureGoYencDecoder(r, &yd.Meta)
 	return yd
 }
+
+// IsTruncated reports a decode that reached the article's =yend trailer
+// with fewer bytes than the trailer says: the server's copy is truncated
+// (rapidyenc's "expected size N but got M"). A missing trailer is not
+// this: a dropped connection looks the same.
+func IsTruncated(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "expected size")
+}

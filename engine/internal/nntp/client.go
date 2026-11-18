@@ -200,8 +200,18 @@ func (c *Client) Body(ctx context.Context, prio Priority, id string) ([]byte, Me
 	var meta Meta
 	err := c.attempt(ctx, prio, id, func(cn *conn) (bool, error) {
 		d, m, err := cn.body(id)
+		if errors.Is(err, ErrTruncated) {
+			return false, nil // as below
+		}
 		if err != nil {
 			return false, err
+		}
+		if m.PartSize > 0 && int64(len(d)) < m.PartSize {
+			// The article's own =ypart says it holds more than it decoded
+			// to: this server's copy is truncated. Like a missing article,
+			// the next server is asked; short or missing on every server is
+			// proof (cli_mount's relayoutDead: "a segment that decodes short").
+			return false, nil
 		}
 		data, meta = d, m
 		return true, nil

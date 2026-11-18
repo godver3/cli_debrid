@@ -191,6 +191,12 @@ func (c *conn) body(id string) ([]byte, Meta, error) {
 	var out bytes.Buffer
 	out.Grow(800 * 1024)
 	if _, err := io.Copy(&out, dec); err != nil {
+		if yenc.IsTruncated(err) {
+			// The whole article (through =yend and the terminator) arrived
+			// and decoded short: this server's copy is truncated.
+			c.lastUsed = time.Now()
+			return nil, Meta{}, fmt.Errorf("nntp: %s: %w: %v", id, ErrTruncated, err)
+		}
 		return nil, Meta{}, fmt.Errorf("nntp: decode %s: %w", id, err)
 	}
 	m := dec.Meta

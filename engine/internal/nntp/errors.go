@@ -36,5 +36,9 @@ func classify(code int, msg string) error {
 	return &ProtocolError{Code: code, Msg: msg}
 }
 
+// ErrTruncated: a server's copy of an article decodes shorter than its own
+// yEnc trailer says. Treated like a missing article on that server.
+var ErrTruncated = errors.New("article truncated on the server")
+
 // IsNotFound reports whether err is a confirmed missing article.
 func IsNotFound(err error) bool { return errors.Is(err, ErrArticleNotFound) }

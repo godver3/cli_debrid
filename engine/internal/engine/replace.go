@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os/exec"
 	"path"
 	"strings"
 
@@ -108,8 +109,36 @@ func (e *Engine) VerifyReplacement(ctx context.Context, cliID int, jobID string)
 			return out, nil
 		}
 	}
+	// cli_mount verifies a replacement with its container header and
+	// ffprobe (always, not only with media_probe_usenet on).
+	head := make([]byte, job.MediaHeaderLen)
+	if entry.Size >= job.MediaHeaderLen {
+		if _, err := r.ReadAtCtx(ctx, nntp.Live, head, 0); err == nil && !job.MediaHeaderValid(entry.Name, head) {
+			out.Status, out.Reason = "broken", ReasonHeaderInvalid
+			return out, nil
+		}
+	}
+	switch p := e.prober.probe(ctx, jobID, entry); {
+	case p.state == health.Broken:
+		out.Status, out.Reason = "broken", p.reason
+		return out, nil
+	case p.state == health.Healthy, p.reason == reasonProbeUnavailble && !ffprobeInstalled(e.cfg.FFprobe):
+		// No ffprobe on this machine (e.g. Windows without it): the reads
+		// above are all the proof there is, as before.
+	default:
+		out.Status, out.Reason = "unknown", p.reason
+		return out, nil
+	}
 	out.Status = "healthy"
 	return out, nil
+}
+
+func ffprobeInstalled(bin string) bool {
+	if bin == "" {
+		bin = "ffprobe"
+	}
+	_, err := exec.LookPath(bin)
+	return err == nil
 }
 
 // pickEntry finds the entry registered for cliID, else the only media

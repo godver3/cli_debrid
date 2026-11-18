@@ -87,6 +87,8 @@ type Config struct {
 	ImportTimeout int             `json:"import_timeout_seconds"` // per import; a timeout is retryable, never final
 	ImportSample  float64         `json:"import_sample_percent"`  // % of articles checked before a job is ready (0 = off)
 	HealthSample  float64         `json:"health_sample_percent"`  // % checked by health checks (0 = 10%, as cli_mount)
+	MediaProbe    bool            `json:"media_probe"`            // health checks also run ffprobe (cli_mount's media_probe_usenet)
+	FFprobe       string          `json:"ffprobe_path"`           // ffprobe binary (default: "ffprobe" on PATH)
 	IdleTimeout   int             `json:"idle_timeout_seconds"`   // close NNTP connections unused this long (default 300)
 	CacheExpiry   int             `json:"cache_expiry_seconds"`   // drop disk cache entries unused this long (0 = only by size)
 	LinkCallback  string          `json:"link_callback"`          // cli_debrid URL that hands out debrid download links
@@ -217,6 +219,7 @@ type Engine struct {
 	tops      []string                      // top folders in listing order
 
 	healthSem chan struct{}
+	prober    mediaProber
 	streams   streamTable
 	links     *callbackLinks
 	stopReq   chan struct{}
@@ -266,6 +269,7 @@ func New(cfg Config, log *slog.Logger) (*Engine, error) {
 		go e.worker()
 	}
 	e.links = newCallbackLinks(cfg.LinkCallback, cfg.Token, log.With("component", "debrid"))
+	e.prober.e = e
 	e.Client.SetLogger(log.With("component", "nntp"))
 	e.wg.Add(1)
 	go e.maintain()
@@ -296,6 +300,7 @@ func (e *Engine) Close() {
 	e.cancel()
 	e.wg.Wait()
 	e.Client.Close()
+	e.prober.close()
 	if e.Disk != nil {
 		e.Disk.Flush()
 	}
@@ -1006,9 +1011,15 @@ func (e *Engine) runCheck(id string, full bool) {
 	// container header proves the file can't play even with every article
 	// there (archive volumes stitched in the wrong order).
 	badHeader := e.headerCheck(id, res, rep)
+	probeUnknown := 0
+	if e.cfg.MediaProbe {
+		var probed []store.BrokenFile
+		probed, probeUnknown = e.mediaCheck(id, res, rep, badHeader)
+		badHeader = append(badHeader, probed...)
+	}
 	now := time.Now()
 	e.Store.Update(id, func(j *store.Job) {
-		h := store.Health{Status: rep.Status, CheckedAt: now, Inconclusive: rep.Inconclusive}
+		h := store.Health{Status: rep.Status, CheckedAt: now, Inconclusive: rep.Inconclusive + probeUnknown}
 		for _, f := range rep.Broken() {
 			h.Broken = append(h.Broken, store.BrokenFile{Name: f.Name, Reason: ReasonSegmentMissing,
 				Detail: f.Reason, Segment: f.Segment, Via: "check", At: now})

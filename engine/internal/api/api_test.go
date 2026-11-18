@@ -8,6 +8,8 @@ import (
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -329,6 +331,15 @@ func TestHealthForRepair(t *testing.T) {
 
 func TestReplacementVerifyAndAck(t *testing.T) {
 	h := newHarness(t)
+	// Replacements are always checked with ffprobe (as cli_mount does); a
+	// stub stands in for it: it says "playable" until rewritten below.
+	stub := filepath.Join(t.TempDir(), "ffprobe")
+	playable := "#!/bin/sh\necho '{\"streams\":[{\"codec_type\":\"video\"}]}'\n"
+	if err := os.WriteFile(stub, []byte(playable), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	h.cfg.FFprobe = stub
+	h.restart()
 	var pack, single jobOut
 	h.do("POST", "/jobs?name=Show.S01", nzbXML(h.s, "rp",
 		file{Name: "Show.S01E01.mkv", Data: random(20, 300_000)},
@@ -347,6 +358,13 @@ func TestReplacementVerifyAndAck(t *testing.T) {
 	if v["status"] != "healthy" || v["file_name"] != "Show.S01E02.mkv" || v["entry_name"] != "Show.S01" {
 		t.Fatalf("verify healthy: %v", v)
 	}
+	// ffprobe can't open it: broken, like cli_mount's verification.
+	os.WriteFile(stub, []byte("#!/bin/sh\necho 'Invalid data found when processing input' >&2\nexit 1\n"), 0o755)
+	h.do("POST", "/replacements/verify", []byte(`{"cli_debrid_id":101,"info_hash":"`+pack.ID+`"}`), &v)
+	if v["status"] != "broken" || v["reason"] != "media_probe_failed" {
+		t.Fatalf("verify unplayable: %v", v)
+	}
+	os.WriteFile(stub, []byte(playable), 0o755)
 	// Single-media job with no registration yet: its only file is the target.
 	h.s.Remove("rs0.3@test")
 	h.do("POST", "/replacements/verify", []byte(`{"cli_debrid_id":7,"info_hash":"`+single.ID+`"}`), &v)

@@ -140,3 +140,34 @@ func (e *Engine) runDebridCheck(id string) {
 	e.rebuildTree()
 	e.log.Info("debrid health checked", "job", id, "status", h.Status, "broken", len(h.Broken), "inconclusive", h.Inconclusive)
 }
+
+// mediaCheck runs cli_mount's ffprobe check (Built-in Mount → media probe,
+// cli_mount's media_probe_usenet) on media files nothing else proved broken.
+func (e *Engine) mediaCheck(id string, res *job.Result, rep health.Report, already []store.BrokenFile) ([]store.BrokenFile, int) {
+	skip := map[string]bool{}
+	for _, f := range rep.Broken() {
+		skip[f.Name] = true
+	}
+	for _, b := range already {
+		skip[b.Name] = true
+	}
+	var out []store.BrokenFile
+	unknown := 0
+	now := time.Now()
+	for _, en := range res.Entries {
+		if skip[en.Name] || !isMedia(en.Name) {
+			continue
+		}
+		r := e.prober.probe(e.ctx, id, en)
+		switch r.state {
+		case health.Broken:
+			out = append(out, store.BrokenFile{Name: en.Name, Reason: r.reason, Detail: "ffprobe", Segment: r.segment,
+				Via: "check", At: now})
+		case health.Healthy:
+		default:
+			unknown++
+			e.log.Debug("media probe inconclusive", "job", id, "file", en.Name, "reason", r.reason)
+		}
+	}
+	return out, unknown
+}
