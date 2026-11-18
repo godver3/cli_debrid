@@ -7,10 +7,14 @@
 .mnt .sub{color:#999;margin:0 0 18px}
 .mnt .warn{background:#3a2a12;border:1px solid #8a5a12;color:#f3d39b;border-radius:8px;padding:10px 14px;margin-bottom:14px}
 .mnt .bad{background:#3a1616;border:1px solid #8a2a2a;color:#f2b8b8;border-radius:8px;padding:10px 14px;margin-bottom:14px}
-.mnt .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:18px}
+.mnt .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:18px}
+@media (min-width:600px){.mnt .grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (min-width:1000px){.mnt .grid{grid-template-columns:repeat(6,minmax(0,1fr))}}
+.mnt .lastapply{color:#999;font-size:13px;margin:-8px 0 14px}
 .mnt .tile{background:#1e1e1e;border:1px solid #333;border-radius:8px;padding:10px 12px}
 .mnt .tile .k{color:#999;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
-.mnt .tile .v{font-size:1.25em;margin-top:4px;font-variant-numeric:tabular-nums;word-break:break-all}
+.mnt .tile .v{font-size:1.15em;margin-top:4px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere;line-height:1.3}
+.mnt .tile .s{color:#888;font-size:12px;margin-top:3px;font-variant-numeric:tabular-nums}
 .mnt .ok{color:#7fd47f}.mnt .no{color:#f08a8a}.mnt .mid{color:#e8c46a}
 .mnt .card{background:#1a1a1a;border:1px solid #333;border-radius:8px;margin-bottom:14px}
 .mnt .card h3{margin:0;padding:10px 14px;border-bottom:1px solid #333;font-size:1.05em}
@@ -74,6 +78,7 @@
   <div class="pane" data-pane="overview">
   <div class="grid" id="tiles"></div>
   <div class="grid" id="tiles2"></div>
+  <div class="lastapply" id="lastapply" style="display:none"></div>
   <div class="actions" style="margin:4px 0 14px">
     <button type="button" class="btn sec" id="cleanupBtn" title="Apply the cache size limit and expiry now, remove stray cache files, close idle connections">Run cleanup</button>
     <button type="button" class="btn danger" id="purgeBtn" title="Empty the memory and disk caches">Purge cache</button>
@@ -285,7 +290,7 @@
     (settings.virtual_folders || []).forEach(vfRow);
   }
 
-  function tile(k, v, cls) { return '<div class="tile"><div class="k">' + esc(k) + '</div><div class="v ' + (cls || '') + '">' + v + '</div></div>'; }
+  function tile(k, v, cls, sub) { return '<div class="tile"><div class="k">' + esc(k) + '</div><div class="v ' + (cls || '') + '">' + v + '</div>' + (sub ? '<div class="s">' + sub + '</div>' : '') + '</div>'; }
 
   function render(st) {
     const probs = st.selected ? (st.problems || []) : [];
@@ -293,29 +298,35 @@
     $('#problems').innerHTML = probs.length ? '<strong>The engine can\'t start:</strong><br>' + probs.map(esc).join('<br>') : '';
     const e = st.engine, s = st.stats;
     const stateCls = st.state === 'RUNNING' ? 'ok' : (st.state === 'STARTING' ? 'mid' : 'no');
-    const jobs = e && e.jobs ? Object.entries(e.jobs).map(([k, v]) => v + ' ' + k).join(', ') || 'none' : '—';
+    // Biggest state first ("543 ready"), the rest ("2 failed") as the detail line.
+    const jobList = e && e.jobs ? Object.entries(e.jobs).sort((a, b) => b[1] - a[1]).map(([k, v]) => v + ' ' + k) : null;
+    const jobs = jobList ? (jobList[0] || 'none') : '—';
+    const jobsSub = jobList && jobList.length > 1 ? esc(jobList.slice(1).join(' · ')) : '';
     const dc = s && s.disk_cache;
     $('#tiles').innerHTML =
       tile('Engine', esc(st.selected ? st.state : 'not selected'), st.selected ? stateCls : 'mid') +
       tile('Mount', e ? esc(e.mount_path) + (e.ready ? ' <span class="ok">●</span>' : ' <span class="no">●</span>') : '—') +
-      tile('Jobs', esc(jobs)) +
-      tile('Downloaded', s ? fmtBytes(s.bytes_downloaded) + ' <span style="color:#888;font-size:.7em">' + (s.articles || 0) + ' articles</span>' : '—') +
+      tile('Jobs', esc(jobs), '', jobsSub) +
+      tile('Downloaded', s ? fmtBytes(s.bytes_downloaded) : '—', '', s ? (s.articles || 0) + ' articles' : '') +
       tile('Missing articles', s ? String(s.articles_missing || 0) : '—', s && s.articles_missing ? 'mid' : '') +
-      tile('Disk cache', dc ? fmtBytes(dc.bytes) + ' <span style="color:#888;font-size:.7em">' + (dc.hits || 0) + ' hits / ' + (dc.misses || 0) + ' misses</span>' : '—') +
-      (st.last_sync && st.last_sync.result ? tile('Last apply', esc(st.last_sync.running ? 'applying…' : st.last_sync.result)) : '');
+      tile('Disk cache', dc ? fmtBytes(dc.bytes) : '—', '', dc ? (dc.hits || 0) + ' hits · ' + (dc.misses || 0) + ' misses' : '');
+    const la = st.last_sync && st.last_sync.result ? (st.last_sync.running ? 'applying…' : st.last_sync.result) : '';
+    $('#lastapply').style.display = la ? '' : 'none';
+    $('#lastapply').textContent = la ? 'Last settings apply: ' + la : '';
     const o = s && s.overview;
     const dur = sec => { sec = sec || 0; const d = Math.floor(sec / 86400), h = Math.floor(sec / 3600) % 24, m = Math.floor(sec / 60) % 60; return (d ? d + 'd ' : '') + (d || h ? h + 'h ' : '') + m + 'm'; };
     $('#tiles2').innerHTML = o ? (
-      tile('Content', (o.content.jobs || 0) + ' folders · ' + fmtBytes(o.content.bytes || 0) +
-        ' <span style="color:#888;font-size:.7em">' + (o.content.usenet_jobs || 0) + ' usenet / ' + (o.content.debrid_jobs || 0) + ' debrid · ' + (o.content.files || 0) + ' files</span>') +
-      tile('Streams', (o.streams.open || 0) + ' open' + (o.streams.rate_bytes ? ' · ' + fmtBytes(o.streams.rate_bytes) + '/s' : '')) +
-      tile('Health', (o.health.healthy || 0) + ' healthy · ' + (o.health.broken || 0) + ' broken' +
-        ' <span style="color:#888;font-size:.7em">' + (o.health.unchecked || 0) + ' unchecked</span>', o.health.broken ? 'mid' : '') +
-      tile('Plex protection', !o.plex_protection.enabled ? 'off' : (o.plex_protection.active ? o.plex_protection.files.length + ' protected stream(s)' :
-        (o.plex_protection.poll_ok ? 'on · nothing playing' : 'on · ' + esc(o.plex_protection.error || 'waiting for Plex'))),
-        o.plex_protection.enabled && !o.plex_protection.poll_ok && o.plex_protection.error ? 'mid' : '') +
-      tile('Memory cache', fmtBytes((s.mem_cache || {}).bytes || 0) + ' <span style="color:#888;font-size:.7em">' + ((s.mem_cache || {}).segments || 0) + ' segments</span>') +
-      tile('Engine', 'up ' + dur(o.uptime_seconds) + ' <span style="color:#888;font-size:.7em">' + fmtBytes(o.runtime.heap_bytes || 0) + ' heap · ' + (o.runtime.goroutines || 0) + ' goroutines</span>')
+      tile('Content', fmtBytes(o.content.bytes || 0), '',
+        (o.content.jobs || 0) + ' folders · ' + (o.content.usenet_jobs || 0) + ' usenet · ' + (o.content.debrid_jobs || 0) + ' debrid · ' + (o.content.files || 0) + ' files') +
+      tile('Streams', (o.streams.open || 0) + ' open', '', o.streams.rate_bytes ? fmtBytes(o.streams.rate_bytes) + '/s' : '') +
+      tile('Health', (o.health.broken || 0) + ' broken', o.health.broken ? 'mid' : '',
+        (o.health.healthy || 0) + ' healthy · ' + (o.health.unchecked || 0) + ' unchecked') +
+      tile('Plex protection', !o.plex_protection.enabled ? 'off' : (o.plex_protection.active ? o.plex_protection.files.length + ' protected' : 'on'),
+        o.plex_protection.enabled && !o.plex_protection.poll_ok && o.plex_protection.error ? 'mid' : '',
+        !o.plex_protection.enabled ? '' : (o.plex_protection.active ? 'stream(s) playing' :
+          (o.plex_protection.poll_ok ? 'nothing playing' : esc(o.plex_protection.error || 'waiting for Plex')))) +
+      tile('Memory cache', fmtBytes((s.mem_cache || {}).bytes || 0), '', ((s.mem_cache || {}).segments || 0) + ' segments') +
+      tile('Uptime', dur(o.uptime_seconds), '', fmtBytes(o.runtime.heap_bytes || 0) + ' heap · ' + (o.runtime.goroutines || 0) + ' goroutines')
     ) : '';
     const pools = (s && s.pools) || (e && e.providers) || [];
     $('#pools tbody').innerHTML = pools.length ? pools.map(p => {
