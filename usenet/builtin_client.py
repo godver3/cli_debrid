@@ -6,8 +6,10 @@ same machine (supervised by cli_debrid) and serves a localhost JSON API;
 this client translates it into the same method set and return shapes as
 CliMountClient, so every caller works unchanged.
 
-Not supported by the engine (capabilities left out): debrid torrent sync,
-sidecar uploads (the mount is read-only) and log sharing.
+Debrid torrents on the mount are mirrored from the accounts by
+utilities/mount_debrid.py; their health records come back here with
+protocol "torrent" (info_hash = the torrent's hash) for
+usenet/debrid_repair_engine.py, like cli_mount's.
 """
 
 import collections
@@ -353,6 +355,17 @@ class BuiltinClient(UnsupportedFeaturesMixin):
 
     # ---- health / repair -----------------------------------------------------
 
+    @staticmethod
+    def _protocol(j: dict) -> str:
+        """cli_mount's protocol names: nzb, or torrent for debrid jobs."""
+        return 'torrent' if j.get('protocol') == 'debrid' else 'nzb'
+
+    @staticmethod
+    def _hash(j: dict) -> str:
+        """The id cli_debrid's records use: a debrid job's torrent hash
+        (falls back to the job id), a usenet job's id."""
+        return (j.get('hash') or j.get('id', '')) if j.get('protocol') == 'debrid' else j.get('id', '')
+
     def _broken_entries(self) -> List[dict]:
         """Broken files in cli_mount's /api/repair/health shape."""
         code, body = self._call('GET', '/health', params={'status': 'broken'})
@@ -361,11 +374,12 @@ class BuiltinClient(UnsupportedFeaturesMixin):
         out = []
         for j in body:
             health = j.get('health') or {}
-            files = [{'file_name': b.get('file_name', ''), 'info_hash': j.get('id', ''),
+            h = self._hash(j)
+            files = [{'file_name': b.get('file_name', ''), 'info_hash': h,
                       'cli_debrid_id': (j.get('cli_ids') or {}).get(b.get('file_name', '')),
                       'reason': b.get('reason', '')} for b in health.get('broken_files') or []]
             out.append({'entry_name': _folder(j) or j.get('name', ''), 'name': _folder(j) or j.get('name', ''),
-                        'info_hash': j.get('id', ''), 'protocol': 'nzb', 'status': 'broken',
+                        'info_hash': h, 'job_id': j.get('id', ''), 'protocol': self._protocol(j), 'status': 'broken',
                         'failure_reason': files[0]['reason'] if files else '', 'broken_files': files})
         return out
 
@@ -375,8 +389,9 @@ class BuiltinClient(UnsupportedFeaturesMixin):
             return None
         if status == 'broken':
             return self._broken_entries()
-        return [{'entry_name': _folder(j) or j.get('name', ''), 'info_hash': j.get('id', ''), 'protocol': 'nzb',
-                 'status': (j.get('health') or {}).get('status', 'unknown')} for j in body]
+        return [{'entry_name': _folder(j) or j.get('name', ''), 'info_hash': self._hash(j), 'job_id': j.get('id', ''),
+                 'protocol': self._protocol(j), 'status': (j.get('health') or {}).get('status', 'unknown')}
+                for j in body]
 
     def fetch_broken_items(self) -> list:
         """One item per broken file, like CliMountClient.fetch_broken_items."""
@@ -427,9 +442,10 @@ class BuiltinClient(UnsupportedFeaturesMixin):
 
     def run_health_scan(self, protocol: str, full: bool = False, wait: bool = False,
                         timeout: int = 300, log_label: str = '') -> bool:
-        if protocol != 'nzb':
-            return False  # the engine holds no debrid torrents yet
-        q = {'full': 'true' if full else 'false', 'ignore_last_checked': 'true' if full else 'false'}
+        if protocol not in ('nzb', 'torrent', ''):
+            return False
+        q = {'full': 'true' if full else 'false', 'ignore_last_checked': 'true' if full else 'false',
+             'protocol': protocol}
         code, run = self._call('POST', '/health/run', params=q)
         if code != 202:
             return False
@@ -443,6 +459,55 @@ class BuiltinClient(UnsupportedFeaturesMixin):
 
     def trigger_health_scan(self, full: bool = False, wait: bool = False, timeout: int = 300) -> bool:
         return self.is_enabled() and self.run_health_scan('nzb', full=full, wait=wait, timeout=timeout)
+
+    # ---- debrid torrents on the mount (debrid_repair_engine) ----------------
+
+    def _debrid_jobs(self) -> List[dict]:
+        return [j for j in self._jobs('ready') if j.get('protocol') == 'debrid']
+
+    def _debrid_job(self, info_hash: str) -> Optional[dict]:
+        h = (info_hash or '').strip().lower()
+        if not h:
+            return None
+        return next((j for j in self._debrid_jobs() if (j.get('hash') or '').lower() == h or j.get('id') == info_hash),
+                    None)
+
+    def iter_mount_torrents(self, page_size: int = 500, timeout: int = 30):
+        for j in self._debrid_jobs():
+            if _folder(j):
+                yield {'name': _folder(j), 'hash': self._hash(j), 'is_dir': True}
+
+    def delete_mount_torrent(self, info_hash: str) -> Optional[int]:
+        """Like cli_mount's DELETE /api/browse/torrents/{hash}: the torrent
+        leaves the debrid account and the mount."""
+        j = self._debrid_job(info_hash)
+        if not j:
+            return 404
+        from utilities import mount_debrid
+        key, _, torrent_id = j['id'].partition('-')
+        for p in mount_debrid.providers():
+            if mount_debrid.provider_key(p) == key:
+                try:
+                    ok = p.remove_torrent(torrent_id, removal_reason='debrid repair')
+                except Exception as exc:
+                    logging.warning(f'{_LOG} removing torrent {torrent_id} from {key} failed: {exc}')
+                    return 502  # keep it on the mount while it's still on the account
+                if ok is False:
+                    return 502
+                break
+        code, _ = self._call('DELETE', f'/jobs/{j["id"]}')
+        mount_debrid.forget_links(f'{key}:{torrent_id}:')
+        return 200 if code in (204, 404) else code
+
+    def sync_torrent(self, info_hash: str, rd_id: str = '') -> Optional[int]:
+        """Pick up a re-added torrent now instead of on the next mirror pass."""
+        from utilities import mount_debrid
+        try:
+            mount_debrid.sync_once(self)
+        except Exception as exc:
+            logging.warning(f'{_LOG} debrid sync after re-add failed: {exc}')
+            return 502
+        return 200
 
     def get_repair_status(self) -> Optional[dict]:
         code, run = self._call('GET', '/health/run', timeout=10)

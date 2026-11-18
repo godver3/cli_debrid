@@ -376,23 +376,46 @@ def job_action(job_id, action):
 
 # ---- Debrid links for the engine (not a user page) ---------------------------
 
+def _engine_caller_ok() -> bool:
+    """Only the local engine (its token, from localhost) may call /internal."""
+    from utilities import builtin_engine
+    token = builtin_engine.current_token()
+    auth = request.headers.get('Authorization', '')
+    return bool(token) and auth == f'Bearer {token}' and request.remote_addr in ('127.0.0.1', '::1')
+
+
 @mount_bp.route('/internal/link', methods=['POST'])
 def internal_link():
     """The engine's link callback: a fresh download URL for one debrid file.
-    Only the local engine (its token, from localhost) may call it."""
-    from utilities import builtin_engine, mount_debrid
-    token = builtin_engine.current_token()
-    auth = request.headers.get('Authorization', '')
-    if not token or auth != f'Bearer {token}' or request.remote_addr not in ('127.0.0.1', '::1'):
+    410 + dead=true when the provider proved the file gone (the engine then
+    marks it broken for repair); any other failure is 502 and proves nothing."""
+    from utilities import mount_debrid
+    from debrid.mount_proof import MountFileGone
+    if not _engine_caller_ok():
         return jsonify({'error': 'forbidden'}), 403
     body = request.get_json(silent=True) or {}
     ref = str(body.get('ref') or '')
     try:
         url, ttl = mount_debrid.link(ref, refresh=bool(body.get('refresh')))
+    except MountFileGone as gone:
+        logging.warning(f'[mount debrid] {ref} is gone on the provider: {gone}')
+        return jsonify({'dead': True, 'reason': gone.reason, 'error': gone.detail or str(gone)}), 410
     except Exception as exc:
         logging.warning(f'[mount debrid] no link for {ref}: {exc}')
         return jsonify({'error': str(exc)}), 502
     return jsonify({'url': url, 'expires_in': int(ttl)})
+
+
+@mount_bp.route('/internal/check', methods=['POST'])
+def internal_check():
+    """The engine's repair check for one debrid file, by cli_mount's rules:
+    {state: healthy|broken|unknown, reason}."""
+    from utilities import mount_debrid
+    if not _engine_caller_ok():
+        return jsonify({'error': 'forbidden'}), 403
+    ref = str((request.get_json(silent=True) or {}).get('ref') or '')
+    state, reason = mount_debrid.check(ref)
+    return jsonify({'state': state, 'reason': reason})
 
 
 # ---- Migrate from cli_mount -------------------------------------------------

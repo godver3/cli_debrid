@@ -38,9 +38,30 @@ def _dcy_cfg():
     return url, token
 
 
+def _backend_enabled() -> bool:
+    """The usenet backend whose mount holds the debrid torrents is set up:
+    cli_mount (its URL) or the built-in mount (which mirrors the accounts)."""
+    try:
+        return bool(_client().is_enabled())
+    except Exception:
+        return False
+
+
 def _client():
-    """The active usenet client. Its repair API (capability REPAIR_API) is
-    cli_mount's /api/repair/*; other backends answer with empty no-ops."""
+    """The client of the mount that holds the debrid torrents: the built-in
+    mount when it mirrors the debrid accounts (also when it runs for debrid
+    alone), else the active usenet client (cli_mount's /api/repair/*; other
+    backends answer with empty no-ops)."""
+    try:
+        from utilities import mount_debrid
+        from utilities.settings import get_setting
+        if mount_debrid.engine_holds_debrid(get_setting):
+            from usenet.builtin_client import BuiltinClient
+            c = BuiltinClient()
+            c.enabled = True  # usenet may be off or another backend: debrid still lives here
+            return c
+    except Exception as exc:
+        logger.debug(f'[DebridRepair] built-in mount check failed: {exc}')
     from usenet import get_usenet_client
     return get_usenet_client()
 
@@ -66,8 +87,7 @@ def fetch_broken_items() -> list:
     """Return broken torrent-protocol entries from cli_mount /api/repair/health.
     Each entry is tagged with is_ghost=True if its folder does not exist in the mount."""
     try:
-        url, _ = _dcy_cfg()
-        if not url:
+        if not _backend_enabled():
             return []
         client = _client()
         entries = client.list_repair_health(timeout=60)
@@ -102,8 +122,7 @@ def fetch_broken_items() -> list:
 def get_health_summary() -> dict:
     """Return health-state counts for torrent-protocol entries only."""
     try:
-        url, _ = _dcy_cfg()
-        if not url:
+        if not _backend_enabled():
             return {}
         entries = _client().list_repair_health(timeout=60)
         if entries is None:
@@ -125,8 +144,7 @@ def trigger_health_scan(full: bool = False, wait: bool = False, timeout: int = 3
     full=True scans all files; full=False (default) only scans unchecked files.
     wait=True blocks until the scan completes (up to timeout seconds)."""
     try:
-        url, _ = _dcy_cfg()
-        if not url:
+        if not _backend_enabled():
             return False
         return _client().run_health_scan('torrent', full=full, wait=wait, timeout=timeout,
                                          log_label='Torrent')
@@ -296,8 +314,7 @@ def _delete_from_climount(info_hash: str, entry_name: str = '') -> bool:
         logger.warning(f'[DebridRepair] _delete_from_climount: no hash for {entry_name!r}')
         return False
     try:
-        url, _ = _dcy_cfg()
-        if not url:
+        if not _backend_enabled():
             return False
         status = _client().delete_mount_torrent(info_hash)
         if status in (200, 204):
@@ -327,8 +344,7 @@ def delete_ghost_health_records() -> dict:
 
     Returns dict: {deleted, skipped, errors}
     """
-    url, _ = _dcy_cfg()
-    if not url:
+    if not _backend_enabled():
         return {'deleted': 0, 'skipped': 0, 'errors': 0}
     client = _client()
 
@@ -615,8 +631,7 @@ def reinsert_entry(entry_name: str, info_hash: str) -> dict:
         import threading as _t
         _new_id = new_id  # capture for closure
         def _wait_then_sync():
-            _url, _ = _dcy_cfg()
-            if not _url or not info_hash:
+            if not _backend_enabled() or not info_hash:
                 return
             try:
                 rd_id = _new_id

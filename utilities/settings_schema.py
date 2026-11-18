@@ -526,7 +526,7 @@ SETTINGS_SCHEMA = {
         },
         "health_sample_percent": {
             "type": "integer",
-            "description": "Built-in mount only. Repair availability sample %: share of articles checked by health checks (0 = automatic: 2%, at most 30 per file; 100 = every article).",
+            "description": "Built-in mount only. Repair availability sample %: share of each file's articles checked by health checks (0 = cli_mount's default, 10% with no cap per file; 100 = every article). Health checks also read each video file's first bytes: a wrong container header marks it broken, as cli_mount does.",
             "default": 0
         },
         "idle_timeout_minutes": {

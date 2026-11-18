@@ -419,6 +419,25 @@ class DebridLinkProvider(DebridProvider):
             raise ValueError(f'Debrid-Link gave no download link for {torrent_id}/{file_id}')
         return url, self.MOUNT_LINK_TTL
 
+    def mount_check(self, torrent_id: str, file_id: str) -> Tuple[str, str]:
+        """cli_mount's Debrid-Link CheckFile: the file's link answering 404 or
+        410 = gone; a file without a link = missing_provider_link."""
+        from debrid.mount_proof import BROKEN, UNKNOWN, MISSING_PROVIDER_LINK, link_status, from_link_status
+        try:
+            info = self.get_torrent_info(torrent_id)
+        except Exception as exc:
+            return UNKNOWN, f'torrent info: {exc}'
+        if not info:
+            return UNKNOWN, 'torrent not listed'
+        files = info.get('files') or []
+        try:
+            url = files[int(file_id)].get('link')
+        except (ValueError, IndexError):
+            return BROKEN, MISSING_PROVIDER_LINK
+        if not url:
+            return BROKEN, MISSING_PROVIDER_LINK
+        return from_link_status(link_status(url), 'Debrid-Link link')
+
     def get_torrent_info_with_status(self, torrent_id: str) -> TorrentInfoStatus:
         try:
             info = self.get_torrent_info(torrent_id)

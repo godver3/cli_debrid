@@ -890,17 +890,63 @@ class RealDebridProvider(DebridProvider):
         return info.get('filename') or info.get('original_filename') or str(torrent_id), [
             {'name': f.get('path', ''), 'size': int(f.get('bytes') or 0), 'file_id': str(f.get('id'))} for f in sel]
 
-    def mount_link(self, torrent_id: str, file_id: str) -> Tuple[str, int]:
+    def _mount_rd_link(self, torrent_id: str, file_id: str) -> str:
+        """The file's RD hoster link. MountFileGone(missing_provider_link)
+        when the torrent no longer has the file; other errors prove nothing."""
+        from debrid.mount_proof import MountFileGone, MISSING_PROVIDER_LINK
         info = make_request('GET', f'/torrents/info/{torrent_id}', self.api_key)
         sel, links = self._mount_selected(info or {}), (info or {}).get('links') or []
         ids = [str(f.get('id')) for f in sel]
-        if str(file_id) not in ids or len(links) != len(sel):
-            raise ValueError(f'file {file_id} is not a selected file of torrent {torrent_id}')
-        out = make_request('POST', '/unrestrict/link', self.api_key, data={'link': links[ids.index(str(file_id))]})
-        url = (out or {}).get('download')
-        if not url:
-            raise ValueError(f'Real-Debrid gave no download link for {torrent_id}/{file_id}')
-        return url, 12 * 3600
+        if info and str(file_id) not in ids:
+            raise MountFileGone(MISSING_PROVIDER_LINK, f'file {file_id} is no longer in torrent {torrent_id}')
+        if len(links) != len(sel):
+            raise ValueError(f'torrent {torrent_id} has {len(links)} links for {len(sel)} files')
+        return links[ids.index(str(file_id))]
+
+    def _mount_rd_post(self, endpoint: str, data: Dict) -> Tuple[int, Dict]:
+        """(status, body) of an RD POST without make_request's error mapping,
+        which drops the body and with it RD's error_code."""
+        from routes.api_tracker import api as _api
+        from .api import _wait_for_rate_limit
+        _wait_for_rate_limit()
+        r = _api.post(f'https://api.real-debrid.com/rest/1.0{endpoint}', data=data,
+                      headers={'Authorization': f'Bearer {self.api_key}'}, timeout=30)
+        try:
+            body = r.json()
+        except ValueError:
+            body = {}
+        return r.status_code, body if isinstance(body, dict) else {}
+
+    #: RD error codes cli_mount counts as the file being gone.
+    MOUNT_GONE_CODES = (19, 24, 35)  # hoster unavailable, file unavailable, infringing file
+
+    def mount_link(self, torrent_id: str, file_id: str) -> Tuple[str, int]:
+        from debrid.mount_proof import MountFileGone, HOSTER_UNAVAILABLE
+        link = self._mount_rd_link(torrent_id, file_id)
+        code, out = self._mount_rd_post('/unrestrict/link', {'link': link})
+        url = out.get('download') if code == 200 else None
+        if url:
+            return url, 12 * 3600
+        if out.get('error_code') in self.MOUNT_GONE_CODES:
+            raise MountFileGone(HOSTER_UNAVAILABLE, f"Real-Debrid error {out.get('error_code')}: {out.get('error')}")
+        raise ValueError(f'Real-Debrid gave no download link for {torrent_id}/{file_id}: HTTP {code} {out.get("error") or ""}')
+
+    def mount_check(self, torrent_id: str, file_id: str) -> Tuple[str, str]:
+        """cli_mount's RD CheckFile: /unrestrict/check answering 404 = gone."""
+        from debrid.mount_proof import MountFileGone, BROKEN, HEALTHY, UNKNOWN, HOSTER_UNAVAILABLE
+        try:
+            link = self._mount_rd_link(torrent_id, file_id)
+        except MountFileGone as gone:
+            return BROKEN, gone.reason
+        except Exception as exc:
+            return UNKNOWN, f'torrent info: {exc}'
+        try:
+            code, _ = self._mount_rd_post('/unrestrict/check', {'link': link})
+        except Exception as exc:
+            return UNKNOWN, f'unrestrict/check: {exc}'
+        if code == 404:
+            return BROKEN, HOSTER_UNAVAILABLE
+        return (HEALTHY, '') if code == 200 else (UNKNOWN, f'unrestrict/check answered HTTP {code}')
 
     def get_torrent_info_with_status(self, torrent_id: str) -> TorrentInfoStatus:
         """

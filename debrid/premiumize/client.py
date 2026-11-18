@@ -485,11 +485,29 @@ class PremiumizeProvider(DebridProvider):
         return None
 
     def mount_link(self, torrent_id: str, file_id: str) -> Tuple[str, int]:
+        from debrid.mount_proof import MountFileGone, HOSTER_UNAVAILABLE
         det = self._req('GET', '/item/details', params={'id': file_id})
-        url = (det or {}).get('link') if (det or {}).get('status') != 'error' else None
+        if not det or det.get('status') == 'error':
+            raise ValueError(f'Premiumize item {file_id}: {(det or {}).get("message") or "no answer"}')
+        url = det.get('link')
         if not url:
-            raise ValueError(f'Premiumize gave no download link for {torrent_id}/{file_id}')
+            # cli_mount: an item without a link is gone.
+            raise MountFileGone(HOSTER_UNAVAILABLE, f'Premiumize item {file_id} has no link')
         return url, self.MOUNT_LINK_TTL
+
+    def mount_check(self, torrent_id: str, file_id: str) -> Tuple[str, str]:
+        """cli_mount's Premiumize CheckFile: an item id is fine while its
+        details load; no item id at all = gone; a failed lookup proves nothing."""
+        from debrid.mount_proof import BROKEN, HEALTHY, UNKNOWN, MISSING_PROVIDER_LINK
+        if not file_id:
+            return BROKEN, MISSING_PROVIDER_LINK
+        try:
+            det = self._req('GET', '/item/details', params={'id': file_id})
+        except Exception as exc:
+            return UNKNOWN, f'item/details: {exc}'
+        if not det or det.get('status') == 'error':
+            return UNKNOWN, f'item/details: {(det or {}).get("message") or "no answer"}'
+        return HEALTHY, ''
 
     def get_torrent_info_with_status(self, torrent_id: str) -> TorrentInfoStatus:
         try:

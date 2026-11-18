@@ -71,7 +71,7 @@ class MountDebridTests(IsolatedLinkCache):
         self.assertEqual([f['name'] for f in out], ['e1.mkv', 'Pack - Sample - sample.mkv', 'Pack - Extras - sample.mkv'])
 
     def test_sync_adds_finished_and_removes_gone(self):
-        p = FakeProvider([{'id': 'A', 'status': 'downloaded'}, {'id': 'B', 'status': 'downloading'},
+        p = FakeProvider([{'id': 'A', 'status': 'downloaded', 'hash': 'AABB'}, {'id': 'B', 'status': 'downloading'},
                           {'id': 'C', 'status': 'downloaded'}],
                          {'A': ('Movie.2024', [{'name': 'Movie.2024/Movie.2024.mkv', 'size': 10, 'file_id': '1'},
                                                {'name': 'empty.txt', 'size': 0, 'file_id': '2'}])})
@@ -86,7 +86,7 @@ class MountDebridTests(IsolatedLinkCache):
         out = md.sync_once(eng, [p])
         self.assertEqual((out['added'], out['removed']), (0, 1))
         post = [c for c in eng.calls if c[0] == 'POST'][0]
-        self.assertEqual(post[1:], ('/debrid/jobs', {'id': 'rd-A', 'name': 'Movie.2024', 'provider': 'rd', 'files': [
+        self.assertEqual(post[1:], ('/debrid/jobs', {'id': 'rd-A', 'name': 'Movie.2024', 'provider': 'rd', 'hash': 'aabb', 'files': [
             {'name': 'Movie.2024.mkv', 'size': 10, 'ref': 'rd:A:1'}]}))
         self.assertIn(('DELETE', '/jobs/rd-OLD', None), eng.calls)
         self.assertNotIn(('DELETE', '/jobs/usenetjob', None), eng.calls)
@@ -249,13 +249,16 @@ class ProviderLinkTests(unittest.TestCase):
             calls.append((method, endpoint, data))
             return {'download': 'https://dl/' + data['link']} if endpoint == '/unrestrict/link' else info
         rd = rdc.RealDebridProvider.__new__(rdc.RealDebridProvider)
+        from debrid.mount_proof import MountFileGone
         with mock.patch.object(rdc, 'make_request', side_effect=req), \
+                mock.patch.object(rd, '_mount_rd_post', side_effect=lambda ep, data: (200, req('POST', ep, 'k', data))), \
                 mock.patch.object(type(rd), 'api_key', new_callable=mock.PropertyMock, return_value='k'):
             folder, files = rd.mount_files('T')
             self.assertEqual((folder, [(f['file_id'], f['size']) for f in files]), ('Show.S01', [('2', 10), ('5', 20)]))
             self.assertEqual(rd.mount_link('T', '5'), ('https://dl/L5', 43200))
-            with self.assertRaises(ValueError):
-                rd.mount_link('T', '1')  # not selected
+            with self.assertRaises(MountFileGone) as gone:
+                rd.mount_link('T', '1')  # not selected: the torrent has no link for it
+            self.assertEqual(gone.exception.reason, 'missing_provider_link')
             info['links'] = ['ONE.rar']
             self.assertIsNone(rd.mount_files('T'), 'files packed into one link are not streamable')
 

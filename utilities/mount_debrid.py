@@ -141,6 +141,33 @@ def link(ref: str, refresh: bool = False) -> Tuple[str, int]:
     return url, int(ttl)
 
 
+def check(ref: str) -> Tuple[str, str]:
+    """(state, reason) of one engine file ref by the provider's cli_mount
+    rules (debrid/mount_proof.py). Never raises: trouble is unknown."""
+    from debrid.mount_proof import BROKEN, UNKNOWN
+    try:
+        key, torrent_id, file_id = ref.split(':', 2)
+    except ValueError:
+        return UNKNOWN, f'bad file reference {ref!r}'
+    for p in providers():
+        if provider_key(p) == key:
+            if not hasattr(p, 'mount_check'):
+                return UNKNOWN, 'provider_check_unsupported'
+            try:
+                state, reason = p.mount_check(torrent_id, file_id)
+            except Exception as exc:
+                return UNKNOWN, f'provider_probe_error: {exc}'
+            if state == BROKEN:
+                logging.info(f'[mount debrid] check: {ref} is gone ({reason})')
+                forget_links(ref + ':')  # never hand out its cached link again
+                with _link_lock:
+                    links = _load_links()
+                    if links.pop(ref, None) is not None:
+                        _save_links(links)
+            return state, reason
+    return UNKNOWN, 'provider_client_not_found'
+
+
 def forget_links(prefix: str) -> None:
     """Drop cached links of a removed torrent ("<key>:<torrent id>:")."""
     with _link_lock:
@@ -178,6 +205,15 @@ _skipped: Dict[str, float] = {}  # job id -> when mount_files declined it
 _mass_warned: Dict[str, float] = {}
 _status: Dict = {'synced_at': 0.0, 'pending': 0, 'skipped': 0, 'held_removals': 0, 'complete': False,
                  'errors': 0, 'providers': 0}
+
+
+def engine_holds_debrid(get_setting) -> bool:
+    """The built-in mount (not cli_mount/Zurg) serves the debrid torrents:
+    it is in use and debrid streaming is on. Debrid repair then goes to it."""
+    from utilities import builtin_engine
+    bm = get_setting('Built-in Mount') or {}
+    return builtin_engine.selected({'Usenet Provider': get_setting('Usenet Provider') or {}, 'Built-in Mount': bm}) \
+        and bool(bm.get('debrid_streaming', True))
 
 
 def needed(get_setting) -> bool:
@@ -276,7 +312,7 @@ def sync_once(engine, provs: Optional[List] = None, budget: int = ADD_PER_PASS) 
                 continue
             folder, files = found
             files = unique_names([f for f in files if int(f.get('size') or 0) > 0])
-            body = {'id': jid, 'name': folder, 'provider': key, 'files': [
+            body = {'id': jid, 'name': folder, 'provider': key, 'hash': str(t.get('hash') or '').lower(), 'files': [
                 {'name': f['name'], 'size': int(f['size']), 'ref': f"{key}:{t['id']}:{f['file_id']}"} for f in files]}
             c, resp = engine._call('POST', '/debrid/jobs', timeout=30, json=body)
             if c == 201:

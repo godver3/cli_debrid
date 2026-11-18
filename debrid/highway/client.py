@@ -283,13 +283,33 @@ class HighwayProvider(DebridProvider):
                  for f in info.get('files') or [] if f.get('id') is not None and not f.get('partial')]
         return (info.get('filename') or str(torrent_id), files) if files else None
 
+    @staticmethod
+    def _mount_not_found(exc: Exception) -> bool:
+        return isinstance(exc, HighwayAPIError) and str(exc).startswith('HighWay request failed: 404')
+
     def mount_link(self, torrent_id: str, file_id: str) -> Tuple[str, int]:
+        from debrid.mount_proof import MountFileGone, HOSTER_UNAVAILABLE
         transfer_id, _ = self._split_id(torrent_id)
-        res = hw.get_file(self.api_key, transfer_id, file_id)
+        try:
+            res = hw.get_file(self.api_key, transfer_id, file_id)
+        except Exception as exc:
+            if self._mount_not_found(exc):  # cli_mount: a 404 file is gone
+                raise MountFileGone(HOSTER_UNAVAILABLE, str(exc))
+            raise
         url = (res.get('file') or {}).get('download_url')
         if not url:
             raise ValueError(f'HighWay gave no download link for {torrent_id}/{file_id}')
         return url, self.MOUNT_LINK_TTL
+
+    def mount_check(self, torrent_id: str, file_id: str) -> Tuple[str, str]:
+        """cli_mount's HighWay CheckFile: the file answering 404 = gone."""
+        from debrid.mount_proof import BROKEN, HEALTHY, UNKNOWN, HOSTER_UNAVAILABLE
+        transfer_id, _ = self._split_id(torrent_id)
+        try:
+            hw.get_file(self.api_key, transfer_id, file_id)
+        except Exception as exc:
+            return (BROKEN, HOSTER_UNAVAILABLE) if self._mount_not_found(exc) else (UNKNOWN, str(exc))
+        return HEALTHY, ''
 
     def get_torrent_info_with_status(self, torrent_id: str) -> TorrentInfoStatus:
         transfer_id, hash_value = self._split_id(torrent_id)

@@ -990,6 +990,26 @@ class AllDebridProvider(DebridProvider):
             return None
         return info.get('filename') or str(torrent_id), files
 
+    def mount_check(self, torrent_id: str, file_id: str) -> Tuple[str, str]:
+        """cli_mount's AllDebrid CheckFile: /link/infos returning an error for
+        the file's link = gone. (Doesn't unlock: no link is generated.)"""
+        from debrid.mount_proof import BROKEN, HEALTHY, UNKNOWN, HOSTER_UNAVAILABLE, MISSING_PROVIDER_LINK
+        if not str(file_id).startswith('http'):
+            return BROKEN, MISSING_PROVIDER_LINK
+        try:
+            out = make_request('GET', '/v4/link/infos', self.api_key, params={'link[]': file_id}, use_query_auth=True)
+        except Exception as exc:
+            return UNKNOWN, f'link/infos: {exc}'
+        if (out or {}).get('status') != 'success':
+            return UNKNOWN, f"link/infos: {((out or {}).get('error') or {}).get('message', 'error')}"
+        infos = ((out.get('data') or {}).get('infos')) or []
+        if len(infos) != 1:
+            return UNKNOWN, f'link/infos returned {len(infos)} entries'
+        err = infos[0].get('error')
+        if err:
+            return BROKEN, HOSTER_UNAVAILABLE
+        return HEALTHY, ''
+
     def mount_link(self, torrent_id: str, file_id: str) -> Tuple[str, int]:
         if not str(file_id).startswith('http'):
             raise ValueError(f'AllDebrid file ref for {torrent_id} is not a link')
