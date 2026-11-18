@@ -1,8 +1,14 @@
 # clid-engine
 
-cli_debrid's optional built-in mount: imports NZBs, serves their files
-over FUSE and exposes a localhost API. Nothing in cli_debrid uses it yet;
-the external backends (cli_mount, NzbDAV, Zurg) are unaffected.
+cli_debrid's built-in mount: imports NZBs, streams them and the user's
+Real-Debrid / TorBox torrents over FUSE (WinFsp on Windows), and exposes a
+localhost API. It is the `builtin` usenet backend (the default for new
+installs); cli_mount, NzbDAV and Zurg stay available as external backends.
+
+cli_debrid runs it under supervisord (`mount_engine`), writes its
+`engine.json` from the *Built-in Mount* settings
+(`utilities/builtin_engine.py`) and talks to it through
+`usenet/builtin_client.py`. Users manage it on the Mount page.
 
 ```
 go test ./...                 # FUSE tests skip without /dev/fuse
@@ -32,7 +38,8 @@ Example config:
 }
 ```
 
-Mount layout (same as cli_mount): `<mount>/__all__/<job>/<file>` and
-`<mount>/nzbs/<job>/<file>`.
+Mount layout (same as cli_mount): `<mount>/__all__/<job>/<file>`,
+`<mount>/nzbs/`, `<mount>/torrents/`, one folder per debrid provider,
+`<mount>/__bad__/` and any virtual folders.
 
 API: see `internal/api/api.go`. Third-party code: see `NOTICE.md`.
