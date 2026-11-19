@@ -208,23 +208,36 @@
                 </div>
                 {% if not limited_env %}
                 {% set is_climount = stats.active_downloads_data and stats.active_downloads_data.get('source') in ('climount', 'combined') %}
-                <div class="stat-item {% if not is_climount %}stat-item-clickable{% endif %} status-{{ stats.active_downloads_data.status }}" id="kpi-active" {% if not is_climount %}onclick="window.location.href='/debrid_manager/?tab=active'"{% endif %}>
+                {% if is_climount %}
+                {# Connection health: same checks as the Connections page, read from a background cache #}
+                <div class="stat-item stat-item-clickable" id="kpi-connections" onclick="window.location.href='/performance/dashboard#connections'" title="Checking connections…">
                     <div class="stat-content">
                         <div class="stat-icon">
-                            <i class="fas fa-{% if is_climount %}newspaper{% else %}download{% endif %}"></i>
+                            <i class="fas fa-plug"></i>
                         </div>
                         <div class="stat-text-content">
-                            <div class="stat-label">{% if is_climount %}Connections{% else %}Active{% endif %}</div>
-                            <div class="stat-number {{ stats.active_downloads_data.status }}">
-                                {% if is_climount %}
-                                <span id="active_downloads" title="Active connections">{{ stats.active_downloads_data.count|default(0) }}</span>/<span id="idle_downloads" title="Idle connections">{{ stats.active_downloads_data.idle|default(0) }}</span>
-                                {% else %}
-                                <span id="active_downloads">{{ stats.active_downloads_data.count|default(0) }}</span>/<span id="download_limit">{{ stats.active_downloads_data.limit|default(25) }}</span>
-                                {% endif %}
+                            <div class="stat-label">Connections</div>
+                            <div class="stat-number" id="conn_health_number">
+                                <span id="conn_health">…</span>
                             </div>
                         </div>
                     </div>
                 </div>
+                {% else %}
+                <div class="stat-item stat-item-clickable status-{{ stats.active_downloads_data.status }}" id="kpi-active" onclick="window.location.href='/debrid_manager/?tab=active'">
+                    <div class="stat-content">
+                        <div class="stat-icon">
+                            <i class="fas fa-download"></i>
+                        </div>
+                        <div class="stat-text-content">
+                            <div class="stat-label">Active</div>
+                            <div class="stat-number {{ stats.active_downloads_data.status }}">
+                                <span id="active_downloads">{{ stats.active_downloads_data.count|default(0) }}</span>/<span id="download_limit">{{ stats.active_downloads_data.limit|default(25) }}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
                 <div class="stat-item {% if not is_climount %}stat-item-clickable{% endif %}" {% if not is_climount %}onclick="window.location.href='/debrid_manager/?tab=usage'"{% endif %}>
                     <div class="stat-content">
                         <div class="stat-icon">
@@ -630,6 +643,7 @@
 </script>
 
 <script src="{{ url_for('static', filename='js/pages/statistics-3.js') }}"></script>
+<script src="{{ url_for('static', filename='js/pages/statistics-connections.js') }}"></script>
 
 <!-- Include loading.js for loading overlay used by scraper -->
 <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
