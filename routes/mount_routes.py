@@ -354,7 +354,9 @@ def now_playing():
     client = BuiltinClient()
     streams = client.get_streams()
     sessions = []
-    if streams:  # nothing open on the mount: nothing to ask Plex about
+    # Nothing open and nothing remembered (a fully cached file is closed by
+    # Plex while it still plays): nothing to ask Plex about.
+    if streams or np.has_remembered():
         url, token = np.plex_server(get_setting)
         sessions = np.now_playing(np.plex_sessions(url, token), streams, client.mount_path,
                                   np.metadata_lookup(url, token))

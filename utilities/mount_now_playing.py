@@ -13,6 +13,7 @@ A Plex session is matched to an open file on the mount (engine /streams):
 
 import logging
 import os
+import threading
 from typing import Callable, List, Optional
 
 import requests
@@ -142,11 +143,38 @@ def _title(s: dict) -> tuple:
     return f"{s.get('title', '')}{year}", ''
 
 
+# Plex session key -> the mount stream it was last matched to. A file that is
+# fully cached is read to the end and closed by Plex while playback goes on
+# from Plex's own buffer; the session is still shown from this memory until
+# Plex ends it.
+_remembered: dict = {}
+_remembered_lock = threading.Lock()
+
+
+def has_remembered() -> bool:
+    with _remembered_lock:
+        return bool(_remembered)
+
+
+def _session_key(s: dict) -> str:
+    return str(s.get('sessionKey') or (s.get('Session') or {}).get('id') or '')
+
+
 def now_playing(sessions: List[dict], streams: List[dict], mount_path: str,
                 lookup: Optional[Callable] = None) -> List[dict]:
     out = []
+    live_keys = set()
     for s in sessions:
+        key = _session_key(s)
+        if key:
+            live_keys.add(key)
         st = next((m for m in (match_stream(f, streams, mount_path) for f in _session_files(s, lookup)) if m), None)
+        buffered = False
+        with _remembered_lock:
+            if st is not None and key:
+                _remembered[key] = dict(st)
+            elif st is None and key in _remembered:
+                st, buffered = _remembered[key], True
         if st is None:
             continue  # not from the mount
         title, subtitle = _title(s)
@@ -169,7 +197,11 @@ def now_playing(sessions: List[dict], streams: List[dict], mount_path: str,
             'source': st.get('folder', ''),
             'file': st.get('file', ''),
             'tags': scene_tags(st.get('folder') or st.get('file') or ''),
-            'rate_bytes': int(st.get('rate_bytes') or 0),
+            'rate_bytes': 0 if buffered else int(st.get('rate_bytes') or 0),
             'bytes_read': int(st.get('bytes_read') or 0),
+            'buffered': buffered,
         })
+    with _remembered_lock:
+        for key in [k for k in _remembered if k not in live_keys]:
+            del _remembered[key]
     return out

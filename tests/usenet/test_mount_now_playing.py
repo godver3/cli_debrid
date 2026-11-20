@@ -24,6 +24,25 @@ def session(path, **kw):
 
 
 class NowPlayingTests(unittest.TestCase):
+    def setUp(self):
+        with np._remembered_lock:
+            np._remembered.clear()
+
+    def test_fully_cached_file_stays_listed_until_plex_ends_session(self):
+        path = '/media/clid/__all__/The.Matrix.1999.1080p-SPiRiT/The.Matrix.1999.1080p-SPiRiT.mkv'
+        s = session(path, sessionKey='7')
+        first = np.now_playing([s], STREAMS, '/mnt/clid')
+        self.assertFalse(first[0]['buffered'])
+        # Plex read the whole file and closed it; playback goes on
+        later = np.now_playing([s], [], '/mnt/clid')
+        self.assertEqual(len(later), 1)
+        self.assertTrue(later[0]['buffered'])
+        self.assertEqual(later[0]['rate_bytes'], 0)
+        self.assertTrue(np.has_remembered())
+        # Plex ended the session: forgotten
+        self.assertEqual(np.now_playing([], [], '/mnt/clid'), [])
+        self.assertFalse(np.has_remembered())
+
     def test_symlink_into_the_mount(self):
         with tempfile.TemporaryDirectory() as d:
             mount = os.path.join(d, 'mnt')

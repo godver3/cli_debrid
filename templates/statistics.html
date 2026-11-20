@@ -372,7 +372,7 @@
                             '<div class="np-sub">' + esc(s.user) + (s.player ? ' · ' + esc(s.player) : '') + ' · ' + esc(s.decision) + (s.state && s.state !== 'playing' ? ' · ' + esc(s.state) : '') + '</div>' +
                             npTags(s) + '</div>' +
                             '<div class="np-side"><span class="np-tag ' + esc(s.protocol) + '">' + (s.protocol === 'debrid' ? 'Debrid' : 'Usenet') + '</span>' +
-                            (s.rate_bytes ? '<span>' + mb(s.rate_bytes) + '</span>' : '') + '</div></div>' +
+                            (s.rate_bytes ? '<span>' + mb(s.rate_bytes) + '</span>' : (s.buffered ? '<span title="Whole file already read; Plex plays from its buffer">cached</span>' : '')) + '</div></div>' +
                             '<div class="np-bar"><i style="width:' + pct + '%"></i></div>' +
                             (s.duration_ms ? '<div class="np-time"><span>' + hms(s.position_ms) + ' / ' + hms(s.duration_ms) + '</span><span>' + Math.round(pct) + '%</span></div>' : '') +
                             '</div>';
