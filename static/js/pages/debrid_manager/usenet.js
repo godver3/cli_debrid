@@ -470,10 +470,14 @@ async function usenetViewBroken() {
                 const bg = idx % 2 === 0 ? 'transparent' : 'rgba(128,128,128,0.04)';
                 const name = _esc(i.entry_name || i.name || i.title || '—');
                 const rawName = (i.entry_name || i.name || i.title || '').replace(/'/g, "\\'");
-                const broken = i.broken_count || i.broken_files || '?';
+                // broken_files is a list of {file_name, reason} (cli_mount and
+                // the built-in mount); older backends sent a count.
+                const files = Array.isArray(i.broken_files) ? i.broken_files : [];
+                const broken = i.broken_count || (Array.isArray(i.broken_files) ? files.length : i.broken_files) || '?';
+                const tip = _esc(files.map(f => (f && f.file_name ? f.file_name : '?') + (f && f.reason ? ' — ' + f.reason : '')).join('\n'));
                 return `<tr style="border-bottom:1px solid var(--border-color,#2a2a2a);background:${bg}">
                     <td style="padding:8px 12px;font-weight:500">${name}</td>
-                    <td style="padding:8px 12px;color:#ff4444;font-weight:600;text-align:right;white-space:nowrap">${broken}</td>
+                    <td style="padding:8px 12px;color:#ff4444;font-weight:600;text-align:right;white-space:nowrap" title="${tip}">${_esc(String(broken))}${files.length ? ' file' + (files.length === 1 ? '' : 's') : ''}</td>
                     <td style="padding:8px 12px;text-align:center;white-space:nowrap">
                         <button onclick="usenetFixSingle('${rawName}', this)" class="un-btn" style="padding:4px 12px;font-size:12px">Fix</button>
                     </td>
