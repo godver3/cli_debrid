@@ -297,6 +297,27 @@ class EngineManagerTests(unittest.TestCase):
         self.assertEqual(self.be.user_start(self.settings()), 'started')
         self.assertFalse(self.be.stopped_by_user())
 
+    def test_startup_with_autostart_overrides_a_manual_stop(self):
+        self.state = 'RUNNING'
+        self.be.user_stop()
+        self.state = 'STOPPED'
+        s = self.settings()
+        self.assertEqual(self.be.startup(s), 'stopped by user', 'autostart off keeps a manual Stop')
+        self.assertTrue(self.be.stopped_by_user())
+        s['Debug'] = {'auto_run_program': True}
+        self.calls.clear()
+        self.assertEqual(self.be.startup(s), 'autostart: started')
+        self.assertIn(('start', 'mount_engine'), self.calls)
+        self.assertFalse(self.be.stopped_by_user())
+
+    def test_startup_never_starts_for_an_external_mount(self):
+        self.be.user_stop()
+        s = self.settings(provider='climount')
+        s['Debug'] = {'auto_run_program': True}
+        self.assertEqual(self.be.startup(s), 'not selected')
+        self.assertNotIn(('start', 'mount_engine'), self.calls)
+        self.assertTrue(self.be.stopped_by_user(), 'flag left alone when the mount is not in use')
+
     def test_sync_reports_problems_instead_of_starting(self):
         self.problems.return_value = ['/dev/fuse is not available']
         self.assertTrue(self.be.sync(self.settings()).startswith('cannot start'))

@@ -117,6 +117,6 @@ if __name__ == '__main__':
         import sys
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         from utilities import builtin_engine
-        print(f"Built-in mount engine: {builtin_engine.sync()}")
+        print(f"Built-in mount engine: {builtin_engine.startup()}")
     except Exception as e:
         print(f"Built-in mount engine sync failed: {e}")

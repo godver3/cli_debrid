@@ -674,7 +674,7 @@ def run_main():
     def _sync_builtin_engine():
         try:
             from utilities import builtin_engine
-            logging.info(f"Built-in mount engine: {builtin_engine.sync()}")
+            logging.info(f"Built-in mount engine: {builtin_engine.startup()}")
         except Exception as exc:
             logging.warning(f"Built-in mount engine sync failed: {exc}")
     threading.Thread(target=_sync_builtin_engine, name='builtin-engine-sync', daemon=True).start()

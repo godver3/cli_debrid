@@ -480,6 +480,16 @@ def user_start(settings: dict = None) -> str:
     return sync(settings)
 
 
+def startup(settings: dict = None) -> str:
+    """Container/app start. With Debug.auto_run_program on, the mount comes
+    up even if it was stopped by hand before (autostart means everything
+    starts); otherwise a manual Stop is kept. Only when the built-in mount is
+    in use: with an external mount nothing is started either way."""
+    s = settings if settings is not None else _load_settings()
+    if wanted(s) and (s.get('Debug') or {}).get('auto_run_program') and stopped_by_user():
+        return 'autostart: ' + user_start(s)
+    return sync(s)
+
 def sync(settings: dict = None) -> str:
     """Bring the engine in line with the settings. Returns what happened.
 

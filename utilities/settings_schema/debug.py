@@ -16,7 +16,7 @@ SECTIONS = {
         },
         "auto_run_program": {
             "type": "boolean",
-            "description": "Run the program automatically on startup",
+            "description": "Run the program automatically on startup. With the built-in mount in use, this also starts the mount, even if it was stopped on the Mount page.",
             "default": False
         },
         "disable_initialization": {
