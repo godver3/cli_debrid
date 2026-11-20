@@ -5,7 +5,26 @@ set_permissions() {
     chmod -R 755 /user
     find /user -type f -exec chmod 644 {} +
     chown -R $PUID:$PGID /user
+    prepare_mount_dirs
     echo "Permissions set successfully"
+}
+
+# The built-in mount engine runs as PUID: it can't create /mnt/clid itself,
+# and fusermount3 refuses a mountpoint the user can't write to. Create the
+# default and the configured mount path and hand them (not their contents) to
+# PUID. A path that's already mounted is left alone.
+prepare_mount_dirs() {
+    local paths="/mnt/clid"
+    local configured
+    configured=$(python3 -c "import json,sys; print((json.load(open(sys.argv[1])).get('Built-in Mount') or {}).get('mount_path') or '')" \
+        "${USER_CONFIG:-/user/config}/config.json" 2>/dev/null)
+    case "$configured" in
+        /*) paths="$paths $configured" ;;
+    esac
+    for p in $paths; do
+        mountpoint -q "$p" 2>/dev/null && continue
+        mkdir -p "$p" 2>/dev/null && chown $PUID:$PGID "$p" 2>/dev/null
+    done
 }
 
 clean_stale_x11_sockets() {
