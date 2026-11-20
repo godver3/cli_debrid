@@ -287,8 +287,13 @@ class EngineManagerTests(unittest.TestCase):
         self.assertEqual([(p['host'], p['port'], p['tls'], p['max_conns'], p['backup']) for p in ps],
                          [('block.c', 119, False, 10, True), ('news.a', 563, True, 30, False),
                           ('news.b', 563, True, 4, False)], 'order kept; the engine itself asks backups last')
-        # warm connections (not on backups) and the playback reserve (>= 1, none on 1-conn servers)
-        self.assertEqual([(p['min_idle'], p['reserve']) for p in ps], [(0, 1), (2, 3), (2, 1)])
+        # warm connections (not on backups) and the playback reserve: 11% within
+        # 6..100 by default, always leaving one connection
+        self.assertEqual([(p['min_idle'], p['reserve']) for p in ps], [(0, 6), (2, 6), (2, 3)])
+        s['Built-in Mount'].update(playback_reserve_min=1)
+        self.assertEqual([p['reserve'] for p in self.be.build_config(s)['providers']], [1, 3, 1])
+        s['Built-in Mount'].update(playback_reserve_percent=50, playback_reserve_max=4)
+        self.assertEqual([p['reserve'] for p in self.be.build_config(s)['providers']], [4, 4, 2])
         s['Built-in Mount'].update(warm_connections=0, playback_reserve_percent=0)
         self.assertEqual({(p['min_idle'], p['reserve']) for p in self.be.build_config(s)['providers']}, {(0, 0)})
         s['Built-in Mount']['servers'] = ''
@@ -433,3 +438,16 @@ class FactoryTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class StreamingDefaultsTests(unittest.TestCase):
+    """New installs get the streaming setup the maintainer runs (cli_mount's
+    interactive reserve 11% / 6..100, protection + prewarm on, 256 MB)."""
+
+    def test_defaults(self):
+        from utilities.settings_schema import SETTINGS_SCHEMA
+        bm = SETTINGS_SCHEMA['Built-in Mount']
+        want = {'plex_playback_protection': True, 'playback_reserve_percent': 11, 'playback_reserve_min': 6,
+                'playback_reserve_max': 100, 'plex_prewarm': True, 'prewarm_max_mb': 256,
+                'prewarm_trigger_percent': 70, 'prewarm_percent': 20}
+        self.assertEqual({k: bm[k]['default'] for k in want}, want)

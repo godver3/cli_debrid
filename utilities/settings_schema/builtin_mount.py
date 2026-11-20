@@ -47,8 +47,18 @@ SECTIONS = {
         },
         "playback_reserve_percent": {
             "type": "integer",
-            "description": "Built-in mount only. Playback connection reserve: % of each server's connections that only playback may use; read-ahead, imports and health checks never take them (at least 1 when set; 0 = off).",
-            "default": 10
+            "description": "Built-in mount only. Playback connection reserve: % of each server's connections that only playback may use; read-ahead, imports and health checks never take them (0 = off).",
+            "default": 11
+        },
+        "playback_reserve_min": {
+            "type": "integer",
+            "description": "Built-in mount only. Reserve at least this many connections per server for playback (when the reserve is on; a server always keeps one connection outside it).",
+            "default": 6
+        },
+        "playback_reserve_max": {
+            "type": "integer",
+            "description": "Built-in mount only. Reserve at most this many connections per server for playback.",
+            "default": 100
         },
         "debug_logging": {
             "type": "boolean",

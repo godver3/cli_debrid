@@ -168,6 +168,14 @@ def _int(v, default: int) -> int:
         return default
 
 
+def reserve(max_conns: int, pct: int, lo: int, hi: int) -> int:
+    """Playback-only connections of one server: pct of its connections,
+    within lo..hi, always leaving one for everything else (0 = off)."""
+    if pct <= 0 or max_conns < 2:
+        return 0
+    return min(max(round(max_conns * pct / 100), lo), hi, max_conns - 1)
+
+
 def build_config(settings: dict) -> dict:
     """The engine config for these settings (token must already be set)."""
     bm = settings.get('Built-in Mount') or {}
@@ -176,10 +184,12 @@ def build_config(settings: dict) -> dict:
     except ValueError:
         providers = []  # problems() reports it; sync() never gets here with it
     warm = _int(bm.get('warm_connections'), 2)
-    reserve_pct = _int(bm.get('playback_reserve_percent'), 10)
+    reserve_pct = _int(bm.get('playback_reserve_percent'), 11)
+    reserve_min = max(1, _int(bm.get('playback_reserve_min'), 6))
+    reserve_max = max(reserve_min, _int(bm.get('playback_reserve_max'), 100))
     for p in providers:
         p['min_idle'] = 0 if p['backup'] else min(max(warm, 0), p['max_conns'])
-        p['reserve'] = 0 if reserve_pct <= 0 or p['max_conns'] < 2 else max(1, round(p['max_conns'] * reserve_pct / 100))
+        p['reserve'] = reserve(p['max_conns'], reserve_pct, reserve_min, reserve_max)
     cache_gb = int(bm.get('cache_size_gb') or 0)
 
     def num(key, default):
