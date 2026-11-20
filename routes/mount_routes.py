@@ -10,6 +10,7 @@ Passwords and the API token are never sent to the browser. An empty
 password field on save means "keep the current one".
 """
 
+import datetime
 import json
 import logging
 import os
@@ -179,6 +180,16 @@ def _merge_servers(new_list, old_list) -> list:
         row = {'host': host, 'port': s.get('port') or 563, 'ssl': bool(s.get('ssl', True)),
                'username': str(s.get('username') or '').strip(), 'connections': s.get('connections') or 10,
                'backup': bool(s.get('backup', False)), 'password': str(s.get('password') or '')}
+        # Plan end + auto-renew are notes for the Mount page only; the
+        # engine never sees them (builtin_engine.servers drops them).
+        expires = str(s.get('expires') or '').strip()
+        if expires:
+            try:
+                expires = datetime.date.fromisoformat(expires).isoformat()
+            except ValueError:
+                raise ValueError(f'server {i + 1} ({host}): plan end must be a date (YYYY-MM-DD)') from None
+        row['expires'] = expires
+        row['auto_renew'] = bool(s.get('auto_renew', False))
         if not row['password']:
             match = next((o for o in old if o.get('host') == host and (o.get('username') or '') == row['username']), None)
             if match is None and i < len(old) and old[i].get('host') == host:
@@ -187,6 +198,45 @@ def _merge_servers(new_list, old_list) -> list:
         out.append(row)
     servers({'servers': out})  # raises ValueError on bad rows
     return out
+
+
+_plans = {'at': 0.0, 'data': {}, 'running': False}
+_plans_lock = threading.Lock()
+PLAN_REFRESH_SECONDS = 3600
+
+
+def _debrid_plans() -> dict:
+    """Plan end per debrid provider key (rd, tb, ...), from the providers'
+    own account APIs. Cached an hour and refreshed in the background, so the
+    Mount page never waits on a provider."""
+    import time
+    with _plans_lock:
+        stale = time.time() - _plans['at'] > PLAN_REFRESH_SECONDS
+        if stale and not _plans['running']:
+            _plans['running'] = True
+            threading.Thread(target=_refresh_debrid_plans, daemon=True, name='mount-debrid-plans').start()
+        return dict(_plans['data'])
+
+
+def _refresh_debrid_plans():
+    import time
+    data = {}
+    try:
+        from utilities import mount_debrid
+        for p in mount_debrid.providers():
+            key = mount_debrid.provider_key(p)
+            try:
+                sub = p.get_subscription_status() or {}
+            except Exception as exc:
+                logging.debug(f'Mount page: {key} subscription status failed: {exc}')
+                continue
+            if sub.get('error'):
+                continue
+            data[key] = {'expiration': sub.get('expiration'), 'days_remaining': sub.get('days_remaining'),
+                         'premium': sub.get('premium')}
+    finally:
+        with _plans_lock:
+            _plans.update(at=time.time(), data=data, running=False)
 
 
 def _sync_in_background():
@@ -244,6 +294,7 @@ def status():
             if code == 200:
                 out['stats'] = body
             out['streams'] = c.get_streams()
+            out['debrid_plans'] = _debrid_plans()
         except Exception as exc:
             logging.debug(f'Mount page: engine status failed: {exc}')
     return jsonify(out)

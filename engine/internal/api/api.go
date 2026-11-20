@@ -561,6 +561,7 @@ func (a *api) stats(w http.ResponseWriter, r *http.Request) {
 		"mem_cache":        map[string]int64{"segments": int64(segs), "bytes": memBytes},
 	}
 	out["debrid"] = stream.RemoteStats()
+	out["usage"] = a.e.Usage.Summaries()
 	out["overview"] = a.e.Overview()
 	if a.e.Disk != nil {
 		files, used := a.e.Disk.Usage()

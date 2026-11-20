@@ -20,6 +20,8 @@
       '<td><input data-k="password" type="password" autocomplete="new-password" placeholder="' + (s.password_set ? 'unchanged' : '') + '"></td>' +
       '<td><input data-k="connections" type="number" value="' + esc(s.connections ?? 10) + '" style="width:70px"></td>' +
       '<td><input data-k="backup" type="checkbox"' + (s.backup ? ' checked' : '') + ' style="width:auto"></td>' +
+      '<td><input data-k="expires" type="date" value="' + esc(s.expires || '') + '" style="width:auto"></td>' +
+      '<td><input data-k="auto_renew" type="checkbox"' + (s.auto_renew ? ' checked' : '') + ' style="width:auto"></td>' +
       '<td><button type="button" class="btn sec rm" style="padding:4px 10px">Remove</button></td>';
     tr.querySelector('.rm').onclick = () => { tr.remove(); dirty = true; };
     tr.querySelectorAll('.mv').forEach(b => b.onclick = () => {
@@ -145,6 +147,7 @@
       '<td' + (d.link_errors ? ' class="mid" title="' + esc(d.last_error || '') + '"' : '') + '>' + (d.link_errors || 0) + '</td>' +
       '<td>' + (d.latency_ms ? Math.round(d.latency_ms) + ' ms' : '—') + '</td></tr>'
     ).join('') : '<tr><td colspan="7" style="color:#888">No debrid reads since the engine started.</td></tr>';
+    renderUsage(st, s, pools, debrid, DEBRID_NAMES);
     $('#pools tbody').innerHTML = pools.length ? pools.map(p => {
       const busy = Math.max(0, (p.open || 0) - (p.idle || 0));
       const pct = p.max ? Math.round(100 * busy / p.max) : 0;
@@ -156,6 +159,49 @@
              '<td>' + (p.latency_ms ? Math.round(p.latency_ms) + ' ms' : '—') + '</td></tr>';
     }).join('') : '<tr><td colspan="11" style="color:#888">The engine isn\'t running.</td></tr>';
     if (!loaded || !dirty) { fill(st.settings); loaded = true; dirty = false; }
+  }
+
+  // Plan end cell: date, days left (red inside a week or past, amber inside
+  // a month) and how it renews.
+  function planCell(dateText, renew) {
+    if (!dateText) return '<td style="color:#888">—</td>';
+    const d = /^\d{4}-\d{2}-\d{2}$/.test(dateText) ? new Date(dateText + 'T00:00:00') : new Date(dateText);
+    if (isNaN(d)) return '<td>' + esc(dateText) + '</td>';
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const day = new Date(d); day.setHours(0, 0, 0, 0);
+    const left = Math.round((day - today) / 86400000);
+    const cls = left <= 7 ? 'no' : (left <= 30 ? 'mid' : '');
+    const when = left < 0 ? 'expired ' + (-left) + 'd ago' : (left === 0 ? 'ends today' : left + 'd left');
+    return '<td>' + esc(d.toLocaleDateString()) + ' <span class="' + cls + '">(' + when + ')</span>' + (renew ? '<div style="color:#888;font-size:12px">' + esc(renew) + '</div>' : '') + '</td>';
+  }
+
+  function renderUsage(st, s, pools, debrid, names) {
+    const usage = (s && s.usage) || {};
+    const rows = [], seen = new Set();
+    const add = (key, label, type, plan, renew) => {
+      if (seen.has(key)) return;
+      seen.add(key);
+      rows.push({key, label, type, plan, renew, u: usage[key] || {}});
+    };
+    const servers = (st.settings && st.settings.servers) || [];
+    servers.forEach(x => add('usenet/' + (x.name || x.host), x.host, x.backup ? 'usenet (backup)' : 'usenet', x.expires,
+      x.expires ? (x.auto_renew ? 'auto-renews' : 'manual renewal') : ''));
+    pools.forEach(p => add('usenet/' + p.name, p.name, 'usenet', '', ''));
+    const plans = st.debrid_plans || {};
+    const dkeys = new Set([...debrid.map(d => d.provider), ...Object.keys(plans),
+      ...Object.keys(usage).filter(k => k.startsWith('debrid/')).map(k => k.slice(7))]);
+    [...dkeys].sort().forEach(k => {
+      const pl = plans[k] || {};
+      add('debrid/' + k, names[k] || k, 'debrid', pl.expiration || '', pl.expiration ? 'from ' + (names[k] || k) : (pl.premium === false ? 'not premium' : ''));
+    });
+    Object.keys(usage).filter(k => k.startsWith('usenet/')).forEach(k => add(k, k.slice(7) + ' (removed)', 'usenet', '', ''));
+    $('#usage tbody').innerHTML = rows.length ? rows.map(r =>
+      '<tr><td>' + esc(r.label) + '</td><td>' + esc(r.type) + '</td><td>' + fmtBytes(r.u.today_bytes || 0) + '</td>' +
+      '<td>' + fmtBytes(r.u.last_30d_bytes || 0) + '</td>' +
+      '<td title="' + (r.u.days_tracked ? 'over ' + r.u.days_tracked + ' day(s) tracked' : '') + '">' + fmtBytes(r.u.avg_daily_bytes || 0) +
+      (r.u.days_tracked && r.u.days_tracked < 30 ? ' <span style="color:#888;font-size:12px">(' + r.u.days_tracked + 'd)</span>' : '') + '</td>' +
+      planCell(r.plan, r.renew) + '</tr>'
+    ).join('') : '<tr><td colspan="6" style="color:#888">No servers or debrid services yet.</td></tr>';
   }
 
   async function refresh() {

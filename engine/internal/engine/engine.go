@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -22,6 +23,7 @@ import (
 	"github.com/godver3/cli_debrid/engine/internal/nzb"
 	"github.com/godver3/cli_debrid/engine/internal/store"
 	"github.com/godver3/cli_debrid/engine/internal/stream"
+	"github.com/godver3/cli_debrid/engine/internal/usage"
 )
 
 // Top-level folders, matching cli_mount so existing symlinks keep resolving
@@ -191,14 +193,46 @@ func (e *Engine) maintain() {
 	}
 }
 
+// trackUsage folds the live byte counters into the per-day usage file
+// every 30 seconds, and once more on shutdown.
+func (e *Engine) trackUsage() {
+	defer e.wg.Done()
+	t := time.NewTicker(30 * time.Second)
+	defer t.Stop()
+	sample := func() {
+		pools, _, _, _ := e.Client.Stats()
+		for _, p := range pools {
+			e.Usage.Observe("usenet/"+p.Name, p.Bytes)
+		}
+		for _, d := range stream.RemoteStats() {
+			e.Usage.Observe("debrid/"+d.Provider, d.Bytes)
+		}
+		if err := e.Usage.Flush(); err != nil {
+			e.log.Warn("could not save provider usage", "err", err)
+		}
+	}
+	for {
+		select {
+		case <-e.ctx.Done():
+			sample()
+			return
+		case <-t.C:
+			sample()
+		}
+	}
+}
+
 // Engine is safe for concurrent use.
 type Engine struct {
 	cfg    Config
 	log    *slog.Logger
 	Client *nntp.Client
-	Cache  *stream.Cache
-	Disk   *diskcache.Cache
-	Store  *store.Store
+	// Usage is bytes per day per usenet server ("usenet/<name>") and debrid
+	// provider ("debrid/<rd|tb|...>"), kept 30 days on disk.
+	Usage *usage.Tracker
+	Cache *stream.Cache
+	Disk  *diskcache.Cache
+	Store *store.Store
 
 	queue  chan string
 	ctx    context.Context
@@ -271,8 +305,13 @@ func New(cfg Config, log *slog.Logger) (*Engine, error) {
 	e.links = newCallbackLinks(cfg.LinkCallback, cfg.Token, log.With("component", "debrid"))
 	e.prober.e = e
 	e.Client.SetLogger(log.With("component", "nntp"))
-	e.wg.Add(1)
+	e.Usage = usage.Open(filepath.Join(cfg.DataDir, "provider_usage.json"))
+	for _, d := range stream.RemoteStats() { // process-wide counters
+		e.Usage.Baseline("debrid/"+d.Provider, d.Bytes)
+	}
+	e.wg.Add(2)
 	go e.maintain()
+	go e.trackUsage()
 	e.Client.Warm(e.ctx)
 	for _, j := range st.List() {
 		if j.Status == store.Queued {

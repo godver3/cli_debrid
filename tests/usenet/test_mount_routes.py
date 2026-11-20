@@ -81,6 +81,23 @@ class MountRoutesTests(unittest.TestCase):
         self.assertEqual([(s['host'], s['password']) for s in saved], [('block.c', 'pc'), ('news.b', 'pb'), ('news.a', 'pa')])
         self.sync.assert_called_once()
 
+    def test_plan_end_is_saved_but_never_reaches_the_engine(self):
+        rows = [dict(SERVERS[0], password='', expires='2026-12-31', auto_renew=True), dict(SERVERS[1], password='')]
+        code, body = self.save({'servers': rows})
+        self.assertEqual(code, 200, body)
+        saved = json.loads(self.store['Built-in Mount']['servers'])
+        self.assertEqual([(s['expires'], s['auto_renew']) for s in saved], [('2026-12-31', True), ('', False)])
+        self.assertEqual(mr._public_settings()['servers'][0]['expires'], '2026-12-31')
+        from utilities.builtin_engine import servers
+        self.assertNotIn('expires', json.dumps(servers({'servers': saved})))
+
+    def test_bad_plan_end_is_rejected(self):
+        before = self.store['Built-in Mount']['servers']
+        code, body = self.save({'servers': [dict(SERVERS[0], expires='31/12/2026')]})
+        self.assertEqual(code, 400, body)
+        self.assertIn('plan end', body['error'])
+        self.assertEqual(self.store['Built-in Mount']['servers'], before)
+
     def test_new_password_and_removed_row(self):
         code, _ = self.save({'servers': [dict(SERVERS[2], password='new'), {'host': ''}]})
         self.assertEqual(code, 200)
