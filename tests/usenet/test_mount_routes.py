@@ -229,3 +229,13 @@ class FuseMountedTests(unittest.TestCase):
         with mock.patch('builtins.open', side_effect=OSError), \
                 mock.patch.object(mr.os.path, 'ismount', return_value=True):
             self.assertTrue(mr._fuse_mounted('/anything'))
+
+
+class EngineCallbacksPublicTests(unittest.TestCase):
+    def test_engine_callbacks_skip_the_login_gate(self):
+        """The engine has no login session; with the user system on, the
+        login gate answered its link requests with 401 and every debrid read
+        failed. The routes check the engine token + localhost themselves."""
+        from routes import models
+        self.assertIn('mount.internal_link', models._PUBLIC_ENDPOINTS)
+        self.assertIn('mount.internal_check', models._PUBLIC_ENDPOINTS)
