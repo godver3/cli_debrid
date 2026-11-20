@@ -47,3 +47,53 @@ def deduplicate_results(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             title_size_map[f"{title}_{rounded_size}"] = result
 
     return list(unique_results.values())
+
+
+def normalize_episode_format_for_dedup(episode_format: str) -> str:
+    """
+    Normalize episode format for deduplication purposes.
+    Considers E123 and 123 as the same format.
+    """
+    if not episode_format:
+        return ""
+    
+    # Remove leading 'E' and leading zeros
+    normalized = episode_format.strip()
+    if normalized.startswith('E'):
+        normalized = normalized[1:]
+    
+    # Remove leading zeros
+    normalized = normalized.lstrip('0')
+    
+    return normalized
+
+
+def dedupe_passed_results(results, is_anime=False, episode_formats=None):
+    """Final dedup of passed results across searches, keeping order.
+
+    Torrents (and debrid results) merge on their title, as before. NZB
+    results merge only when they are the same indexer item (same NZB URL):
+    two indexers often list the same release name for different uploads,
+    and merging on title alone kept whichever came back first and dropped
+    the other upload unseen, sometimes keeping the one already on the
+    not-wanted list, which left nothing to try.
+    """
+    seen = set()
+    out = []
+    for result in results:
+        if result.get('protocol') == 'nzb' and (result.get('nzb_url') or (result.get('parsed_info') or {}).get('guid')):
+            result_key = ('nzb', result.get('nzb_url') or result['parsed_info']['guid'])
+        elif is_anime and episode_formats:
+            # For anime, use normalized episode format for deduplication
+            title = result.get('parsed_title', result.get('original_title', ''))
+            episode_num = (result.get('parsed_info') or {}).get('episode')
+            if episode_num:
+                result_key = f"{title.lower()}_{normalize_episode_format_for_dedup(str(episode_num))}"
+            else:
+                result_key = result.get('original_title', '')
+        else:
+            result_key = result.get('original_title', '')
+        if result_key not in seen:
+            seen.add(result_key)
+            out.append(result)
+    return out
