@@ -487,3 +487,27 @@
   const start = (location.hash || '').slice(1);
   if (['queue', 'browse', 'settings', 'migrate'].includes(start)) showTab(start);
 })();
+
+// Settings tab: each card folds like the main Settings page (closed at
+// first), with Collapse All / Expand All. The open set is remembered per
+// browser.
+(function () {
+  const pane = document.querySelector('.pane[data-pane="settings"]');
+  if (!pane) return;
+  const KEY = 'mountSettingsOpen';
+  const cards = Array.from(pane.querySelectorAll('.card.fold'));
+  const title = c => (c.querySelector('h3') || {}).textContent || '';
+  let saved = [];
+  try { saved = JSON.parse(localStorage.getItem(KEY) || '[]'); } catch (e) { saved = []; }
+  const save = () => {
+    try { localStorage.setItem(KEY, JSON.stringify(cards.filter(c => c.classList.contains('open')).map(title))); } catch (e) { /* private mode */ }
+  };
+  cards.forEach(c => {
+    if (saved.indexOf(title(c)) !== -1) c.classList.add('open');
+    c.querySelector('h3').addEventListener('click', () => { c.classList.toggle('open'); save(); });
+  });
+  const all = open => () => { cards.forEach(c => c.classList.toggle('open', open)); save(); };
+  const ex = document.getElementById('expandAll'), co = document.getElementById('collapseAll');
+  if (ex) ex.addEventListener('click', all(true));
+  if (co) co.addEventListener('click', all(false));
+})();

@@ -19,6 +19,12 @@
 .mnt .card{background:#1a1a1a;border:1px solid #333;border-radius:8px;margin-bottom:14px}
 .mnt .card h3{margin:0;padding:10px 14px;border-bottom:1px solid #333;font-size:1.05em}
 .mnt .card .body{padding:12px 14px}
+.mnt .fold-all{display:flex;gap:8px;justify-content:flex-end;margin-bottom:10px}
+.mnt .card.fold>h3{cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between}
+.mnt .card.fold>h3::after{content:'\25B8';color:#888;transition:transform .15s}
+.mnt .card.fold.open>h3::after{transform:rotate(90deg)}
+.mnt .card.fold:not(.open)>h3{border-bottom:none}
+.mnt .card.fold:not(.open)>.body{display:none}
 .mnt table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
 .mnt th,.mnt td{text-align:left;padding:6px 8px;border-bottom:1px solid #2a2a2a;font-size:13px}
 .mnt th{color:#999;font-weight:600}
@@ -172,14 +178,18 @@
   </div>
 
   <div class="pane" data-pane="settings" hidden>
+  <div class="fold-all">
+    <button type="button" class="btn sec" id="collapseAll"><i class="fa-solid fa-compress"></i> Collapse All</button>
+    <button type="button" class="btn sec" id="expandAll"><i class="fa-solid fa-expand"></i> Expand All</button>
+  </div>
   <form id="mntForm" autocomplete="off">
-  <div class="card"><h3>Usenet servers</h3><div class="body">
+  <div class="card fold"><h3>Usenet servers</h3><div class="body">
     <p style="color:#8f8f8f;font-size:12px;margin-top:0">Tried top to bottom: when a server lacks an article the next one is asked. Servers marked <strong>Backup</strong> (block accounts) are asked last. Use the arrows to reorder. Leave a password empty to keep the saved one.</p>
     <div class="srv"><table id="servers"><thead><tr><th></th><th>Host</th><th>Port</th><th>SSL</th><th>Username</th><th>Password</th><th>Connections</th><th>Backup</th><th></th></tr></thead><tbody></tbody></table></div>
     <button type="button" class="btn sec" id="addServer" style="margin-top:8px">Add server</button>
   </div></div>
   {% for title, fields in groups %}
-  <div class="card"><h3>{{ title }}</h3><div class="body">
+  <div class="card fold"><h3>{{ title }}</h3><div class="body">
     {% for key, spec, label in fields %}
     <div class="f">
       {% if spec.type == 'boolean' %}
@@ -200,7 +210,7 @@
     {% endfor %}
   </div></div>
   {% endfor %}
-  <div class="card"><h3>Virtual folders</h3><div class="body">
+  <div class="card fold"><h3>Virtual folders</h3><div class="body">
     <p style="color:#8f8f8f;font-size:12px;margin-top:0">Extra folders at the top of the mount, each listing the jobs that match <strong>all</strong> its filters (a name regex and a files regex together match either). Useful in Plex mode: point a Movies library at one folder and a TV library at another. <em>Add Movies + TV Shows</em> fills in the docs' Content routing filters, so every release lands in exactly one of the two. Sizes take 10GB / 500MB, last_added takes 7d / 12h, protocol takes usenet or debrid.</p>
     <div id="vfolders"></div>
     <button type="button" class="btn sec" id="addVf" style="margin-top:8px">Add virtual folder</button>
