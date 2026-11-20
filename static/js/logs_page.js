@@ -675,7 +675,16 @@ document.getElementById('log-search').addEventListener('input', filterLogs);
 function initialLoad() {
     loadSavedLogLevel();
     const logEntries = document.getElementById('log-entries');
-    updateLogs(true);
+    // /logs?source=climount&q=<name>: open the mount tab filtered to one file
+    // (links from Now playing / the Mount page's open streams).
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('q')) document.getElementById('log-search').value = params.get('q');
+    const tab = params.get('source') && document.querySelector('.log-source-tab[data-source="' + params.get('source') + '"]');
+    if (tab && params.get('source') !== currentSource) {
+        tab.click();
+    } else {
+        updateLogs(true);
+    }
     // Initial scroll to bottom and check position
     setTimeout(() => {
         scrollToBottom(logEntries);

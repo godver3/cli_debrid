@@ -91,6 +91,7 @@ func (e *Engine) runDebridCheck(id string) {
 	now := time.Now()
 	h := store.Health{CheckedAt: now}
 	healthy := 0
+	e.nameRefs(j.Name, res)
 	for _, en := range res.Entries {
 		if contains(j.Hidden, en.Name) || len(en.Pieces) == 0 {
 			continue

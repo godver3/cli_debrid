@@ -32,6 +32,7 @@ _VIDEO_EXTS = {'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.m4v', '.ts'}
 _LOG = '[builtin]'
 
 # Engine log lines are Go slog text: time=... level=INFO msg="..." key=value
+_FILE_RE = re.compile(r'(^|\s)file=("(?:[^"\\]|\\.)*"|\S*)')
 _SLOG_RE = re.compile(r'^time=(\S+) level=(\S+) msg=("(?:[^"\\]|\\.)*"|\S+)\s*(.*)$')
 
 
@@ -49,6 +50,16 @@ def format_engine_log_line(line: str) -> str:
     if msg.startswith('"'):
         msg = msg[1:-1].replace('\\"', '"')
     ts = ts.replace('T', ' ', 1)[:23]
+    # The file a line is about goes first, so a playing file's lines are
+    # easy to pick out (and to filter by its name).
+    fm = _FILE_RE.search(rest)
+    if fm:
+        name = fm.group(2)
+        if name.startswith('"'):
+            name = name[1:-1].replace('\\"', '"')
+        rest = (rest[:fm.start()] + rest[fm.end():]).strip()
+        if name:
+            msg = f'[{name}] {msg}'
     return f'{ts} | {level.upper()} | [mount] {msg}' + (f' {rest}' if rest else '')
 
 

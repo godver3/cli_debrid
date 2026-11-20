@@ -2,6 +2,7 @@ package engine
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,8 +10,10 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/godver3/cli_debrid/engine/internal/nntptest"
 	"github.com/godver3/cli_debrid/engine/internal/store"
@@ -164,5 +167,71 @@ func TestTreeSplitsLikeCliMount(t *testing.T) {
 	e.ClearHealth("rd-T1")
 	if got := names("__bad__"); got != "" {
 		t.Errorf("__bad__ after ClearHealth: %q", got)
+	}
+}
+
+// Readers missing the link cache at the same time share one callback:
+// each callback mints a new link at the provider.
+func TestConcurrentLinkMissesShareOneCallback(t *testing.T) {
+	var calls atomic.Int32
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"url":"http://cdn/x","expires_in":3600}`))
+	}))
+	defer srv.Close()
+	c := newCallbackLinks(srv.URL, "t", nil)
+	var wg sync.WaitGroup
+	urls := make([]string, 8)
+	for i := range urls {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			u, err := c.Link(context.Background(), "rd:ABC:2", false)
+			if err != nil {
+				t.Error(err)
+			}
+			urls[i] = u
+		}(i)
+	}
+	time.Sleep(100 * time.Millisecond)
+	close(release)
+	wg.Wait()
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("callbacks = %d, want 1", n)
+	}
+	for _, u := range urls {
+		if u != "http://cdn/x" {
+			t.Fatalf("url = %q", u)
+		}
+	}
+	// cached now: no further callback
+	if _, err := c.Link(context.Background(), "rd:ABC:2", false); err != nil || calls.Load() != 1 {
+		t.Fatalf("cached link: err=%v calls=%d", err, calls.Load())
+	}
+}
+
+// A waiter whose own context ends gives up without breaking the shared call.
+func TestLinkWaiterContextCancel(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+		w.Write([]byte(`{"url":"http://cdn/y","expires_in":3600}`))
+	}))
+	defer srv.Close()
+	c := newCallbackLinks(srv.URL, "t", nil)
+	first := make(chan error, 1)
+	go func() { _, err := c.Link(context.Background(), "rd:B:1", false); first <- err }()
+	time.Sleep(50 * time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := c.Link(ctx, "rd:B:1", false); err == nil {
+		t.Fatal("cancelled waiter got no error")
+	}
+	close(release)
+	if err := <-first; err != nil {
+		t.Fatal(err)
 	}
 }

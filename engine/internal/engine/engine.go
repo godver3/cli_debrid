@@ -256,6 +256,7 @@ type Engine struct {
 	prober    mediaProber
 	streams   streamTable
 	links     *callbackLinks
+	refNames  sync.Map // debrid ref -> "job/file", for log lines
 	stopReq   chan struct{}
 	stopOnce  sync.Once
 	runMu     sync.Mutex
@@ -303,6 +304,7 @@ func New(cfg Config, log *slog.Logger) (*Engine, error) {
 		go e.worker()
 	}
 	e.links = newCallbackLinks(cfg.LinkCallback, cfg.Token, log.With("component", "debrid"))
+	e.links.names = e.refName
 	e.prober.e = e
 	e.Client.SetLogger(log.With("component", "nntp"))
 	e.Usage = usage.Open(filepath.Join(cfg.DataDir, "provider_usage.json"))
@@ -647,6 +649,7 @@ func (e *Engine) Files(id string) (*job.Files, error) {
 	if err != nil {
 		return nil, err
 	}
+	e.nameRefs(j.Name, res)
 	e.mu.Lock()
 	if prev, ok := e.open[id]; ok {
 		prev.used = time.Now()
@@ -660,6 +663,23 @@ func (e *Engine) Files(id string) (*job.Files, error) {
 		e.trimOpen(time.Now())
 	}
 	return fs, nil
+}
+
+// nameRefs records the "job/file" name of each debrid source so link log
+// lines say which file they are for.
+func (e *Engine) nameRefs(jobName string, res *job.Result) {
+	for _, s := range res.Sources {
+		if s.Remote != "" {
+			e.refNames.Store(s.Remote, jobName+"/"+s.Name)
+		}
+	}
+}
+
+func (e *Engine) refName(ref string) string {
+	if v, ok := e.refNames.Load(ref); ok {
+		return v.(string)
+	}
+	return ""
 }
 
 // openJob is a job's built readers and when they were last asked for.

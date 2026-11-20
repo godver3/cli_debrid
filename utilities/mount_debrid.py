@@ -125,14 +125,36 @@ def _mint(ref: str) -> Tuple[str, int]:
     raise ValueError(f'no configured debrid provider for {key!r}')
 
 
-def link(ref: str, refresh: bool = False) -> Tuple[str, int]:
-    """(url, ttl seconds) for an engine file ref. Raises on failure."""
+# Mints of the same ref are serialised (striped locks): concurrent requests
+# for a file not yet cached reuse the first mint instead of each unlocking
+# the file again at the provider.
+_mint_locks = [threading.Lock() for _ in range(64)]
+
+
+def _cached(ref: str, refresh: bool) -> Optional[Tuple[str, int]]:
     now = time.time()
     with _link_lock:
         hit = _load_links().get(ref)
     if hit and hit.get('expires', 0) > now + 60:
         if not refresh or now - hit.get('minted', 0) < REFRESH_MIN_AGE:
             return hit['url'], int(hit['expires'] - now)
+    return None
+
+
+def link(ref: str, refresh: bool = False) -> Tuple[str, int]:
+    """(url, ttl seconds) for an engine file ref. Raises on failure."""
+    hit = _cached(ref, refresh)
+    if hit:
+        return hit
+    with _mint_locks[hash(ref) % len(_mint_locks)]:
+        hit = _cached(ref, refresh)
+        if hit:
+            return hit
+        return _mint_and_store(ref)
+
+
+def _mint_and_store(ref: str) -> Tuple[str, int]:
+    now = time.time()
     url, ttl = _mint(ref)
     with _link_lock:
         links = _load_links()

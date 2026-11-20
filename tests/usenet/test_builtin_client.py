@@ -204,6 +204,14 @@ class BuiltinClientTests(unittest.TestCase):
             'time=2026-11-17T09:46:37.927-06:00 level=WARN msg="import failed" job=abc err="job: x \\"y\\""'),
             '2026-11-17 09:46:37.927 | WARN | [mount] import failed job=abc err="job: x \\"y\\""')
         self.assertEqual(bc.format_engine_log_line('panic: boom'), 'panic: boom', 'non-slog lines pass through')
+        self.assertEqual(bc.format_engine_log_line(
+            'time=2026-11-20T17:59:30.174-06:00 level=DEBUG msg="debrid link" component=debrid '
+            'file="Show S01/Show.S01E02.mkv" ref=rd:PQ:2 took=1.6s'),
+            '2026-11-20 17:59:30.174 | DEBUG | [mount] [Show S01/Show.S01E02.mkv] debrid link component=debrid ref=rd:PQ:2 took=1.6s',
+            'the file a line is about goes first')
+        self.assertIn('[mount] read failed job=j',
+                      bc.format_engine_log_line('time=2026-11-20T17:59:30.174Z level=WARN msg="read failed" job=j file= x=1'),
+                      'empty file= is dropped')
         with tempfile.TemporaryDirectory() as d:
             with open(os.path.join(d, 'mount_engine.log'), 'w') as f:
                 f.write('time=2026-11-17T09:00:00Z level=INFO msg=mounted path=/mnt/clid\n\n'

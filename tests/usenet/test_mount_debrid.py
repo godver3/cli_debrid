@@ -183,6 +183,25 @@ class LinkCacheTests(IsolatedLinkCache):
             self.assertEqual(p.minted, 1)
             self.assertGreater(ttl, 3500)
 
+    def test_concurrent_requests_mint_once(self):
+        import threading
+        p = self._provider()
+        orig = p.mount_link
+
+        def slow(tid, fid):
+            time.sleep(0.2)
+            return orig(tid, fid)
+        p.mount_link = slow
+        out = []
+        with mock.patch.object(md, 'providers', return_value=[p]):
+            ts = [threading.Thread(target=lambda: out.append(md.link('rd:A:1')[0])) for _ in range(6)]
+            for t in ts:
+                t.start()
+            for t in ts:
+                t.join()
+        self.assertEqual(p.minted, 1)
+        self.assertEqual(len(set(out)), 1)
+
     def test_refresh_mints_unless_link_is_brand_new(self):
         p = self._provider()
         with mock.patch.object(md, 'providers', return_value=[p]):

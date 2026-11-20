@@ -69,7 +69,18 @@ type callbackLinks struct {
 	client     *http.Client
 	mu         sync.Mutex
 	cache      map[string]cachedLink
+	pending    map[string]*linkCall
+	names      func(ref string) string
 	log        *slog.Logger
+}
+
+// linkCall is one callback in flight; readers missing the cache for the same
+// ref at the same time wait for it instead of each asking cli_debrid (which
+// would mint a new link at the provider per reader).
+type linkCall struct {
+	done chan struct{}
+	url  string
+	err  error
 }
 
 type cachedLink struct {
@@ -82,19 +93,54 @@ func newCallbackLinks(url, token string, log *slog.Logger) *callbackLinks {
 		log = slog.Default()
 	}
 	return &callbackLinks{url: url, token: token, client: &http.Client{Timeout: 30 * time.Second},
-		cache: map[string]cachedLink{}, log: log}
+		cache: map[string]cachedLink{}, pending: map[string]*linkCall{}, log: log}
+}
+
+// name is the "job/file" a ref belongs to, for log lines ("" when unknown).
+func (c *callbackLinks) name(ref string) string {
+	if c.names == nil {
+		return ""
+	}
+	return c.names(ref)
 }
 
 func (c *callbackLinks) Link(ctx context.Context, ref string, refresh bool) (string, error) {
+	key := ref
+	if refresh {
+		key += "\x00refresh"
+	}
 	c.mu.Lock()
 	l, ok := c.cache[ref]
-	c.mu.Unlock()
 	if ok && !refresh && time.Now().Before(l.expires) {
+		c.mu.Unlock()
 		return l.url, nil
 	}
 	if c.url == "" {
+		c.mu.Unlock()
 		return "", errors.New("no link callback configured")
 	}
+	if call, ok := c.pending[key]; ok {
+		c.mu.Unlock()
+		select {
+		case <-call.done:
+			return call.url, call.err
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+	call := &linkCall{done: make(chan struct{})}
+	c.pending[key] = call
+	c.mu.Unlock()
+	// The waiters must not fail because the first reader went away.
+	call.url, call.err = c.fetch(context.WithoutCancel(ctx), ref, refresh)
+	c.mu.Lock()
+	delete(c.pending, key)
+	c.mu.Unlock()
+	close(call.done)
+	return call.url, call.err
+}
+
+func (c *callbackLinks) fetch(ctx context.Context, ref string, refresh bool) (string, error) {
 	body, _ := json.Marshal(map[string]any{"ref": ref, "refresh": refresh})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url, bytes.NewReader(body))
 	if err != nil {
@@ -106,7 +152,7 @@ func (c *callbackLinks) Link(ctx context.Context, ref string, refresh bool) (str
 	resp, err := c.client.Do(req)
 	if err != nil {
 		if ctx.Err() == nil {
-			c.log.Warn("debrid link request failed", "ref", ref, "refresh", refresh, "err", err)
+			c.log.Warn("debrid link request failed", "file", c.name(ref), "ref", ref, "refresh", refresh, "err", err)
 		}
 		return "", fmt.Errorf("cli_debrid unreachable: %w", err)
 	}
@@ -120,17 +166,18 @@ func (c *callbackLinks) Link(ctx context.Context, ref string, refresh bool) (str
 	}
 	decErr := json.NewDecoder(resp.Body).Decode(&out)
 	if resp.StatusCode == http.StatusGone && decErr == nil && out.Dead && out.Reason != "" {
-		c.log.Warn("debrid file gone", "ref", ref, "reason", out.Reason, "err", out.Error)
+		c.log.Warn("debrid file gone", "file", c.name(ref), "ref", ref, "reason", out.Reason, "err", out.Error)
 		return "", &stream.DeadFileError{Reason: out.Reason, Detail: out.Error}
 	}
 	if decErr != nil || resp.StatusCode != http.StatusOK || out.URL == "" {
 		if out.Error == "" {
 			out.Error = fmt.Sprintf("HTTP %d", resp.StatusCode)
 		}
-		c.log.Warn("no debrid link", "ref", ref, "refresh", refresh, "status", resp.StatusCode, "err", out.Error)
+		c.log.Warn("no debrid link", "file", c.name(ref), "ref", ref, "refresh", refresh, "status", resp.StatusCode, "err", out.Error)
 		return "", fmt.Errorf("no link: %s", out.Error)
 	}
-	c.log.Debug("debrid link", "ref", ref, "refresh", refresh, "took", time.Since(start).Round(time.Millisecond))
+	c.log.Debug("debrid link", "file", c.name(ref), "ref", ref, "refresh", refresh, "expires_in", out.ExpiresIn,
+		"took", time.Since(start).Round(time.Millisecond))
 	ttl := time.Duration(out.ExpiresIn) * time.Second
 	if ttl <= 0 {
 		ttl = 6 * time.Hour
