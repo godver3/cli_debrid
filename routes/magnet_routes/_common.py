@@ -303,12 +303,16 @@ def _sync_plex_order_for_new_show(imdb_id, order):
     try:
         from utilities.episode_order_change import _plex_ordering_for, sync_plex_ordering
         candidates = _plex_ordering_for(order)
-        if not candidates:
-            return "Plex has no matching episode ordering; set the show's ordering in Plex by hand."
-        note = sync_plex_ordering(imdb_id, candidates, [])
+        from utilities.plex_order_metadata import sync_show
+        note = (sync_plex_ordering(imdb_id, candidates, []) if candidates
+                else "Plex has no matching episode ordering")
         if note.startswith('Show not found in Plex'):
             return "Once the show appears in Plex, set its episode ordering there to match."
-        return note
+        # Already in Plex: lock the order's episode titles/summaries/dates in
+        titles = sync_show(imdb_id, order)
+        if 'not in Plex yet' in titles:
+            titles = ''
+        return f"{note}; {titles}" if titles else note
     except Exception as e:
         logging.warning(f"Plex ordering for {imdb_id} after manual assign failed: {e}")
         return None
