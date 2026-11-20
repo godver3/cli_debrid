@@ -29,6 +29,7 @@ import base64
 import hashlib
 import logging
 import os
+import re
 import random
 import threading
 import time
@@ -220,8 +221,51 @@ def climount_repair_settings(data_path: str) -> Dict[str, object]:
             v = use.get(src)
             if isinstance(v, int) and 0 < v <= 100:
                 out[dst] = v
+        out.update(_climount_streaming_settings(cfg))
         return out
     return {}
+
+
+def _size_mb(v) -> Optional[int]:
+    """cli_mount size strings ("8MB", "1GB", "512KB", bare bytes) -> whole MB."""
+    if isinstance(v, int):
+        return max(0, v >> 20)
+    m = re.fullmatch(r'\s*(\d+(?:\.\d+)?)\s*([KMGT]?)i?B?\s*', str(v or ''), re.I)
+    if not m:
+        return None
+    n, unit = float(m.group(1)), m.group(2).upper()
+    mb = n * {'': 1 / (1 << 20), 'K': 1 / 1024, 'M': 1, 'G': 1024, 'T': 1 << 20}[unit]
+    return int(round(mb))
+
+
+def _climount_streaming_settings(cfg: dict) -> Dict[str, object]:
+    """cli_mount's Plex protection / prewarm settings (and Plex URL/token,
+    which the caller only uses when cli_debrid has none)."""
+    out: Dict[str, object] = {}
+    use = cfg.get('usenet') or {}
+    dfs = ((cfg.get('mount') or {}).get('dfs')) or {}
+    if isinstance(use.get('interactive_pool_reserve_enabled'), bool):
+        on = use['interactive_pool_reserve_enabled']
+        out['plex_playback_protection'] = on
+        pct = use.get('interactive_pool_reserve_percent')
+        if not on:
+            out['playback_reserve_percent'] = 0
+        elif isinstance(pct, int) and 0 < pct <= 100:
+            out['playback_reserve_percent'] = pct
+        for src, dst in (('interactive_pool_reserve_min', 'playback_reserve_min'),
+                         ('interactive_pool_reserve_max', 'playback_reserve_max')):
+            if on and isinstance(use.get(src), int) and use[src] >= 0:
+                out[dst] = use[src]
+    if isinstance(dfs.get('prewarm_next_episode'), bool):
+        out['plex_prewarm'] = dfs['prewarm_next_episode']
+    if dfs.get('prewarm_max_size'):
+        mb = _size_mb(dfs['prewarm_max_size'])
+        if mb:
+            out['prewarm_max_mb'] = mb
+    if (dfs.get('plex_url') or '').strip() and (dfs.get('plex_token') or '').strip():
+        out['plex_url'] = dfs['plex_url'].strip().rstrip('/')
+        out['plex_token'] = dfs['plex_token'].strip()
+    return out
 
 
 # ---- job runner (progress polled by the Mount page) -------------------------

@@ -212,6 +212,10 @@
       <div class="d">{{ spec.description | replace('Built-in mount only. ', '') | replace('Built-in mount only (Usenet Provider = builtin). ', '') | safe }}</div>
     </div>
     {% endfor %}
+    {% if title == 'Plex' %}
+    <div class="f"><div class="d" id="plexEffective"></div>
+      <button type="button" class="btn sec" id="plexTest" style="margin-top:6px">Test Plex</button> <span id="plexTestMsg" style="font-size:12px"></span></div>
+    {% endif %}
   </div></div>
   {% endfor %}
   <div class="card fold"><h3>Virtual folders</h3><div class="body">

@@ -55,9 +55,20 @@ SECTIONS = {
             "description": "Built-in mount only. Debug logging: the engine also logs every debrid link fetch, refused API call and what each import found in the NZB (archive sets, skipped files). Problems are always logged; turn this on while chasing one.",
             "default": False
         },
+        "plex_url": {
+            "type": "string",
+            "description": "Built-in mount only. Plex URL for playback protection, next-episode prewarm and Now playing, e.g. http://192.168.1.10:32400. Leave empty to use the Plex URL from your other cli_debrid settings (Plex, or Symlink Plex settings).",
+            "default": ""
+        },
+        "plex_token": {
+            "type": "string",
+            "description": "Built-in mount only. Plex token for the URL above. Leave empty to use the token from your other cli_debrid settings.",
+            "default": "",
+            "sensitive": True
+        },
         "plex_playback_protection": {
             "type": "boolean",
-            "description": "Built-in mount only. Plex playback protection: the playback connection reserve is only for files Plex reports playing (checked every 10 s). Plex scans, thumbnails and intro detection can't take it while someone watches. Needs your Plex URL and token; if Plex can't be reached, every read is treated as playback, as without this.",
+            "description": "Built-in mount only. Plex playback protection: the playback connection reserve is only for files Plex reports playing (checked every 10 s). Plex scans, thumbnails and intro detection can't take it while someone watches. Uses the Plex URL and token in the Plex group above; if Plex can't be reached, every read is treated as playback, as without this.",
             "default": True
         },
         "webdav_enabled": {

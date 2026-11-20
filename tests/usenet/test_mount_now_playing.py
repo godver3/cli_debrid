@@ -43,6 +43,19 @@ class NowPlayingTests(unittest.TestCase):
         self.assertEqual(np.now_playing([], [], '/mnt/clid'), [])
         self.assertFalse(np.has_remembered())
 
+    def test_plex_server_order(self):
+        def getter(cfg):
+            return lambda section, key, default='': cfg.get(section, {}).get(key, default)
+        both = {'Plex': {'url': 'http://plex:32400/', 'token': 'p'},
+                'File Management': {'plex_url_for_symlink': 'http://sym:32400', 'plex_token_for_symlink': 's'}}
+        self.assertEqual(np.plex_server(getter(both)), ('http://plex:32400', 'p'))
+        mine = dict(both, **{'Built-in Mount': {'plex_url': 'http://mine:32400', 'plex_token': ''}})
+        self.assertEqual(np.plex_server_source(getter(mine)),
+                         ('http://mine:32400', 'p', 'Mount page', 'Settings → Plex'))
+        only_sym = {'File Management': both['File Management']}
+        self.assertEqual(np.plex_server(getter(only_sym)), ('http://sym:32400', 's'))
+        self.assertEqual(np.plex_server(getter({})), ('', ''))
+
     def test_symlink_into_the_mount(self):
         with tempfile.TemporaryDirectory() as d:
             mount = os.path.join(d, 'mnt')

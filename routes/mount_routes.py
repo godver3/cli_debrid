@@ -41,11 +41,12 @@ def _start_background(state):
         logging.warning(f'Mount debrid sync not started: {exc}')
 
 SECTION = 'Built-in Mount'
-SECRET_KEYS = ('api_token', 'webdav_password')
+SECRET_KEYS = ('api_token', 'webdav_password', 'plex_token')
 GROUPS = [
     ('Mount', ['mount_path', 'allow_other', 'uid', 'gid', 'umask']),
     ('WebDAV share', ['webdav_enabled', 'webdav_port', 'webdav_username', 'webdav_password']),
     ('Files', ['allowed_extensions', 'deobfuscate_mode']),
+    ('Plex', ['plex_url', 'plex_token']),
     ('Streaming', ['read_ahead_mb', 'max_connections_per_file', 'precache_mb', 'warm_connections',
                    'playback_reserve_percent', 'plex_playback_protection', 'buffer_memory_mb', 'idle_timeout_minutes']),
     ('Plex next-episode prewarm', ['plex_prewarm', 'prewarm_trigger_percent', 'prewarm_percent', 'prewarm_max_mb']),
@@ -69,7 +70,7 @@ LABELS = {
     'cache_cleanup_minutes': 'Cache cleanup interval (minutes)', 'processing_connections': 'Processing connections per file',
     'processing_timeout_minutes': 'Processing timeout (minutes)', 'import_sample_percent': 'NZB import availability sample %',
     'health_sample_percent': 'Repair availability sample %', 'media_probe': 'Check playability with ffprobe',
-    'debug_logging': 'Debug logging',
+    'debug_logging': 'Debug logging', 'plex_url': 'Plex URL', 'plex_token': 'Plex token',
     'allowed_extensions': 'Allowed file extensions', 'deobfuscate_mode': 'Deobfuscate mode', 'api_port': 'Engine API port', 'api_token': 'Engine API token',
 }
 
@@ -136,6 +137,9 @@ def _public_settings() -> dict:
             out[key] = val
     out['virtual_folders'] = [{'name': n, 'filters': [{'type': k, 'value': v} for k, v in f.items()]}
                               for n, f in _virtual_folders(cur).items()]
+    from utilities import mount_now_playing as np
+    url, token, url_src, token_src = np.plex_server_source(get_setting)
+    out['plex_effective'] = {'url': url, 'url_source': url_src, 'token_set': bool(token), 'token_source': token_src}
     out['servers'] = [
         {**{k: v for k, v in s.items() if k != 'password'}, 'password': '', 'password_set': bool(s.get('password'))}
         for s in _servers(cur.get('servers')) if isinstance(s, dict)]
@@ -341,6 +345,34 @@ def save_settings():
         _sync_in_background()
     return jsonify({'success': True, 'changed': sorted(changed),
                     'applying': bool(changed and builtin_selected())})
+
+
+@mount_bp.route('/api/plex_test', methods=['POST'])
+@admin_required
+def plex_test():
+    """Can the mount reach Plex? Uses the URL/token typed on the page (not
+    saved yet) or else the ones in effect."""
+    from utilities import mount_now_playing as np
+    data = request.get_json(silent=True) or {}
+    url, token, url_src, token_src = np.plex_server_source(get_setting)
+    if (data.get('url') or '').strip():
+        url, url_src = data['url'].strip().rstrip('/'), 'Mount page (unsaved)'
+    if (data.get('token') or '').strip():
+        token, token_src = data['token'].strip(), 'Mount page (unsaved)'
+    if not url or not token:
+        return jsonify({'ok': False, 'error': 'No Plex URL/token: enter them here, or set Plex in Settings.'})
+    import requests as rq
+    try:
+        r = rq.get(f'{url}/', headers={'X-Plex-Token': token, 'Accept': 'application/json'}, timeout=8)
+        if r.status_code == 401:
+            return jsonify({'ok': False, 'error': 'Plex refused the token (401).', 'url': url})
+        r.raise_for_status()
+        name = (r.json().get('MediaContainer') or {}).get('friendlyName') or ''
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': f'Plex not reachable at {url}: {exc}', 'url': url})
+    sessions, err = np.plex_sessions_checked(url, token)
+    return jsonify({'ok': not err, 'error': err, 'server': name, 'url': url, 'url_source': url_src,
+                    'token_source': token_src, 'sessions': len(sessions)})
 
 
 @mount_bp.route('/api/now_playing')
@@ -577,12 +609,19 @@ def migrate_import():
     data_path = (get_setting('Usenet Provider') or {}).get('data_path') or ''
     # Same repair standards as cli_mount: carry its repair settings over.
     copied = bm.climount_repair_settings(data_path)
+    # cli_mount's Plex URL/token only when cli_debrid has none of its own
+    from utilities import mount_now_playing as np
+    have_url, have_token = np.plex_server(get_setting)
+    if have_url and have_token:
+        copied.pop('plex_url', None)
+        copied.pop('plex_token', None)
     for key, value in copied.items():
         set_setting(SECTION, key, value)
     if copied:
         _sync_in_background()
     job = bm.start_import(_climount_source(), _engine(), data_path, limit=limit, space=_import_space())
-    return jsonify({'success': True, 'job': job, 'copied_settings': copied})
+    shown = {k: ('(set)' if k in SECRET_KEYS else v) for k, v in copied.items()}
+    return jsonify({'success': True, 'job': job, 'copied_settings': shown})
 
 
 @mount_bp.route('/api/migrate/job/<job_id>')

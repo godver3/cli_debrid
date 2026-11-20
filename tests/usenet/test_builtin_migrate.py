@@ -312,3 +312,27 @@ class SpaceTests(unittest.TestCase):
         self.assertEqual(st['status'], 'error')
         self.assertIn('Stopped after 2 job(s)', st['error'])
         self.assertEqual(len(eng.posts), 2, 'jobs imported before the stop are kept')
+
+    def test_copies_plex_protection_and_prewarm(self):
+        import json
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, 'config.json'), 'w') as f:
+                json.dump({'usenet': {'interactive_pool_reserve_enabled': True, 'interactive_pool_reserve_percent': 11,
+                                      'interactive_pool_reserve_min': 6, 'interactive_pool_reserve_max': 100},
+                           'mount': {'dfs': {'prewarm_next_episode': True, 'prewarm_max_size': '512MB',
+                                             'plex_url': 'http://10.0.0.2:32400/', 'plex_token': 'tok'}}}, f)
+            self.assertEqual(bm.climount_repair_settings(d), {
+                'plex_playback_protection': True, 'playback_reserve_percent': 11, 'playback_reserve_min': 6,
+                'playback_reserve_max': 100, 'plex_prewarm': True, 'prewarm_max_mb': 512,
+                'plex_url': 'http://10.0.0.2:32400', 'plex_token': 'tok'})
+
+    def test_protection_off_turns_reserve_off(self):
+        import json
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, 'config.json'), 'w') as f:
+                json.dump({'usenet': {'interactive_pool_reserve_enabled': False, 'interactive_pool_reserve_percent': 15}}, f)
+            self.assertEqual(bm.climount_repair_settings(d),
+                             {'plex_playback_protection': False, 'playback_reserve_percent': 0})
+
+    def test_size_strings(self):
+        self.assertEqual([bm._size_mb(x) for x in ('8MB', '1GB', '512KB', 'junk', 1 << 21)], [8, 1024, 0, None, 2])

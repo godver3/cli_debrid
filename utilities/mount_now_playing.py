@@ -19,9 +19,28 @@ from typing import Callable, List, Optional
 import requests
 
 
+#: Where the mount's Plex URL/token come from, first match wins: the Mount
+#: page's own fields, then Plex mode's, then the Symlink Plex settings.
+PLEX_SOURCES = (
+    ('Built-in Mount', 'plex_url', 'plex_token', 'Mount page'),
+    ('Plex', 'url', 'token', 'Settings → Plex'),
+    ('File Management', 'plex_url_for_symlink', 'plex_token_for_symlink', 'Settings → Symlink Plex'),
+)
+
+
+def plex_server_source(get_setting: Callable) -> tuple:
+    """(url, token, where each came from) of the Plex server the mount asks."""
+    url = token = url_src = token_src = ''
+    for section, url_key, token_key, label in PLEX_SOURCES:
+        if not url and (get_setting(section, url_key, '') or '').strip():
+            url, url_src = get_setting(section, url_key, '').strip().rstrip('/'), label
+        if not token and (get_setting(section, token_key, '') or '').strip():
+            token, token_src = get_setting(section, token_key, '').strip(), label
+    return url, token, url_src, token_src
+
+
 def plex_server(get_setting: Callable) -> tuple:
-    url = (get_setting('Plex', 'url', '') or get_setting('File Management', 'plex_url_for_symlink', '') or '').rstrip('/')
-    token = get_setting('Plex', 'token', '') or get_setting('File Management', 'plex_token_for_symlink', '') or ''
+    url, token, _, _ = plex_server_source(get_setting)
     return url, token
 
 

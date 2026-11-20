@@ -79,11 +79,26 @@
       else if (el.type === 'password') { el.value = ''; el.placeholder = settings[el.name + '_set'] ? 'unchanged' : 'not set'; }
       else el.value = v ?? '';
     });
+    const pe = settings.plex_effective || {};
+    if ($('#plexEffective')) $('#plexEffective').textContent = pe.url
+      ? 'In use: ' + pe.url + ' (from ' + pe.url_source + '), token ' + (pe.token_set ? 'from ' + pe.token_source : 'not set')
+      : 'No Plex URL set: playback protection, prewarm and Now playing are off until one is entered here or in Settings.';
     $('#servers tbody').innerHTML = '';
     (settings.servers || []).forEach(serverRow);
     $('#vfolders').innerHTML = '';
     (settings.virtual_folders || []).forEach(vfRow);
   }
+
+  if ($('#plexTest')) $('#plexTest').onclick = () => {
+    const msg = $('#plexTestMsg');
+    msg.textContent = 'Testing…'; msg.style.color = '';
+    fetch('/mount/api/plex_test', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({url: form.querySelector('[name=plex_url]').value, token: form.querySelector('[name=plex_token]').value})})
+      .then(r => r.json()).then(d => {
+        msg.style.color = d.ok ? '#4caf50' : '#e57373';
+        msg.textContent = d.ok ? 'OK: ' + (d.server || d.url) + ', ' + d.sessions + ' playing now' : d.error;
+      }).catch(err => { msg.style.color = '#e57373'; msg.textContent = String(err); });
+  };
 
   function tile(k, v, cls, sub) { return '<div class="tile"><div class="k">' + esc(k) + '</div><div class="v ' + (cls || '') + '">' + v + '</div>' + (sub ? '<div class="s">' + sub + '</div>' : '') + '</div>'; }
 
