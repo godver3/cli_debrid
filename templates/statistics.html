@@ -329,7 +329,7 @@
         .mount-now-playing .np-tag.usenet{border-color:#3d7bd9;color:#8fb7f2}
         .mount-now-playing .np-tag.debrid{border-color:#2f9e6b;color:#8fdcb6}
         .mount-now-playing .np-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
-        .mount-now-playing .np-tags span{font-size:.7em;padding:1px 6px;border-radius:4px;background:rgba(255,255,255,.08);color:#ccc;white-space:nowrap}
+        .mount-now-playing .np-tags span:not(.quality-badge){font-size:.7em;padding:1px 6px;border-radius:4px;background:rgba(255,255,255,.08);color:#ccc;white-space:nowrap}
         .mount-now-playing .np-time{display:flex;justify-content:space-between;font-size:.75em;color:#9a9a9a;margin-top:3px;font-variant-numeric:tabular-nums}
         .mount-now-playing .np-side{text-align:right;font-size:.8em;color:#aaa;white-space:nowrap}
         </style>
@@ -343,6 +343,20 @@
                 return (h ? h + ':' + (m < 10 ? '0' : '') : '') + m + ':' + (sec < 10 ? '0' : '') + sec;
             }
             function mb(b) { return b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB/s' : (b / 1024).toFixed(0) + ' KB/s'; }
+            // Coloured quality badges like Recently Added (same parser, Tangerine
+            // theme); plain tags otherwise or when the parser finds nothing.
+            function npTags(s) {
+                var name = s.source || s.file || '';
+                if (document.body.getAttribute('data-theme') === 'tangerine' && name && typeof extractQualityTags === 'function') {
+                    var qt = extractQualityTags(name) || [];
+                    if (qt.length) {
+                        return '<div class="np-tags release-tags">' + qt.map(function (t) {
+                            return '<span class="quality-badge ' + esc(t.type) + '">' + esc(t.value) + '</span>';
+                        }).join('') + '</div>';
+                    }
+                }
+                return (s.tags || []).length ? '<div class="np-tags">' + s.tags.map(function (t) { return '<span>' + esc(t) + '</span>'; }).join('') + '</div>' : '';
+            }
             function poll() {
                 if (document.hidden) return;
                 fetch('/mount/api/now_playing').then(function (r) { return r.json(); }).then(function (d) {
@@ -353,7 +367,7 @@
                         return '<div class="np-row"><div class="np-main">' +
                             '<div class="np-title">' + esc(s.title) + (s.subtitle ? ' <span style="font-weight:400;color:#bbb">' + esc(s.subtitle) + '</span>' : '') + '</div>' +
                             '<div class="np-sub">' + esc(s.user) + (s.player ? ' · ' + esc(s.player) : '') + ' · ' + esc(s.decision) + (s.state && s.state !== 'playing' ? ' · ' + esc(s.state) : '') + '</div>' +
-                            ((s.tags || []).length ? '<div class="np-tags">' + s.tags.map(function (t) { return '<span>' + esc(t) + '</span>'; }).join('') + '</div>' : '') +
+                            npTags(s) +
                             '<div class="np-bar"><i style="width:' + pct + '%"></i></div>' +
                             (s.duration_ms ? '<div class="np-time"><span>' + hms(s.position_ms) + ' / ' + hms(s.duration_ms) + '</span><span>' + Math.round(pct) + '%</span></div>' : '') +
                             '</div>' +
