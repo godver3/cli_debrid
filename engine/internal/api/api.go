@@ -1,6 +1,7 @@
 // Package api is the engine's localhost HTTP API, used by cli_debrid.
 //
 //	GET    /status                 engine, providers, caches, job counts
+//	POST   /speedtest             {"provider": name}: manual usenet server speed test
 //	POST   /jobs?name=&category=&id=   body: NZB (raw, or multipart field "nzb")
 //	GET    /jobs?status=           list
 //	GET    /jobs/{id}              job + entries (with mount paths) + failures
@@ -32,6 +33,7 @@ import (
 	"time"
 
 	"github.com/godver3/cli_debrid/engine/internal/engine"
+	"github.com/godver3/cli_debrid/engine/internal/nntp"
 	"github.com/godver3/cli_debrid/engine/internal/store"
 	"github.com/godver3/cli_debrid/engine/internal/stream"
 )
@@ -65,6 +67,7 @@ func Handler(e *engine.Engine) http.Handler {
 	mux.HandleFunc("GET /stats", a.stats)
 	mux.HandleFunc("GET /streams", a.streams)
 	mux.HandleFunc("POST /prewarm", a.prewarm)
+	mux.HandleFunc("POST /speedtest", a.speedTest)
 	mux.HandleFunc("POST /shutdown", a.shutdown)
 	mux.HandleFunc("GET /health", a.healthList)
 	mux.HandleFunc("POST /health/run", a.healthRun)
@@ -543,6 +546,27 @@ func (a *api) prewarm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "prewarming"})
+}
+
+// speedTest measures one usenet server ({"provider": name}).
+func (a *api) speedTest(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Provider string `json:"provider"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<12)).Decode(&body); err != nil || body.Provider == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "provider is required"})
+		return
+	}
+	res, err := a.e.SpeedTest(r.Context(), body.Provider)
+	if errors.Is(err, nntp.ErrUnknownProvider) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }
 
 // streams lists files open on the mount (for "now playing").

@@ -100,6 +100,30 @@
       }).catch(err => { msg.style.color = '#e57373'; msg.textContent = String(err); });
   };
 
+  // Speed tests: results kept across table refreshes, keyed kind:name.
+  const speed = {};
+  function speedCell(kind, name) {
+    const r = speed[kind + ':' + name];
+    let text = '';
+    if (r && r.running) text = 'testing…';
+    else if (r && r.ok) text = '<span class="ok">' + r.mb_per_second + ' MB/s</span> · ' + Math.round(r.latency_ms) + ' ms · ' + esc(r.tested_at || '');
+    else if (r) text = '<span class="no" title="' + esc(r.error || '') + '">failed</span> ' + esc(r.tested_at || '');
+    return '<td style="white-space:nowrap"><button type="button" class="btn sec speedtest" data-kind="' + esc(kind) + '" data-name="' + esc(name) +
+           '"' + (r && r.running ? ' disabled' : '') + ' style="padding:2px 8px;font-size:12px">Test</button> <span style="font-size:12px">' + text + '</span></td>';
+  }
+  document.addEventListener('click', ev => {
+    const b = ev.target.closest('button.speedtest');
+    if (!b) return;
+    const key = b.dataset.kind + ':' + b.dataset.name;
+    speed[key] = {running: true};
+    b.disabled = true; b.nextElementSibling.textContent = 'testing…';
+    fetch('/mount/api/speedtest', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({kind: b.dataset.kind, provider: b.dataset.name})})
+      .then(r => r.json()).then(d => { speed[key] = d; })
+      .catch(err => { speed[key] = {ok: false, error: String(err)}; })
+      .finally(() => { if (typeof refresh === 'function') refresh(); });
+  });
+
   function tile(k, v, cls, sub) { return '<div class="tile"><div class="k">' + esc(k) + '</div><div class="v ' + (cls || '') + '">' + v + '</div>' + (sub ? '<div class="s">' + sub + '</div>' : '') + '</div>'; }
 
   function render(st) {
@@ -156,14 +180,16 @@
              '</td><td>' + openedFor(x.opened_at) + ' ago</td><td>' + fmtBytes(x.bytes_read || 0) + (idle ? ' (idle)' : '') +
              '</td><td>' + pct + '%</td><td>' + (x.rate_bytes ? fmtBytes(x.rate_bytes) + '/s' : '—') + '</td><td>' + (prot ? '<span class="ok">protected</span>' : '') + '</td></tr>';
     }).join('') : '<tr><td colspan="7" style="color:#888">Nothing open.</td></tr>';
+    const debridKeys = st.debrid_keys || [];
     const DEBRID_NAMES = {rd: 'Real-Debrid', tb: 'TorBox', ad: 'AllDebrid', pm: 'Premiumize', dl: 'Debrid-Link', hw: 'HighWay'};
     $('#debridPools tbody').innerHTML = debrid.length ? debrid.map(d =>
       '<tr><td>' + esc(DEBRID_NAMES[d.provider] || d.provider) + '</td><td>' + (d.open || 0) + '</td><td>' + (d.requests || 0) +
       '</td><td>' + fmtBytes(d.bytes || 0) + '</td>' +
       '<td' + (d.errors ? ' class="no" title="' + esc(d.last_error || '') + '"' : '') + '>' + (d.errors || 0) + '</td>' +
       '<td' + (d.link_errors ? ' class="mid" title="' + esc(d.last_error || '') + '"' : '') + '>' + (d.link_errors || 0) + '</td>' +
-      '<td>' + (d.latency_ms ? Math.round(d.latency_ms) + ' ms' : '—') + '</td></tr>'
-    ).join('') : '<tr><td colspan="7" style="color:#888">No debrid reads since the engine started.</td></tr>';
+      '<td>' + (d.latency_ms ? Math.round(d.latency_ms) + ' ms' : '—') + '</td>' + speedCell('debrid', d.provider) + '</tr>'
+    ).join('') : (debridKeys.length ? debridKeys.map(k => '<tr><td>' + esc(DEBRID_NAMES[k] || k) + '</td><td colspan="6" style="color:#888">No reads since the engine started.</td>' + speedCell('debrid', k) + '</tr>').join('')
+      : '<tr><td colspan="8" style="color:#888">No debrid reads since the engine started.</td></tr>');
     renderUsage(st, s, pools, debrid, DEBRID_NAMES);
     $('#pools tbody').innerHTML = pools.length ? pools.map(p => {
       const busy = Math.max(0, (p.open || 0) - (p.idle || 0));
@@ -173,8 +199,8 @@
              '<td>' + (p.articles || 0) + '</td><td>' + fmtBytes(p.bytes || 0) + '</td>' +
              '<td' + (p.missing ? ' class="mid"' : '') + '>' + (p.missing || 0) + '</td>' +
              '<td' + (p.errors ? ' class="no" title="' + esc(p.last_error || '') + '"' : '') + '>' + (p.errors || 0) + '</td>' +
-             '<td>' + (p.latency_ms ? Math.round(p.latency_ms) + ' ms' : '—') + '</td></tr>';
-    }).join('') : '<tr><td colspan="11" style="color:#888">The engine isn\'t running.</td></tr>';
+             '<td>' + (p.latency_ms ? Math.round(p.latency_ms) + ' ms' : '—') + '</td>' + speedCell('usenet', p.name) + '</tr>';
+    }).join('') : '<tr><td colspan="12" style="color:#888">The engine isn\'t running.</td></tr>';
     if (!loaded || !dirty) { fill(st.settings); loaded = true; dirty = false; }
   }
 

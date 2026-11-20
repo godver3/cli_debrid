@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import threading
+import time
 from urllib.parse import quote
 
 from flask import Blueprint, jsonify, render_template, request
@@ -300,6 +301,8 @@ def status():
                 out['stats'] = body
             out['streams'] = c.get_streams()
             out['debrid_plans'] = _debrid_plans()
+            from utilities import mount_debrid as md
+            out['debrid_keys'] = [md.provider_key(p) for p in md.providers()]
         except Exception as exc:
             logging.debug(f'Mount page: engine status failed: {exc}')
     return jsonify(out)
@@ -346,6 +349,28 @@ def save_settings():
         _sync_in_background()
     return jsonify({'success': True, 'changed': sorted(changed),
                     'applying': bool(changed and builtin_selected())})
+
+
+@mount_bp.route('/api/speedtest', methods=['POST'])
+@admin_required
+def speedtest():
+    """Manual speed test of one usenet server ({kind: usenet, provider:
+    name}) or debrid service ({kind: debrid, provider: rd|tb|...})."""
+    if not builtin_selected():
+        return jsonify({'ok': False, 'error': 'the built-in mount is not in use'}), 409
+    from utilities import mount_speedtest as mst
+    data = request.get_json(silent=True) or {}
+    name = str(data.get('provider') or '').strip()
+    if not name:
+        return jsonify({'ok': False, 'error': 'provider is required'}), 400
+    client = _engine()
+    if data.get('kind') == 'debrid':
+        from utilities import mount_debrid as md
+        out = mst.debrid(client, name, md.providers, md.provider_key, md.link)
+    else:
+        out = mst.usenet(client, name)
+    out['tested_at'] = time.strftime('%H:%M')
+    return jsonify(out)
 
 
 @mount_bp.route('/api/plex_test', methods=['POST'])
