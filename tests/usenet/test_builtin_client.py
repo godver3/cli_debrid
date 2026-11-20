@@ -46,7 +46,8 @@ class FakeEngine:
             ('GET', '/jobs/gone'): _Resp(404, {'error': 'not found'}),
             ('GET', '/health'): _Resp(200, [JOB]),
             ('GET', '/stats'): _Resp(200, {'pools': [{'name': 'p', 'max': 20, 'open': 5, 'idle': 2},
-                                                     {'name': 'b', 'max': 5, 'open': 0, 'idle': 0}]}),
+                                                     {'name': 'b', 'max': 5, 'open': 0, 'idle': 0}],
+                                            'overview': {'content': {'bytes': 300, 'usenet_bytes': 200, 'debrid_bytes': 100}}}),
             ('GET', '/changes'): _Resp(200, {'now': 1, 'jobs': [JOB, {'id': 'j2', 'status': 'queued'}], 'deleted': []}),
             ('POST', '/jobs'): _Resp(201, {'id': 'new1', 'status': 'queued'}),
             ('PATCH', '/jobs/j1'): _Resp(200, JOB),
@@ -184,6 +185,8 @@ class BuiltinClientTests(unittest.TestCase):
         st = self.c.get_debug_stats()
         self.assertEqual(st['usenet']['pool'], {'active': 3, 'idle': 2, 'max_connections': 25})
         self.assertEqual(st['repair']['health']['broken'], 1)
+        # Library size on the stats page: the mount's content, not the debrid account.
+        self.assertEqual(st['content'], {'total_size': 300, 'usenet_size': 200, 'debrid_size': 100})
 
     def test_generated_token_read_per_call(self):
         """The client often exists before startup sync writes engine.json."""

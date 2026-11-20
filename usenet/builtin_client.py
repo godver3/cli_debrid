@@ -618,6 +618,7 @@ class BuiltinClient(UnsupportedFeaturesMixin):
         if code != 200 or not isinstance(st, dict):
             return None
         pools = st.get('pools') or []
+        content = (st.get('overview') or {}).get('content') or {}
         broken = len(self._broken_entries())
         return {
             'usenet': {'pool': {
@@ -627,6 +628,11 @@ class BuiltinClient(UnsupportedFeaturesMixin):
             }},
             'repair': {'health': {'broken': broken}},
             'active_streams': {'streams': []},
+            # Library size for the stats page (cli_mount reports the same
+            # key); without it the page fell back to the debrid account size.
+            'content': {'total_size': int(content.get('bytes') or 0),
+                        'usenet_size': int(content.get('usenet_bytes') or 0),
+                        'debrid_size': int(content.get('debrid_bytes') or 0)},
             'engine': st,
         }
 
