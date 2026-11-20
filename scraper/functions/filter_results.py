@@ -208,6 +208,38 @@ def _swaps_a_title_word(parsed_title, target_title):
     return bool(unmatched(parsed_words, target_words)) and bool(unmatched(target_words, parsed_words))
 
 
+# Words a release puts between the show name and SxxEyy on reunion/special
+# episodes ('Show.Reunion.Part.1.S05E17', Dutch 'De.Reunie.Deel.2').
+_EPISODE_LABEL_WORDS = {'reunion', 'reunie', 'reünie', 'part', 'pt', 'deel', 'teil', 'partie', 'parte',
+                        'the', 'de', 'het', 'la', 'le', 'die', 'der', 'finale', 'special'}
+
+
+def _episode_words_after_title(parsed_title, target_titles, episode_title):
+    """Words the release adds after the full show title, when they are the
+    episode's own label rather than another show's name.
+
+    Some posters name episodes 'Show.Episode.Title.S02E10' or
+    'Show.Reunion.Part.1.S05E17'; PTT then reads the episode words as part of
+    the show title and the similarity check rejects every such release. The
+    extra words count as an episode label when they match the episode's title
+    from metadata, or are only reunion/part words. A spin-off
+    ('Below Deck Mediterranean' for 'Below Deck') matches neither.
+    Returns the added words, or '' when the release doesn't qualify."""
+    parsed = [w for w in re.split(r'[^a-z0-9]+', parsed_title or '') if w]
+    ep_words = [w for w in re.split(r'[^a-z0-9]+', normalize_title(episode_title or '').lower()) if w]
+    for target in target_titles:
+        tw = [w for w in re.split(r'[^a-z0-9]+', target or '') if w]
+        if len(tw) < 2 or len(parsed) <= len(tw) or parsed[:len(tw)] != tw:
+            continue
+        extra = parsed[len(tw):]
+        if all(w in _EPISODE_LABEL_WORDS or w.isdigit() for w in extra) and \
+                any(w in ('reunion', 'reunie', 'reünie') for w in extra):
+            return ' '.join(extra)
+        if ep_words and fuzz.token_set_ratio(' '.join(extra), ' '.join(ep_words)) >= 85:
+            return ' '.join(extra)
+    return ''
+
+
 def _inserts_a_title_word(parsed_title, target_title):
     """True when parsed_title is target_title with a word added in the middle:
     'spider.man.the.new.animated.series' against 'spider.man.the.animated.series'
@@ -350,6 +382,7 @@ def filter_results(
     
     # --- Cache for API fallback results within this filter_results call ---
     _fetched_detailed_seasons_data_cache = None
+    _episode_title_cache = {'loaded': False, 'title': ''}  # the searched episode's title, fetched on first need
     _absolute_season_counts = None  # full season counts, loaded on the first absolute-numbered batch
     _order_map = False  # aired numbering -> the show's episode order; loaded on the first season pack
     
@@ -1019,6 +1052,30 @@ def filter_results(
                     result['filter_reason'] = f"Different title: '{normalized_parsed_title}' adds a word inside '{normalized_query_title}'"
                     logging.info(f"Rejected: Different title '{normalized_parsed_title}' adds a word inside '{normalized_query_title}' for '{original_title}' (Size: {result['size']:.2f}GB)")
                     continue
+
+            if (best_sim < result_similarity_threshold and is_episode and not is_anime
+                    and normalized_parsed_title and season is not None and episode is not None
+                    and parsed_info.get('seasons') == [season]
+                    and episode in (parsed_info.get('episodes') or [])):
+                # 'Show.Episode.Title.S02E10' / 'Show.Reunion.Part.1.S05E17': the
+                # episode's own words read as part of the show title.
+                if _episode_title_cache['loaded'] is False:
+                    _episode_title_cache['loaded'] = True
+                    try:
+                        if direct_api is not None and imdb_id:
+                            seasons_data, _ = direct_api.get_show_seasons(imdb_id=imdb_id)
+                            eps = ((seasons_data or {}).get(season) or (seasons_data or {}).get(str(season)) or {}).get('episodes') or {}
+                            ep = eps.get(episode) or eps.get(str(episode)) or {}
+                            _episode_title_cache['title'] = ep.get('title') or ''
+                    except Exception as ep_err:
+                        logging.debug(f"Episode title lookup failed for {imdb_id} S{season}E{episode}: {ep_err}")
+                label = _episode_words_after_title(
+                    normalized_parsed_title, [normalized_query_title, *normalized_aliases],
+                    _episode_title_cache['title'])
+                if label:
+                    logging.info(f"Title match: '{original_title}' is '{normalized_query_title}' with the episode label "
+                                 f"'{label}' before S{season:02d}E{episode:02d} (similarity was {best_sim:.2f})")
+                    best_sim = result_similarity_threshold
 
             if best_sim < result_similarity_threshold:
                 # Log the failure reason including all comparison scores
