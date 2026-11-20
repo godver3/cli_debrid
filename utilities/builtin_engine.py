@@ -480,6 +480,50 @@ def user_start(settings: dict = None) -> str:
     return sync(settings)
 
 
+def fuse_mounted(path: str) -> bool:
+    """A FUSE filesystem (cli_mount's, live or dead) sits on path. Inside
+    Docker the folder is a bind mount, so os.path.ismount() is always True
+    there and can't tell cli_mount apart from the bind; /proc/self/mountinfo
+    names the filesystem type. Without mountinfo (Windows) fall back to
+    ismount."""
+    target = os.path.realpath(path).rstrip('/') or '/'
+    try:
+        with open('/proc/self/mountinfo') as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return os.path.ismount(path)
+    for line in lines:
+        left, _, right = line.partition(' - ')
+        parts = left.split()
+        if len(parts) < 5:
+            continue
+        mnt = parts[4].replace('\\040', ' ').replace('\\011', '\t').replace('\\012', '\n').replace('\\134', '\\')
+        if mnt.rstrip('/') == target and (right.split() or [''])[0].startswith('fuse'):
+            return True
+    return False
+
+
+
+def wait_until_mounted(settings: dict = None, timeout: float = 180, poll: float = 2) -> bool:
+    """Block until the built-in mount is up, for program start: after a
+    container start the engine loads every job before it mounts (about a
+    minute for ~8k jobs), and a program started meanwhile failed its
+    connectivity check on the original files path. Returns at once when the
+    built-in mount isn't in use or isn't running (stopped, can't start);
+    True when mounted, False on timeout."""
+    import time
+    s = settings if settings is not None else _load_settings()
+    if not wanted(s):
+        return True
+    path = mount_path(s.get('Built-in Mount') or {})
+    deadline = time.monotonic() + timeout
+    while True:
+        if fuse_mounted(path):
+            return True
+        if state() not in ('RUNNING', 'STARTING', 'BACKOFF') or time.monotonic() >= deadline:
+            return fuse_mounted(path)
+        time.sleep(poll)
+
 def startup(settings: dict = None) -> str:
     """Container/app start. With Debug.auto_run_program on, the mount comes
     up even if it was stopped by hand before (autostart means everything

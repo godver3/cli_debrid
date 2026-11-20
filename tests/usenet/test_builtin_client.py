@@ -318,6 +318,21 @@ class EngineManagerTests(unittest.TestCase):
         self.assertNotIn(('start', 'mount_engine'), self.calls)
         self.assertTrue(self.be.stopped_by_user(), 'flag left alone when the mount is not in use')
 
+    def test_wait_until_mounted(self):
+        s = self.settings()
+        self.state = 'RUNNING'
+        seen = iter([False, False, True])
+        with mock.patch.object(self.be, 'fuse_mounted', side_effect=lambda p: next(seen)), \
+                mock.patch('time.sleep'):
+            self.assertTrue(self.be.wait_until_mounted(s, timeout=60))
+        with mock.patch.object(self.be, 'fuse_mounted', return_value=False) as fm:
+            self.state = 'STOPPED'
+            self.assertFalse(self.be.wait_until_mounted(s, timeout=60), 'a stopped mount is not waited for')
+            self.assertEqual(fm.call_count, 2)
+            fm.reset_mock()
+            self.assertTrue(self.be.wait_until_mounted(self.settings(provider='climount')), 'external mount: no wait')
+            fm.assert_not_called()
+
     def test_sync_reports_problems_instead_of_starting(self):
         self.problems.return_value = ['/dev/fuse is not available']
         self.assertTrue(self.be.sync(self.settings()).startswith('cannot start'))

@@ -85,28 +85,10 @@ def mount_page_visible() -> bool:
         return False
 
 
-def _fuse_mounted(path: str) -> bool:
-    """A FUSE filesystem (cli_mount's, live or dead) sits on path. Inside
-    Docker the folder is a bind mount, so os.path.ismount() is always True
-    there and can't tell cli_mount apart from the bind; /proc/self/mountinfo
-    names the filesystem type. Without mountinfo (Windows) fall back to
-    ismount."""
-    target = os.path.realpath(path).rstrip('/') or '/'
-    try:
-        with open('/proc/self/mountinfo') as f:
-            lines = f.read().splitlines()
-    except OSError:
-        return os.path.ismount(path)
-    for line in lines:
-        left, _, right = line.partition(' - ')
-        parts = left.split()
-        if len(parts) < 5:
-            continue
-        mnt = parts[4].replace('\\040', ' ').replace('\\011', '\t').replace('\\012', '\n').replace('\\134', '\\')
-        if mnt.rstrip('/') == target and (right.split() or [''])[0].startswith('fuse'):
-            return True
-    return False
 
+def _fuse_mounted(path: str) -> bool:
+    from utilities import builtin_engine
+    return builtin_engine.fuse_mounted(path)
 
 def builtin_selected() -> bool:
     """The built-in mount is in use (usenet backend, or debrid-only)."""
