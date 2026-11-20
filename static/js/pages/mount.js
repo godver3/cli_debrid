@@ -96,11 +96,14 @@
     const jobs = jobList ? (jobList[0] || 'none') : '—';
     const jobsSub = jobList && jobList.length > 1 ? esc(jobList.slice(1).join(' · ')) : '';
     const dc = s && s.disk_cache;
+    const debrid = (s && s.debrid) || [];
+    const debridBytes = debrid.reduce((n, d) => n + (d.bytes || 0), 0);
     $('#tiles').innerHTML =
       tile('Engine', esc(st.selected ? st.state : 'not selected'), st.selected ? stateCls : 'mid') +
       tile('Mount', e ? esc(e.mount_path) + (e.ready ? ' <span class="ok">●</span>' : ' <span class="no">●</span>') : '—') +
       tile('Jobs', esc(jobs), '', jobsSub) +
-      tile('Downloaded', s ? fmtBytes(s.bytes_downloaded) : '—', '', s ? (s.articles || 0) + ' articles' : '') +
+      tile('Downloaded', s ? fmtBytes((s.bytes_downloaded || 0) + debridBytes) : '—', '',
+        s ? (debrid.length ? 'usenet ' + fmtBytes(s.bytes_downloaded || 0) + ' · debrid ' + fmtBytes(debridBytes) : (s.articles || 0) + ' articles') : '') +
       tile('Missing articles', s ? String(s.articles_missing || 0) : '—', s && s.articles_missing ? 'mid' : '') +
       tile('Disk cache', dc ? fmtBytes(dc.bytes) : '—', '', dc ? (dc.hits || 0) + ' hits · ' + (dc.misses || 0) + ' misses' : '');
     const la = st.last_sync && st.last_sync.result ? (st.last_sync.running ? 'applying…' : st.last_sync.result) : '';
@@ -122,6 +125,14 @@
       tile('Uptime', dur(o.uptime_seconds), '', fmtBytes(o.runtime.heap_bytes || 0) + ' heap · ' + (o.runtime.goroutines || 0) + ' goroutines')
     ) : '';
     const pools = (s && s.pools) || (e && e.providers) || [];
+    const DEBRID_NAMES = {rd: 'Real-Debrid', tb: 'TorBox', ad: 'AllDebrid', pm: 'Premiumize', dl: 'Debrid-Link', hw: 'HighWay'};
+    $('#debridPools tbody').innerHTML = debrid.length ? debrid.map(d =>
+      '<tr><td>' + esc(DEBRID_NAMES[d.provider] || d.provider) + '</td><td>' + (d.open || 0) + '</td><td>' + (d.requests || 0) +
+      '</td><td>' + fmtBytes(d.bytes || 0) + '</td>' +
+      '<td' + (d.errors ? ' class="no" title="' + esc(d.last_error || '') + '"' : '') + '>' + (d.errors || 0) + '</td>' +
+      '<td' + (d.link_errors ? ' class="mid" title="' + esc(d.last_error || '') + '"' : '') + '>' + (d.link_errors || 0) + '</td>' +
+      '<td>' + (d.latency_ms ? Math.round(d.latency_ms) + ' ms' : '—') + '</td></tr>'
+    ).join('') : '<tr><td colspan="7" style="color:#888">No debrid reads since the engine started.</td></tr>';
     $('#pools tbody').innerHTML = pools.length ? pools.map(p => {
       const busy = Math.max(0, (p.open || 0) - (p.idle || 0));
       const pct = p.max ? Math.round(100 * busy / p.max) : 0;

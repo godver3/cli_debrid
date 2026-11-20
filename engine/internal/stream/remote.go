@@ -111,6 +111,7 @@ func (r *RemoteFile) fetchChunk(ctx context.Context, prio nntp.Priority, i int) 
 		for attempt := 0; attempt < 4; attempt++ {
 			url, err := r.links.Link(ctx, r.ref, false)
 			if err != nil {
+				countersFor(r.ref).linkFail(err)
 				return nil, fmt.Errorf("stream: link for %s: %w", r.ref, err)
 			}
 			// On the wire now: a live read for this chunk joins this fetch
@@ -151,24 +152,40 @@ func (r *RemoteFile) get(ctx context.Context, url string, start, n int64) ([]byt
 		return nil, 0, err
 	}
 	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, start+n-1))
+	st := countersFor(r.ref)
+	st.begin()
+	defer st.end()
+	began := time.Now()
 	resp, err := r.client.Do(req)
 	if err != nil {
+		if ctx.Err() == nil {
+			st.fail(err)
+		}
 		return nil, 0, err
 	}
+	st.headers(began)
 	defer resp.Body.Close()
 	switch {
 	case resp.StatusCode == http.StatusPartialContent:
 	case resp.StatusCode == http.StatusOK && start == 0 && n == r.size:
 	default:
 		io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
-		return nil, resp.StatusCode, fmt.Errorf("%w: HTTP %d for bytes %d-%d", ErrLinkRefused, resp.StatusCode, start, start+n-1)
+		err := fmt.Errorf("%w: HTTP %d for bytes %d-%d", ErrLinkRefused, resp.StatusCode, start, start+n-1)
+		st.fail(err)
+		return nil, resp.StatusCode, err
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, n+1))
+	st.bytes.Add(int64(len(data)))
 	if err != nil {
+		if ctx.Err() == nil {
+			st.fail(err)
+		}
 		return nil, resp.StatusCode, err
 	}
 	if int64(len(data)) != n {
-		return nil, resp.StatusCode, fmt.Errorf("stream: got %d bytes, want %d", len(data), n)
+		err := fmt.Errorf("stream: got %d bytes, want %d", len(data), n)
+		st.fail(err)
+		return nil, resp.StatusCode, err
 	}
 	return data, resp.StatusCode, nil
 }

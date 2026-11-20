@@ -289,8 +289,10 @@ func (r *RemoteFile) waitTimeout(dur time.Duration) {
 // error means it stopped cleanly.
 func (d *downloader) pump(ctx context.Context, start int64) (int, error) {
 	r := d.r
+	st := countersFor(r.ref)
 	url, err := r.links.Link(ctx, r.ref, false)
 	if err != nil {
+		st.linkFail(err)
 		return 0, fmt.Errorf("stream: link for %s: %w", r.ref, err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -298,14 +300,23 @@ func (d *downloader) pump(ctx context.Context, start int64) (int, error) {
 		return 0, err
 	}
 	req.Header.Set("Range", fmt.Sprintf("bytes=%d-", start))
+	st.begin()
+	defer st.end()
+	began := time.Now()
 	resp, err := r.client.Do(req)
 	if err != nil {
+		if ctx.Err() == nil {
+			st.fail(err)
+		}
 		return 0, err
 	}
+	st.headers(began)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusPartialContent && !(resp.StatusCode == http.StatusOK && start == 0) {
 		io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
-		return resp.StatusCode, fmt.Errorf("%w: HTTP %d from byte %d", ErrLinkRefused, resp.StatusCode, start)
+		err := fmt.Errorf("%w: HTTP %d from byte %d", ErrLinkRefused, resp.StatusCode, start)
+		st.fail(err)
+		return resp.StatusCode, err
 	}
 	block := make([]byte, streamBlock)
 	for {
@@ -339,6 +350,7 @@ func (d *downloader) pump(ctx context.Context, start int64) (int, error) {
 		r.smu.Unlock()
 
 		m, err := io.ReadFull(resp.Body, block[:want])
+		st.bytes.Add(int64(m))
 		r.smu.Lock()
 		if m > 0 {
 			d.buf = append(d.buf, block[:m]...)
@@ -369,7 +381,12 @@ func (d *downloader) pump(ctx context.Context, start int64) (int, error) {
 				if ended {
 					return resp.StatusCode, nil
 				}
-				return 0, fmt.Errorf("stream: body ended early at %d", d.pos)
+				err := fmt.Errorf("stream: body ended early at %d", d.pos)
+				st.fail(err)
+				return 0, err
+			}
+			if ctx.Err() == nil {
+				st.fail(err)
 			}
 			return 0, err
 		}

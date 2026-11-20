@@ -33,6 +33,7 @@ import (
 
 	"github.com/godver3/cli_debrid/engine/internal/engine"
 	"github.com/godver3/cli_debrid/engine/internal/store"
+	"github.com/godver3/cli_debrid/engine/internal/stream"
 )
 
 const maxNZB = 64 << 20
@@ -559,6 +560,7 @@ func (a *api) stats(w http.ResponseWriter, r *http.Request) {
 		"articles_missing": missing,
 		"mem_cache":        map[string]int64{"segments": int64(segs), "bytes": memBytes},
 	}
+	out["debrid"] = stream.RemoteStats()
 	out["overview"] = a.e.Overview()
 	if a.e.Disk != nil {
 		files, used := a.e.Disk.Usage()
