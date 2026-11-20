@@ -342,3 +342,47 @@ func TestNoProvidersIsNeverProof(t *testing.T) {
 		t.Fatalf("want inconclusive ErrNoProviders, got %v", err)
 	}
 }
+
+// A provider that closes idle connections closes all of them. The first
+// stale one tells us the rest are dead too: the retry must not pick another
+// stale one (that failed, logged "broken pipe" and moved to the next server).
+func TestStaleIdleConnectionsDroppedTogether(t *testing.T) {
+	data := awkward(50_000)
+	arts := nntptest.Post("st", "file.bin", data, 10_000)
+	s := nntptest.Start(t, arts...)
+	c, _ := NewClient([]Provider{provider(s, "a", 4)})
+	defer c.Close()
+	var wg sync.WaitGroup
+	for _, a := range arts[:4] { // open four connections at once
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			if _, _, err := c.Body(context.Background(), Live, id); err != nil {
+				t.Error(err)
+			}
+		}(a.ID)
+	}
+	wg.Wait()
+	pl := c.pools[0]
+	pl.mu.Lock()
+	if len(pl.idle) < 2 {
+		pl.mu.Unlock()
+		t.Fatalf("want several idle connections, have %d", len(pl.idle))
+	}
+	for _, cn := range pl.idle {
+		cn.lastUsed = time.Now().Add(-time.Minute) // idle a minute
+	}
+	pl.mu.Unlock()
+	s.CloseConns() // the server drops them all
+	time.Sleep(50 * time.Millisecond)
+
+	var logged bytes.Buffer
+	c.SetLogger(slog.New(slog.NewTextHandler(&logged, nil)))
+	got, _, err := c.Body(context.Background(), Live, arts[4].ID)
+	if err != nil || !bytes.Equal(got, data[40_000:]) {
+		t.Fatalf("read after the server closed idle connections: %v", err)
+	}
+	if strings.Contains(logged.String(), "provider problem") {
+		t.Fatalf("a stale idle connection was reported as a provider problem:\n%s", logged.String())
+	}
+}

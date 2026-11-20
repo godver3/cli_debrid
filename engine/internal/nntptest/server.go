@@ -20,6 +20,7 @@ type Server struct {
 	user, pass string        // when set, BODY/STAT need AUTHINFO first
 	delay      time.Duration // slept before answering each BODY
 	drop       map[string]bool
+	conns      map[net.Conn]bool
 
 	Bodies  atomic.Int64 // BODY commands answered with an article
 	Stats   atomic.Int64
@@ -100,12 +101,34 @@ func (s *Server) serve() {
 			return
 		}
 		s.Accepts.Add(1)
+		s.mu.Lock()
+		if s.conns == nil {
+			s.conns = map[net.Conn]bool{}
+		}
+		s.conns[c] = true
+		s.mu.Unlock()
 		go s.handle(c)
 	}
 }
 
+// CloseConns drops every open client connection, the way a provider
+// closes idle connections on its side.
+func (s *Server) CloseConns() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for c := range s.conns {
+		c.Close()
+	}
+	s.conns = map[net.Conn]bool{}
+}
+
 func (s *Server) handle(c net.Conn) {
-	defer c.Close()
+	defer func() {
+		s.mu.Lock()
+		delete(s.conns, c)
+		s.mu.Unlock()
+		c.Close()
+	}()
 	r := bufio.NewReader(c)
 	write := func(line string) bool {
 		_, err := c.Write([]byte(line + "\r\n"))

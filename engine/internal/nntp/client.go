@@ -148,6 +148,7 @@ func (c *Client) attempt(ctx context.Context, prio Priority, id string,
 				break
 			}
 			acquired(ctx)
+			idleFor := time.Since(cn.lastUsed)
 			began := time.Now()
 			found, err := fn(cn)
 			pl.record(began, cn.lastBytes, found, err)
@@ -173,6 +174,12 @@ func (c *Client) attempt(ctx context.Context, prio Priority, id string,
 					pl.discard(cn)
 					if try > 0 { // the first failure is often just a stale idle connection
 						c.problem(pl.p.Name, "connection", prio, err)
+					} else if idleFor >= staleIdleAge {
+						// The server closed it while idle, and the other
+						// connections idle as long with it: drop them so the
+						// retry gets a live (or freshly dialed) connection
+						// instead of failing the same way ("broken pipe").
+						pl.dropIdleOlderThan(min(idleFor, staleIdleCap))
 					}
 				}
 				last = fmt.Errorf("%s: %w", pl.p.Name, err)
@@ -193,6 +200,14 @@ func (c *Client) attempt(ctx context.Context, prio Priority, id string,
 	}
 	return &InconclusiveError{ID: id, Last: last}
 }
+
+// A reused connection that fails after sitting idle at least staleIdleAge
+// is taken as closed by the server; idle connections unused for
+// min(its idle time, staleIdleCap) are dropped with it.
+const (
+	staleIdleAge = 5 * time.Second
+	staleIdleCap = 30 * time.Second
+)
 
 // Body downloads and decodes one article.
 func (c *Client) Body(ctx context.Context, prio Priority, id string) ([]byte, Meta, error) {

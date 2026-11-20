@@ -205,6 +205,27 @@ func (pl *pool) closeIdle(maxIdle time.Duration) {
 	pl.idle = keep
 }
 
+// dropIdleOlderThan closes idle connections unused for at least age. A
+// provider that closes idle connections closes all of them at once, so when
+// one turns out dead, the others idle as long are dead too.
+func (pl *pool) dropIdleOlderThan(age time.Duration) int {
+	pl.mu.Lock()
+	defer pl.mu.Unlock()
+	keep := pl.idle[:0]
+	dropped := 0
+	for _, c := range pl.idle {
+		if time.Since(c.lastUsed) < age {
+			keep = append(keep, c)
+			continue
+		}
+		c.close()
+		pl.open--
+		dropped++
+	}
+	pl.idle = keep
+	return dropped
+}
+
 // warm dials connections until MinIdle are open (idle or busy), so a new
 // session doesn't pay for the handshake. A failure stops this round (the
 // next warm or read tries again) and is returned for the caller to report.
