@@ -49,6 +49,7 @@ from .upgrade_hub_routes import upgrade_hub_bp
 # AI Assistant disabled: the AI Butler routes (/api/ai/*) are not registered.
 # from .ai_routes import ai_bp
 from .tracker_account_routes import tracker_account_bp
+from .mcp_routes import mcp_bp
 from .oidc_routes import oidc_bp
 
 tooltip_bp = Blueprint('tooltip', __name__)
@@ -184,6 +185,7 @@ def register_blueprints(app):
         # (ai_bp, ''),  # /api/ai/* routes (AI Assistant disabled)
         (oidc_bp, '/auth/oidc'),  # OIDC SSO routes
         (tracker_account_bp, '/tracking'),  # Simkl sign-in, Floppy test
+        (mcp_bp, '/mcp'),  # read-only MCP endpoint (own token) + setup page
     ]
     
     for blueprint, url_prefix in blueprints:
