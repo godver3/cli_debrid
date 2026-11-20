@@ -73,6 +73,16 @@ class MigrateTests(unittest.TestCase):
                          [('a@x', 0, 999, 176), ('b@x', 1000, 1999, 0)], 'sorted by file offset')
         self.assertEqual(m['skipped'], [('secret.mkv', "encrypted archive without a usable key in cli_mount's metadata")])
 
+    def test_parse_meta_duplicate_name_keeps_largest(self):
+        meta = (fld(1, 'x') + fld(2, 'Deep.Blue.Sea') +
+                fld(9, nzbfile('dbs.mkv', [seg(1, 'a@x', 0, 99)], 100)) +
+                fld(9, nzbfile('dbs.mkv', [seg(1, 'b@x', 0, 9999)], 10000)) +
+                fld(9, nzbfile('dbs.sample.mkv', [seg(1, 'c@x', 0, 9)], 10)))
+        m = bm.parse_meta(meta)
+        self.assertEqual([(f['name'], f['size']) for f in m['files']], [('dbs.mkv', 10000), ('dbs.sample.mkv', 10)])
+        self.assertEqual(len(m['skipped']), 1)
+        self.assertIn('duplicate name', m['skipped'][0][1])
+
     def test_import_one_keeps_id_folder_and_reports(self):
         with tempfile.TemporaryDirectory() as d:
             with open(os.path.join(d, '95af6933-9d46-487a-96a1-efac7d2b4113.meta'), 'wb') as f:

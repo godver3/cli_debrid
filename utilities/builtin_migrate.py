@@ -107,6 +107,18 @@ def parse_meta(data: bytes) -> dict:
                     continue
                 entry['key'], entry['iv'] = key, iv
             out['files'].append(entry)
+    # A name listed twice (seen live: a stray ~100 MB entry next to the real
+    # 6-8 GB movie) would make the engine refuse the whole job: keep the largest.
+    best = {}
+    for f in out['files']:
+        if f['name'] not in best or f['size'] > best[f['name']]['size']:
+            best[f['name']] = f
+    if len(best) < len(out['files']):
+        keep = {id(f) for f in best.values()}
+        for f in out['files']:
+            if id(f) not in keep:
+                out['skipped'].append((f['name'], f'duplicate name, kept the larger copy ({f["size"]} bytes left out)'))
+        out['files'] = [f for f in out['files'] if id(f) in keep]
     return out
 
 
