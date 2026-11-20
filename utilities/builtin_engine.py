@@ -509,7 +509,7 @@ def wait_until_mounted(settings: dict = None, timeout: float = 180, poll: float 
     container start the engine loads every job before it mounts (about a
     minute for ~8k jobs), and a program started meanwhile failed its
     connectivity check on the original files path. Returns at once when the
-    built-in mount isn't in use or isn't running (stopped, can't start);
+    built-in mount isn't in use, was stopped by hand, crashed or can't run;
     True when mounted, False on timeout."""
     import time
     s = settings if settings is not None else _load_settings()
@@ -520,7 +520,11 @@ def wait_until_mounted(settings: dict = None, timeout: float = 180, poll: float 
     while True:
         if fuse_mounted(path):
             return True
-        if state() not in ('RUNNING', 'STARTING', 'BACKOFF') or time.monotonic() >= deadline:
+        # Not started yet is normal at container start: supervisord starts
+        # the program before the start hook starts the engine. Give up early
+        # only when it won't come: stopped by hand, crashed, or can't run.
+        if (time.monotonic() >= deadline or stopped_by_user() or state() == 'FATAL'
+                or problems(s)):
             return fuse_mounted(path)
         time.sleep(poll)
 

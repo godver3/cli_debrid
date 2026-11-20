@@ -325,9 +325,20 @@ class EngineManagerTests(unittest.TestCase):
         with mock.patch.object(self.be, 'fuse_mounted', side_effect=lambda p: next(seen)), \
                 mock.patch('time.sleep'):
             self.assertTrue(self.be.wait_until_mounted(s, timeout=60))
+        # Not started yet (container start: the program comes up first) is waited for.
+        self.state = 'STOPPED'
+        seen = iter([False, False, True])
+        with mock.patch.object(self.be, 'fuse_mounted', side_effect=lambda p: next(seen)), \
+                mock.patch('time.sleep'):
+            self.assertTrue(self.be.wait_until_mounted(s, timeout=60))
         with mock.patch.object(self.be, 'fuse_mounted', return_value=False) as fm:
+            self.state = 'FATAL'
+            self.assertFalse(self.be.wait_until_mounted(s, timeout=60), 'a crashed mount is not waited for')
+            self.assertEqual(fm.call_count, 2)
+            fm.reset_mock()
             self.state = 'STOPPED'
-            self.assertFalse(self.be.wait_until_mounted(s, timeout=60), 'a stopped mount is not waited for')
+            self.be.user_stop()
+            self.assertFalse(self.be.wait_until_mounted(s, timeout=60), 'stopped by hand: no wait')
             self.assertEqual(fm.call_count, 2)
             fm.reset_mock()
             self.assertTrue(self.be.wait_until_mounted(self.settings(provider='climount')), 'external mount: no wait')
