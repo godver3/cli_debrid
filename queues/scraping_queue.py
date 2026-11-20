@@ -32,6 +32,48 @@ def _is_excluded_release(item: Dict[str, Any], result: Dict[str, Any]) -> bool:
         return excluded == candidate
 
 
+# filter_reasons that filter_results only reaches after a result has passed the
+# title, resolution, language and year checks: the release is the right show and
+# only the wrong shape (or episode) for this particular search.
+_SIBLING_PROOF_REASONS = (
+    "Single episode result when searching for multi",
+    "Non-multi result when searching for multi",
+    "Partial multi-episode file",
+    "Multi-episode pack does not contain requested episode",
+    "Multi-episode file ",
+    "Episode mismatch:",
+)
+
+
+def _season_episodes_seen(season, results) -> set:
+    """Episode numbers of `season` that the given scrape results prove are released.
+
+    Counts results that passed every filter and results rejected only for their
+    episode/pack shape (_SIBLING_PROOF_REASONS). Title, quality and year rejects
+    don't count: a 'Real Housewives of Atlanta S04E05' says nothing about Amsterdam.
+    """
+    seen = set()
+    if season is None:
+        return seen
+    for r in results or []:
+        if not isinstance(r, dict):
+            continue
+        reason = r.get('filter_reason')
+        if reason and reason != "Passed all filters" and not reason.startswith(_SIBLING_PROOF_REASONS):
+            continue
+        parsed = r.get('parsed_info') or {}
+        se_info = parsed.get('season_episode_info') or {}
+        seasons = se_info.get('seasons') or parsed.get('seasons') or []
+        episodes = se_info.get('episodes') or parsed.get('episodes') or []
+        # Multi-season packs can't say which season an episode number belongs to.
+        if list(seasons) != [season]:
+            continue
+        for ep in episodes:
+            if isinstance(ep, int):
+                seen.add(ep)
+    return seen
+
+
 def _other_season_episodes_pending(item: Dict[str, Any]) -> bool:
     """True when another episode of the item's show+season+version is Wanted or Scraping.
 
@@ -1078,8 +1120,11 @@ class ScrapingQueue:
                         return True
 
                     logging.info(f"Scraping for {item_identifier} (multi-pack: {is_multi_pack}) with initial check_pack_wantedness={check_pack_wantedness_for_initial_scrape}")
+                    self._season_episodes_seen.pop(item_id_being_processed, None)
                     if _prescraped_results is not None:
                         results, filtered_out_results = _prescraped_results
+                        self._note_season_episodes_seen(
+                            item_to_process, list(results or []) + list(filtered_out_results or []))
                     else:
                         results, filtered_out_results = self.scrape_with_fallback(
                             item_to_process,
@@ -1407,6 +1452,22 @@ class ScrapingQueue:
         # Or if we actually processed an item in this call (even if it resulted in removal)
         return len(self.items) > 0 or processed_an_item_this_cycle
 
+    @property
+    def _season_episodes_seen(self) -> Dict[Any, set]:
+        """item_id -> episode numbers of the item's season seen in its scrape results.
+
+        handle_no_results exempts those siblings from the old-season blacklist
+        cascade: they exist, just not as part of this item's search.
+        """
+        return self.__dict__.setdefault('_season_episodes_seen_map', {})
+
+    def _note_season_episodes_seen(self, item, results):
+        if item.get('type') != 'episode' or item.get('id') is None:
+            return
+        seen = _season_episodes_seen(item.get('season_number'), results)
+        if seen:
+            self._season_episodes_seen.setdefault(item['id'], set()).update(seen)
+
     @logs_for_item
     def scrape_with_fallback(self, item, is_multi_pack, queue_manager, skip_filter=False, check_pack_wantedness: bool = False):
         item_identifier = queue_manager.generate_identifier(item)
@@ -1437,6 +1498,7 @@ class ScrapingQueue:
         # Ensure results and filtered_out are lists
         results = results if results is not None else []
         filtered_out = filtered_out if filtered_out is not None else []
+        self._note_season_episodes_seen(item, results + filtered_out)
 
         if not skip_filter: # Apply existing filters
             # Filter out unwanted magnets, URLs and NZB guids
@@ -1694,6 +1756,7 @@ class ScrapingQueue:
         # Ensure individual results and filtered_out are lists
         individual_results = individual_results if individual_results is not None else []
         individual_filtered_out = individual_filtered_out if individual_filtered_out is not None else []
+        self._note_season_episodes_seen(item, individual_results + individual_filtered_out)
         logging.info(f"Individual episode scrape for {item_identifier} initially returned {len(individual_results)} results.")
         if individual_results:
             logging.debug(f"  Initial individual titles: {[r.get('original_title', 'N/A') for r in individual_results]}")
@@ -1942,6 +2005,7 @@ class ScrapingQueue:
     @logs_for_item
     def handle_no_results(self, item: Dict[str, Any], queue_manager):
         item_identifier = queue_manager.generate_identifier(item)
+        season_episodes_seen = self._season_episodes_seen.pop(item.get('id'), set())
         is_upgrade = item.get('upgrading') or item.get('upgrading_from') is not None
 
         # --- Handle Upgrade Failure ---
@@ -2045,7 +2109,8 @@ class ScrapingQueue:
                     queue_manager.move_to_blacklisted(item, "Scraping") # Blacklist only this F1/UFC item
                 else:
                     logging.info(f"No results found for old episode {item_identifier}. Blacklisting item and related season items.")
-                    queue_manager.queues["Blacklisted"].blacklist_old_season_items(item, queue_manager)
+                    queue_manager.queues["Blacklisted"].blacklist_old_season_items(
+                        item, queue_manager, exempt_episodes=season_episodes_seen)
                 
                 self.reset_not_wanted_check(item['id'])
                 self.remove_item(item) # Remove from current queue
