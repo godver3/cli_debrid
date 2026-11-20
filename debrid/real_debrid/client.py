@@ -903,14 +903,14 @@ class RealDebridProvider(DebridProvider):
             raise ValueError(f'torrent {torrent_id} has {len(links)} links for {len(sel)} files')
         return links[ids.index(str(file_id))]
 
-    def _mount_rd_post(self, endpoint: str, data: Dict) -> Tuple[int, Dict]:
+    def _mount_rd_post(self, endpoint: str, data: Dict, api_key: Optional[str] = None) -> Tuple[int, Dict]:
         """(status, body) of an RD POST without make_request's error mapping,
         which drops the body and with it RD's error_code."""
         from routes.api_tracker import api as _api
         from .api import _wait_for_rate_limit
         _wait_for_rate_limit()
         r = _api.post(f'https://api.real-debrid.com/rest/1.0{endpoint}', data=data,
-                      headers={'Authorization': f'Bearer {self.api_key}'}, timeout=30)
+                      headers={'Authorization': f'Bearer {api_key or self.api_key}'}, timeout=30)
         try:
             body = r.json()
         except ValueError:
@@ -920,13 +920,45 @@ class RealDebridProvider(DebridProvider):
     #: RD error codes cli_mount counts as the file being gone.
     MOUNT_GONE_CODES = (19, 24, 35)  # hoster unavailable, file unavailable, infringing file
 
+    #: RD answers meaning "this account can't unrestrict right now"
+    #: (too many requests, fair-usage / traffic limit): try the next key.
+    MOUNT_KEY_LIMIT_CODES = (34, 36)
+
+    def _mount_download_keys(self) -> List[str]:
+        """The account key, then Built-in Mount.debrid_download_api_keys
+        (cli_mount's download_api_keys), starting with the last one that
+        worked."""
+        import re
+        try:
+            from utilities.settings import get_setting
+            extra = get_setting('Built-in Mount', 'debrid_download_api_keys', '') or ''
+        except Exception:
+            extra = ''
+        keys = []
+        for k in [self.api_key] + re.split(r'[\s,;]+', str(extra)):
+            if k and k not in keys:
+                keys.append(k)
+        start = keys.index(RealDebridProvider._mount_key_ok) if RealDebridProvider._mount_key_ok in keys else 0
+        return keys[start:] + keys[:start]
+
+    _mount_key_ok: Optional[str] = None
+
     def mount_link(self, torrent_id: str, file_id: str) -> Tuple[str, int]:
         from debrid.mount_proof import MountFileGone, HOSTER_UNAVAILABLE
         link = self._mount_rd_link(torrent_id, file_id)
-        code, out = self._mount_rd_post('/unrestrict/link', {'link': link})
-        url = out.get('download') if code == 200 else None
-        if url:
-            return url, 12 * 3600
+        keys = self._mount_download_keys()
+        for i, key in enumerate(keys):
+            code, out = self._mount_rd_post('/unrestrict/link', {'link': link}, api_key=key)
+            url = out.get('download') if code == 200 else None
+            if url:
+                RealDebridProvider._mount_key_ok = key
+                return url, 12 * 3600
+            limited = out.get('error_code') in self.MOUNT_KEY_LIMIT_CODES or (
+                code in (429, 503) and out.get('error_code') not in self.MOUNT_GONE_CODES)
+            if not limited or i == len(keys) - 1:
+                break
+            logging.info(f'[mount] Real-Debrid download key {i + 1} of {len(keys)} is limited '
+                         f'(HTTP {code} {out.get("error") or ""}); trying the next one')
         if out.get('error_code') in self.MOUNT_GONE_CODES:
             raise MountFileGone(HOSTER_UNAVAILABLE, f"Real-Debrid error {out.get('error_code')}: {out.get('error')}")
         raise ValueError(f'Real-Debrid gave no download link for {torrent_id}/{file_id}: HTTP {code} {out.get("error") or ""}')

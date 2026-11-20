@@ -277,6 +277,16 @@ class EngineManagerTests(unittest.TestCase):
         self.assertEqual((cfg['umask'], cfg['uid'], cfg['gid']), (0o027, 1000, 1001))
         self.assertEqual((cfg['cache_expiry_seconds'], cfg['health_sample_percent']), (7200, 100))
 
+    def test_debrid_streaming_settings(self):
+        s = self.settings()
+        cfg = self.be.build_config(s)
+        self.assertEqual((cfg['debrid_chunk_mb'], cfg['debrid_conns_per_file'], cfg['debrid_read_ahead_mb']), (8, 4, 32))
+        s['Built-in Mount'].update(debrid_chunk_mb=500, debrid_connections_per_file=0, debrid_proxy=' http://p:1 ',
+                                   debrid_user_agent='ua')
+        cfg = self.be.build_config(s)
+        self.assertEqual((cfg['debrid_chunk_mb'], cfg['debrid_conns_per_file'], cfg['debrid_proxy'], cfg['debrid_user_agent']),
+                         (64, 1, 'http://p:1', 'ua'))
+
     def test_servers_list(self):
         s = self.settings()
         s['Built-in Mount']['servers'] = json.dumps([

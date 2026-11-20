@@ -71,8 +71,12 @@ type callbackLinks struct {
 	cache      map[string]cachedLink
 	pending    map[string]*linkCall
 	names      func(ref string) string
+	opts       stream.RemoteOptions
 	log        *slog.Logger
 }
+
+// RemoteOptions: the debrid streaming settings every file gets.
+func (c *callbackLinks) RemoteOptions() stream.RemoteOptions { return c.opts }
 
 // linkCall is one callback in flight; readers missing the cache for the same
 // ref at the same time wait for it instead of each asking cli_debrid (which

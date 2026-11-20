@@ -336,3 +336,17 @@ class SpaceTests(unittest.TestCase):
 
     def test_size_strings(self):
         self.assertEqual([bm._size_mb(x) for x in ('8MB', '1GB', '512KB', 'junk', 1 << 21)], [8, 1024, 0, None, 2])
+
+    def test_copies_debrid_streaming(self):
+        import json
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, 'config.json'), 'w') as f:
+                json.dump({'mount': {'dfs': {'chunk_size': '8MB', 'read_ahead_size': '32MB'}},
+                           'debrids': [{'provider': 'realdebrid', 'api_key': 'main', 'download_api_keys': ['main', 'x2'],
+                                        'torrents_refresh_interval': '10s', 'auto_expire_links_after': '3d'}]}, f)
+            self.assertEqual(bm.climount_repair_settings(d), {
+                'debrid_chunk_mb': 8, 'debrid_read_ahead_mb': 32, 'debrid_sync_seconds': 10,
+                'debrid_link_lifetime_hours': 72, 'debrid_download_api_keys': 'x2'})
+
+    def test_durations(self):
+        self.assertEqual([bm._seconds(x) for x in ('10s', '5m', '3d', '1h30m', '', 'junk')], [10, 300, 259200, 5400, None, None])

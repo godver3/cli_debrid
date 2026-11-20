@@ -223,6 +223,11 @@ def build_config(settings: dict) -> dict:
         # Debrid streaming: the engine asks cli_debrid (this host) for links.
         'link_callback': f"http://127.0.0.1:{os.environ.get('CLI_DEBRID_PORT', '5000')}/mount/internal/link",
         'precache_mb': max(0, num('precache_mb', 2)),
+        'debrid_chunk_mb': min(64, max(1, num('debrid_chunk_mb', 8))),
+        'debrid_conns_per_file': min(16, max(1, num('debrid_connections_per_file', 4))),
+        'debrid_read_ahead_mb': max(0, num('debrid_read_ahead_mb', 32)),
+        'debrid_user_agent': str(bm.get('debrid_user_agent') or '').strip(),
+        'debrid_proxy': str(bm.get('debrid_proxy') or '').strip(),
         'log_level': 'debug' if bm.get('debug_logging') else 'info',
         'allowed_extensions': allowed_extensions(bm),
         'deobfuscate_mode': {'season_ep': 'season_ep', 'index': 'index'}.get(str(bm.get('deobfuscate_mode', 'season_ep') or '').strip(), ''),

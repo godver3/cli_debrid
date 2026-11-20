@@ -25,7 +25,8 @@ import threading
 import time
 from typing import Dict, List, Optional, Tuple
 
-SYNC_SECONDS = 120
+SYNC_SECONDS = 30  # default of Built-in Mount.debrid_sync_seconds
+MIN_SYNC_SECONDS = 10
 ADD_PER_PASS = 50  # provider API calls per pass stay modest
 
 _KEYS = {'RealDebridProvider': 'rd', 'TorboxProvider': 'tb', 'AllDebridProvider': 'ad',
@@ -153,9 +154,20 @@ def link(ref: str, refresh: bool = False) -> Tuple[str, int]:
         return _mint_and_store(ref)
 
 
+def _link_lifetime() -> int:
+    """Built-in Mount.debrid_link_lifetime_hours in seconds (0 = the
+    provider's own lifetime)."""
+    try:
+        from utilities.settings import get_setting
+        return max(0, int(get_setting('Built-in Mount', 'debrid_link_lifetime_hours', 0) or 0)) * 3600
+    except Exception:
+        return 0
+
+
 def _mint_and_store(ref: str) -> Tuple[str, int]:
     now = time.time()
     url, ttl = _mint(ref)
+    ttl = _link_lifetime() or ttl
     with _link_lock:
         links = _load_links()
         links[ref] = {'url': url, 'expires': now + int(ttl), 'minted': now}
@@ -217,6 +229,9 @@ def _finished(t: dict) -> bool:
 # missing for MASS_HOLD_SECONDS.
 
 MISS_PASSES = 2
+# ...and for at least this long, however often the account is listed (the
+# old fixed 2 x 120 s passes), so a faster sync doesn't shorten the guard.
+MIN_MISS_SECONDS = 240
 MASS_MIN = 10           # more removals than this in one pass...
 MASS_SHARE = 0.10       # ...and more than this share of the provider's torrents
 MASS_HOLD_SECONDS = 6 * 3600
@@ -257,6 +272,10 @@ def _list(p) -> List[Dict]:
         return p.list_active_torrents() or []
 
 
+def _due(m: Dict, now: float) -> bool:
+    return m['count'] >= MISS_PASSES and now - m['since'] >= MIN_MISS_SECONDS
+
+
 def _removals(key: str, have: set, on_account: set, now: float) -> List[str]:
     """Job ids of this provider safe to remove now."""
     mine = {h for h in have if h.startswith(key + '-')}
@@ -268,7 +287,7 @@ def _removals(key: str, have: set, on_account: set, now: float) -> List[str]:
     for jid in gone:
         m = _missing.setdefault(jid, {'count': 0, 'since': now})
         m['count'] += 1
-        if m['count'] >= MISS_PASSES:
+        if _due(m, now):
             ready.append(jid)
     if len(ready) > MASS_MIN and len(ready) > MASS_SHARE * len(mine):
         oldest = min(_missing[j]['since'] for j in ready)
@@ -345,7 +364,7 @@ def sync_once(engine, provs: Optional[List] = None, budget: int = ADD_PER_PASS) 
                 logging.warning(f'[mount debrid] engine refused {folder}: {c} {resp}')
         ready = _removals(key, have, on_account, now)
         out['held_removals'] += sum(1 for j, m in _missing.items()
-                                    if j.startswith(key + '-') and m['count'] >= MISS_PASSES and j not in ready)
+                                    if j.startswith(key + '-') and _due(m, now) and j not in ready)
         for jid in ready:
             if engine._call('DELETE', f'/jobs/{jid}', timeout=20)[0] in (204, 404):
                 out['removed'] += 1
@@ -377,12 +396,22 @@ def _enabled(get_setting) -> bool:
     return builtin_engine.selected(settings) or builtin_engine.alongside(settings)
 
 
+def sync_seconds(get_setting) -> int:
+    """How often the debrid accounts are listed (new torrents show up on
+    the mount within this many seconds)."""
+    try:
+        v = int((get_setting('Built-in Mount') or {}).get('debrid_sync_seconds') or SYNC_SECONDS)
+    except (TypeError, ValueError):
+        v = SYNC_SECONDS
+    return max(MIN_SYNC_SECONDS, v)
+
+
 def _loop(get_setting):
     from usenet.builtin_client import BuiltinClient
     wait = FIRST_SYNC_SECONDS
     while True:
         time.sleep(wait)
-        wait = SYNC_SECONDS
+        wait = sync_seconds(get_setting)
         try:
             if _enabled(get_setting):
                 if sync_once(BuiltinClient()).get('pending'):

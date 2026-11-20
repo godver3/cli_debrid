@@ -36,16 +36,46 @@ class RealDebridRules(unittest.TestCase):
 
     def test_link_error_codes_19_24_35_are_proof(self):
         for code in (19, 24, 35):
-            rd = self.rd(lambda ep, d, c=code: (503, {'error': 'unavailable_file', 'error_code': c}))
+            rd = self.rd(lambda ep, d, c=code, **kw: (503, {'error': 'unavailable_file', 'error_code': c}))
             with self.assertRaises(MountFileGone) as gone:
                 rd.mount_link('T', '2')
             self.assertEqual(gone.exception.reason, 'hoster_unavailable')
 
     def test_other_link_failures_prove_nothing(self):
         for status, body in ((503, {'error': 'service_unavailable', 'error_code': 25}), (429, {}), (500, {})):
-            rd = self.rd(lambda ep, d, s=status, b=body: (s, b))
+            rd = self.rd(lambda ep, d, s=status, b=body, **kw: (s, b))
             with self.assertRaises(ValueError):
                 rd.mount_link('T', '2')
+
+    def test_limited_key_falls_through_to_download_keys(self):
+        from debrid.real_debrid import client as rdc
+        used = []
+
+        def post(ep, d, api_key=None):
+            used.append(api_key)
+            if api_key == 'k':  # the account key (KEY)
+                return 503, {'error': 'fair_usage_limit', 'error_code': 36}
+            return 200, {'download': 'https://dl/' + api_key}
+        rd = self.rd(post)
+        self.addCleanup(setattr, rdc.RealDebridProvider, '_mount_key_ok', None)
+        with mock.patch('utilities.settings.get_setting', return_value='extra1, extra2'):
+            self.assertEqual(rd.mount_link('T', '2')[0], 'https://dl/extra1')
+            self.assertEqual(used, ['k', 'extra1'])
+            used.clear()
+            rd.mount_link('T', '2')
+            self.assertEqual(used, ['extra1'], 'the key that worked is tried first next time')
+
+    def test_gone_file_is_not_retried_with_other_keys(self):
+        used = []
+
+        def post(ep, d, api_key=None):
+            used.append(api_key)
+            return 503, {'error': 'unavailable_file', 'error_code': 24}
+        rd = self.rd(post)
+        with mock.patch('utilities.settings.get_setting', return_value='extra1'):
+            with self.assertRaises(MountFileGone):
+                rd.mount_link('T', '2')
+        self.assertEqual(len(used), 1)
 
     def test_check_uses_unrestrict_check(self):
         for status, want in ((404, (BROKEN, 'hoster_unavailable')), (200, (HEALTHY, ''))):

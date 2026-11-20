@@ -238,6 +238,16 @@ def _size_mb(v) -> Optional[int]:
     return int(round(mb))
 
 
+def _seconds(v) -> Optional[int]:
+    """Go-style durations ("10s", "5m", "3d", "1h30m") -> seconds."""
+    total, rest = 0, str(v or '').strip().lower()
+    if not rest:
+        return None
+    for n, unit in re.findall(r'(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)', rest):
+        total += float(n) * {'ms': 0.001, 's': 1, 'm': 60, 'h': 3600, 'd': 86400}[unit]
+    return int(total) or None
+
+
 def _climount_streaming_settings(cfg: dict) -> Dict[str, object]:
     """cli_mount's Plex protection / prewarm settings (and Plex URL/token,
     which the caller only uses when cli_debrid has none)."""
@@ -262,6 +272,24 @@ def _climount_streaming_settings(cfg: dict) -> Dict[str, object]:
         mb = _size_mb(dfs['prewarm_max_size'])
         if mb:
             out['prewarm_max_mb'] = mb
+    for src, dst in (('chunk_size', 'debrid_chunk_mb'), ('read_ahead_size', 'debrid_read_ahead_mb')):
+        mb = _size_mb(dfs.get(src)) if dfs.get(src) else None
+        if mb:
+            out[dst] = mb
+    rd = next((d for d in cfg.get('debrids') or [] if isinstance(d, dict)
+               and str(d.get('provider') or d.get('name') or '').lower().replace('-', '') == 'realdebrid'), None)
+    if rd:
+        secs = _seconds(rd.get('torrents_refresh_interval'))
+        if secs:
+            out['debrid_sync_seconds'] = max(10, secs)
+        hours = (_seconds(rd.get('auto_expire_links_after')) or 0) // 3600
+        if hours:
+            out['debrid_link_lifetime_hours'] = hours
+        keys = [k for k in rd.get('download_api_keys') or [] if isinstance(k, str) and k and k != rd.get('api_key')]
+        if keys:
+            out['debrid_download_api_keys'] = ', '.join(keys)
+        if (rd.get('proxy') or '').strip():
+            out['debrid_proxy'] = rd['proxy'].strip()
     if (dfs.get('plex_url') or '').strip() and (dfs.get('plex_token') or '').strip():
         out['plex_url'] = dfs['plex_url'].strip().rstrip('/')
         out['plex_token'] = dfs['plex_token'].strip()

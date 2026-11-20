@@ -172,3 +172,36 @@ func TestRemoteStreamResumesAfterReset(t *testing.T) {
 		t.Fatalf("read past the reset: %v", err)
 	}
 }
+
+type optLink struct {
+	staticLink
+	o RemoteOptions
+}
+
+func (l optLink) RemoteOptions() RemoteOptions { return l.o }
+
+// Debrid streaming settings reach every file of a link source: range size,
+// User-Agent, parallel ranges and read-ahead.
+func TestRemoteOptionsFromLinkSource(t *testing.T) {
+	file := bytes.Repeat([]byte("0123456789"), (3<<20)/10)
+	var agents atomic.Value
+	cdn := httptest.NewServer(serveRanges(file, 0, func(r *http.Request) { agents.Store(r.Header.Get("User-Agent")) }))
+	defer cdn.Close()
+	l := optLink{staticLink(cdn.URL), RemoteOptions{ChunkBytes: 1 << 20, MaxConns: 2, ReadAheadBytes: 2 << 20, UserAgent: "clid-test/1"}}
+	r := OpenRemote(l, nil, NewCache(64<<20), "rd:O:1", int64(len(file)), ReadAhead{Bytes: 64 << 20})
+	if r.chunkSize != 1<<20 || cap(r.slots) != 2 || r.readAhead != 2 {
+		t.Fatalf("chunk=%d slots=%d ahead=%d", r.chunkSize, cap(r.slots), r.readAhead)
+	}
+	buf := make([]byte, 100)
+	if _, err := r.ReadAtCtx(context.Background(), nntp.Prefetch, buf, (1<<20)+5); err != nil || !bytes.Equal(buf, file[(1<<20)+5:(1<<20)+105]) {
+		t.Fatalf("read: %v", err)
+	}
+	if ua, _ := agents.Load().(string); ua != "clid-test/1" {
+		t.Fatalf("user agent %q", ua)
+	}
+	// without options: the defaults
+	d := OpenRemote(staticLink(cdn.URL), nil, NewCache(64<<20), "rd:O:2", int64(len(file)), ReadAhead{})
+	if d.chunkSize != RemoteChunk || cap(d.slots) != RemoteMaxConns {
+		t.Fatalf("defaults: chunk=%d slots=%d", d.chunkSize, cap(d.slots))
+	}
+}

@@ -21,6 +21,22 @@ const RemoteChunk = 4 << 20
 // RemoteMaxConns caps parallel range requests per debrid file.
 const RemoteMaxConns = 4
 
+// RemoteOptions tune debrid streaming (zero values = the defaults above).
+// A LinkSource that also implements RemoteOptioner hands them to every
+// file it serves.
+type RemoteOptions struct {
+	ChunkBytes     int64  // one HTTP range / cache unit
+	MaxConns       int    // parallel range requests per file
+	ReadAheadBytes int64  // prefetch after each live read (0 = the usenet read-ahead)
+	UserAgent      string // sent with every download request ("" = Go's default)
+	Client         *http.Client
+}
+
+// RemoteOptioner is a LinkSource with streaming options.
+type RemoteOptioner interface {
+	RemoteOptions() RemoteOptions
+}
+
 // DeadFileError is the debrid service's proof that a file is gone (the
 // same answers cli_mount's repair counts as broken: hoster unavailable,
 // file removed, no link). Only this marks a debrid file broken; timeouts
@@ -51,6 +67,8 @@ var ErrLinkRefused = errors.New("stream: debrid link refused")
 type RemoteFile struct {
 	ref       string
 	size      int64
+	chunkSize int64
+	userAgent string
 	links     LinkSource
 	cache     *Cache
 	client    *http.Client
@@ -71,10 +89,27 @@ func OpenRemote(links LinkSource, client *http.Client, cache *Cache, ref string,
 	if client == nil {
 		client = http.DefaultClient
 	}
-	r := &RemoteFile{ref: ref, size: size, links: links, cache: cache, client: client,
-		readAhead: ra.segments(RemoteChunk), prefetched: map[int]bool{}}
+	var o RemoteOptions
+	if op, ok := links.(RemoteOptioner); ok {
+		o = op.RemoteOptions()
+	}
+	if o.Client != nil && client == http.DefaultClient {
+		client = o.Client
+	}
+	chunk := int64(RemoteChunk)
+	if o.ChunkBytes > 0 {
+		chunk = o.ChunkBytes
+	}
+	if o.ReadAheadBytes > 0 {
+		ra = ReadAhead{Bytes: o.ReadAheadBytes, MaxConns: ra.MaxConns}
+	}
+	r := &RemoteFile{ref: ref, size: size, links: links, cache: cache, client: client, chunkSize: chunk,
+		userAgent: o.UserAgent, prefetched: map[int]bool{}}
+	r.readAhead = ra.segments(chunk)
 	conns := RemoteMaxConns
-	if ra.MaxConns > 0 {
+	if o.MaxConns > 0 {
+		conns = o.MaxConns
+	} else if ra.MaxConns > 0 {
 		conns = min(conns, ra.MaxConns)
 	}
 	r.slots = make(chan struct{}, conns)
@@ -86,13 +121,13 @@ func OpenRemote(links LinkSource, client *http.Client, cache *Cache, ref string,
 func (r *RemoteFile) Size() int64 { return r.size }
 
 func (r *RemoteFile) chunkLen(i int) int64 {
-	return min(RemoteChunk, r.size-int64(i)*RemoteChunk)
+	return min(r.chunkSize, r.size-int64(i)*r.chunkSize)
 }
 
 // key names chunk i; the chunk size is part of it so chunks cached with
 // another size (an older version) are never mistaken for these.
 func (r *RemoteFile) key(i int) string {
-	return "remote:" + strconv.Itoa(RemoteChunk) + ":" + r.ref + ":" + strconv.Itoa(i)
+	return "remote:" + strconv.FormatInt(r.chunkSize, 10) + ":" + r.ref + ":" + strconv.Itoa(i)
 }
 
 func (r *RemoteFile) chunk(ctx context.Context, prio nntp.Priority, i int) ([]byte, error) {
@@ -105,7 +140,7 @@ func (r *RemoteFile) chunk(ctx context.Context, prio nntp.Priority, i int) ([]by
 
 func (r *RemoteFile) fetchChunk(ctx context.Context, prio nntp.Priority, i int) ([]byte, error) {
 	return r.cache.DoCtx(ctx, r.key(i), prio, func(ctx context.Context) ([]byte, error) {
-		start, n := int64(i)*RemoteChunk, r.chunkLen(i)
+		start, n := int64(i)*r.chunkSize, r.chunkLen(i)
 		var last error
 		relinked := false
 		for attempt := 0; attempt < 4; attempt++ {
@@ -152,6 +187,9 @@ func (r *RemoteFile) get(ctx context.Context, url string, start, n int64) ([]byt
 		return nil, 0, err
 	}
 	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, start+n-1))
+	if r.userAgent != "" {
+		req.Header.Set("User-Agent", r.userAgent)
+	}
 	st := countersFor(r.ref)
 	st.begin()
 	defer st.end()
@@ -205,12 +243,12 @@ func (r *RemoteFile) ReadAtCtx(ctx context.Context, prio nntp.Priority, p []byte
 	}
 	n, last := 0, -1
 	for n < len(p) && off+int64(n) < r.size {
-		i := int((off + int64(n)) / RemoteChunk)
+		i := int((off + int64(n)) / r.chunkSize)
 		data, err := r.chunk(ctx, prio, i)
 		if err != nil {
 			return n, err
 		}
-		n += copy(p[n:], data[off+int64(n)-int64(i)*RemoteChunk:])
+		n += copy(p[n:], data[off+int64(n)-int64(i)*r.chunkSize:])
 		last = i
 	}
 	if prio != nntp.Prefetch && r.readAhead > 0 && last >= 0 {
@@ -223,7 +261,7 @@ func (r *RemoteFile) ReadAtCtx(ctx context.Context, prio nntp.Priority, p []byte
 }
 
 func (r *RemoteFile) startReadAhead(from int) {
-	total := int((r.size + RemoteChunk - 1) / RemoteChunk)
+	total := int((r.size + r.chunkSize - 1) / r.chunkSize)
 	for i := from; i < from+r.readAhead && i < total; i++ {
 		if _, ok := r.cache.Get(r.key(i)); ok {
 			continue

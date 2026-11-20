@@ -10,6 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"net/url"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -94,6 +96,11 @@ type Config struct {
 	IdleTimeout   int             `json:"idle_timeout_seconds"`   // close NNTP connections unused this long (default 300)
 	CacheExpiry   int             `json:"cache_expiry_seconds"`   // drop disk cache entries unused this long (0 = only by size)
 	LinkCallback  string          `json:"link_callback"`          // cli_debrid URL that hands out debrid download links
+	DebridChunkMB int             `json:"debrid_chunk_mb"`        // debrid HTTP range size (0 = 4 MB)
+	DebridConns   int             `json:"debrid_conns_per_file"`  // parallel debrid ranges per file (0 = 4)
+	DebridAheadMB int             `json:"debrid_read_ahead_mb"`   // debrid read-ahead (0 = read_ahead_mb)
+	DebridUA      string          `json:"debrid_user_agent"`      // User-Agent for debrid downloads ("" = default)
+	DebridProxy   string          `json:"debrid_proxy"`           // proxy URL for debrid downloads ("" = none / env)
 	PreCacheMB    int             `json:"precache_mb"`            // on open, fetch this much of the start and end (0 = off)
 	CacheCleanup  int             `json:"cache_cleanup_seconds"`  // how often the expiry runs (default 60)
 	ImportWorkers int             `json:"import_workers"`         // jobs imported at once
@@ -145,6 +152,24 @@ func (c *Config) defaults() {
 	if c.CacheCleanup <= 0 {
 		c.CacheCleanup = 60
 	}
+}
+
+// remoteOptions: debrid streaming settings (a bad proxy URL is logged and
+// ignored, so streaming still works without it).
+func (c Config) remoteOptions(log *slog.Logger) stream.RemoteOptions {
+	o := stream.RemoteOptions{ChunkBytes: int64(c.DebridChunkMB) << 20, MaxConns: c.DebridConns,
+		ReadAheadBytes: int64(c.DebridAheadMB) << 20, UserAgent: c.DebridUA}
+	if c.DebridProxy != "" {
+		u, err := url.Parse(c.DebridProxy)
+		if err != nil || u.Host == "" {
+			log.Warn("debrid proxy ignored: not a URL", "proxy", c.DebridProxy)
+		} else {
+			tr := http.DefaultTransport.(*http.Transport).Clone()
+			tr.Proxy = http.ProxyURL(u)
+			o.Client = &http.Client{Transport: tr}
+		}
+	}
+	return o
 }
 
 func (c Config) readAhead() stream.ReadAhead {
@@ -304,6 +329,7 @@ func New(cfg Config, log *slog.Logger) (*Engine, error) {
 		go e.worker()
 	}
 	e.links = newCallbackLinks(cfg.LinkCallback, cfg.Token, log.With("component", "debrid"))
+	e.links.opts = cfg.remoteOptions(log)
 	e.links.names = e.refName
 	e.prober.e = e
 	e.Client.SetLogger(log.With("component", "nntp"))

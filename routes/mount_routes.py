@@ -42,7 +42,7 @@ def _start_background(state):
         logging.warning(f'Mount debrid sync not started: {exc}')
 
 SECTION = 'Built-in Mount'
-SECRET_KEYS = ('api_token', 'webdav_password', 'plex_token')
+SECRET_KEYS = ('api_token', 'webdav_password', 'plex_token', 'debrid_download_api_keys', 'debrid_proxy')
 GROUPS = [
     ('Mount', ['mount_path', 'allow_other', 'uid', 'gid', 'umask']),
     ('WebDAV share', ['webdav_enabled', 'webdav_port', 'webdav_username', 'webdav_password']),
@@ -50,6 +50,9 @@ GROUPS = [
     ('Plex', ['plex_url', 'plex_token']),
     ('Streaming', ['read_ahead_mb', 'max_connections_per_file', 'precache_mb', 'warm_connections',
                    'playback_reserve_percent', 'playback_reserve_min', 'playback_reserve_max', 'plex_playback_protection', 'buffer_memory_mb', 'idle_timeout_minutes']),
+    ('Debrid streaming', ['debrid_chunk_mb', 'debrid_connections_per_file', 'debrid_read_ahead_mb',
+                          'debrid_sync_seconds', 'debrid_link_lifetime_hours', 'debrid_download_api_keys',
+                          'debrid_proxy', 'debrid_user_agent']),
     ('Plex next-episode prewarm', ['plex_prewarm', 'prewarm_trigger_percent', 'prewarm_percent', 'prewarm_max_mb']),
     ('Disk cache', ['cache_dir', 'cache_size_gb', 'cache_expiry_hours', 'cache_cleanup_minutes']),
     ('Importing & health checks', ['processing_connections', 'processing_timeout_minutes',
@@ -73,6 +76,10 @@ LABELS = {
     'processing_timeout_minutes': 'Processing timeout (minutes)', 'import_sample_percent': 'NZB import availability sample %',
     'health_sample_percent': 'Repair availability sample %', 'media_probe': 'Check playability with ffprobe',
     'debug_logging': 'Debug logging', 'plex_url': 'Plex URL', 'plex_token': 'Plex token',
+    'debrid_chunk_mb': 'Range size (MB)', 'debrid_connections_per_file': 'Connections per file',
+    'debrid_read_ahead_mb': 'Read ahead (MB)', 'debrid_sync_seconds': 'Account sync interval (seconds)',
+    'debrid_link_lifetime_hours': 'Link lifetime (hours)', 'debrid_download_api_keys': 'Extra download API keys',
+    'debrid_proxy': 'Proxy', 'debrid_user_agent': 'User-Agent',
     'allowed_extensions': 'Allowed file extensions', 'deobfuscate_mode': 'Deobfuscate mode', 'api_port': 'Engine API port', 'api_token': 'Engine API token',
 }
 

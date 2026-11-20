@@ -65,6 +65,48 @@ SECTIONS = {
             "description": "Built-in mount only. Debug logging: the engine also logs every debrid link fetch, refused API call and what each import found in the NZB (archive sets, skipped files). Problems are always logged; turn this on while chasing one.",
             "default": False
         },
+        "debrid_chunk_mb": {
+            "type": "integer",
+            "description": "Built-in mount only. Debrid range size (MB): each debrid download request fetches this much. Larger = fewer requests; debrid CDNs throttle many small ones.",
+            "default": 8
+        },
+        "debrid_connections_per_file": {
+            "type": "integer",
+            "description": "Built-in mount only. Parallel debrid downloads per file.",
+            "default": 4
+        },
+        "debrid_read_ahead_mb": {
+            "type": "integer",
+            "description": "Built-in mount only. Debrid read ahead (MB) fetched past what a player reads (0 = same as the usenet read ahead).",
+            "default": 32
+        },
+        "debrid_sync_seconds": {
+            "type": "integer",
+            "description": "Built-in mount only. How often the debrid account is listed (seconds, 10 or more): new torrents show up on the mount within this time.",
+            "default": 30
+        },
+        "debrid_link_lifetime_hours": {
+            "type": "integer",
+            "description": "Built-in mount only. Reuse a debrid download link for this many hours before asking for a new one (0 = the provider's own lifetime, e.g. 12 h for Real-Debrid). An expired or refused link is always replaced right away.",
+            "default": 0
+        },
+        "debrid_download_api_keys": {
+            "type": "string",
+            "description": "Built-in mount only. Real-Debrid only: extra API keys (comma separated) used to get download links when the account's key hits a limit (cli_mount's download_api_keys).",
+            "default": "",
+            "sensitive": True
+        },
+        "debrid_proxy": {
+            "type": "string",
+            "description": "Built-in mount only. Proxy for debrid downloads, e.g. http://user:pass@host:8080 or socks5://host:1080 (empty = none).",
+            "default": "",
+            "sensitive": True
+        },
+        "debrid_user_agent": {
+            "type": "string",
+            "description": "Built-in mount only. User-Agent sent with debrid downloads (empty = default).",
+            "default": ""
+        },
         "plex_url": {
             "type": "string",
             "description": "Built-in mount only. Plex URL for playback protection, next-episode prewarm and Now playing, e.g. http://192.168.1.10:32400. Leave empty to use the Plex URL from your other cli_debrid settings (Plex, or Symlink Plex settings).",

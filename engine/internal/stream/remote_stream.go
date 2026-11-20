@@ -68,9 +68,9 @@ func (r *RemoteFile) readStream(ctx context.Context, p []byte, off int64) (int, 
 	n := 0
 	for n < len(p) && off+int64(n) < r.size {
 		cur := off + int64(n)
-		i := int(cur / RemoteChunk)
+		i := int(cur / r.chunkSize)
 		if data, ok := r.cached(i); ok {
-			n += copy(p[n:], data[cur-int64(i)*RemoteChunk:])
+			n += copy(p[n:], data[cur-int64(i)*r.chunkSize:])
 			continue
 		}
 		if r.cache.Started(r.key(i)) { // a pre-cache/prewarm fetch is on the wire: join it
@@ -78,10 +78,10 @@ func (r *RemoteFile) readStream(ctx context.Context, p []byte, off int64) (int, 
 			if err != nil {
 				return n, err
 			}
-			n += copy(p[n:], data[cur-int64(i)*RemoteChunk:])
+			n += copy(p[n:], data[cur-int64(i)*r.chunkSize:])
 			continue
 		}
-		want := min(off+int64(len(p)), r.size, int64(i+1)*RemoteChunk) // within this chunk
+		want := min(off+int64(len(p)), r.size, int64(i+1)*r.chunkSize) // within this chunk
 		got, err := r.waitStream(ctx, cur, want, p[n:])
 		n += got
 		if err != nil {
@@ -118,7 +118,7 @@ func (r *RemoteFile) waitStream(ctx context.Context, from, to int64, dst []byte)
 	d.target = max(d.target, min(to+r.aheadBytes(), r.size))
 	r.scond.Broadcast()
 	for {
-		i := int(from / RemoteChunk)
+		i := int(from / r.chunkSize)
 		if from >= d.bufFrom && to <= d.pos && d.chunk == i {
 			return copy(dst, d.buf[from-d.bufFrom:to-d.bufFrom]), nil
 		}
@@ -131,7 +131,7 @@ func (r *RemoteFile) waitStream(ctx context.Context, from, to int64, dst []byte)
 			data, ok := r.cached(i)
 			r.smu.Lock()
 			if ok {
-				return copy(dst, data[from-int64(i)*RemoteChunk:to-int64(i)*RemoteChunk]), nil
+				return copy(dst, data[from-int64(i)*r.chunkSize:to-int64(i)*r.chunkSize]), nil
 			}
 			if d.done && d.err != nil {
 				return 0, d.err
@@ -152,7 +152,7 @@ func (r *RemoteFile) waitStream(ctx context.Context, from, to int64, dst []byte)
 }
 
 func (r *RemoteFile) aheadBytes() int64 {
-	return max(int64(r.readAhead)*RemoteChunk, 2*RemoteChunk)
+	return max(int64(r.readAhead)*r.chunkSize, 2*r.chunkSize)
 }
 
 // downloaderFor returns a stream that will serve off, starting one at off
@@ -186,7 +186,7 @@ func (r *RemoteFile) downloaderFor(off int64) *downloader {
 		oldest.stop()
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	d := &downloader{r: r, chunk: int(off / RemoteChunk), bufFrom: off, pos: off, target: off,
+	d := &downloader{r: r, chunk: int(off / r.chunkSize), bufFrom: off, pos: off, target: off,
 		lastUsed: time.Now(), cancel: cancel}
 	r.streams = append(r.streams, d)
 	go d.run(ctx)
@@ -300,6 +300,9 @@ func (d *downloader) pump(ctx context.Context, start int64) (int, error) {
 		return 0, err
 	}
 	req.Header.Set("Range", fmt.Sprintf("bytes=%d-", start))
+	if r.userAgent != "" {
+		req.Header.Set("User-Agent", r.userAgent)
+	}
 	st.begin()
 	defer st.end()
 	began := time.Now()
@@ -345,7 +348,7 @@ func (d *downloader) pump(ctx context.Context, start int64) (int, error) {
 				return resp.StatusCode, nil // idle: drop the connection
 			}
 		}
-		chunkEnd := min(int64(d.chunk+1)*RemoteChunk, r.size)
+		chunkEnd := min(int64(d.chunk+1)*r.chunkSize, r.size)
 		want := min(int64(len(block)), chunkEnd-d.pos)
 		r.smu.Unlock()
 
@@ -356,7 +359,7 @@ func (d *downloader) pump(ctx context.Context, start int64) (int, error) {
 			d.buf = append(d.buf, block[:m]...)
 			d.pos += int64(m)
 			if d.pos == chunkEnd { // chunk complete: cache it (whole chunks only), move on
-				if d.bufFrom == int64(d.chunk)*RemoteChunk {
+				if d.bufFrom == int64(d.chunk)*r.chunkSize {
 					r.cache.Put(r.key(d.chunk), d.buf)
 				}
 				d.prevChunk, d.prevFrom, d.prevBuf = d.chunk, d.bufFrom, d.buf
@@ -406,7 +409,7 @@ func (r *RemoteFile) skipCachedLocked(d *downloader) {
 			break
 		}
 		d.chunk++
-		d.pos = min(int64(d.chunk)*RemoteChunk, r.size)
+		d.pos = min(int64(d.chunk)*r.chunkSize, r.size)
 		d.bufFrom, d.buf = d.pos, nil
 	}
 	d.target = max(d.target, d.pos)

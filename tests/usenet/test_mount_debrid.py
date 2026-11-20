@@ -84,6 +84,9 @@ class MountDebridTests(IsolatedLinkCache):
         self.assertNotIn(('DELETE', '/jobs/rd-OLD', None), eng.calls)
         eng.jobs.append({'id': 'rd-A', 'protocol': 'debrid'})
         out = md.sync_once(eng, [p])
+        self.assertEqual((out['added'], out['removed']), (0, 0), 'two passes, but not missing long enough yet')
+        with mock.patch.object(md.time, 'time', return_value=time.time() + md.MIN_MISS_SECONDS + 1):
+            out = md.sync_once(eng, [p])
         self.assertEqual((out['added'], out['removed']), (0, 1))
         post = [c for c in eng.calls if c[0] == 'POST'][0]
         self.assertEqual(post[1:], ('/debrid/jobs', {'id': 'rd-A', 'name': 'Movie.2024', 'provider': 'rd', 'hash': 'aabb', 'files': [
@@ -124,6 +127,7 @@ class MountDebridTests(IsolatedLinkCache):
         p = FakeProvider([{'id': str(i), 'status': 'downloaded'} for i in range(50)], {})  # half the account vanished
         with mock.patch.object(md.time, 'time', return_value=1000.0):
             md.sync_once(eng, [p])
+        with mock.patch.object(md.time, 'time', return_value=1000.0 + md.MIN_MISS_SECONDS):
             out = md.sync_once(eng, [p])
         self.assertEqual((out['removed'], out['held_removals']), (0, 50))
         with mock.patch.object(md.time, 'time', return_value=1000.0 + md.MASS_HOLD_SECONDS + 1):
@@ -301,7 +305,7 @@ class ProviderLinkTests(unittest.TestCase):
         rd = rdc.RealDebridProvider.__new__(rdc.RealDebridProvider)
         from debrid.mount_proof import MountFileGone
         with mock.patch.object(rdc, 'make_request', side_effect=req), \
-                mock.patch.object(rd, '_mount_rd_post', side_effect=lambda ep, data: (200, req('POST', ep, 'k', data))), \
+                mock.patch.object(rd, '_mount_rd_post', side_effect=lambda ep, data, api_key=None: (200, req('POST', ep, 'k', data))), \
                 mock.patch.object(type(rd), 'api_key', new_callable=mock.PropertyMock, return_value='k'):
             folder, files = rd.mount_files('T')
             self.assertEqual((folder, [(f['file_id'], f['size']) for f in files]), ('Show.S01', [('2', 10), ('5', 20)]))
