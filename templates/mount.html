@@ -87,6 +87,10 @@
   <div class="card"><h3>Server connections</h3><div class="body">
     <div class="tbl"><table id="pools"><thead><tr><th>Server</th><th>Role</th><th>In use</th><th>Open</th><th>Waiting</th><th></th><th>Articles</th><th>Data</th><th>Missing</th><th>Errors</th><th>Avg fetch</th></tr></thead><tbody></tbody></table></div>
   </div></div>
+  <div class="card"><h3>Open streams</h3><div class="body">
+    <div class="tbl"><table id="streams"><thead><tr><th>File</th><th>Source</th><th>Opened</th><th>Read</th><th>Position</th><th>Rate</th><th>Plex</th></tr></thead><tbody></tbody></table></div>
+    <p class="hint" style="color:#888;font-size:.85em;margin:6px 0 0">Every file open on the mount: playback, but also scanners (Plex analysis, Bazarr) that open files and read little or nothing.</p>
+  </div></div>
   <div class="card"><h3>Debrid connections</h3><div class="body">
     <div class="tbl"><table id="debridPools"><thead><tr><th>Provider</th><th>Open</th><th>Requests</th><th>Data</th><th>Errors</th><th>Link errors</th><th>Avg response</th></tr></thead><tbody></tbody></table></div>
   </div></div>

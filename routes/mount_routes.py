@@ -243,6 +243,7 @@ def status():
             code, body = c._call('GET', '/stats', timeout=5)
             if code == 200:
                 out['stats'] = body
+            out['streams'] = c.get_streams()
         except Exception as exc:
             logging.debug(f'Mount page: engine status failed: {exc}')
     return jsonify(out)
