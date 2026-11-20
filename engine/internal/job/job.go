@@ -35,6 +35,10 @@ type Source struct {
 	// Remote, when set, is a debrid file reference: the file is read over
 	// HTTP from a link cli_debrid provides (Layout carries the size).
 	Remote string `json:"remote,omitempty"`
+	// Encryption, when set on a mapped source, means Map holds AES-CBC
+	// ciphertext (padded to whole blocks) and Layout.Size is the plaintext
+	// size (encrypted RAR members migrated from cli_mount).
+	Encryption *stream.Encryption `json:"encryption,omitempty"`
 }
 
 // MapIndex returns the 0-based segment of a mapped source holding off.

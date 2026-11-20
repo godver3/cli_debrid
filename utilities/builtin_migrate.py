@@ -25,6 +25,7 @@ Migrate from cli_mount to the built-in mount, side by side.
 Nothing is moved or deleted on either side: every step copies.
 """
 
+import base64
 import hashlib
 import logging
 import os
@@ -92,14 +93,20 @@ def parse_meta(data: bytes) -> dict:
             name = (meta.get(2) or b'').decode('utf-8', 'replace')
             if meta.get(10):
                 continue  # deleted from the job (repair cleanup)
-            if meta.get(15):
-                out['skipped'].append((name, 'encrypted archive (not supported by the built-in mount)'))
-                continue
             if not segs:
                 out['skipped'].append((name, 'no articles'))
                 continue
             segs.sort(key=lambda s: s['start'])
-            out['files'].append({'name': name, 'size': meta.get(4, 0), 'segments': segs})
+            entry = {'name': name, 'size': meta.get(4, 0), 'segments': segs}
+            if meta.get(15):
+                # Encrypted RAR member: cli_mount kept the derived AES key and
+                # IV; the segments map the ciphertext, size is the plaintext.
+                key, iv = meta.get(13) or b'', meta.get(14) or b''
+                if len(key) not in (16, 24, 32) or len(iv) != 16:
+                    out['skipped'].append((name, 'encrypted archive without a usable key in cli_mount\'s metadata'))
+                    continue
+                entry['key'], entry['iv'] = key, iv
+            out['files'].append(entry)
     return out
 
 
@@ -257,6 +264,18 @@ def start_import(source, engine, data_path: str, limit: int = 0, space: Optional
 SPACE_RECHECK_EVERY = 25
 
 
+def _file_body(f: dict) -> dict:
+    """One file of a POST /jobs/import body (key/iv base64, as Go's []byte)."""
+    body = {'name': f['name'], 'segments': [
+        {'id': s['id'], 'start': s['start'], 'end': s['end'], 'data_start': s['data_start']}
+        for s in f['segments']]}
+    if f.get('key'):
+        body['key'] = base64.b64encode(f['key']).decode('ascii')
+        body['iv'] = base64.b64encode(f['iv']).decode('ascii')
+        body['size'] = f['size']
+    return body
+
+
 def import_one(engine, entry: dict, mdir: str) -> Tuple[str, str, int]:
     """(outcome, message, skipped files). outcome: imported/already/failed."""
     jid, folder = entry.get('info_hash') or '', entry.get('name') or ''
@@ -274,9 +293,7 @@ def import_one(engine, entry: dict, mdir: str) -> Tuple[str, str, int]:
         why = '; '.join(f'{n}: {w}' for n, w in meta['skipped']) or 'no files'
         return 'failed', f'{folder}: nothing importable ({why})', len(meta['skipped'])
     body = {'id': jid, 'name': folder, 'category': entry.get('category') or '',
-            'files': [{'name': f['name'], 'segments': [
-                {'id': s['id'], 'start': s['start'], 'end': s['end'], 'data_start': s['data_start']}
-                for s in f['segments']]} for f in meta['files']]}
+            'files': [_file_body(f) for f in meta['files']]}
     code, resp = engine._call('POST', '/jobs/import', timeout=60, json=body)
     if code == 201:
         return 'imported', '', len(meta['skipped'])

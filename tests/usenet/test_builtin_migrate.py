@@ -2,6 +2,7 @@
 """Migration from cli_mount (utilities/builtin_migrate.py): cli_mount's
 NZBProto metadata is decoded and imported with the same id/folder/files."""
 
+import base64
 import os
 import sys
 import tempfile
@@ -37,15 +38,17 @@ def seg(number, mid, start, end, data_start=0):
         fld(7, data_start) if data_start else b'')
 
 
-def nzbfile(name, segs, size, ftype='rar', deleted=False, encrypted=False):
+def nzbfile(name, segs, size, ftype='rar', deleted=False, encrypted=False, key=b'', iv=b''):
     b = fld(2, name) + fld(4, size) + fld(8, ftype) + b''.join(fld(6, s) for s in segs)
+    b += (fld(13, key) if key else b'') + (fld(14, iv) if iv else b'')
     return b + (fld(10, 1) if deleted else b'') + (fld(15, 1) if encrypted else b'')
 
 
 META = (fld(1, '95af6933-9d46-487a-96a1-efac7d2b4113') + fld(2, 'Veep.S06E01') +
         fld(9, nzbfile('Veep.S06E01.mkv', [seg(2, 'b@x', 1000, 1999), seg(1, 'a@x', 0, 999, 176)], 2000)) +
         fld(9, nzbfile('old.nfo', [seg(1, 'c@x', 0, 9)], 10, 'media', deleted=True)) +
-        fld(9, nzbfile('secret.mkv', [seg(1, 'd@x', 0, 9)], 10, encrypted=True)))
+        fld(9, nzbfile('secret.mkv', [seg(1, 'd@x', 0, 9)], 10, encrypted=True)) +
+        fld(9, nzbfile('locked.mkv', [seg(1, 'e@x', 0, 31)], 27, encrypted=True, key=b'K' * 32, iv=b'I' * 16)))
 
 
 class FakeEngine:
@@ -61,11 +64,14 @@ class MigrateTests(unittest.TestCase):
     def test_parse_meta(self):
         m = bm.parse_meta(META)
         self.assertEqual((m['id'], m['name']), ('95af6933-9d46-487a-96a1-efac7d2b4113', 'Veep.S06E01'))
-        self.assertEqual([f['name'] for f in m['files']], ['Veep.S06E01.mkv'], 'deleted and encrypted files left out')
+        self.assertEqual([f['name'] for f in m['files']], ['Veep.S06E01.mkv', 'locked.mkv'],
+                         'deleted files and encrypted ones without a key left out')
+        locked = m['files'][1]
+        self.assertEqual((locked['key'], locked['iv'], locked['size']), (b'K' * 32, b'I' * 16, 27))
         segs = m['files'][0]['segments']
         self.assertEqual([(s['id'], s['start'], s['end'], s['data_start']) for s in segs],
                          [('a@x', 0, 999, 176), ('b@x', 1000, 1999, 0)], 'sorted by file offset')
-        self.assertEqual(m['skipped'], [('secret.mkv', 'encrypted archive (not supported by the built-in mount)')])
+        self.assertEqual(m['skipped'], [('secret.mkv', "encrypted archive without a usable key in cli_mount's metadata")])
 
     def test_import_one_keeps_id_folder_and_reports(self):
         with tempfile.TemporaryDirectory() as d:
@@ -78,6 +84,10 @@ class MigrateTests(unittest.TestCase):
             self.assertEqual((method, path, body['id'], body['name']),
                              ('POST', '/jobs/import', entry['info_hash'], 'Veep S06E01 (renamed folder)'))
             self.assertEqual(body['files'][0]['segments'][0], {'id': 'a@x', 'start': 0, 'end': 999, 'data_start': 176})
+            self.assertNotIn('key', body['files'][0])
+            self.assertEqual({k: body['files'][1][k] for k in ('name', 'key', 'iv', 'size')},
+                             {'name': 'locked.mkv', 'key': base64.b64encode(b'K' * 32).decode(),
+                              'iv': base64.b64encode(b'I' * 16).decode(), 'size': 27})
             self.assertEqual(bm.import_one(FakeEngine(409), entry, d)[0], 'already')
             self.assertEqual(bm.import_one(FakeEngine(400), entry, d)[0], 'failed')
             outcome, msg, _ = bm.import_one(FakeEngine(), {'name': 'X', 'info_hash': 'missing'}, d)

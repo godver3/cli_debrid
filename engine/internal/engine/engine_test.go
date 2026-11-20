@@ -1,6 +1,9 @@
 package engine
 
 import (
+	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
 	"math/rand"
 	"strings"
 	"testing"
@@ -206,5 +209,59 @@ func TestImportMappedFromCliMount(t *testing.T) {
 	gap[1].Start++
 	if _, err := e.ImportMapped("b6f0c3a0-0000-4000-8000-000000000001", "Gap", "", nil, []MappedFileSpec{{Name: "a.mkv", Segments: gap}}); err == nil {
 		t.Fatal("non-contiguous map accepted")
+	}
+}
+
+func TestImportMappedEncryptedMember(t *testing.T) {
+	s := nntptest.Start(t)
+	e := newEngine(t, s, func(c *Config) { c.ReadAhead = 2 })
+	plain := data(12, 150_007)
+	copy(plain, []byte{0x1A, 0x45, 0xDF, 0xA3})
+	key, iv := data(13, 32), data(14, 16)
+	padded := make([]byte, (len(plain)+15)/16*16)
+	copy(padded, plain)
+	ct := make([]byte, len(padded))
+	b, _ := aes.NewCipher(key)
+	cipher.NewCBCEncrypter(b, iv).CryptBlocks(ct, padded)
+	arts := nntptest.Post("enc", "show.part01.rar", ct, 50_000)
+	s.Add(arts...)
+	var segs []MappedSegment
+	var off int64
+	for _, a := range arts {
+		n := min(int64(50_000), int64(len(ct))-off)
+		segs = append(segs, MappedSegment{ID: "<" + a.ID + ">", Start: off, End: off + n - 1})
+		off += n
+	}
+	spec := MappedFileSpec{Name: "Show.S01E02.mkv", Segments: segs, Key: key, IV: iv, Size: int64(len(plain))}
+	j, err := e.ImportMapped("5a1d0c3e-0000-4000-8000-0000000000e1", "Show.S01E02", "tv", nil, []MappedFileSpec{spec})
+	if err != nil || j.Status != store.Ready {
+		t.Fatalf("import: %+v %v", j, err)
+	}
+	if f, ok := e.Folder(AllFolder, "Show.S01E02"); !ok || len(f.Entries) != 1 || f.Entries[0].Size != int64(len(plain)) {
+		t.Fatalf("folder shows the ciphertext size, not the file size: %+v", f)
+	}
+	files, err := e.Files(j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, res, _ := e.Store.Get(j.ID)
+	r := files.Entry(res.Entries[0])
+	got := make([]byte, len(plain))
+	if n, _ := r.ReadAt(got, 0); n != len(plain) || !bytes.Equal(got, plain) {
+		t.Fatalf("decrypted read: n=%d equal=%v", n, bytes.Equal(got, plain))
+	}
+	part := make([]byte, 7000)
+	if n, _ := r.ReadAt(part, 49_990); n != 7000 || !bytes.Equal(part, plain[49_990:56_990]) {
+		t.Fatal("decrypted read across an article boundary")
+	}
+	bad := spec
+	bad.IV = iv[:8]
+	if _, err := e.ImportMapped("5a1d0c3e-0000-4000-8000-0000000000e2", "Bad", "", nil, []MappedFileSpec{bad}); err == nil {
+		t.Fatal("short IV accepted")
+	}
+	big := spec
+	big.Size = int64(len(ct)) + 1
+	if _, err := e.ImportMapped("5a1d0c3e-0000-4000-8000-0000000000e3", "Big", "", nil, []MappedFileSpec{big}); err == nil {
+		t.Fatal("plaintext larger than the map accepted")
 	}
 }

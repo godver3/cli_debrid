@@ -39,7 +39,16 @@ func Open(res *Result, n *nzb.NZB, f stream.Fetcher, cache *stream.Cache, readAh
 			return nil, fmt.Errorf("job: source %q points at NZB file %d of %d", s.Name, s.NZBIndex, len(n.Files))
 		}
 		if len(s.Map) > 0 {
-			out.sources = append(out.sources, stream.OpenMapped(f, cache, n.Files[s.NZBIndex], s.Map, readAhead))
+			m := stream.OpenMapped(f, cache, n.Files[s.NZBIndex], s.Map, readAhead)
+			if s.Encryption != nil && s.Encryption.Enabled() {
+				d, err := stream.NewDecryptedFile(m, *s.Encryption, s.Layout.Size, m.Size())
+				if err != nil {
+					return nil, fmt.Errorf("job: source %q: %w", s.Name, err)
+				}
+				out.sources = append(out.sources, d)
+				continue
+			}
+			out.sources = append(out.sources, m)
 			continue
 		}
 		out.sources = append(out.sources, stream.Open(f, cache, n.Files[s.NZBIndex], s.Layout, readAhead))

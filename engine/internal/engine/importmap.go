@@ -24,6 +24,11 @@ type MappedSegment struct {
 type MappedFileSpec struct {
 	Name     string          `json:"name"`
 	Segments []MappedSegment `json:"segments"`
+	// Encrypted members (cli_mount's derived AES key + IV): Segments map
+	// the ciphertext and Size is the plaintext size.
+	Key  []byte `json:"key,omitempty"`
+	IV   []byte `json:"iv,omitempty"`
+	Size int64  `json:"size,omitempty"`
 }
 
 // ImportMapped adds a job migrated from cli_mount: same id, folder name
@@ -59,7 +64,23 @@ func (e *Engine) ImportMapped(id, name, category string, tags []string, files []
 		if err != nil {
 			return store.Job{}, fmt.Errorf("%w: %s: %v", ErrBadNZB, f.Name, err)
 		}
-		res.Sources = append(res.Sources, job.Source{NZBIndex: i, Name: f.Name, Layout: stream.Layout{Size: size}, Map: segs})
+		src := job.Source{NZBIndex: i, Name: f.Name, Layout: stream.Layout{Size: size}, Map: segs}
+		if len(f.Key) > 0 || len(f.IV) > 0 {
+			enc := stream.Encryption{Key: f.Key, IV: f.IV}
+			if err := enc.Validate(); err != nil {
+				return store.Job{}, fmt.Errorf("%w: %s: %v", ErrBadNZB, f.Name, err)
+			}
+			plain := f.Size
+			if plain <= 0 {
+				plain = size
+			}
+			if plain > size || size-plain >= 16 || size%16 != 0 {
+				return store.Job{}, fmt.Errorf("%w: %s: encrypted map is %d bytes for a %d byte file", ErrBadNZB, f.Name, size, plain)
+			}
+			src.Encryption, size = &enc, plain
+			src.Layout.Size = plain
+		}
+		res.Sources = append(res.Sources, src)
 		res.Entries = append(res.Entries, job.Entry{Name: f.Name, Size: size,
 			Pieces: []job.Piece{{Source: i, Offset: 0, Length: size}}})
 	}
