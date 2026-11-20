@@ -156,22 +156,22 @@ class MountRoutesTests(unittest.TestCase):
 
     def test_switch_waits_for_the_debrid_mirror(self):
         with self._switch_ready(True, {'synced_at': 1.0, 'complete': False, 'pending': 120}), \
-                mock.patch.object(mr.os.path, 'ismount', return_value=False):
+                mock.patch.object(mr, '_fuse_mounted', return_value=False):
             code, body = self._post(mr.migrate_switch)
         self.assertEqual(code, 409)
         self.assertIn('120 debrid torrent(s)', body['error'])
         self.assertEqual(self.store['Usenet Provider']['provider'], 'climount', 'nothing switched')
         with self._switch_ready(True, {'synced_at': 0, 'complete': False}), \
-                mock.patch.object(mr.os.path, 'ismount', return_value=False):
+                mock.patch.object(mr, '_fuse_mounted', return_value=False):
             self.assertEqual(self._post(mr.migrate_switch)[0], 409, 'never listed yet')
         with self._switch_ready(True, {'synced_at': 1.0, 'complete': True}), \
-                mock.patch.object(mr.os.path, 'ismount', return_value=False):
+                mock.patch.object(mr, '_fuse_mounted', return_value=False):
             code, body = self._post(mr.migrate_switch)
         self.assertEqual((code, self.store['Usenet Provider']['provider']), (200, 'builtin'))
         self.assertEqual(self.store['Built-in Mount']['mount_path'], '/mnt/climount')
 
     def test_switch_without_debrid_does_not_wait(self):
-        with self._switch_ready(False, {}), mock.patch.object(mr.os.path, 'ismount', return_value=False):
+        with self._switch_ready(False, {}), mock.patch.object(mr, '_fuse_mounted', return_value=False):
             self.assertEqual(self._post(mr.migrate_switch)[0], 200)
 
     def test_switch_back_needs_the_program_stopped_and_keeps_the_engine_up(self):
@@ -201,3 +201,31 @@ class MountRoutesTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class FuseMountedTests(unittest.TestCase):
+    """Switch must tell cli_mount's FUSE mount apart from Docker's bind mount
+    of the same folder (os.path.ismount is True for both)."""
+
+    MOUNTINFO = (
+        "5920 5477 259:1 /decypharr_root/mnt /media/x/mnt rw,relatime shared:106 - ext4 /dev/nvme0n1p1 rw\n"
+        "6001 5920 0:99 / /mnt/clid rw,nosuid,nodev - fuse.clid clid rw,user_id=1000\n"
+        "6002 5920 0:98 / /media/my\\040mount rw - fuse.decypharr decypharr rw\n"
+    )
+
+    def _check(self, path):
+        with mock.patch('builtins.open', mock.mock_open(read_data=self.MOUNTINFO)), \
+                mock.patch.object(mr.os.path, 'realpath', side_effect=lambda p: p):
+            return mr._fuse_mounted(path)
+
+    def test_bind_mount_is_not_cli_mount(self):
+        self.assertFalse(self._check('/media/x/mnt'))
+
+    def test_fuse_mount_is_seen(self):
+        self.assertTrue(self._check('/mnt/clid'))
+        self.assertTrue(self._check('/media/my mount/'))
+
+    def test_no_mountinfo_falls_back_to_ismount(self):
+        with mock.patch('builtins.open', side_effect=OSError), \
+                mock.patch.object(mr.os.path, 'ismount', return_value=True):
+            self.assertTrue(mr._fuse_mounted('/anything'))

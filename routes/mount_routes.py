@@ -85,6 +85,29 @@ def mount_page_visible() -> bool:
         return False
 
 
+def _fuse_mounted(path: str) -> bool:
+    """A FUSE filesystem (cli_mount's, live or dead) sits on path. Inside
+    Docker the folder is a bind mount, so os.path.ismount() is always True
+    there and can't tell cli_mount apart from the bind; /proc/self/mountinfo
+    names the filesystem type. Without mountinfo (Windows) fall back to
+    ismount."""
+    target = os.path.realpath(path).rstrip('/') or '/'
+    try:
+        with open('/proc/self/mountinfo') as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return os.path.ismount(path)
+    for line in lines:
+        left, _, right = line.partition(' - ')
+        parts = left.split()
+        if len(parts) < 5:
+            continue
+        mnt = parts[4].replace('\\040', ' ').replace('\\011', '\t').replace('\\012', '\n').replace('\\134', '\\')
+        if mnt.rstrip('/') == target and (right.split() or [''])[0].startswith('fuse'):
+            return True
+    return False
+
+
 def builtin_selected() -> bool:
     """The built-in mount is in use (usenet backend, or debrid-only)."""
     try:
@@ -468,7 +491,7 @@ def migrate_status():
         'problems': builtin_engine.problems(),
         'meta_dir': mdir, 'metas': metas,
         'climount_root': root,
-        'climount_root_mounted': bool(root) and os.path.ismount(root),
+        'climount_root_mounted': bool(root) and _fuse_mounted(root),
         'builtin_root': _engine().mount_path,
         'pre_migration_mount_path': (get_setting('Built-in Mount') or {}).get('pre_migration_mount_path') or '',
         'debrid_needed': _debrid_needed(),
@@ -562,7 +585,7 @@ def migrate_switch():
     root = bm.climount_mount_root(get_setting)
     if not root:
         return jsonify({'success': False, 'error': "cli_mount's mount path isn't known (File Management → original files path)."}), 400
-    if os.path.ismount(root):
+    if _fuse_mounted(root):
         return jsonify({'success': False, 'error': f'{root} is still mounted: stop the cli_mount container first, then switch.'}), 409
     if _debrid_needed():
         st = _debrid_status()
