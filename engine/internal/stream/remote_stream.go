@@ -244,7 +244,7 @@ func (d *downloader) run(ctx context.Context) {
 		if progressed {
 			fails = 0
 		}
-		if status >= 400 && status < 500 || status == 503 {
+		if status >= 400 && status < 500 && !transientStatus(status) {
 			if relinked {
 				d.fail(err)
 				return
@@ -257,6 +257,17 @@ func (d *downloader) run(ctx context.Context) {
 			continue
 		}
 		if fails++; fails > streamRetries {
+			if status == http.StatusServiceUnavailable && !relinked {
+				// Still 503: ask the service for a fresh link once; a dead
+				// file comes back as its own error.
+				relinked = true
+				if _, lerr := r.links.Link(ctx, r.ref, true); lerr != nil {
+					d.fail(fmt.Errorf("stream: new link for %s: %w", r.ref, lerr))
+					return
+				}
+				fails = 0
+				continue
+			}
 			d.fail(err)
 			return
 		}
@@ -288,8 +299,10 @@ func (r *RemoteFile) waitTimeout(dur time.Duration) {
 // pump reads one HTTP response from start onward into the buffer until it
 // is paused (pos reached target), the file ends or the body breaks. A nil
 // error means it stopped cleanly.
-func (d *downloader) pump(ctx context.Context, start int64) (int, error) {
+func (d *downloader) pump(parent context.Context, start int64) (int, error) {
 	r := d.r
+	ctx, wd := newWatchdog(parent)
+	defer wd.stop()
 	st := countersFor(r.ref)
 	url, err := r.links.Link(ctx, r.ref, false)
 	if err != nil {
@@ -316,11 +329,15 @@ func (d *downloader) pump(ctx context.Context, start int64) (int, error) {
 	began := time.Now()
 	resp, err := r.client.Do(req)
 	if err != nil {
-		if ctx.Err() == nil {
+		if wd.stalled() {
+			err = fmt.Errorf("stream: no answer for %s: %w", remoteStallTimeout(), err)
+		}
+		if parent.Err() == nil {
 			st.fail(err)
 		}
 		return 0, err
 	}
+	wd.progress()
 	st.headers(began)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusPartialContent && !(resp.StatusCode == http.StatusOK && start == 0) {
@@ -344,9 +361,11 @@ func (d *downloader) pump(ctx context.Context, start int64) (int, error) {
 			// Far enough ahead: hold the connection (TCP pushes back) and
 			// wait for the reader, like cli_mount; close it after streamIdle.
 			idleSince := time.Now()
+			wd.pause() // waiting for the reader on purpose, not a stall
 			for d.pos >= d.target && !d.done && time.Since(idleSince) < streamIdle {
 				r.waitTimeout(time.Second)
 			}
+			wd.resume()
 			if d.done {
 				r.smu.Unlock()
 				return 0, errStreamStopped
@@ -360,7 +379,7 @@ func (d *downloader) pump(ctx context.Context, start int64) (int, error) {
 		want := min(int64(len(block)), chunkEnd-d.pos, end+1-d.pos)
 		r.smu.Unlock()
 
-		m, err := io.ReadFull(resp.Body, block[:want])
+		m, err := io.ReadFull(progressReader{r: resp.Body, w: wd}, block[:want])
 		st.bytes.Add(int64(m))
 		r.smu.Lock()
 		if m > 0 {
@@ -396,7 +415,10 @@ func (d *downloader) pump(ctx context.Context, start int64) (int, error) {
 				st.fail(err)
 				return 0, err
 			}
-			if ctx.Err() == nil {
+			if wd.stalled() {
+				err = fmt.Errorf("stream: no data for %s at %d: %w", remoteStallTimeout(), d.pos, err)
+			}
+			if parent.Err() == nil {
 				st.fail(err)
 			}
 			return 0, err

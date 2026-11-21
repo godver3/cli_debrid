@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/godver3/cli_debrid/engine/internal/engine"
 	"github.com/godver3/cli_debrid/engine/internal/job"
@@ -38,6 +39,7 @@ type openFile struct {
 	mu     sync.Mutex
 	next   int64 // offset after the last read, -1 before the first
 	seq    int64 // bytes read sequentially since the last jump
+	jumps  int   // jumps since the handle last read scanSeq in order
 }
 
 const (
@@ -47,19 +49,47 @@ const (
 	// seqSlack: reads this close to the last one count as sequential
 	// (kernel readahead reorders and overlaps them).
 	seqSlack = 4 << 20
+	// scanJumps: a handle that has jumped this many times without reading
+	// scanSeq sequentially is a scanner (Plex thumbnails, intro/credit
+	// detection), not playback: playback jumps a few times (head, tail,
+	// resume point) and then reads in order. A scanner gets no minimum
+	// read-ahead, only what its own sequential reading earns: found live,
+	// one thumbnail pass reading a few hundred KB per jump made the full
+	// read-ahead pull ~10 MB/s for 1 MB/s of reads.
+	scanJumps = 4
+	scanSeq   = 16 << 20
+	// readTimeout bounds one mount read (cli_mount's ReadTimeout): a read
+	// stuck on a stalled server ends with an error instead of holding a
+	// FUSE worker until the player gives up.
+	readTimeout = 120 * time.Second
 )
 
 // hint returns the read-ahead hint for a read of n bytes at off: twice
-// what this handle has read sequentially so far, at least minAhead.
+// what this handle has read sequentially so far, at least minAhead unless
+// the handle reads like a scanner and nobody reports the file playing.
 func (h *openFile) hint(off int64, n int) stream.ReadHint {
 	h.mu.Lock()
 	if h.next >= 0 && off >= h.next-seqSlack && off <= h.next+seqSlack {
 		h.seq += int64(n)
 		h.next = max(h.next, off+int64(n))
+		if h.seq >= scanSeq {
+			h.jumps = 0 // reading in order now: playback after its seeks
+		}
 	} else { // first read, or a jump: start counting again here
+		if h.next >= 0 {
+			h.jumps++
+		}
 		h.seq, h.next = int64(n), off+int64(n)
 	}
-	ahead := max(int64(minAhead), 2*h.seq)
+	floor := int64(minAhead)
+	if h.jumps >= scanJumps {
+		if h.e == nil {
+			floor = 0
+		} else if playing, _ := h.e.Playing(h.jobID, h.name); !playing {
+			floor = 0
+		}
+	}
+	ahead := max(floor, 2*h.seq, 1)
 	h.mu.Unlock()
 	return stream.ReadHint{Ahead: ahead, Owner: h.ctx}
 }
@@ -82,6 +112,8 @@ func (h *openFile) readAt(ctx context.Context, dest []byte, off int64) (int, err
 	if off >= h.r.Size() {
 		return 0, nil
 	}
+	ctx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
 	ctx = stream.WithReadHint(ctx, h.hint(off, len(dest)))
 	n, err := h.r.ReadAtCtx(ctx, h.e.ReadPriority(h.jobID, h.name), dest, off)
 	if err != nil && n < len(dest) && off+int64(n) < h.r.Size() {

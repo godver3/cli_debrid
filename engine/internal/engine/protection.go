@@ -74,6 +74,21 @@ func (e *Engine) ReadPriority(jobID, file string) nntp.Priority {
 	return nntp.Read
 }
 
+// Playing reports whether the media server says jobID/file is playing;
+// known is false when nobody is asking it (protection off, or no fresh
+// successful poll), so callers can't tell either way.
+func (e *Engine) Playing(jobID, file string) (playing, known bool) {
+	if !e.cfg.PlexProtection {
+		return false, false
+	}
+	e.protect.mu.RLock()
+	defer e.protect.mu.RUnlock()
+	if !e.protect.ok || time.Since(e.protect.at) >= ProtectionTTL {
+		return false, false
+	}
+	return e.protect.files[ProtectedFile{JobID: jobID, File: file}], true
+}
+
 // ProtectionStatus is for status pages.
 type ProtectionStatus struct {
 	Enabled bool            `json:"enabled"`

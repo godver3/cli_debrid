@@ -208,10 +208,12 @@ class NzbHealthPollProgressTests(unittest.TestCase):
 
     # --- restart-safe folder / ghost waits ------------------------------------
 
-    def _expire_waits(self, jobs, ticks):
+    def _expire_waits(self, jobs, ticks, ago=400):
+        """Wait ran out: past the tick cap and the 300 s minimum (ago seconds)."""
+        import time as _t
         for j in jobs:
             ProgramRunner._nzb_folder_wait_counts[j] = ticks
-            ProgramRunner._nzb_folder_wait_since[j] = 0.0  # started long ago
+            ProgramRunner._nzb_folder_wait_since[j] = _t.monotonic() - ago
 
     def test_job_dropped_from_queue_with_folder_is_not_a_ghost_after_restart(self):
         # The confirmed-complete memory is empty after a restart and cli_mount has
@@ -241,6 +243,17 @@ class NzbHealthPollProgressTests(unittest.TestCase):
             self._tick(runner, client)
         bl.assert_not_called()
         self.assertTrue(any('holding them' in line for line in logs.output), logs.output)
+
+    def test_mass_hold_ends_after_its_cap(self):
+        # Two bad NZBs and nothing else finishing: the hold must end, or they
+        # stay in Downloading forever (held jobs skip the download timeout).
+        runner, _ = _runner(2)
+        client = _FakeClimountClient(progress=1.0)
+        self._expire_waits(['job0', 'job1'], 10, ago=ProgramRunner._NZB_MASS_HOLD_MAX_SECONDS + 60)
+        with mock.patch('database.nzb_playback_repair.reject_active_candidate', return_value=False), \
+             mock.patch('utilities.nzb_failure_cleanup.blacklist_and_cleanup_nzb_failure') as bl:
+            self._tick(runner, client)
+        bl.assert_called()
 
     def test_single_folder_timeout_still_fails(self):
         runner, _ = _runner(1)

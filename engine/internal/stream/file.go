@@ -185,15 +185,23 @@ func (r *File) segment(ctx context.Context, prio nntp.Priority, idx int) ([]byte
 	if !ok {
 		return nil, &SegmentError{File: r.name, Number: idx + 1, Err: ErrNotInNZB}
 	}
+	wantOff, wantLen := int64(idx)*r.layout.PartSize, r.partLen(idx)
+	// Single-part posts may omit =ypart; then only the length can be checked.
+	fits := func(data []byte, meta nntp.Meta) bool {
+		offOK := meta.Offset == wantOff || (meta.Offset == 0 && meta.PartSize == 0)
+		return offOK && int64(len(data)) == wantLen
+	}
 	return r.cache.DoCtx(ctx, seg.ID, prio, func(ctx context.Context) ([]byte, error) {
-		data, meta, err := r.fetch.Body(ctx, prio, seg.ID)
+		// A server whose copy doesn't fit is skipped for the next one.
+		data, meta, err := fetchBody(ctx, r.fetch, prio, seg.ID, fits)
+		if errors.Is(err, nntp.ErrMismatch) {
+			return nil, &SegmentError{File: r.name, Number: idx + 1, ID: seg.ID,
+				Err: fmt.Errorf("%w: no server has a copy at offset %d len %d (%v)", ErrLayout, wantOff, wantLen, err)}
+		}
 		if err != nil {
 			return nil, &SegmentError{File: r.name, Number: idx + 1, ID: seg.ID, Err: err}
 		}
-		wantOff, wantLen := int64(idx)*r.layout.PartSize, r.partLen(idx)
-		// Single-part posts may omit =ypart; then only the length can be checked.
-		offOK := meta.Offset == wantOff || (meta.Offset == 0 && meta.PartSize == 0)
-		if !offOK || int64(len(data)) != wantLen {
+		if !fits(data, meta) {
 			return nil, &SegmentError{File: r.name, Number: idx + 1, ID: seg.ID,
 				Err: fmt.Errorf("%w: got offset %d len %d, want offset %d len %d",
 					ErrLayout, meta.Offset, len(data), wantOff, wantLen)}

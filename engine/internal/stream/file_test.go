@@ -238,3 +238,30 @@ func TestReadAheadBytesAndPerFileCap(t *testing.T) {
 		t.Fatalf("with MaxConns 1, %d prefetches started (%d slots used), want 1", inFlight, len(r.slots))
 	}
 }
+
+// With a second server, the wrong copy on the first is skipped and the read
+// gets the right bytes from the second (found live on a migrated job).
+func TestWrongArticleOnOneServerReadsFromTheNext(t *testing.T) {
+	data, arts, s, _, f := setup(t, 2_100_000, 700_000)
+	s.Add(nntptest.Article{ID: arts[1].ID, Body: arts[2].Body})
+	good := nntptest.Start(t, arts...)
+	h1, p1 := s.Addr()
+	h2, p2 := good.Addr()
+	c, err := nntp.NewClient([]nntp.Provider{
+		{Name: "bad", Host: h1, Port: p1, MaxConns: 2, Timeout: 5 * time.Second},
+		{Name: "good", Host: h2, Port: p2, MaxConns: 2, Timeout: 5 * time.Second}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	cache := NewCache(64 << 20)
+	l, err := Probe(context.Background(), c, cache, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := Open(c, cache, f, l, ReadAhead{})
+	buf := make([]byte, 10)
+	if _, err := r.ReadAt(buf, 700_000); err != nil || !bytes.Equal(buf, data[700_000:700_010]) {
+		t.Fatalf("got %v; want segment 2 from the second server", err)
+	}
+}

@@ -40,5 +40,11 @@ func classify(code int, msg string) error {
 // yEnc trailer says. Treated like a missing article on that server.
 var ErrTruncated = errors.New("article truncated on the server")
 
+// ErrMismatch: the servers that had the Message-ID returned a different
+// article than the file needs (the caller's accept check said no), and the
+// rest said "no such article". One server's wrong copy is not this error:
+// the next server is asked first (cli_mount's ArticleMismatch failover).
+var ErrMismatch = errors.New("nntp: article does not match the file on any server")
+
 // IsNotFound reports whether err is a confirmed missing article.
 func IsNotFound(err error) bool { return errors.Is(err, ErrArticleNotFound) }

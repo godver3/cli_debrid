@@ -167,9 +167,7 @@ func (c Config) remoteOptions(log *slog.Logger) stream.RemoteOptions {
 		if err != nil || u.Host == "" {
 			log.Warn("debrid proxy ignored: not a URL", "proxy", c.DebridProxy)
 		} else {
-			tr := http.DefaultTransport.(*http.Transport).Clone()
-			tr.Proxy = http.ProxyURL(u)
-			o.Client = &http.Client{Transport: tr}
+			o.Client = stream.NewRemoteClient(http.ProxyURL(u))
 		}
 	}
 	return o

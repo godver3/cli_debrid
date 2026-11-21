@@ -131,14 +131,14 @@ func (c *Client) attempt(ctx context.Context, prio Priority, id string,
 		// Never proof: with no provider nothing was asked.
 		return &InconclusiveError{ID: id, Last: ErrNoProviders}
 	}
-	notFound := 0
+	notFound, mismatched := 0, 0
 	var last error
 	left := append([]*pool(nil), c.pools...)
 	for len(left) > 0 {
 		k, pre, preErr, got := pick(ctx, left, prio)
 		pl := left[k]
 		left = append(left[:k:k], left[k+1:]...)
-		answered, gotNotFound := false, false
+		answered, gotNotFound, gotMismatch := false, false, false
 		// One retry per provider: an idle connection the server already
 		// closed fails on first use, which says nothing about the article.
 		for try := 0; try < 2 && !answered; try++ {
@@ -166,6 +166,12 @@ func (c *Client) attempt(ctx context.Context, prio Priority, id string,
 			case err == nil && found:
 				pl.release(cn)
 				return nil
+			case errors.Is(err, errWrongArticle):
+				// This server's copy isn't the one the file needs (a
+				// Message-ID collision or a re-post): ask the next server.
+				pl.release(cn)
+				gotMismatch = true
+				answered = true
 			case err == nil || IsNotFound(err):
 				pl.release(cn)
 				gotNotFound = true
@@ -198,12 +204,18 @@ func (c *Client) attempt(ctx context.Context, prio Priority, id string,
 		if gotNotFound {
 			notFound++
 		}
+		if gotMismatch {
+			mismatched++
+		}
 	}
 	// Proof needs a "no such article" from every provider; a provider that
 	// failed any other way might have had it.
 	if notFound == len(c.pools) {
 		c.missing.Add(1)
 		return ErrArticleNotFound
+	}
+	if mismatched > 0 && notFound+mismatched == len(c.pools) {
+		return fmt.Errorf("%w: %s", ErrMismatch, id)
 	}
 	if last == nil {
 		last = errors.New("no provider answered")
@@ -249,8 +261,19 @@ const (
 	staleIdleCap = 30 * time.Second
 )
 
+// errWrongArticle: the accept check rejected one server's copy.
+var errWrongArticle = errors.New("nntp: wrong article on this server")
+
 // Body downloads and decodes one article.
 func (c *Client) Body(ctx context.Context, prio Priority, id string) ([]byte, Meta, error) {
+	return c.BodyAccept(ctx, prio, id, nil)
+}
+
+// BodyAccept is Body with a check of the decoded article: when accept
+// returns false the next server is asked, as for a missing article. If no
+// server has an accepted copy and at least one had a rejected one, the
+// error is ErrMismatch (not ErrArticleNotFound).
+func (c *Client) BodyAccept(ctx context.Context, prio Priority, id string, accept func([]byte, Meta) bool) ([]byte, Meta, error) {
 	var data []byte
 	var meta Meta
 	err := c.attempt(ctx, prio, id, func(cn *conn) (bool, error) {
@@ -267,6 +290,9 @@ func (c *Client) Body(ctx context.Context, prio Priority, id string) ([]byte, Me
 			// the next server is asked; short or missing on every server is
 			// proof (cli_mount's relayoutDead: "a segment that decodes short").
 			return false, nil
+		}
+		if accept != nil && !accept(d, m) {
+			return false, errWrongArticle
 		}
 		data, meta = d, m
 		return true, nil

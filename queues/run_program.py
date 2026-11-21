@@ -784,6 +784,7 @@ class ProgramRunner(SchedulingMixin, TaskControlMixin, ContentSourceTasks, Conne
     _NZB_FOLDER_MIN_WAIT_SECONDS = 300   # ...and at least this long since the wait started
     _NZB_GHOST_MIN_WAIT_SECONDS = 120    # a job missing from the queue waits at least this long
     _nzb_folder_wait_since: dict = {}    # job_id → monotonic time its ghost/folder wait started
+    _NZB_MASS_HOLD_MAX_SECONDS = 900     # a mass hold (see usenet_tasks) lasts at most this long per job
     _nzb_health_triggered: dict = {}     # entry_name → tick count since trigger (0 = not yet triggered)
     _nzb_confirmed_complete: dict = {}   # job_id → entry_name for jobs confirmed complete+folder found
     _nzb_ghost_repeat_counts: dict = {}  # item_id → consecutive ghost-job cycles for this item

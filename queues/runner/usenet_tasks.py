@@ -218,7 +218,12 @@ class UsenetTasks:
             # them until some folder lookup works again.
             if _wait_expired:
                 _folders_seen = any(prog == 100 and entry for prog, entry, _, _ in _job_results.values())
-                if len(_wait_expired) >= 2 and not _folders_seen:
+                # Capped: with no other job finishing (two bad NZBs from one season and
+                # nothing else downloading), an uncapped hold kept them in Downloading
+                # forever, since held jobs also skip the download timeout.
+                _held_longest = max((_now_mono - _wait_since.get(_jid, _now_mono) for _jid in _wait_expired), default=0)
+                if (len(_wait_expired) >= 2 and not _folders_seen
+                        and _held_longest < self._NZB_MASS_HOLD_MAX_SECONDS):
                     logging.warning(
                         f'[NZB] {len(_wait_expired)} jobs ran out of wait at once and no finished job '
                         f'found its folder — treating it as a mount/provider problem, holding them'

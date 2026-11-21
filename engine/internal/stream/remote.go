@@ -86,15 +86,15 @@ type RemoteFile struct {
 
 // OpenRemote wraps a debrid file of the given size.
 func OpenRemote(links LinkSource, client *http.Client, cache *Cache, ref string, size int64, ra ReadAhead) *RemoteFile {
-	if client == nil {
-		client = http.DefaultClient
-	}
 	var o RemoteOptions
 	if op, ok := links.(RemoteOptioner); ok {
 		o = op.RemoteOptions()
 	}
-	if o.Client != nil && client == http.DefaultClient {
+	if client == nil || client == http.DefaultClient {
 		client = o.Client
+	}
+	if client == nil {
+		client = defaultRemoteClient // with dial/header timeouts
 	}
 	chunk := int64(RemoteChunk)
 	if o.ChunkBytes > 0 {
@@ -142,8 +142,9 @@ func (r *RemoteFile) fetchChunk(ctx context.Context, prio nntp.Priority, i int) 
 	return r.cache.DoCtx(ctx, r.key(i), prio, func(ctx context.Context) ([]byte, error) {
 		start, n := int64(i)*r.chunkSize, r.chunkLen(i)
 		var last error
+		lastStatus := 0
 		relinked := false
-		for attempt := 0; attempt < 4; attempt++ {
+		for attempt := 0; attempt < 5; attempt++ {
 			url, err := r.links.Link(ctx, r.ref, false)
 			if err != nil {
 				countersFor(r.ref).linkFail(err)
@@ -157,9 +158,11 @@ func (r *RemoteFile) fetchChunk(ctx context.Context, prio nntp.Priority, i int) 
 			if err == nil {
 				return data, nil
 			}
-			last = err
-			switch {
-			case status >= 400 && status < 500 || status == 503:
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			last, lastStatus = err, status
+			if status >= 400 && status < 500 && !transientStatus(status) {
 				// The link expired or was refused: one fresh link, then give up.
 				if relinked {
 					return nil, last
@@ -168,20 +171,29 @@ func (r *RemoteFile) fetchChunk(ctx context.Context, prio nntp.Priority, i int) 
 				if _, err := r.links.Link(ctx, r.ref, true); err != nil {
 					return nil, fmt.Errorf("stream: new link for %s: %w", r.ref, err)
 				}
-			default:
-				// Connection reset, timeout, 5xx: transient, retry after a pause.
-				select {
-				case <-ctx.Done():
-					return nil, ctx.Err()
-				case <-time.After(time.Duration(250<<attempt) * time.Millisecond):
-				}
+				continue
+			}
+			// 429/5xx, connection reset, stall: transient, same link after a pause.
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Duration(500<<attempt) * time.Millisecond):
+			}
+		}
+		if lastStatus == http.StatusServiceUnavailable && !relinked {
+			// Still 503: the file may be gone. A fresh link asks the service,
+			// whose answer (dead file or not) is the real error.
+			if _, err := r.links.Link(ctx, r.ref, true); err != nil {
+				return nil, fmt.Errorf("stream: new link for %s: %w", r.ref, err)
 			}
 		}
 		return nil, last
 	})
 }
 
-func (r *RemoteFile) get(ctx context.Context, url string, start, n int64) ([]byte, int, error) {
+func (r *RemoteFile) get(parent context.Context, url string, start, n int64) ([]byte, int, error) {
+	ctx, wd := newWatchdog(parent)
+	defer wd.stop()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, 0, err
@@ -196,11 +208,15 @@ func (r *RemoteFile) get(ctx context.Context, url string, start, n int64) ([]byt
 	began := time.Now()
 	resp, err := r.client.Do(req)
 	if err != nil {
-		if ctx.Err() == nil {
+		if wd.stalled() {
+			err = fmt.Errorf("stream: no answer for %s: %w", remoteStallTimeout(), err)
+		}
+		if parent.Err() == nil {
 			st.fail(err)
 		}
 		return nil, 0, err
 	}
+	wd.progress()
 	st.headers(began)
 	defer resp.Body.Close()
 	switch {
@@ -212,10 +228,13 @@ func (r *RemoteFile) get(ctx context.Context, url string, start, n int64) ([]byt
 		st.fail(err)
 		return nil, resp.StatusCode, err
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, n+1))
+	data, err := io.ReadAll(io.LimitReader(progressReader{r: resp.Body, w: wd}, n+1))
 	st.bytes.Add(int64(len(data)))
 	if err != nil {
-		if ctx.Err() == nil {
+		if wd.stalled() {
+			err = fmt.Errorf("stream: no data for %s: %w", remoteStallTimeout(), err)
+		}
+		if parent.Err() == nil {
 			st.fail(err)
 		}
 		return nil, resp.StatusCode, err
