@@ -174,20 +174,120 @@ func TestTooManyConnectionsFailsOverAndThrottles(t *testing.T) {
 
 func TestClassifyBusy(t *testing.T) {
 	for _, tc := range []struct {
-		code int
-		msg  string
-		busy bool
+		code          int
+		msg           string
+		busy, connect bool // classify, classifyConnect
 	}{
-		{502, "Too many connections", true},
-		{481, "Max connections reached for this account", true},
-		{400, "Service temporarily unavailable", true},
-		{502, "Permission denied", false},
-		{481, "Authentication failed", false},
-		{430, "no such article (too many)", false},
+		{502, "Too many connections", true, true},
+		{481, "Max connections reached for this account", true, true},
+		// A bare 400 is busy only at greeting/login; on a connection in use
+		// it's the server closing it.
+		{400, "Service temporarily unavailable", false, true},
+		{400, "Idle timeout, closing connection", false, true},
+		{502, "Permission denied", false, false},
+		{481, "Authentication failed", false, false},
+		{430, "no such article (too many)", false, false},
 	} {
-		err := classify(tc.code, tc.msg)
-		if errors.Is(err, ErrBusy) != tc.busy {
+		if err := classify(tc.code, tc.msg); errors.Is(err, ErrBusy) != tc.busy {
 			t.Errorf("classify(%d %q) = %v, busy want %v", tc.code, tc.msg, err, tc.busy)
 		}
+		if err := classifyConnect(tc.code, tc.msg); errors.Is(err, ErrBusy) != tc.connect {
+			t.Errorf("classifyConnect(%d %q) = %v, busy want %v", tc.code, tc.msg, err, tc.connect)
+		}
+	}
+	if !isClosing(classify(400, "Idle timeout")) || isClosing(classify(500, "what?")) {
+		t.Error("isClosing wrong")
+	}
+}
+
+// Connections the server ended while idle answer "400 Idle timeout": that's
+// a stale connection, retried on a fresh one. It must not throttle the
+// server, skip it, or shrink its connections (first play after a quiet
+// night with a single provider).
+func TestIdleTimeout400IsStaleNotBusy(t *testing.T) {
+	arts := nntptest.Post("idle", "idle.bin", awkward(500), 500)
+	s := nntptest.Start(t, arts...)
+	s.SetDelay(50 * time.Millisecond)
+	c, _ := NewClient([]Provider{provider(s, "only", 4)})
+	defer c.Close()
+	var wg sync.WaitGroup
+	for range 4 { // open all four connections
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, _, err := c.Body(context.Background(), Live, arts[0].ID); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	pl := c.pools[0]
+	pl.mu.Lock()
+	if len(pl.idle) != 4 {
+		t.Fatalf("idle = %d, want 4", len(pl.idle))
+	}
+	for _, cn := range pl.idle { // idle long enough to count as stale
+		cn.lastUsed = time.Now().Add(-time.Minute)
+	}
+	pl.mu.Unlock()
+	s.SetDelay(0)
+	s.IdleTimeout()
+
+	for i := range 5 {
+		if _, _, err := c.Body(context.Background(), Live, arts[0].ID); err != nil {
+			t.Fatalf("read %d after idle timeout: %v", i, err)
+		}
+	}
+	if pl.throttled() {
+		t.Fatal("idle-timeout 400 throttled the server")
+	}
+	pl.mu.Lock()
+	limit := pl.maxConnsLocked()
+	pl.mu.Unlock()
+	if limit != 4 {
+		t.Fatalf("connection limit %d after idle timeout, want 4", limit)
+	}
+}
+
+// While throttled, the playback reserve shrinks with the lowered limit:
+// background work can't take every connection that is left.
+func TestThrottleKeepsReserve(t *testing.T) {
+	pl := newPool(Provider{Name: "p", MaxConns: 20, Reserve: 4})
+	pl.capConns, pl.capUntil = 6, time.Now().Add(time.Minute)
+	pl.mu.Lock()
+	defer pl.mu.Unlock()
+	if !pl.prefetchMayTake(1) {
+		t.Fatal("background blocked below the throttled limit minus reserve")
+	}
+	if pl.prefetchMayTake(2) {
+		t.Fatal("background may take a throttled pool's reserve (limit 6, reserve 4)")
+	}
+	pl.capConns = 1 // reserve never takes the last connection
+	if !pl.prefetchMayTake(0) {
+		t.Fatal("throttled to one connection: background locked out entirely")
+	}
+}
+
+// Back-to-back refusals each give a slot back; re-capping at the shrinking
+// open count would walk the pool down to one connection.
+func TestThrottleNeverLowersCap(t *testing.T) {
+	pl := newPool(Provider{Name: "p", MaxConns: 20})
+	pl.open = 8
+	pl.throttle()
+	pl.open = 3
+	pl.throttle()
+	pl.mu.Lock()
+	got := pl.maxConnsLocked()
+	pl.mu.Unlock()
+	if got != 8 {
+		t.Fatalf("cap = %d after a second refusal, want 8 (kept)", got)
+	}
+	pl.capUntil = time.Now().Add(-time.Second) // expired: a new refusal re-caps
+	pl.throttle()
+	pl.mu.Lock()
+	got = pl.maxConnsLocked()
+	pl.mu.Unlock()
+	if got != 3 {
+		t.Fatalf("cap = %d after expiry, want 3", got)
 	}
 }

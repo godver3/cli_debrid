@@ -109,7 +109,7 @@ func (pl *pool) load(prio Priority) (busy, usable int) {
 	busy = pl.open - len(pl.idle)
 	usable = pl.maxConnsLocked()
 	if prio != Live {
-		usable -= pl.reserve()
+		usable -= pl.reserveLocked()
 	}
 	return busy, max(usable, 1)
 }
@@ -175,11 +175,17 @@ const busyBackoff = 30 * time.Second
 
 // throttle caps the pool at its current open connections for busyBackoff
 // (the account's real limit is lower than MaxConns, or another program
-// uses it). Called with the failed dial's slot already given back.
+// uses it). Called with the failed dial's slot already given back. A cap
+// already in place is only extended, never lowered: several refusals in a
+// row each give back a slot, and re-capping at the shrinking open count
+// would walk the pool down to one connection.
 func (pl *pool) throttle() {
 	pl.mu.Lock()
 	defer pl.mu.Unlock()
-	pl.capConns = max(pl.open, 1)
+	pl.maxConnsLocked() // clears an expired backoff
+	if pl.capConns == 0 {
+		pl.capConns = max(pl.open, 1)
+	}
 	pl.capUntil = time.Now().Add(busyBackoff)
 }
 

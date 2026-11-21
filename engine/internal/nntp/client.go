@@ -210,8 +210,11 @@ func (c *Client) attempt(ctx context.Context, prio Priority, id string,
 				c.problem(pl.p.Name, "login", prio, err)
 				answered = true // retrying the same credentials won't help
 			default:
+				// "400" on a connection in use is the server closing it (idle
+				// timeout): a stale connection like a broken pipe, retried on
+				// a fresh one below. Any other status is a clean answer.
 				var pe *ProtocolError
-				if errors.As(err, &pe) {
+				if errors.As(err, &pe) && !isClosing(err) {
 					pl.release(cn) // a clean status answer; the connection is fine
 					answered = true
 				} else {

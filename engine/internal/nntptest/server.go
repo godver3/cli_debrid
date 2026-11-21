@@ -22,6 +22,7 @@ type Server struct {
 	drop       map[string]bool
 	refuse     string // when set, every new connection gets this line and is closed
 	conns      map[net.Conn]bool
+	idleGen    atomic.Int64 // bumped by IdleTimeout; older connections answer 400
 
 	Bodies  atomic.Int64 // BODY commands answered with an article
 	Stats   atomic.Int64
@@ -131,7 +132,13 @@ func (s *Server) CloseConns() {
 	s.conns = map[net.Conn]bool{}
 }
 
+// IdleTimeout makes every connection open now answer its next command
+// with "400 Idle timeout" and close, the way providers end connections
+// that sat idle too long. New connections are not affected.
+func (s *Server) IdleTimeout() { s.idleGen.Add(1) }
+
 func (s *Server) handle(c net.Conn) {
+	gen := s.idleGen.Load()
 	defer func() {
 		s.mu.Lock()
 		delete(s.conns, c)
@@ -166,6 +173,10 @@ func (s *Server) handle(c net.Conn) {
 		f := strings.Fields(strings.TrimSpace(line))
 		if len(f) == 0 {
 			continue
+		}
+		if s.idleGen.Load() != gen {
+			write("400 Idle timeout, closing connection")
+			return
 		}
 		cmd := strings.ToUpper(f[0])
 		arg := ""

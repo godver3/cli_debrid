@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -421,5 +422,58 @@ func TestZipSetsStream(t *testing.T) {
 				t.Fatalf("entries %v failures %v", entryNames(res), res.Failures)
 			}
 		})
+	}
+}
+
+// prioFetcher records the priority of every article an import asks for.
+type prioFetcher struct {
+	c    *nntp.Client
+	mu   sync.Mutex
+	seen map[nntp.Priority]int
+}
+
+func (f *prioFetcher) note(p nntp.Priority) {
+	f.mu.Lock()
+	f.seen[p]++
+	f.mu.Unlock()
+}
+
+func (f *prioFetcher) Body(ctx context.Context, prio nntp.Priority, id string) ([]byte, nntp.Meta, error) {
+	f.note(prio)
+	return f.c.Body(ctx, prio, id)
+}
+
+func (f *prioFetcher) BodyAccept(ctx context.Context, prio nntp.Priority, id string, accept func([]byte, nntp.Meta) bool) ([]byte, nntp.Meta, error) {
+	f.note(prio)
+	return f.c.BodyAccept(ctx, prio, id, accept)
+}
+
+// An import (probes, PAR2 index, RAR header walk, media header check) never
+// reads at Live priority: Live may take the playback reserve and queues
+// with a player's own reads, so adding a season pack would make a playing
+// stream buffer.
+func TestImportNeverReadsLive(t *testing.T) {
+	e := newEnv(t)
+	members, vols := rarSet(t)
+	real := map[string][]byte{}
+	for i, v := range vols {
+		name := fmt.Sprintf("show.s01e01.part%02d.rar", i+1)
+		real[name] = v
+		e.post(name, name, v)
+	}
+	e.post("show.s01e01.par2", "show.s01e01.par2", par2Index(real))
+	f := &prioFetcher{c: e.c, seen: map[nntp.Priority]int{}}
+	res, err := Build(context.Background(), f, e.cache, e.nzb, Options{Parallel: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Entries) == 0 || res.Entries[0].Name != members[0].Name {
+		t.Fatalf("entries %v (failures %v)", entryNames(res), res.Failures)
+	}
+	if f.seen[nntp.Live] > 0 {
+		t.Fatalf("import made %d live reads (%v)", f.seen[nntp.Live], f.seen)
+	}
+	if f.seen[nntp.Read] == 0 {
+		t.Fatalf("no reads recorded: %v", f.seen)
 	}
 }

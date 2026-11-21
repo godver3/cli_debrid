@@ -57,8 +57,8 @@ func Probe(ctx context.Context, f Fetcher, cache *Cache, file nzb.File) (Layout,
 	}
 	first := file.Segments[0]
 	var meta nntp.Meta
-	data, err := cache.DoCtx(ctx, first.ID, nntp.Live, func(ctx context.Context) ([]byte, error) {
-		d, m, err := f.Body(ctx, nntp.Live, first.ID)
+	data, err := cache.DoCtx(ctx, first.ID, nntp.Read, func(ctx context.Context) ([]byte, error) {
+		d, m, err := f.Body(ctx, nntp.Read, first.ID)
 		meta = m
 		return d, err
 	})
@@ -66,7 +66,7 @@ func Probe(ctx context.Context, f Fetcher, cache *Cache, file nzb.File) (Layout,
 		return Layout{}, &SegmentError{File: file.Name, Number: 1, ID: first.ID, Err: err}
 	}
 	if meta.FileSize == 0 { // served from cache by a concurrent Probe; refetch header cheaply
-		_, meta, err = f.Body(ctx, nntp.Live, first.ID)
+		_, meta, err = f.Body(ctx, nntp.Read, first.ID)
 		if err != nil {
 			return Layout{}, &SegmentError{File: file.Name, Number: 1, ID: first.ID, Err: err}
 		}

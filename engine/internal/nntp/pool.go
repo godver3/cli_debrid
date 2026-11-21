@@ -40,15 +40,24 @@ type pool struct {
 	lastErr                          atomic.Value // string
 }
 
-// reserve is the number of connections only live reads may use.
-func (pl *pool) reserve() int {
-	return min(max(pl.p.Reserve, 0), pl.p.MaxConns-1)
-}
+// reserve is the number of connections only live reads may use, as
+// configured (status pages, speed test).
+func (pl *pool) reserve() int { return reserveOf(pl.p.Reserve, pl.p.MaxConns) }
+
+// reserveOf fits the reserve inside limit connections, leaving at least
+// one for other work.
+func reserveOf(reserve, limit int) int { return min(max(reserve, 0), limit-1) }
+
+// reserveLocked is the reserve inside the connections the pool may open
+// right now: while a "too many connections" throttle lowers the limit, the
+// reserve shrinks with it instead of background work taking every
+// connection that is left (mu held).
+func (pl *pool) reserveLocked() int { return reserveOf(pl.p.Reserve, pl.maxConnsLocked()) }
 
 // prefetchMayTake says whether non-live work may take one more connection
 // when busy connections are already handed out (lock held).
 func (pl *pool) prefetchMayTake(busy int) bool {
-	return busy < pl.p.MaxConns-pl.reserve()
+	return busy < pl.maxConnsLocked()-pl.reserveLocked()
 }
 
 // record updates the counters after one fetch.

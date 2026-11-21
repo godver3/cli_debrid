@@ -45,9 +45,11 @@ type ProtocolError struct {
 
 func (e *ProtocolError) Error() string { return fmt.Sprintf("nntp: %d %s", e.Code, e.Msg) }
 
-// classify turns a non-success status into one of the errors above.
+// classify turns a non-success status into one of the errors above. A
+// bare 400 is not "busy" here: on a connection already in use it is the
+// server closing it ("400 Idle timeout"), handled as a stale connection.
 func classify(code int, msg string) error {
-	if code != 430 && code != 423 && (code == 400 || busyMsg(msg)) {
+	if code != 430 && code != 423 && busyMsg(msg) {
 		return fmt.Errorf("%w: %d %s", ErrBusy, code, msg)
 	}
 	switch code {
@@ -57,6 +59,24 @@ func classify(code int, msg string) error {
 		return fmt.Errorf("%w: %d %s", ErrAuth, code, msg)
 	}
 	return &ProtocolError{Code: code, Msg: msg}
+}
+
+// classifyConnect is classify for the greeting and login of a new
+// connection, where "400 Service temporarily unavailable" means the
+// server won't take another connection right now.
+func classifyConnect(code int, msg string) error {
+	if code == 400 {
+		return fmt.Errorf("%w: %d %s", ErrBusy, code, msg)
+	}
+	return classify(code, msg)
+}
+
+// isClosing: the server answered 400 on a connection already in use, which
+// means it is closing it (idle timeout, shutdown). Says nothing about the
+// article or the account.
+func isClosing(err error) bool {
+	var pe *ProtocolError
+	return errors.As(err, &pe) && pe.Code == 400
 }
 
 // ErrTruncated: a server's copy of an article decodes shorter than its own
