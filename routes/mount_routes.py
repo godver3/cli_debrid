@@ -29,12 +29,12 @@ mount_bp = Blueprint('mount', __name__)
 
 @mount_bp.record_once
 def _start_background(state):
-    """Plex next-episode prewarm poller (idle unless the mount is in use)."""
+    """Show precache + stream protection poller (idle unless the mount is in use)."""
     try:
         from utilities import mount_prewarm
         mount_prewarm.start(get_setting)
     except Exception as exc:
-        logging.warning(f'Mount prewarm poller not started: {exc}')
+        logging.warning(f'Stream protection / show precache poller not started: {exc}')
     try:
         from utilities import mount_debrid
         mount_debrid.start(get_setting)
@@ -42,12 +42,12 @@ def _start_background(state):
         logging.warning(f'Mount debrid sync not started: {exc}')
 
 SECTION = 'Built-in Mount'
-SECRET_KEYS = ('api_token', 'webdav_password', 'plex_token', 'debrid_download_api_keys', 'debrid_proxy')
+SECRET_KEYS = ('api_token', 'webdav_password', 'plex_token', 'jellyfin_token', 'debrid_download_api_keys', 'debrid_proxy')
 GROUPS = [
     ('Mount', ['mount_path', 'allow_other', 'uid', 'gid', 'umask']),
     ('WebDAV share', ['webdav_enabled', 'webdav_port', 'webdav_username', 'webdav_password']),
     ('Files', ['allowed_extensions', 'deobfuscate_mode']),
-    ('Plex', ['plex_url', 'plex_token']),
+    ('Media servers', ['plex_url', 'plex_token', 'jellyfin_url', 'jellyfin_token']),
     ('Streaming', ['read_ahead_mb', 'max_connections_per_file', 'precache_mb', 'warm_connections',
                    'playback_reserve_percent', 'playback_reserve_min', 'playback_reserve_max', 'plex_playback_protection', 'buffer_memory_mb', 'idle_timeout_minutes',
                    'plex_prewarm', 'prewarm_trigger_percent', 'prewarm_percent', 'prewarm_max_mb']),
@@ -66,16 +66,17 @@ LABELS = {
     'max_connections_per_file': 'Max connections per file', 'buffer_memory_mb': 'Buffer memory (MB)',
     'idle_timeout_minutes': 'Connection idle timeout (minutes)', 'precache_mb': 'Pre-cache on open (MB)',
     'warm_connections': 'Warm connections per server', 'webdav_enabled': 'Share the mount over WebDAV',
-    'webdav_port': 'WebDAV port', 'webdav_username': 'WebDAV username', 'webdav_password': 'WebDAV password', 'plex_prewarm': 'Prewarm the next episode while one plays',
+    'webdav_port': 'WebDAV port', 'webdav_username': 'WebDAV username', 'webdav_password': 'WebDAV password', 'plex_prewarm': 'Show precache (fetch the start of the next episode while one plays)',
     'prewarm_trigger_percent': 'Start at (% watched)', 'prewarm_percent': 'Fetch (% of next episode)',
     'prewarm_max_mb': 'Fetch at most (MB)', 'playback_reserve_percent': 'Playback connection reserve %',
     'playback_reserve_min': 'Reserve at least (connections)', 'playback_reserve_max': 'Reserve at most (connections)',
-    'plex_playback_protection': 'Plex playback protection (reserve only for what Plex is playing)', 'cache_dir': 'Cache directory',
+    'plex_playback_protection': 'Stream protection (reserve only for what your media server is playing)', 'cache_dir': 'Cache directory',
     'cache_size_gb': 'Disk cache size (GB)', 'cache_expiry_hours': 'Cache expiry (hours)',
     'cache_cleanup_minutes': 'Cache cleanup interval (minutes)', 'processing_connections': 'Processing connections per file',
     'processing_timeout_minutes': 'Processing timeout (minutes)', 'import_sample_percent': 'NZB import availability sample %',
     'health_sample_percent': 'Repair availability sample %', 'media_probe': 'Check playability with ffprobe',
     'debug_logging': 'Debug logging', 'plex_url': 'Plex URL', 'plex_token': 'Plex token',
+    'jellyfin_url': 'Jellyfin / Emby URL', 'jellyfin_token': 'Jellyfin / Emby API key',
     'debrid_chunk_mb': 'Range size (MB)', 'debrid_connections_per_file': 'Connections per file',
     'debrid_read_ahead_mb': 'Read ahead (MB)', 'debrid_sync_seconds': 'Account sync interval (seconds)',
     'debrid_link_lifetime_hours': 'Link lifetime (hours)', 'debrid_download_api_keys': 'Extra download API keys',
@@ -149,6 +150,9 @@ def _public_settings() -> dict:
     from utilities import mount_now_playing as np
     url, token, url_src, token_src = np.plex_server_source(get_setting)
     out['plex_effective'] = {'url': url, 'url_source': url_src, 'token_set': bool(token), 'token_source': token_src}
+    from utilities import media_sessions as ms
+    url, token, url_src, token_src = ms.jellyfin_server_source(get_setting)
+    out['jellyfin_effective'] = {'url': url, 'url_source': url_src, 'token_set': bool(token), 'token_source': token_src}
     out['servers'] = [
         {**{k: v for k, v in s.items() if k != 'password'}, 'password': '', 'password_set': bool(s.get('password'))}
         for s in _servers(cur.get('servers')) if isinstance(s, dict)]
@@ -408,10 +412,26 @@ def plex_test():
                     'token_source': token_src, 'sessions': len(sessions)})
 
 
+@mount_bp.route('/api/jellyfin_test', methods=['POST'])
+@admin_required
+def jellyfin_test():
+    """Can the mount reach Jellyfin/Emby? Uses the URL/key typed on the page
+    (not saved yet) or else the ones in effect."""
+    from utilities import media_sessions as ms
+    data = request.get_json(silent=True) or {}
+    url, token, url_src, token_src = ms.jellyfin_server_source(get_setting)
+    if (data.get('url') or '').strip():
+        url, url_src = data['url'].strip().rstrip('/'), 'Mount page (unsaved)'
+    if (data.get('token') or '').strip():
+        token, token_src = data['token'].strip(), 'Mount page (unsaved)'
+    return jsonify({**ms.jellyfin_test(url, token), 'url_source': url_src, 'token_source': token_src})
+
+
 @mount_bp.route('/api/now_playing')
 @admin_required
 def now_playing():
-    """Plex sessions streaming from the built-in mount (others left out)."""
+    """Media server sessions (Plex, Jellyfin/Emby) streaming from the
+    built-in mount (others left out)."""
     if not builtin_selected():
         return jsonify({'selected': False, 'sessions': []})
     from usenet.builtin_client import BuiltinClient
@@ -420,11 +440,10 @@ def now_playing():
     streams = client.get_streams()
     sessions = []
     # Nothing open and nothing remembered (a fully cached file is closed by
-    # Plex while it still plays): nothing to ask Plex about.
+    # the player while it still plays): nothing to ask the servers about.
     if streams or np.has_remembered():
-        url, token = np.plex_server(get_setting)
-        sessions = np.now_playing(np.plex_sessions(url, token), streams, client.mount_path,
-                                  np.metadata_lookup(url, token))
+        from utilities import media_sessions as ms
+        sessions = np.now_playing(ms.sessions(get_setting), streams, client.mount_path, ms.lookup(get_setting))
     return jsonify({'selected': True, 'sessions': sessions, 'open_files': len(streams)})
 
 

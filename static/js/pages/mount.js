@@ -101,10 +101,14 @@
       else if (el.type === 'password') { el.value = ''; el.placeholder = settings[el.name + '_set'] ? 'unchanged' : 'not set'; }
       else el.value = v ?? '';
     });
-    const pe = settings.plex_effective || {};
+    const pe = settings.plex_effective || {}, je = settings.jellyfin_effective || {};
     if ($('#plexEffective')) $('#plexEffective').textContent = pe.url
-      ? 'In use: ' + pe.url + ' (from ' + pe.url_source + '), token ' + (pe.token_set ? 'from ' + pe.token_source : 'not set')
-      : 'No Plex URL set: playback protection, prewarm and Now playing are off until one is entered here or in Settings.';
+      ? 'Plex in use: ' + pe.url + ' (from ' + pe.url_source + '), token ' + (pe.token_set ? 'from ' + pe.token_source : 'not set')
+      : 'No Plex URL set.';
+    if ($('#jellyfinEffective')) $('#jellyfinEffective').textContent = (je.url
+      ? 'Jellyfin/Emby in use: ' + je.url + ' (from ' + je.url_source + '), API key ' + (je.token_set ? 'from ' + je.token_source : 'not set')
+      : 'No Jellyfin/Emby URL set.') + (!pe.url && !je.url
+      ? ' Stream protection, show precache and Now playing are off until a media server is entered here or in Settings.' : '');
     $('#servers tbody').innerHTML = '';
     (settings.servers || []).forEach(serverRow);
     $('#vfolders').innerHTML = '';
@@ -112,16 +116,18 @@
     vfPaths();
   }
 
-  if ($('#plexTest')) $('#plexTest').onclick = () => {
-    const msg = $('#plexTestMsg');
+  function serverTest(kind) {
+    const msg = $('#' + kind + 'TestMsg');
     msg.textContent = 'Testing…'; msg.style.color = '';
-    fetch('/mount/api/plex_test', {method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({url: form.querySelector('[name=plex_url]').value, token: form.querySelector('[name=plex_token]').value})})
+    fetch('/mount/api/' + kind + '_test', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({url: form.querySelector('[name=' + kind + '_url]').value, token: form.querySelector('[name=' + kind + '_token]').value})})
       .then(r => r.json()).then(d => {
         msg.style.color = d.ok ? '#4caf50' : '#e57373';
         msg.textContent = d.ok ? 'OK: ' + (d.server || d.url) + ', ' + d.sessions + ' playing now' : d.error;
       }).catch(err => { msg.style.color = '#e57373'; msg.textContent = String(err); });
-  };
+  }
+  if ($('#plexTest')) $('#plexTest').onclick = () => serverTest('plex');
+  if ($('#jellyfinTest')) $('#jellyfinTest').onclick = () => serverTest('jellyfin');
 
   // Speed tests: results kept across table refreshes, keyed kind:name.
   const speed = {};
@@ -181,10 +187,10 @@
       tile('Streams', (o.streams.open || 0) + ' open', '', o.streams.rate_bytes ? fmtBytes(o.streams.rate_bytes) + '/s' : '') +
       tile('Health', (o.health.broken || 0) + ' broken', o.health.broken ? 'mid' : '',
         (o.health.healthy || 0) + ' healthy · ' + (o.health.unchecked || 0) + ' unchecked') +
-      tile('Plex protection', !o.plex_protection.enabled ? 'off' : (o.plex_protection.active ? o.plex_protection.files.length + ' protected' : 'on'),
+      tile('Stream protection', !o.plex_protection.enabled ? 'off' : (o.plex_protection.active ? o.plex_protection.files.length + ' protected' : 'on'),
         o.plex_protection.enabled && !o.plex_protection.poll_ok && o.plex_protection.error ? 'mid' : '',
         !o.plex_protection.enabled ? '' : (o.plex_protection.active ? 'stream(s) playing while importing' :
-          (!o.plex_protection.poll_ok ? esc(o.plex_protection.error || 'waiting for Plex') :
+          (!o.plex_protection.poll_ok ? esc(o.plex_protection.error || 'waiting for the media server') :
             ((o.plex_protection.files || []).length ? 'playing, no imports to protect from' : 'nothing playing')))) +
       tile('Memory cache', fmtBytes((s.mem_cache || {}).bytes || 0), '', ((s.mem_cache || {}).segments || 0) + ' segments') +
       tile('Uptime', dur(o.uptime_seconds), '', fmtBytes(o.runtime.heap_bytes || 0) + ' heap · ' + (o.runtime.goroutines || 0) + ' goroutines')

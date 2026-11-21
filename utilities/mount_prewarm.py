@@ -1,18 +1,19 @@
 """
-Plex next-episode prewarm and Plex playback protection for the built-in
-mount (both cli_mount features), from one Plex sessions poller.
+Show precache and stream protection for the built-in mount (both cli_mount
+features, once Plex-only), from one poller over every media server the
+mount serves: Plex, and Jellyfin or Emby (utilities/media_sessions.py).
 
-Protection: every 10 s the mount files Plex reports playing are posted to
-the engine, which keeps the playback reserve for them alone while they
-play. A failed Plex poll is posted as such, and the engine then treats
-every read as playback again.
+Stream protection: every 10 s the mount files the media servers report
+playing are posted to the engine, which keeps the playback reserve for them
+alone while they play. A failed poll is posted as such, and the engine then
+treats every read as playback again.
 
-Every 20 s, Plex sessions streaming from the mount are checked. Once an
-episode passes the trigger point (default 70%), the next episode's first
-part (default 20%, at most 256 MB) is fetched in the background into the
-engine's caches, so it starts instantly. Plex says who is really watching,
-so scanners and other readers never trigger it. Each episode is prewarmed
-at most once per 6 hours.
+Show precache: every 20 s, sessions streaming from the mount are checked.
+Once an episode passes the trigger point (default 70%), the next episode's
+first part (default 20%, at most 256 MB) is fetched in the background into
+the engine's caches, so it starts instantly. The media server says who is
+really watching, so scanners and other readers never trigger it. Each
+episode is precached at most once per 6 hours.
 """
 
 import logging
@@ -23,6 +24,7 @@ from typing import Callable, Optional, Tuple
 
 import requests
 
+from utilities import media_sessions as ms
 from utilities import mount_now_playing as np
 from utilities.paths import safe_realpath
 
@@ -58,7 +60,7 @@ def next_episode(url: str, token: str, s: dict, timeout: float = 5) -> Optional[
         r.raise_for_status()
         eps = (r.json().get('MediaContainer') or {}).get('Metadata') or []
     except Exception as exc:
-        logging.debug(f'[prewarm] episodes of {show}: {exc}')
+        logging.debug(f'[show precache] episodes of {show}: {exc}')
         return None
     cur = (int(s['parentIndex']), int(s['index']))
     later = [e for e in eps if e.get('parentIndex') is not None and e.get('index') is not None
@@ -131,22 +133,22 @@ def check_once(client, get_setting: Callable, now: Optional[float] = None) -> li
     streams = client.get_streams()
     if not streams:
         return []
-    url, token = np.plex_server(get_setting)
-    lookup = np.metadata_lookup(url, token)
+    lookup = ms.lookup(get_setting)
     for k in [k for k, t in _done.items() if now - t > REMEMBER_SECONDS]:
         _done.pop(k, None)
     out = []
-    for s in np.plex_sessions(url, token):
+    for s in ms.sessions(get_setting):
         if s.get('type') != 'episode' or not s.get('duration'):
             continue
         if 100 * int(s.get('viewOffset') or 0) / int(s['duration']) < cfg['trigger']:
             continue
         if not any(np.match_stream(f, streams, client.mount_path) for f in np._session_files(s, lookup)):
             continue  # not playing from the mount
-        nxt = next_episode(url, token, s)
+        nxt = ms.next_episode(get_setting, s)
         if not nxt or str(nxt.get('ratingKey')) in _done:
             continue
-        item = lookup(str(nxt['ratingKey'])) or nxt
+        # Jellyfin/Emby episodes come with their files; Plex's are looked up.
+        item = nxt if str(nxt.get('ratingKey')).startswith(ms.JF) else (lookup(str(nxt['ratingKey'])) or nxt)
         for media in item.get('Media') or []:
             part = (media.get('Part') or [{}])[0]
             found = resolve_mount_file(client, part.get('file', ''))
@@ -157,7 +159,7 @@ def check_once(client, get_setting: Callable, now: Optional[float] = None) -> li
             n = min(cfg['max_mb'] << 20, size * cfg['percent'] // 100) if size else cfg['max_mb'] << 20
             if client.prewarm(job_id, file, n):
                 _done[str(nxt['ratingKey'])] = now
-                logging.info(f"[prewarm] {nxt.get('grandparentTitle', '')} S{int(nxt['parentIndex']):02d}"
+                logging.info(f"[show precache] {nxt.get('grandparentTitle', '')} S{int(nxt['parentIndex']):02d}"
                              f"E{int(nxt['index']):02d}: fetching first {n >> 20} MB of {file}")
                 out.append((job_id, file, n))
             break
@@ -177,10 +179,9 @@ def protect_once(client, get_setting: Callable) -> Optional[list]:
     if not streams:
         files, ok, err = [], True, ''  # nothing open: no need to ask Plex
     else:
-        url, token = np.plex_server(get_setting)
-        sessions, err = np.plex_sessions_checked(url, token)
+        sessions, err = ms.sessions_checked(get_setting)
         ok = not err
-        lookup = np.metadata_lookup(url, token) if ok else None
+        lookup = ms.lookup(get_setting) if ok else None
         files, seen = [], set()
         for s in sessions:
             for f in np._session_files(s, lookup):
@@ -195,12 +196,12 @@ def protect_once(client, get_setting: Callable) -> Optional[list]:
     if state != _protect_state['last']:
         _protect_state['last'] = state
         if not ok:
-            logging.warning(f'[mount protection] Plex poll failed ({err}) - every mount read counts as playback until it works')
+            logging.warning(f'[stream protection] media server poll failed ({err}) - every mount read counts as playback until it works')
         elif files:
-            logging.info(f"[mount protection] reserve kept for {len(files)} Plex stream(s): "
+            logging.info(f"[stream protection] reserve kept for {len(files)} playing stream(s): "
                          + ', '.join(f['file'] for f in files))
         else:
-            logging.debug('[mount protection] nothing playing from the mount')
+            logging.debug('[stream protection] nothing playing from the mount')
     return files
 
 
@@ -217,12 +218,12 @@ def _loop(get_setting: Callable):
             try:
                 protect_once(client, get_setting)
             except Exception as exc:
-                logging.debug(f'[mount protection] poll failed: {exc}')
+                logging.debug(f'[stream protection] poll failed: {exc}')
             if time.monotonic() - last_prewarm >= POLL_SECONDS:
                 last_prewarm = time.monotonic()
                 check_once(client, get_setting)
         except Exception as exc:
-            logging.debug(f'[prewarm] poll failed: {exc}')
+            logging.debug(f'[show precache] poll failed: {exc}')
 
 
 def start(get_setting: Callable):

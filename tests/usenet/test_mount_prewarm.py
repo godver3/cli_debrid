@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plex next-episode prewarm (utilities/mount_prewarm.py)."""
+"""Show precache and stream protection (utilities/mount_prewarm.py)."""
 
 import os
 import sys
@@ -157,7 +157,7 @@ class PlexProtectionTests(unittest.TestCase):
         with mock.patch.object(mp.np, 'plex_sessions_checked', return_value=([], 'timeout')), \
              self.assertLogs(level='WARNING'):
             mp.protect_once(c, settings)
-        self.assertEqual(c.posted, [([], False, 'timeout')])
+        self.assertEqual(c.posted, [([], False, 'Plex: timeout')])
 
     def test_nothing_open_skips_plex(self):
         c = ProtectClient([])

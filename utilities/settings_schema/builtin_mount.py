@@ -109,7 +109,7 @@ SECTIONS = {
         },
         "plex_url": {
             "type": "string",
-            "description": "Built-in mount only. Plex URL for playback protection, next-episode prewarm and Now playing, e.g. http://192.168.1.10:32400. Leave empty to use the Plex URL from your other cli_debrid settings (Plex, or Symlink Plex settings).",
+            "description": "Built-in mount only. Plex URL for stream protection, show precache and Now playing, e.g. http://192.168.1.10:32400. Leave empty to use the Plex URL from your other cli_debrid settings (Plex, or Symlink Plex settings).",
             "default": ""
         },
         "plex_token": {
@@ -118,9 +118,20 @@ SECTIONS = {
             "default": "",
             "sensitive": True
         },
+        "jellyfin_url": {
+            "type": "string",
+            "description": "Built-in mount only. Jellyfin or Emby URL for stream protection, show precache and Now playing, e.g. http://192.168.1.10:8096. Leave empty to use the Jellyfin/Emby URL from Settings. Works next to Plex: sessions of both are used.",
+            "default": ""
+        },
+        "jellyfin_token": {
+            "type": "string",
+            "description": "Built-in mount only. Jellyfin/Emby API key for the URL above (Dashboard → API Keys). Leave empty to use the one from Settings.",
+            "default": "",
+            "sensitive": True
+        },
         "plex_playback_protection": {
             "type": "boolean",
-            "description": "Built-in mount only. Plex playback protection: the playback connection reserve is only for files Plex reports playing (checked every 10 s). Plex scans, thumbnails and intro detection can't take it while someone watches. Uses the Plex URL and token in the Plex group above; if Plex can't be reached, every read is treated as playback, as without this.",
+            "description": "Built-in mount only. Stream protection: the playback connection reserve is only for files your media servers (Plex, Jellyfin/Emby) report playing (checked every 10 s). Library scans, thumbnails, intro detection and Bazarr can't take it while someone watches. Uses the servers in the Media servers group above; if one can't be reached, every read is treated as playback, as without this.",
             "default": True
         },
         "webdav_enabled": {
@@ -146,12 +157,12 @@ SECTIONS = {
         },
         "plex_prewarm": {
             "type": "boolean",
-            "description": "Built-in mount only. Plex next-episode prewarm: when someone is far enough into an episode playing from the mount, fetch the start of the next episode in the background so it starts instantly.",
+            "description": "Built-in mount only. Show precache: when someone is far enough into an episode playing from the mount (Plex, Jellyfin or Emby), fetch the start of the next episode in the background so it starts instantly.",
             "default": True
         },
         "prewarm_trigger_percent": {
             "type": "integer",
-            "description": "Built-in mount only. Prewarm when the current episode is this far in (%).",
+            "description": "Built-in mount only. Precache when the current episode is this far in (%).",
             "default": 70
         },
         "prewarm_percent": {
@@ -161,7 +172,7 @@ SECTIONS = {
         },
         "prewarm_max_mb": {
             "type": "integer",
-            "description": "Built-in mount only. Prewarm at most this many MB of the next episode.",
+            "description": "Built-in mount only. Precache at most this many MB of the next episode.",
             "default": 256
         },
         "buffer_memory_mb": {

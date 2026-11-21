@@ -91,8 +91,8 @@
     <span class="msg" id="cacheMsg"></span>
   </div>
   <div class="card"><h3>Open streams</h3><div class="body">
-    <div class="tbl"><table id="streams"><thead><tr><th>File</th><th>Source</th><th>Opened</th><th>Read</th><th>Position</th><th>Rate</th><th>Plex</th></tr></thead><tbody></tbody></table></div>
-    <p class="hint" style="color:#888;font-size:.85em;margin:6px 0 0">Every file open on the mount: playback, but also scanners (Plex analysis, Bazarr) that open files and read little or nothing.</p>
+    <div class="tbl"><table id="streams"><thead><tr><th>File</th><th>Source</th><th>Opened</th><th>Read</th><th>Position</th><th>Rate</th><th>Protection</th></tr></thead><tbody></tbody></table></div>
+    <p class="hint" style="color:#888;font-size:.85em;margin:6px 0 0">Every file open on the mount: playback, but also scanners (Plex/Jellyfin analysis, Bazarr) that open files and read little or nothing.</p>
   </div></div>
   <div class="card"><h3>Server connections</h3><div class="body">
     <div class="tbl"><table id="pools"><thead><tr><th>Server</th><th>Role</th><th>In use</th><th>Open</th><th>Waiting</th><th></th><th>Articles</th><th>Data</th><th>Missing</th><th>Errors</th><th>Avg fetch</th><th>Speed test</th></tr></thead><tbody></tbody></table></div>
@@ -212,9 +212,11 @@
       <div class="d">{{ spec.description | replace('Built-in mount only. ', '') | replace('Built-in mount only (Usenet Provider = builtin). ', '') | safe }}</div>
     </div>
     {% endfor %}
-    {% if title == 'Plex' %}
+    {% if title == 'Media servers' %}
     <div class="f"><div class="d" id="plexEffective"></div>
       <button type="button" class="btn sec" id="plexTest" style="margin-top:6px">Test Plex</button> <span id="plexTestMsg" style="font-size:12px"></span></div>
+    <div class="f"><div class="d" id="jellyfinEffective"></div>
+      <button type="button" class="btn sec" id="jellyfinTest" style="margin-top:6px">Test Jellyfin / Emby</button> <span id="jellyfinTestMsg" style="font-size:12px"></span></div>
     {% endif %}
   </div></div>
   {% endfor %}
