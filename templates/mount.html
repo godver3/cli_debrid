@@ -219,7 +219,7 @@
   </div></div>
   {% endfor %}
   <div class="card fold"><h3>Virtual folders</h3><div class="body">
-    <p style="color:#8f8f8f;font-size:12px;margin-top:0">Extra folders at the top of the mount, each listing the jobs that match <strong>all</strong> its filters (a name regex and a files regex together match either). Useful in Plex mode: point a Movies library at one folder and a TV library at another. <em>Add Movies + TV Shows</em> fills in the docs' Content routing filters, so every release lands in exactly one of the two. Sizes take 10GB / 500MB, last_added takes 7d / 12h, protocol takes usenet or debrid.</p>
+    <p style="color:#8f8f8f;font-size:12px;margin-top:0">Extra folders at the top of the mount, each listing the jobs that match <strong>all</strong> its filters (a name regex and a files regex together match either). Useful in Plex mode: point a Movies library at one folder and a TV library at another. <em>Add Movies + TV Shows</em> fills in the docs' Content routing filters, so every release lands in exactly one of the two. Sizes take 10GB / 500MB, last_added takes 7d / 12h, protocol takes usenet or debrid. Each folder shows its path under the Mount path; point the Plex library there. If Plex runs in another container, use the same folder under the path that container mounts it at (the Plex side of its volume for the mount).</p>
     <div id="vfolders"></div>
     <button type="button" class="btn sec" id="addVf" style="margin-top:8px">Add virtual folder</button>
     <button type="button" class="btn sec" id="addVfDefaults" style="margin-top:8px" title="The Content routing filters from the docs: every release lands in exactly one of the two">Add Movies + TV Shows</button>

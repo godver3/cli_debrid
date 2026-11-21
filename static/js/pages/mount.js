@@ -57,17 +57,39 @@
       '<button type="button" class="btn sec addf" style="padding:4px 10px">Add filter</button>' +
       '<button type="button" class="btn sec rmv" style="padding:4px 10px">Remove folder</button></div><div class="vfl"></div>';
     const box = card.querySelector('.vfl');
+    const pathLine = document.createElement('div');
+    pathLine.className = 'vfpath';
+    pathLine.style.cssText = 'font-size:12px;color:#8f8f8f;margin-top:4px;word-break:break-all';
+    card.insertBefore(pathLine, box);
+    card.querySelector('.vn').addEventListener('input', vfPaths);
     (v.filters || []).forEach(f => vfFilterRow(box, f));
     card.querySelector('.addf').onclick = () => { vfFilterRow(box); dirty = true; };
     card.querySelector('.rmv').onclick = () => { card.remove(); dirty = true; };
     $('#vfolders').appendChild(card);
   }
-  $('#addVf').onclick = () => { vfRow(); dirty = true; };
+  // Where each virtual folder appears, for pointing a Plex library at it.
+  // Mirrors the engine: the name is trimmed, / and \ become _, and the mount's
+  // own top folders can't be used.
+  const VF_RESERVED = ['__all__', '__bad__', 'torrents', 'nzbs', '', '_', '.', '..'];
+  function vfPaths() {
+    const mp = ((form.querySelector('[name="mount_path"]') || {}).value || '/mnt/clid').trim().replace(/[\/\\]+$/, '');
+    document.querySelectorAll('#vfolders .vf').forEach(card => {
+      const name = card.querySelector('.vn').value.trim().replace(/[\/\\]/g, '_');
+      const line = card.querySelector('.vfpath');
+      if (!line) return;
+      line.innerHTML = VF_RESERVED.includes(name.toLowerCase())
+        ? '<span class="no">' + (name ? 'Reserved name, this folder is skipped.' : 'Give the folder a name.') + '</span>'
+        : 'Plex library path: <code>' + esc(mp + '/' + name) + '</code>';
+    });
+  }
+  form.addEventListener('input', e => { if (e.target && e.target.name === 'mount_path') vfPaths(); });
+  $('#addVf').onclick = () => { vfRow(); vfPaths(); dirty = true; };
   const DEFAULT_VFOLDERS = TPL_MOUNT.default_vfolders;
   $('#addVfDefaults').onclick = () => {
     const have = new Set([...document.querySelectorAll('#vfolders .vn')].map(i => i.value.trim()));
     const add = DEFAULT_VFOLDERS.filter(v => !have.has(v.name));
     add.forEach(v => vfRow(JSON.parse(JSON.stringify(v))));
+    vfPaths();
     if (add.length) dirty = true;
     $('#msg').textContent = add.length ? 'Added ' + add.map(v => v.name).join(' and ') + '. Save to apply.' : 'Movies and TV Shows are already there.';
   };
@@ -86,7 +108,8 @@
     $('#servers tbody').innerHTML = '';
     (settings.servers || []).forEach(serverRow);
     $('#vfolders').innerHTML = '';
-    (settings.virtual_folders || []).forEach(vfRow);
+    (settings.virtual_folders || []).forEach(v => vfRow(v));
+    vfPaths();
   }
 
   if ($('#plexTest')) $('#plexTest').onclick = () => {
