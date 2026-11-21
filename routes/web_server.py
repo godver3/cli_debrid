@@ -41,12 +41,11 @@ CONFIG_FILE = os.path.join(config_dir, 'runtime-config.json')
 
 register_blueprints(app)
 
-# AI Assistant disabled: the AI Butler health monitor is not started.
-# try:
-#     from utilities.ai_health_monitor import start_health_monitor
-#     start_health_monitor()
-# except Exception as _e:
-#     logging.warning(f"AI Health Monitor failed to start: {_e}")
+try:
+    from utilities.ai_health_monitor import start_health_monitor
+    start_health_monitor()
+except Exception as _e:
+    logging.warning(f"AI Health Monitor failed to start: {_e}")
 
 @app.context_processor
 def inject_program_status():
@@ -121,10 +120,8 @@ def inject_support_message_setting():
 
 @app.context_processor
 def inject_ai_butler_enabled():
-    # AI Assistant disabled: the widget never renders, whatever the saved setting.
-    # from utilities.settings import get_setting
-    # ai_butler_enabled = get_setting('AI Assistant', 'enabled', False)
-    return dict(ai_butler_enabled=False)
+    from utilities.settings import get_setting
+    return dict(ai_butler_enabled=bool(get_setting('AI Assistant', 'enabled', False)))
 
 @app.context_processor
 def utility_processor():

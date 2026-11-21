@@ -716,15 +716,14 @@ def start_program():
         # but for start_program, most errors imply a server-side issue or conflict.
 
     logging.info(f"--- /api/start_program HTTP endpoint returning jsonify(result) with status {http_status_code} ---")
-    # AI Assistant disabled: habit tracking (utilities/ai_habits.py) is off.
-    # if result.get('status') != 'error':
-        # try:
-        #     from flask_login import current_user as _cu
-        #     from utilities.ai_habits import track_action
-        #     _uid = _cu.username if _cu.is_authenticated else 'system'
-        #     track_action('program_start' if not is_restart else 'program_restart', user_id=_uid)
-        # except Exception:
-        #     pass
+    if result.get('status') != 'error':
+        try:
+            from flask_login import current_user as _cu
+            from utilities.ai_habits import track_action
+            _uid = _cu.username if _cu.is_authenticated else 'system'
+            track_action('program_start' if not is_restart else 'program_restart', user_id=_uid)
+        except Exception:
+            pass
     return jsonify(result), http_status_code
 
 def stop_program():
@@ -818,15 +817,14 @@ def stop_program_route():
         # Other errors could be 500 if critical, but stop tends to succeed or be a conflict.
     
     logging.info(f"--- /api/stop_program HTTP endpoint returning: {result} with status {http_status_code} ---")
-    # AI Assistant disabled: habit tracking (utilities/ai_habits.py) is off.
-    # if result.get('status') != 'error':
-        # try:
-        #     from flask_login import current_user as _cu
-        #     from utilities.ai_habits import track_action
-        #     _uid = _cu.username if _cu.is_authenticated else 'system'
-        #     track_action('program_stop', user_id=_uid)
-        # except Exception:
-        #     pass
+    if result.get('status') != 'error':
+        try:
+            from flask_login import current_user as _cu
+            from utilities.ai_habits import track_action
+            _uid = _cu.username if _cu.is_authenticated else 'system'
+            track_action('program_stop', user_id=_uid)
+        except Exception:
+            pass
     return jsonify(result), http_status_code
 
 @program_operation_bp.route('/api/update_program_state', methods=['POST'])

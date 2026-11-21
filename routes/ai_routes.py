@@ -25,6 +25,46 @@ def _get_display_name():
     return get_setting('AI Assistant', 'display_name', '') or 'AI Butler'
 
 
+def _request_token():
+    """The API token on this request (?token= or Authorization: Bearer), or ''."""
+    token = request.args.get('token', '') or ''
+    if not token:
+        auth = request.headers.get('Authorization', '')
+        if auth.startswith('Bearer '):
+            token = auth[7:].strip()
+    return token
+
+
+def _caller():
+    """(user, is_admin) for this request.
+
+    User system off: (None, True), the whole app is open then.
+    User system on: the logged-in user, else the user whose API token is on the
+    request (OpenClaw's skill calls back with one), else (None, False).
+    """
+    from flask_login import current_user as cu
+    from routes.utils import is_user_system_enabled
+    if not is_user_system_enabled():
+        return None, True
+    user = cu if cu.is_authenticated else None
+    if user is None:
+        token = _request_token()
+        if token:
+            from routes.auth_routes import User
+            user = User.query.filter_by(api_token=token).first()
+    return user, bool(user is not None and getattr(user, 'role', '') == 'admin')
+
+
+def _require_admin():
+    """None when the caller may change settings or control the program, else an error response."""
+    user, is_admin = _caller()
+    if is_admin:
+        return None
+    if user is None:
+        return jsonify({'error': 'Authentication required'}), 401
+    return jsonify({'error': 'Only an admin can do this'}), 403
+
+
 def _to_http_url(url):
     """Ensure URL uses http(s):// — convert wss:// or ws:// if user entered those."""
     if url.startswith('wss://'):
@@ -390,7 +430,8 @@ def ai_chat():
     session_id = data.get('session_id', '')
 
     try:
-        system_prompt = build_system_prompt(page=page, page_data=page_data)
+        # Non-admins get no config, extended logs or writable-settings schema.
+        system_prompt = build_system_prompt(page=page, page_data=page_data, is_admin=_caller()[1])
     except Exception as e:
         logger.error(f"AI Butler: failed to build system prompt: {e}")
         system_prompt = f"You are the cli_debrid {_get_display_name()}. Help users configure and use the application."
@@ -520,12 +561,11 @@ def ai_apply_setting():
     Body: { "section": "Scraping", "key": "enable_upgrading", "value": true }
     Returns: { "ok": true, "requires_restart": false }
     """
-    from flask_login import current_user as cu
-    from routes.utils import is_user_system_enabled
     from utilities.settings_schema import SETTINGS_SCHEMA
 
-    if is_user_system_enabled() and not cu.is_authenticated:
-        return jsonify({'error': 'Authentication required'}), 401
+    denied = _require_admin()
+    if denied:
+        return denied
 
     if not get_setting('AI Assistant', 'enabled', False):
         return jsonify({'error': 'AI Assistant is disabled'}), 403
@@ -601,13 +641,13 @@ def ai_apply_setting():
 @ai_bp.route('/api/ai/restart', methods=['POST'])
 def ai_restart():
     """Trigger a program restart (stop + start) after AI-applied settings."""
-    from flask_login import current_user as cu
-    from routes.utils import is_user_system_enabled
+    from flask import current_app
     from routes.program_operation_routes import stop_program, _execute_start_program
     import threading
 
-    if is_user_system_enabled() and not cu.is_authenticated:
-        return jsonify({'error': 'Authentication required'}), 401
+    denied = _require_admin()
+    if denied:
+        return denied
 
     if not get_setting('AI Assistant', 'enabled', False):
         return jsonify({'error': 'AI Assistant is disabled'}), 403
@@ -615,11 +655,17 @@ def ai_restart():
     if not get_setting('AI Assistant', 'enable_settings_assistant', True):
         return jsonify({'error': 'Settings Assistant (Phase 2) is disabled in AI Assistant settings'}), 403
 
+    # stop_program/_execute_start_program read current_app.program_runner, so
+    # the thread needs the app context (without it both raised and the
+    # restart silently never happened).
+    app = current_app._get_current_object()
+
     def _do_restart():
         import time
-        stop_program()
-        time.sleep(2)
-        _execute_start_program(skip_connectivity_check=True, is_restart=True)
+        with app.app_context():
+            stop_program()
+            time.sleep(2)
+            _execute_start_program(skip_connectivity_check=True, is_restart=True)
 
     threading.Thread(target=_do_restart, daemon=True).start()
     logger.info("AI Butler: triggered program restart")
@@ -643,13 +689,10 @@ def ai_add_to_library():
     from metadata.metadata import process_metadata
     from utilities.settings import load_config as _lc
 
-    # Allow access via session auth (built-in chat) OR tool token auth (OpenClaw/skill)
-    tool_auth_ok, _ = _check_tool_auth()
-    if is_user_system_enabled() and not cu.is_authenticated and not tool_auth_ok:
-        return jsonify({'error': 'Authentication required'}), 401
-
-    if not get_setting('AI Assistant', 'enabled', False):
-        return jsonify({'error': 'AI Assistant is disabled'}), 403
+    # Session (built-in chat) or API token (OpenClaw skill); also checks enabled.
+    ok, err = _check_tool_auth()
+    if not ok:
+        return err
 
     if not get_setting('AI Assistant', 'enable_recommendations', True):
         return jsonify({'error': 'Content Recommendations (Phase 4) is disabled in AI Assistant settings'}), 403
@@ -1005,44 +1048,40 @@ def ai_save_settings():
 # All endpoints are read-only except /api/ai/tools/add_to_library.
 # ---------------------------------------------------------------------------
 
-def _check_tool_auth():
-    """Validate token for tool endpoints. Returns (ok, error_response).
+def _check_tool_auth(admin=False):
+    """Gate for the /api/ai/tools/* endpoints. Returns (ok, error_response).
 
-    When the user system is enabled, validates against any user's api_token.
-    When the user system is disabled, validates against the OpenClaw token setting.
-
-    Accepts token via:
-      - ?token=<token> query parameter
-      - Authorization: Bearer <token> header
+    - The AI Assistant must be enabled.
+    - User system on: a logged-in session (the chat widget) or a user's API
+      token (?token= or Authorization: Bearer; the OpenClaw skill). admin=True
+      (anything that changes or controls the program) needs an admin.
+    - User system off: the app is open, so are these, except that when an
+      OpenClaw token is set, requests that don't come from cli_debrid's own
+      pages (Sec-Fetch-Site: same-origin) must carry it.
     """
-    from routes.settings_routes import is_user_system_enabled
+    import hmac
+    from routes.utils import is_user_system_enabled
 
-    # Extract token from request
-    incoming = request.args.get('token', '') or ''
-    if not incoming:
-        auth = request.headers.get('Authorization', '')
-        if auth.startswith('Bearer '):
-            incoming = auth[7:]
+    if not get_setting('AI Assistant', 'enabled', False):
+        return False, (jsonify({'error': 'AI Assistant is disabled'}), 403)
 
     if is_user_system_enabled():
-        # Validate against any user's api_token
-        if not incoming:
-            return False, (jsonify({'error': 'API token required'}), 401)
-        from routes.auth_routes import User
-        user = User.query.filter_by(api_token=incoming).first()
-        if not user:
-            return False, (jsonify({'error': 'Invalid API token'}), 401)
+        user, is_admin = _caller()
+        if user is None:
+            return False, (jsonify({'error': 'Login or a valid API token required'}), 401)
+        if admin and not is_admin:
+            return False, (jsonify({'error': 'Only an admin can do this'}), 403)
         return True, None
-    else:
-        # User system disabled — fall back to OpenClaw token setting
-        expected = get_setting('AI Assistant', 'openclaw_token', '')
-        if not expected:
-            return True, None  # No token configured = open
-        if not incoming:
-            return False, (jsonify({'error': 'Token required'}), 401)
-        if incoming != expected:
-            return False, (jsonify({'error': 'Invalid token'}), 401)
+
+    expected = get_setting('AI Assistant', 'openclaw_token', '') or ''
+    if not expected or request.headers.get('Sec-Fetch-Site') == 'same-origin':
         return True, None
+    incoming = _request_token()
+    if not incoming:
+        return False, (jsonify({'error': 'Token required'}), 401)
+    if not hmac.compare_digest(incoming.encode(), expected.encode()):
+        return False, (jsonify({'error': 'Invalid token'}), 401)
+    return True, None
 
 
 @ai_bp.route('/api/ai/tools/queue_status', methods=['GET'])
@@ -1058,22 +1097,12 @@ def tool_queue_status():
         return err
 
     try:
-        from queues.queue_manager import QueueManager
         from routes.program_operation_routes import program_is_running, get_program_status
-        qm = QueueManager()
-        counts = {}
-        for name in ['Wanted', 'Scraping', 'Adding', 'Checking', 'Collecting',
-                     'Upgrading', 'Sleeping', 'Blacklisted']:
-            q = getattr(qm, f'{name.lower()}_queue', None)
-            if q is not None:
-                try:
-                    counts[name] = q.qsize()
-                except Exception:
-                    counts[name] = 0
+        from utilities.ai_context import _get_queue_state
         return jsonify({
             'running': program_is_running(),
             'status': get_program_status(),
-            'queues': counts,
+            'queues': _get_queue_state(),
         })
     except Exception as e:
         logger.error(f"AI tool queue_status: {e}")
@@ -1206,16 +1235,17 @@ def tool_add_to_library():
 @ai_bp.route('/api/ai/tools/queue_start', methods=['POST'])
 def tool_queue_start():
     """OpenClaw tool: start the program/queue processing."""
-    ok, err = _check_tool_auth()
+    ok, err = _check_tool_auth(admin=True)
     if not ok:
         return err
+    # Same path as the Start/Stop buttons: takes the start/stop lock, checks
+    # services, and runs the program loop on its own thread. (runner.start()
+    # ran the main loop on this request thread and never returned.)
     try:
-        from routes.program_operation_routes import get_program_runner
-        runner = get_program_runner()
-        if not runner:
-            return jsonify({'error': 'Program runner not initialized'}), 500
-        result = runner.start()
-        return jsonify({'ok': True, 'message': 'Program start requested', 'result': str(result)})
+        from routes.program_operation_routes import _execute_start_program
+        result = _execute_start_program()
+        ok = result.get('status') != 'error'
+        return jsonify({'ok': ok, 'message': result.get('message', ''), 'result': result}), (200 if ok else 409)
     except Exception as e:
         logger.error(f"AI tool queue_start: {e}")
         return jsonify({'error': str(e)}), 500
@@ -1224,16 +1254,16 @@ def tool_queue_start():
 @ai_bp.route('/api/ai/tools/queue_stop', methods=['POST'])
 def tool_queue_stop():
     """OpenClaw tool: stop the program/queue processing."""
-    ok, err = _check_tool_auth()
+    ok, err = _check_tool_auth(admin=True)
     if not ok:
         return err
+    # Same path as the Stop button: takes the start/stop lock and clears the
+    # runner, so a later queue_start builds a fresh scheduler.
     try:
-        from routes.program_operation_routes import get_program_runner
-        runner = get_program_runner()
-        if not runner:
-            return jsonify({'error': 'Program runner not initialized'}), 500
-        result = runner.stop()
-        return jsonify({'ok': True, 'message': 'Program stop requested', 'result': str(result)})
+        from routes.program_operation_routes import stop_program
+        result = stop_program()
+        ok = result.get('status') != 'error'
+        return jsonify({'ok': ok, 'message': result.get('message', ''), 'result': result}), (200 if ok else 409)
     except Exception as e:
         logger.error(f"AI tool queue_stop: {e}")
         return jsonify({'error': str(e)}), 500
@@ -1242,7 +1272,7 @@ def tool_queue_stop():
 @ai_bp.route('/api/ai/tools/plex_scan', methods=['POST'])
 def tool_plex_scan():
     """OpenClaw tool: trigger a Plex library scan in a background thread."""
-    ok, err = _check_tool_auth()
+    ok, err = _check_tool_auth(admin=True)
     if not ok:
         return err
     try:
@@ -1266,7 +1296,7 @@ def tool_plex_scan():
 @ai_bp.route('/api/ai/tools/upgrade_scan', methods=['POST'])
 def tool_upgrade_scan():
     """OpenClaw tool: trigger an upgrade hub scan."""
-    ok, err = _check_tool_auth()
+    ok, err = _check_tool_auth(admin=True)
     if not ok:
         return err
     try:
@@ -1305,7 +1335,7 @@ def tool_run_task():
 
     Body: { "task_name": "task_heartbeat" }
     """
-    ok, err = _check_tool_auth()
+    ok, err = _check_tool_auth(admin=True)
     if not ok:
         return err
     data = request.get_json(silent=True) or {}
@@ -1329,7 +1359,7 @@ def tool_run_task():
 @ai_bp.route('/api/ai/tools/trim_memory', methods=['POST'])
 def tool_trim_memory():
     """OpenClaw tool: trim process memory via malloc_trim."""
-    ok, err = _check_tool_auth()
+    ok, err = _check_tool_auth(admin=True)
     if not ok:
         return err
     try:
@@ -1345,7 +1375,7 @@ def tool_trim_memory():
 @ai_bp.route('/api/ai/tools/cleanup_failed_upgrades', methods=['POST'])
 def tool_cleanup_failed_upgrades():
     """OpenClaw tool: clean up failed upgrades pkl file."""
-    ok, err = _check_tool_auth()
+    ok, err = _check_tool_auth(admin=True)
     if not ok:
         return err
     try:
@@ -1363,7 +1393,7 @@ def tool_cleanup_failed_upgrades():
 @ai_bp.route('/api/ai/tools/remove_duplicates', methods=['POST'])
 def tool_remove_duplicates():
     """OpenClaw tool: remove duplicate items from the database."""
-    ok, err = _check_tool_auth()
+    ok, err = _check_tool_auth(admin=True)
     if not ok:
         return err
     try:
@@ -1415,7 +1445,7 @@ def tool_context():
 
     GET /api/ai/tools/context?token=<token>
     """
-    ok, err = _check_tool_auth()
+    ok, err = _check_tool_auth(admin=True)
     if not ok:
         return err
 
@@ -1479,15 +1509,10 @@ def tool_send_notification():
       message  — required, the notification body text
       title    — optional, defaults to "AI Butler"
     """
-    # Allow both: OpenClaw tool calls (Bearer token) and in-chat widget (session auth)
-    from routes.utils import is_user_system_enabled
-    from flask_login import current_user as _cu
-    if is_user_system_enabled() and not _cu.is_authenticated:
-        ok, err = _check_tool_auth()
-        if not ok:
-            return err
-    if not get_setting('AI Assistant', 'enabled', False):
-        return jsonify({'error': 'AI Assistant is disabled'}), 403
+    # OpenClaw tool calls (Bearer token) and the in-chat widget (session).
+    ok, err = _check_tool_auth()
+    if not ok:
+        return err
     try:
         data = request.get_json(silent=True) or {}
         message = (data.get('message') or '').strip()

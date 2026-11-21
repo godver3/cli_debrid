@@ -226,8 +226,6 @@ export function updateSettings() {
         settingsData['Bazarr Integration'][key] = input.type === 'checkbox' ? input.checked : input.value;
     });
 
-    // AI Assistant disabled: its settings section is commented out (settings_tabs/_settings_scripts.html).
-    /*
     // Create AI Assistant section if it doesn't exist
     if (!settingsData['AI Assistant']) {
         settingsData['AI Assistant'] = {};
@@ -249,7 +247,6 @@ export function updateSettings() {
             settingsData['AI Assistant'][parts[1]] = val;
         }
     });
-    */
 
 
     // Handle Plex Smart Collections settings

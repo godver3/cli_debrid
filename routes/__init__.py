@@ -46,8 +46,7 @@ from .bazarr_spoofing_routes import bazarr_bp
 from .overlay_routes import overlay_bp, overlay_page_bp
 from .debrid_manager_routes import debrid_manager_bp
 from .upgrade_hub_routes import upgrade_hub_bp
-# AI Assistant disabled: the AI Butler routes (/api/ai/*) are not registered.
-# from .ai_routes import ai_bp
+from .ai_routes import ai_bp
 from .tracker_account_routes import tracker_account_bp
 from .mcp_routes import mcp_bp
 from .oidc_routes import oidc_bp
@@ -182,7 +181,7 @@ def register_blueprints(app):
         (overlay_bp, ''),  # Mounted at root for /api/overlays/* paths (includes prefix in blueprint)
         (debrid_manager_bp, '/debrid_manager'),
         (upgrade_hub_bp, '/upgrade_hub'),
-        # (ai_bp, ''),  # /api/ai/* routes (AI Assistant disabled)
+        (ai_bp, ''),  # /api/ai/* routes
         (oidc_bp, '/auth/oidc'),  # OIDC SSO routes
         (tracker_account_bp, '/tracking'),  # Simkl sign-in, Floppy test
         (mcp_bp, '/mcp'),  # read-only MCP endpoint (own token) + setup page
