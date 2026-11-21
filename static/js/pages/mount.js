@@ -13,10 +13,10 @@
     const tr = document.createElement('tr');
     tr.innerHTML =
       '<td style="white-space:nowrap"><button type="button" class="btn sec mv" data-d="-1" title="Move up" style="padding:3px 8px">▲</button> <button type="button" class="btn sec mv" data-d="1" title="Move down" style="padding:3px 8px">▼</button></td>' +
-      '<td><input data-k="host" value="' + esc(s.host) + '" placeholder="news.example.com"></td>' +
+      '<td><input data-k="host" value="' + esc(s.host) + '" placeholder="news.example.com" title="' + esc(s.host) + '" style="min-width:210px"></td>' +
       '<td><input data-k="port" type="number" value="' + esc(s.port ?? 563) + '" style="width:70px"></td>' +
       '<td><input data-k="ssl" type="checkbox"' + (s.ssl === false ? '' : ' checked') + ' style="width:auto"></td>' +
-      '<td><input data-k="username" value="' + esc(s.username) + '"></td>' +
+      '<td><input data-k="username" value="' + esc(s.username) + '" style="min-width:120px"></td>' +
       '<td><input data-k="password" type="password" autocomplete="new-password" placeholder="' + (s.password_set ? 'unchanged' : '') + '"></td>' +
       '<td><input data-k="connections" type="number" value="' + esc(s.connections ?? 10) + '" style="width:70px"></td>' +
       '<td><input data-k="backup" type="checkbox"' + (s.backup ? ' checked' : '') + ' style="width:auto"></td>' +
