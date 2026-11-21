@@ -617,8 +617,13 @@ class BuiltinClient(UnsupportedFeaturesMixin):
                     parts.append(f.read())
         if not parts:
             raise Exception('the mount engine has not written a log yet')
+        # Same redaction as cli_debrid's own share: the engine writes its log
+        # outside Python's logging, so nothing scrubbed it on the way in.
+        from utilities.log_redaction import scrub
+        text = b''.join(parts).decode('utf-8', errors='replace')
+        text = '\n'.join(scrub(line) for line in text.split('\n'))
         from routes.log_viewer_routes import upload_to_paste_cnet
-        url = upload_to_paste_cnet(gzip.compress(b''.join(parts)))
+        url = upload_to_paste_cnet(gzip.compress(text.encode('utf-8')))
         if not url:
             raise Exception('upload failed')
         return url

@@ -461,3 +461,22 @@ class StreamingDefaultsTests(unittest.TestCase):
                 'playback_reserve_max': 100, 'plex_prewarm': True, 'prewarm_max_mb': 256,
                 'prewarm_trigger_percent': 70, 'prewarm_percent': 20}
         self.assertEqual({k: bm[k]['default'] for k in want}, want)
+
+
+class ShareLogsTests(unittest.TestCase):
+    def test_engine_log_is_scrubbed_before_upload(self):
+        import gzip
+        import tempfile
+        import types
+        from usenet import builtin_client as bc
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, 'mount_engine.log'), 'w') as f:
+                f.write('time=x level=WARN msg="login failed" user=nwsuser77 pass=nntp-pass-123\n')
+            sent = []
+            with mock.patch.object(bc, 'engine_log_path', return_value=os.path.join(d, 'mount_engine.log')), \
+                    mock.patch('utilities.log_redaction.scrub', side_effect=lambda l: l.replace('nntp-pass-123', '[R]')), \
+                    mock.patch.dict(sys.modules, {'routes.log_viewer_routes': types.SimpleNamespace(
+                        upload_to_paste_cnet=lambda b: sent.append(gzip.decompress(b).decode()) or 'https://p/x')}):
+                self.assertEqual(bc.BuiltinClient.share_logs(None), 'https://p/x')
+        self.assertNotIn('nntp-pass-123', sent[0])
+        self.assertIn('login failed', sent[0])

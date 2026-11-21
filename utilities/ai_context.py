@@ -81,14 +81,26 @@ def _redact_value(key_name: str, value):
 def _redact_config(obj, _depth=0):
     """
     Recursively walk a config dict and redact sensitive values.
-    Non-sensitive scalar values are kept. Nested dicts are walked.
-    Lists are kept as-is (they're usually non-sensitive option lists).
+    Non-sensitive scalar values are kept. Nested dicts, lists and JSON-text
+    values are walked.
     """
     if _depth > 10:
         return '...'
     if isinstance(obj, dict):
         return {k: _redact_config(v, _depth + 1) if not _is_sensitive(k) else _redact_value(k, v)
                 for k, v in obj.items()}
+    if isinstance(obj, list):
+        # Lists of dicts carry credentials too (fallback debrid providers).
+        return [_redact_config(v, _depth + 1) for v in obj]
+    if isinstance(obj, str) and obj.lstrip()[:1] in ('[', '{'):
+        # Settings stored as JSON text: Built-in Mount.servers holds every
+        # news server's username/password (they reached shared log bundles).
+        try:
+            parsed = json.loads(obj)
+        except ValueError:
+            return obj
+        if isinstance(parsed, (dict, list)):
+            return json.dumps(_redact_config(parsed, _depth + 1))
     return obj
 
 

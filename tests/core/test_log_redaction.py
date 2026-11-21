@@ -170,3 +170,30 @@ class TestMarkerPrefilter(unittest.TestCase):
         ]
         for line in samples:
             self.assertEqual(lr._has_marker(line), lr._MARKER_RE.search(line) is not None, line)
+
+
+class TestJsonTextSettings(unittest.TestCase):
+    """Built-in Mount.servers stores news-server logins as JSON text; the
+    value pass must still learn and replace them."""
+
+    def test_secrets_inside_json_text_are_collected(self):
+        cfg = {'Built-in Mount': {'servers': json.dumps([
+            {'host': 'news.example.com', 'username': 'nwsuser77', 'password': 'nntp-pass-123'}])}}
+        out = set()
+        log_redaction._collect_secret_values(cfg, out)
+        self.assertEqual(out, {'nwsuser77', 'nntp-pass-123'})
+
+    def test_scrub_replaces_them_in_any_line(self):
+        cfg = {'Built-in Mount': {'servers': json.dumps([{'username': 'nwsuser77', 'password': 'nntp-pass-123'}])}}
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, 'config.json'), 'w') as f:
+                json.dump(cfg, f)
+            with patch.dict(os.environ, {'USER_CONFIG': d}):
+                refresh_secrets()
+                try:
+                    line = scrub('login failed for nwsuser77 with nntp-pass-123 on news.example.com')
+                finally:
+                    refresh_secrets()
+        self.assertNotIn('nwsuser77', line)
+        self.assertNotIn('nntp-pass-123', line)
+        self.assertIn('news.example.com', line)
