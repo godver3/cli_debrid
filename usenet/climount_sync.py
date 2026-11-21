@@ -232,6 +232,36 @@ def _find_item_ids(conn, entry: dict, infohash_map: dict = None, location_map: d
     return matched_ids
 
 
+def _drop_items_on_other_nzb(conn, entry: dict, item_ids: list) -> list:
+    """Leave out items that already sit on a different usenet job.
+
+    A replaced job keeps the item's id in its cli_debrid_ids (and its folder /
+    original name still match), so when it changes later (e.g. marked broken)
+    Strategies 0/3/4 match the item that a repair or upgrade has since moved
+    to another job, and the update wrote the old job's id and folder back.
+    Found live 2026-11-21: Dark Matter S02E10 went back from its new NZB to
+    the broken one it replaced, and its playback repair could not complete.
+
+    Usenet only: a debrid torrent re-inserted on the provider gets a new
+    provider id for the same content, which the sync is meant to copy.
+    """
+    provider_id = (entry.get('provider_id') or '').lower()
+    if entry.get('protocol') != 'nzb' or not provider_id or not item_ids:
+        return item_ids
+    kept = []
+    for iid in item_ids:
+        row = conn.execute('SELECT filled_by_torrent_id FROM media_items WHERE id = ?', (iid,)).fetchone()
+        current = ((row[0] if row else '') or '').lower()
+        if current.startswith('nzb:') and current != provider_id:
+            logger.debug(
+                f'[CMSync] Item {iid} is on {current}, not {provider_id} '
+                f'({entry.get("folder_name", "?")}) — not updating it from this entry'
+            )
+            continue
+        kept.append(iid)
+    return kept
+
+
 def _build_update(entry: dict, existing: dict = None, file_name: str = None) -> tuple:
     """
     Build (SET clause, params list) for the UPDATE statement.
@@ -389,6 +419,7 @@ def sync_changes_from_climount(force_full: bool = False) -> dict:
                 try:
                     lookup_map = nzb_map if entry.get('protocol') == 'nzb' else torrent_map
                     item_ids = _find_item_ids(conn, entry, infohash_map=lookup_map, location_map=location_map)
+                    item_ids = _drop_items_on_other_nzb(conn, entry, item_ids)
                     if not item_ids:
                         summary['skipped'] += 1
                         logger.debug(f'[CMSync] No match for {entry.get("protocol")} entry: {entry.get("folder_name","?")}')
