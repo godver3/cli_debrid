@@ -93,7 +93,7 @@ func markExtras(entries []job.Entry) []job.Entry {
 			out = append([]job.Entry(nil), entries...)
 		}
 		taken[strings.ToLower(name)] = true
-		out[i].Name = name
+		out[i].Name, out[i].RealName = name, en.Name
 	}
 	if out == nil {
 		return entries

@@ -73,6 +73,16 @@ type Entry struct {
 	// Encryption is set for a member of a password-protected archive:
 	// Pieces then hold AES-CBC ciphertext and Size is the plaintext size.
 	Encryption *stream.Encryption `json:"encryption,omitempty"`
+
+	// RealName is set on a listed entry whose Name the mount changed (an
+	// extra's "-featurette" suffix): lookups by the real name, e.g. a
+	// symlink made before the rename, still find it. Never stored.
+	RealName string `json:"-"`
+}
+
+// Is reports whether name is this entry's listed or real name.
+func (e Entry) Is(name string) bool {
+	return e.Name == name || (e.RealName != "" && e.RealName == name)
 }
 
 // Failure is something that could not be made streamable.

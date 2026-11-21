@@ -71,3 +71,23 @@ func TestMarkExtras(t *testing.T) {
 		}
 	}
 }
+
+// A renamed extra keeps its real name as a lookup alias, so a symlink made
+// against the real name (before the rename, or by cli_mount) still resolves.
+func TestMarkExtrasKeepsRealNameForLookups(t *testing.T) {
+	const gb = int64(1) << 30
+	out := markExtras([]job.Entry{
+		{Name: "Movie.2160p.Remux.mkv", Size: 60 * gb},
+		{Name: "Movie.1080p.mkv", Size: 8 * gb},
+	})
+	en := out[1]
+	if en.Name != "Movie.1080p-other.mkv" || en.RealName != "Movie.1080p.mkv" {
+		t.Fatalf("got %q (real %q)", en.Name, en.RealName)
+	}
+	if !en.Is("Movie.1080p.mkv") || !en.Is("Movie.1080p-other.mkv") || en.Is("Movie.2160p.Remux.mkv") {
+		t.Fatal("Is should match the listed and real names only")
+	}
+	if out[0].RealName != "" || !out[0].Is("Movie.2160p.Remux.mkv") {
+		t.Fatalf("main file changed: %+v", out[0])
+	}
+}

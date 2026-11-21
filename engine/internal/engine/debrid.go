@@ -136,30 +136,66 @@ func (c *callbackLinks) Link(ctx context.Context, ref string, refresh bool) (str
 	call := &linkCall{done: make(chan struct{})}
 	c.pending[key] = call
 	c.mu.Unlock()
-	// The waiters must not fail because the first reader went away.
-	call.url, call.err = c.fetch(context.WithoutCancel(ctx), ref, refresh)
-	c.mu.Lock()
-	delete(c.pending, key)
-	c.mu.Unlock()
-	close(call.done)
-	return call.url, call.err
+	// The request runs on its own: the waiters must not fail because the
+	// first reader went away, and the first reader may give up on its own
+	// deadline too (a request can wait up to callbackWait for cli_debrid).
+	go func() {
+		url, err := c.fetch(context.WithoutCancel(ctx), ref, refresh)
+		c.mu.Lock()
+		call.url, call.err = url, err
+		delete(c.pending, key)
+		c.mu.Unlock()
+		close(call.done)
+	}()
+	select {
+	case <-call.done:
+		return call.url, call.err
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
 }
+
+// callbackWait: how long a link request keeps trying while cli_debrid
+// can't be reached (its web app restarting, ~30-60 s). Debrid files already
+// playing use cached links; a file opened in that window waits instead of
+// failing. Readers still give up on their own deadline (mount readTimeout).
+var callbackWait = 90 * time.Second
+
+const callbackRetryEvery = 2 * time.Second
 
 func (c *callbackLinks) fetch(ctx context.Context, ref string, refresh bool) (string, error) {
 	body, _ := json.Marshal(map[string]any{"ref": ref, "refresh": refresh})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url, bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.token)
 	start := time.Now()
-	resp, err := c.client.Do(req)
-	if err != nil {
-		if ctx.Err() == nil {
-			c.log.Warn("debrid link request failed", "file", c.name(ref), "ref", ref, "refresh", refresh, "err", err)
+	var resp *http.Response
+	for waited := false; ; {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url, bytes.NewReader(body))
+		if err != nil {
+			return "", err
 		}
-		return "", fmt.Errorf("cli_debrid unreachable: %w", err)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+c.token)
+		resp, err = c.client.Do(req)
+		if err == nil {
+			if waited {
+				c.log.Info("cli_debrid reachable again", "file", c.name(ref), "waited", time.Since(start).Round(time.Second))
+			}
+			break
+		}
+		if ctx.Err() != nil || time.Since(start)+callbackRetryEvery > callbackWait {
+			if ctx.Err() == nil {
+				c.log.Warn("debrid link request failed", "file", c.name(ref), "ref", ref, "refresh", refresh, "err", err)
+			}
+			return "", fmt.Errorf("cli_debrid unreachable: %w", err)
+		}
+		if !waited {
+			waited = true
+			c.log.Info("cli_debrid unreachable (restarting?), waiting for it", "file", c.name(ref), "err", err)
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(callbackRetryEvery):
+		}
 	}
 	defer resp.Body.Close()
 	var out struct {

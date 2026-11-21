@@ -477,6 +477,49 @@ class ShareLogsTests(unittest.TestCase):
                     mock.patch('utilities.log_redaction.scrub', side_effect=lambda l: l.replace('nntp-pass-123', '[R]')), \
                     mock.patch.dict(sys.modules, {'routes.log_viewer_routes': types.SimpleNamespace(
                         upload_to_paste_cnet=lambda b: sent.append(gzip.decompress(b).decode()) or 'https://p/x')}):
-                self.assertEqual(bc.BuiltinClient.share_logs(None), 'https://p/x')
+                me = types.SimpleNamespace(share_snapshot=lambda: '===== engine /stats =====\n{}\n')
+                self.assertEqual(bc.BuiltinClient.share_logs(me), 'https://p/x')
         self.assertNotIn('nntp-pass-123', sent[0])
         self.assertIn('login failed', sent[0])
+        self.assertTrue(sent[0].startswith('===== engine /stats'))  # snapshot leads, like cli_mount's
+
+    def test_settings_are_redacted(self):
+        from usenet.builtin_client import redact_settings
+        servers = json.dumps([{'host': 'news.example.com', 'port': 563, 'username': 'nwsuser77',
+                               'password': 'nntp-pass-123', 'connections': 50, 'backbone': 'omicron'}])
+        got = redact_settings({'servers': servers, 'plex_token': 'plx-tok', 'jellyfin_token': '',
+                               'webdav_username': 'me', 'webdav_password': 'wd', 'debrid_download_api_keys': 'k1, k2',
+                               'debrid_proxy': 'http://u:p@proxy', 'debrid_user_agent': 'UA/1', 'read_ahead_mb': 16,
+                               'providers': [{'name': 'a', 'username': 'u', 'password': 'p', 'max_conns': 10}],
+                               'token': 'engine-tok'})
+        text = json.dumps(got)
+        for secret in ('nwsuser77', 'nntp-pass-123', 'plx-tok', 'wd', 'k1', 'u:p@proxy', 'engine-tok', '"me"'):
+            self.assertNotIn(secret, text)
+        self.assertEqual(got['servers'][0]['host'], 'news.example.com')
+        self.assertEqual((got['servers'][0]['connections'], got['servers'][0]['backbone']), (50, 'omicron'))
+        self.assertEqual((got['plex_token'], got['jellyfin_token']), ('(set)', ''))
+        self.assertEqual((got['debrid_user_agent'], got['read_ahead_mb']), ('UA/1', 16))
+        self.assertEqual(got['providers'][0], {'name': 'a', 'username': '(set)', 'password': '(set)', 'max_conns': 10})
+
+    def test_snapshot_has_stats_goroutines_and_redacted_settings(self):
+        import tempfile
+        from usenet import builtin_client as bc
+        client = bc.BuiltinClient.__new__(bc.BuiltinClient)
+        client.base_url = 'http://127.0.0.1:8283'
+        calls = {'/stats': {'overview': {'runtime': {'goroutines': 21}}}, '/streams': [], '/protected': {'files': []}}
+        resp = mock.Mock(status_code=200, text='goroutine profile: total 21')
+        with tempfile.TemporaryDirectory() as d:
+            cfg = os.path.join(d, 'engine.json')
+            with open(cfg, 'w') as f:
+                json.dump({'token': 'engine-tok', 'providers': [{'host': 'h', 'password': 'nntp-pass-123'}]}, f)
+            with mock.patch.object(bc.BuiltinClient, '_call', lambda self, m, p, **kw: (200, calls[p])), \
+                    mock.patch.object(bc.BuiltinClient, '_headers', lambda self: {}), \
+                    mock.patch.object(bc.requests, 'get', return_value=resp), \
+                    mock.patch.object(bc, 'get_setting', return_value={'plex_token': 'plx-tok', 'read_ahead_mb': 16}), \
+                    mock.patch('utilities.builtin_engine.config_path', return_value=cfg):
+                text = client.share_snapshot()
+        for want in ('engine /stats', '"goroutines": 21', 'goroutine profile: total 21', 'Built-in Mount settings',
+                     '"read_ahead_mb": 16', 'engine.json', '"host": "h"'):
+            self.assertIn(want, text)
+        for secret in ('plx-tok', 'engine-tok', 'nntp-pass-123'):
+            self.assertNotIn(secret, text)

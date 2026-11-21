@@ -36,6 +36,29 @@ _FILE_RE = re.compile(r'(^|\s)file=("(?:[^"\\]|\\.)*"|\S*)')
 _SLOG_RE = re.compile(r'^time=(\S+) level=(\S+) msg=("(?:[^"\\]|\\.)*"|\S+)\s*(.*)$')
 
 
+#: Settings keys whose values never leave the box in a shared log.
+_SECRET_KEY = re.compile(r'(pass|token|secret|api_?keys?|user(name)?$|^user|proxy|cookie|auth)', re.I)
+
+
+def redact_settings(value: Any, key: str = '') -> Any:
+    """A copy of settings with credential values replaced by "(set)" (or ""
+    when empty). Server lists stored as JSON text are parsed and redacted
+    too, so news server logins never reach a shared log."""
+    if key and _SECRET_KEY.search(key) and not isinstance(value, (dict, list)):
+        return '(set)' if value not in (None, '', [], {}) else ''
+    if isinstance(value, dict):
+        return {k: redact_settings(v, str(k)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [redact_settings(v) for v in value]
+    if isinstance(value, str) and value.strip()[:1] in ('[', '{'):
+        try:
+            import json as _json
+            return redact_settings(_json.loads(value))
+        except ValueError:
+            return value
+    return value
+
+
 def engine_log_path() -> str:
     return os.path.join(os.environ.get('USER_LOGS', '/user/logs'), 'mount_engine.log')
 
@@ -656,13 +679,46 @@ class BuiltinClient(UnsupportedFeaturesMixin):
         # Same redaction as cli_debrid's own share: the engine writes its log
         # outside Python's logging, so nothing scrubbed it on the way in.
         from utilities.log_redaction import scrub
-        text = b''.join(parts).decode('utf-8', errors='replace')
+        text = self.share_snapshot() + b''.join(parts).decode('utf-8', errors='replace')
         text = '\n'.join(scrub(line) for line in text.split('\n'))
         from routes.log_viewer_routes import upload_to_paste_cnet
         url = upload_to_paste_cnet(gzip.compress(text.encode('utf-8')))
         if not url:
             raise Exception('upload failed')
         return url
+
+    def share_snapshot(self) -> str:
+        """What leads a shared engine log, like cli_mount's /debug/stats
+        snapshot: the engine's stats (goroutines, heap, pools, caches,
+        debrid, protection), its open streams, a grouped goroutine dump, and
+        the Built-in Mount settings plus the generated engine.json with every
+        credential replaced by "(set)"."""
+        import json as _json
+        now = time.strftime('%Y-%m-%dT%H:%M:%S%z')
+        out = []
+
+        def section(title, body):
+            out.append(f'===== {title} ({now}) =====\n{body}\n===== end {title} =====\n')
+
+        for title, path in (('engine /stats', '/stats'), ('engine /streams', '/streams'), ('engine /protected', '/protected')):
+            code, body = self._call('GET', path, timeout=10)
+            section(title, _json.dumps(body, indent=1, default=str) if code == 200 else f'unavailable (HTTP {code})')
+        try:
+            r = requests.get(f'{self.base_url}/debug/pprof/goroutine?debug=1', headers=self._headers(), timeout=10)
+            section('engine goroutines', r.text[:400_000] if r.status_code == 200 else f'unavailable (HTTP {r.status_code})')
+        except Exception as exc:
+            section('engine goroutines', f'unavailable ({exc})')
+        try:
+            section('Built-in Mount settings', _json.dumps(redact_settings(get_setting('Built-in Mount') or {}), indent=1, default=str))
+        except Exception as exc:
+            section('Built-in Mount settings', f'unavailable ({exc})')
+        try:
+            from utilities.builtin_engine import config_path
+            with open(config_path()) as f:
+                section('engine.json', _json.dumps(redact_settings(_json.load(f)), indent=1))
+        except Exception as exc:
+            section('engine.json', f'unavailable ({exc})')
+        return '\n'.join(out) + '\n'
 
     def get_debug_stats(self, timeout: int = 10) -> Optional[dict]:
         """The engine's stats in the /debug/stats shape the stats page reads."""

@@ -197,7 +197,7 @@ func (d *folder) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*
 		return nil, syscall.ENOENT
 	}
 	for _, en := range f.Entries {
-		if en.Name == name {
+		if en.Is(name) { // listed name, or the real name of a renamed extra
 			fl := &file{node: node{e: d.e, opt: d.opt, log: d.log}, jobID: d.jobID, entry: en, mod: f.ModTime}
 			fl.attr(&out.Attr)
 			return d.NewInode(ctx, fl, fs.StableAttr{Mode: syscall.S_IFREG, Ino: ino(d.jobID, name)}), 0

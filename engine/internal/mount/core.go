@@ -205,7 +205,7 @@ func resolve(e *engine.Engine, p string) resolved {
 		return resolved{}
 	}
 	for _, en := range f.Entries {
-		if en.Name == parts[2] || strings.EqualFold(en.Name, parts[2]) {
+		if en.Is(parts[2]) || strings.EqualFold(en.Name, parts[2]) || (en.RealName != "" && strings.EqualFold(en.RealName, parts[2])) {
 			return resolved{kind: kindFile, top: parts[0], folder: f, entry: en}
 		}
 	}
