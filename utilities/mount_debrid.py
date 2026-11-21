@@ -253,6 +253,19 @@ def engine_holds_debrid(get_setting) -> bool:
     return builtin_engine.selected({'Usenet Provider': get_setting('Usenet Provider') or {}, 'Built-in Mount': bm})
 
 
+def hidden_by_extension(torrent_id: str) -> bool:
+    """The built-in mount holds this finished debrid torrent but the allowed
+    extensions hide all of its files (a .ts-only release): its folder will
+    never appear, so waiting for it is pointless."""
+    try:
+        from usenet.builtin_client import get_builtin_client
+        client = get_builtin_client()
+        return any(client.hidden_by_extension(_job_id(provider_key(p), str(torrent_id))) for p in providers())
+    except Exception as exc:
+        logging.debug(f'[mount debrid] hidden check for {torrent_id} failed: {exc}')
+        return False
+
+
 def needed(get_setting) -> bool:
     """Does Switch have to wait for the debrid mirror?"""
     return bool(providers())

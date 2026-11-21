@@ -274,6 +274,33 @@ class BuiltinClient(UnsupportedFeaturesMixin):
                 return _folder(j)
         return None
 
+    def get_nzb_file_info_for_job(self, job_id: str, season: int = None, episode: int = None,
+                                  include_size: bool = False):
+        """get_nzb_file_info by job id: the folder the mount actually gave this
+        job. Name matching missed jobs whose folder differs from the submitted
+        title (a "(2)" suffix, a rename), so they never "appeared" and were
+        failed as broken. Same return shape as get_nzb_file_info."""
+        code, body = self._call('GET', f'/jobs/{job_id}', timeout=10)
+        if code != 200 or not isinstance(body, dict):
+            return None
+        folder = _folder(body)
+        if not folder:
+            return None
+        videos = [(e['name'], e.get('size', 0) or 0) for e in body.get('entries') or []
+                  if os.path.splitext(e.get('name', ''))[1].lower() in _VIDEO_EXTS]
+        if not videos:
+            return (folder, None, None) if include_size else (folder, None)
+        from debrid.common import filter_unwanted_video_files, pick_best_video_file
+        videos = filter_unwanted_video_files(videos) or videos
+        best = pick_best_video_file(videos, season=season, episode=episode) or max(videos, key=lambda x: x[1])
+        return (folder, best[0], best[1]) if include_size else (folder, best[0])
+
+    def hidden_by_extension(self, job_id: str) -> bool:
+        """True when the engine holds this job but the allowed extensions hide
+        every file: no folder will ever appear for it."""
+        code, body = self._call('GET', f'/jobs/{job_id}', timeout=10)
+        return code == 200 and isinstance(body, dict) and bool(body.get('hidden_by_extension'))
+
     def _list_nzb_folder_files(self, folder_name: str) -> list:
         job = self._job_by_folder(folder_name, usenet_only=True)
         if not job:

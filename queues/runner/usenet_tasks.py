@@ -101,6 +101,16 @@ class UsenetTasks:
             def _find_folder(job_id):
                 items_for_job = _job_groups[job_id]
                 nzb_title = items_for_job[0].get('filled_by_file', '') or items_for_job[0].get('original_scraped_torrent_title', '')
+                by_job = getattr(_nzb_client, 'get_nzb_file_info_for_job', None)
+                if by_job:
+                    # Built-in mount: ask for this job's own folder instead of
+                    # matching names (its folder can differ from the title).
+                    try:
+                        result = by_job(job_id, include_size=True)
+                        if result:
+                            return result[0], result[2]
+                    except Exception:
+                        pass
                 try:
                     result = _nzb_client.get_nzb_file_info(
                         nzb_title or job_id, fast_check=True, include_size=True
