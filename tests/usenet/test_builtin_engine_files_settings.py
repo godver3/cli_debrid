@@ -73,6 +73,17 @@ class InstallDefaultTests(unittest.TestCase):
     def test_existing_choice_untouched(self):
         self.assertEqual(self._run({'Usenet Provider': {'enabled': True, 'provider': 'nzbdav'}})['Usenet Provider']['provider'], 'nzbdav')
 
+    def test_debrid_only_upgrade_never_runs_the_engine(self):
+        # An existing debrid-only config (no Usenet section at all) updated to
+        # this version: cli_mount stays the usenet backend, and nothing turns
+        # the built-in mount on, so no Mount tab, buttons or engine.
+        cfg = self._run({'Debrid Provider': {'provider': 'RealDebrid', 'api_key': 'k'}})
+        self.assertEqual(cfg['Usenet Provider']['provider'], 'climount')
+        self.assertFalse(cfg['Usenet Provider'].get('enabled'))
+        self.assertFalse(cfg['Built-in Mount'].get('enabled'))
+        self.assertFalse(cfg['Built-in Mount'].get('run_alongside'))
+        self.assertFalse(be.wanted(cfg))
+
     def test_new_install_gets_movies_and_tv_folders(self):
         vf = be.virtual_folders(self._run(None)['Built-in Mount'])
         self.assertEqual(sorted(vf), ['Movies', 'TV Shows'])

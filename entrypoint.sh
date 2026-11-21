@@ -12,16 +12,36 @@ set_permissions() {
 # The built-in mount engine runs as PUID: it can't create /mnt/clid itself,
 # and fusermount3 refuses a mountpoint the user can't write to. Create the
 # default and the configured mount path and hand them (not their contents) to
-# PUID. A path that's already mounted is left alone.
+# PUID. A path that's already mounted is left alone. Only touches the host
+# when the built-in mount is in use: /mnt/clid is created otherwise only if
+# /mnt is the container's own filesystem (so a fresh install that picks the
+# built-in mount in onboarding can mount without a restart), never inside a
+# host /mnt bind used by Zurg/rclone setups.
 prepare_mount_dirs() {
-    local paths="/mnt/clid"
-    local configured
-    configured=$(python3 -c "import json,sys; print((json.load(open(sys.argv[1])).get('Built-in Mount') or {}).get('mount_path') or '')" \
-        "${USER_CONFIG:-/user/config}/config.json" 2>/dev/null)
-    case "$configured" in
-        /*) paths="$paths $configured" ;;
-    esac
-    for p in $paths; do
+    local info in_use configured paths=""
+    info=$(python3 -c "
+import json, sys
+try:
+    c = json.load(open(sys.argv[1]))
+except Exception:
+    c = {}
+up, bm = c.get('Usenet Provider') or {}, c.get('Built-in Mount') or {}
+used = (up.get('enabled') and str(up.get('provider') or '').strip().lower() == 'builtin') or bm.get('enabled') or bm.get('run_alongside')
+print('1' if used else '0')
+print(bm.get('mount_path') or '')" "${USER_CONFIG:-/user/config}/config.json" 2>/dev/null)
+    in_use=$(printf '%s\n' "$info" | sed -n 1p)
+    configured=$(printf '%s\n' "$info" | sed -n 2p)
+    if [ "$in_use" = "1" ] || [ "$(stat -c %d /mnt 2>/dev/null)" = "$(stat -c %d / 2>/dev/null)" ]; then
+        paths="/mnt/clid"
+    fi
+    if [ "$in_use" = "1" ]; then
+        case "$configured" in
+            /*) paths="$paths
+$configured" ;;
+        esac
+    fi
+    printf '%s\n' "$paths" | while IFS= read -r p; do
+        [ -n "$p" ] || continue
         mountpoint -q "$p" 2>/dev/null && continue
         mkdir -p "$p" 2>/dev/null && chown $PUID:$PGID "$p" 2>/dev/null
     done

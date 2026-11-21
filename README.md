@@ -2,7 +2,7 @@
 
 cli_debrid is a successor to, and pays homage to, plex_debrid. It watches your lists, finds the best release for everything on them, gets it through your debrid service or Usenet, and keeps your Plex or Jellyfin library organised and upgraded, with no files downloaded to your server.
 
-It works with **Real-Debrid, AllDebrid, TorBox, Premiumize, Debrid-Link and HighWay**, and with **Usenet (NZB)** through cli_mount, NzbDAV or Zurg, for **Plex, Jellyfin and Emby**.
+It works with **Real-Debrid, AllDebrid, TorBox, Premiumize, Debrid-Link and HighWay**, and with **Usenet (NZB)** through its built-in mount, cli_mount, NzbDAV or Zurg, for **Plex, Jellyfin and Emby**.
 
 **📖 [Getting Started](https://godver3.github.io/cli_docs/getting-started/)** · [Documentation](https://godver3.github.io/cli_docs/) · [Discord](https://discord.gg/ynqnXGJ4hU)
 
@@ -59,20 +59,20 @@ Content sources ──> Scrapers ──> Debrid / Usenet ──> Mount ──> L
 1. **Content sources** say what you want: watchlists, lists, requests.
 2. **Scrapers** search torrent indexers and Usenet indexers. Results are ranked against your **Versions**, the quality profiles you define (resolution, size, codecs, languages, preferred groups).
 3. The best cached release goes to your **debrid service** or your **Usenet provider**.
-4. A **mount** (cli_mount, Decypharr or Zurg + rclone) streams the files from the cloud. Nothing is downloaded to your server.
+4. A **mount** (cli_debrid's built-in mount, or cli_mount, Decypharr or Zurg + rclone) streams the files from the cloud. Nothing is downloaded to your server.
 5. cli_debrid files them into your **library**, as Plex-tracked items or a symlinked folder tree, tells your media server to scan, and keeps looking for **upgrades**.
 
 ## Coming from another setup?
 
 - **plex_debrid:** cli_debrid is its successor. It does the same job (watchlists in, cached releases out, Plex library kept up to date) with a web interface, a local database of what you have, and automatic upgrades and repairs.
 - **Sonarr/Radarr with a debrid downloader:** cli_debrid takes the place of the *arr apps and the download client. It scrapes, ranks releases against your Versions, sends them to your debrid service or Usenet provider, and builds the library. Bazarr can still connect to it as if it were Sonarr/Radarr.
-- **Usenet with SABnzbd or NZBGet:** NZBs are streamed from your news server through the mount, with nothing downloaded first. See the [cli_mount setup guide](https://godver3.github.io/cli_docs/integrations/cli_mount/).
+- **Usenet with SABnzbd or NZBGet:** NZBs are streamed from your news server through the mount, with nothing downloaded first. See the [built-in mount guide](https://godver3.github.io/cli_docs/integrations/builtin-mount/) (or the [cli_mount setup guide](https://godver3.github.io/cli_docs/integrations/cli_mount/) for a separate container).
 
 ## Key Features
 
 ### Getting content
 - **Debrid providers:** Real-Debrid, AllDebrid, Premiumize, TorBox, Debrid-Link and HighWay.
-- **Usenet:** NZBs from your Newznab indexers, streamed through [cli_mount](https://github.com/mash2k3/decypharr/tree/dev), NzbDAV or Zurg, with no download step. Usenet can be used alone or next to a debrid service.
+- **Usenet:** NZBs from your Newznab indexers, streamed through the [built-in mount](https://godver3.github.io/cli_docs/integrations/builtin-mount/), [cli_mount](https://github.com/mash2k3/decypharr/tree/dev), NzbDAV or Zurg, with no download step. Usenet can be used alone or next to a debrid service.
 - **Scrapers:** Torrentio, Jackett, Prowlarr, Zilean, Nyaa, MediaFusion, AIOStreams and Newznab, with SeaDex for best-release anime picks.
 - **Content sources:** MDBList, Trakt (watchlists, lists, collection, friends), Plex (your watchlist, other users' and friends' watchlists, RSS), Seerr/Overseerr, Agregarr, Scrob, Adaptive Lists and your existing collection.
 - **Manual and magnet assign:** paste a magnet, torrent or NZB, then map the files to episodes yourself or let the matcher do it. It understands season packs, absolute-numbered anime packs and multi-episode files, and can replace episodes already in your library.
@@ -106,7 +106,7 @@ Content sources ──> Scrapers ──> Debrid / Usenet ──> Mount ──> L
 cli_debrid can use Usenet as a source alongside, or instead of, a debrid service:
 
 1. Add your Newznab indexers as scrapers ([guide](https://godver3.github.io/cli_docs/scrapers/newznab/)).
-2. Set up a Usenet provider. **[cli_mount](https://github.com/mash2k3/decypharr/tree/dev)** is recommended ([setup guide](https://godver3.github.io/cli_docs/integrations/cli_mount/)), and NzbDAV and Zurg are also supported. cli_mount streams NZBs straight from your news server through the same mount it uses for debrid, so nothing is downloaded first.
+2. Set up a Usenet provider. The **[built-in mount](https://godver3.github.io/cli_docs/integrations/builtin-mount/)** is the default for new installs: cli_debrid streams NZBs straight from your news server through its own mount, which also serves your debrid account, so nothing is downloaded first. **[cli_mount](https://github.com/mash2k3/decypharr/tree/dev)** ([setup guide](https://godver3.github.io/cli_docs/integrations/cli_mount/)) does the same in its own container, and NzbDAV and Zurg are also supported. Existing installs keep the provider they already use.
 3. Enable Usenet under **Settings → Required Settings → Usenet Provider**.
 
 NZB results are ranked with your torrent results using the same Versions. Releases with missing articles are caught and replaced automatically.

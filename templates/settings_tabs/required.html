@@ -450,6 +450,9 @@
             <button type="button" id="usenet-mount-detect-btn" class="dpr-btn" style="margin-top:6px">Detect</button>
             <span id="usenet-mount-detect-status" class="settings-description" style="margin-left:8px"></span>
             </span>
+            {% if _provider == 'climount' %}
+            <p class="settings-description"><strong>Moving from cli_mount to the built-in mount?</strong> Use <a href="{{ url_for('mount.index') }}#migrate"><strong>Mount → Migrate from cli_mount</strong></a> instead of switching Provider here: it copies your library across (same job ids and paths) and switches for you.</p>
+            {% endif %}
             <p class="settings-description" data-provider-only="builtin">cli_debrid runs its own mount: no cli_mount container, no URL or token. It streams your debrid account through the same mount, so no Zurg or rclone either. Set your usenet servers, mount path and cache on the <a href="{{ url_for('mount.index') }}"><strong>Mount</strong></a> page (top menu, shown once this is saved). The container needs <code>/dev/fuse</code> and <code>SYS_ADMIN</code>; the Mount page says what's missing.</p>
             <p class="settings-description" data-provider-only="climount,nzbdav,zurg">Backend type. cli_mount uses custom endpoints (<code>/api/add</code>, <code>/api/browse/nzbs</code>); NzbDAV uses standard SAB query-string API (<code>?mode=…</code>). Zurg selects the same SAB-compatible logic as NzbDAV but resolves job folders directly under the mount root instead of a <code>&lt;category&gt;/&lt;job&gt;</code> layout — use it for Zurg 2.0's usenet SAB emulation, or any other flat-layout SAB-compatible mount. All three expose the same client interface internally.</p>
         </div>
