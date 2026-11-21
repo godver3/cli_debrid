@@ -3,6 +3,7 @@ package nntp
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // ErrArticleNotFound means a provider answered that the article does not
@@ -13,6 +14,25 @@ var ErrArticleNotFound = errors.New("nntp: article not found")
 // ErrAuth means the provider rejected the credentials. Retrying the same
 // provider is pointless until settings change.
 var ErrAuth = errors.New("nntp: authentication failed")
+
+// ErrBusy means the provider refused a connection because the account has
+// too many open ("502 Too many connections", "481 max connections
+// reached", "400 ... unavailable"). Not a login problem: the pool stops
+// opening more for a while and the next provider is asked.
+var ErrBusy = errors.New("nntp: too many connections")
+
+// busyMsg: status texts providers use for a full account.
+func busyMsg(msg string) bool {
+	m := strings.ToLower(msg)
+	for _, s := range []string{"too many", "connection limit", "max connections",
+		"maximum connections", "maximum number of connections", "connections exceeded",
+		"connections reached"} {
+		if strings.Contains(m, s) {
+			return true
+		}
+	}
+	return false
+}
 
 // ErrNoProviders means the client has no usable provider at all.
 var ErrNoProviders = errors.New("nntp: no providers configured")
@@ -27,6 +47,9 @@ func (e *ProtocolError) Error() string { return fmt.Sprintf("nntp: %d %s", e.Cod
 
 // classify turns a non-success status into one of the errors above.
 func classify(code int, msg string) error {
+	if code != 430 && code != 423 && (code == 400 || busyMsg(msg)) {
+		return fmt.Errorf("%w: %d %s", ErrBusy, code, msg)
+	}
 	switch code {
 	case 430, 423:
 		return ErrArticleNotFound

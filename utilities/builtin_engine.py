@@ -267,6 +267,7 @@ def build_config(settings: dict) -> dict:
         'gid': ident('gid', 'PGID'),
         'umask': umask,
         'providers': providers,
+        'primary_load_mode': 'balanced' if str(bm.get('primary_load_mode') or '').strip().lower() == 'balanced' else 'fill',
         **webdav_config(bm),
     }
 

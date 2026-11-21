@@ -35,6 +35,7 @@ type MappedFile struct {
 	readAhead int
 	unit      int64 // average segment length, for byte read-ahead hints
 	slots     chan struct{}
+	miss      nntp.MissHint // see File.miss
 
 	mu         sync.Mutex
 	prefetched map[int]bool
@@ -95,7 +96,7 @@ func (m *MappedFile) segment(ctx context.Context, prio nntp.Priority, i int) ([]
 	fits := func(d []byte, _ nntp.Meta) bool { return int64(len(d)) >= s.DataStart+s.Len }
 	data, err := m.cache.DoCtx(ctx, id, prio, func(ctx context.Context) ([]byte, error) {
 		// A server whose copy is too short for the map is skipped for the next one.
-		d, _, err := fetchBody(ctx, m.fetch, prio, id, fits)
+		d, _, err := fetchBody(nntp.WithMissHint(ctx, &m.miss), m.fetch, prio, id, fits)
 		if errors.Is(err, nntp.ErrMismatch) {
 			return nil, &SegmentError{File: m.name, Number: i + 1, ID: id,
 				Err: fmt.Errorf("%w: no server has a copy with the %d bytes the map needs (%v)", ErrLayout, s.DataStart+s.Len, err)}

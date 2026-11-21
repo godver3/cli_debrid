@@ -20,6 +20,7 @@ type Server struct {
 	user, pass string        // when set, BODY/STAT need AUTHINFO first
 	delay      time.Duration // slept before answering each BODY
 	drop       map[string]bool
+	refuse     string // when set, every new connection gets this line and is closed
 	conns      map[net.Conn]bool
 
 	Bodies  atomic.Int64 // BODY commands answered with an article
@@ -57,6 +58,14 @@ func (s *Server) SetAuth(user, pass string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.user, s.pass = user, pass
+}
+
+// Refuse answers every new connection with line (e.g. "502 Too many
+// connections") and closes it; "" accepts again.
+func (s *Server) Refuse(line string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.refuse = line
 }
 
 // SetDelay sleeps before answering each BODY.
@@ -133,6 +142,13 @@ func (s *Server) handle(c net.Conn) {
 	write := func(line string) bool {
 		_, err := c.Write([]byte(line + "\r\n"))
 		return err == nil
+	}
+	s.mu.Lock()
+	refuse := s.refuse
+	s.mu.Unlock()
+	if refuse != "" {
+		write(refuse)
+		return
 	}
 	if !write("200 nntptest ready") {
 		return
@@ -214,6 +230,13 @@ func (s *Server) handle(c net.Conn) {
 			write("500 unknown command")
 		}
 	}
+}
+
+// Asked is the number of BODY commands received (found or not).
+func (s *Server) Asked() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.Order)
 }
 
 // BodyOrder returns a copy of the BODY ids received so far.

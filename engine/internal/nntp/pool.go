@@ -29,6 +29,10 @@ type pool struct {
 	queues  [3][]chan *slot // indexed by Priority
 	closed  bool
 	warming int // dials in progress for MinIdle
+	// While capUntil is ahead, no more than capConns connections are open
+	// ("too many connections" from the server; see throttle).
+	capConns int
+	capUntil time.Time
 
 	// Per-provider counters for status pages.
 	articles, bytes, missing, errors atomic.Int64
@@ -108,7 +112,7 @@ func (pl *pool) takeLocked(prio Priority) (c *conn, dial, ok bool) {
 		pl.idle = pl.idle[:n-1]
 		return c, false, true
 	}
-	if pl.open < pl.p.MaxConns {
+	if pl.open < pl.maxConnsLocked() {
 		pl.open++
 		return nil, true, true
 	}
@@ -293,7 +297,7 @@ func (pl *pool) warm(ctx context.Context) error {
 	want := min(pl.p.MinIdle, pl.p.MaxConns)
 	for {
 		pl.mu.Lock()
-		if pl.closed || pl.open+pl.warming >= want || pl.open >= pl.p.MaxConns {
+		if pl.closed || pl.open+pl.warming >= want || pl.open >= pl.maxConnsLocked() {
 			pl.mu.Unlock()
 			return nil
 		}

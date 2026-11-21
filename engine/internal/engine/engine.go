@@ -111,6 +111,9 @@ type Config struct {
 	HealthWorkers int             `json:"health_workers"`         // jobs health-checked at once
 	Parallel      int             `json:"parallel"`               // probes per import
 	Providers     []nntp.Provider `json:"providers"`
+	// PrimaryLoadMode: "fill" (default) uses the first primary until it is
+	// full; "balanced" spreads requests over every primary by load.
+	PrimaryLoadMode string `json:"primary_load_mode"`
 	// PlexProtection: the playback reserve is only for files Plex reports
 	// playing (cli_debrid posts them to /protected); other mount reads
 	// (scanner, thumbnails, ffprobe) can't take it while one plays.
@@ -337,6 +340,8 @@ func New(cfg Config, log *slog.Logger) (*Engine, error) {
 	if err != nil {
 		return nil, fmt.Errorf("engine: %w", err)
 	}
+	client.SetLoadMode(nntp.ParseLoadMode(cfg.PrimaryLoadMode))
+	log.Info("usenet primary load mode", "mode", client.LoadMode().String())
 	e := &Engine{cfg: cfg, log: log, Client: client, Store: st,
 		Cache: stream.NewCache(cfg.MemCacheBytes),
 		queue: make(chan string, 4096), open: map[string]*openJob{},

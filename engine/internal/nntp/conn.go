@@ -164,6 +164,9 @@ func (c *conn) auth() error {
 		return err
 	}
 	if code != 281 {
+		if busyMsg(msg) {
+			return fmt.Errorf("%w: %d %s", ErrBusy, code, msg)
+		}
 		return fmt.Errorf("%w: %d %s", ErrAuth, code, msg)
 	}
 	return nil
