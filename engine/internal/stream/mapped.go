@@ -32,6 +32,7 @@ type MappedFile struct {
 	ids       []string
 	size      int64
 	readAhead int
+	unit      int64 // average segment length, for byte read-ahead hints
 	slots     chan struct{}
 
 	mu         sync.Mutex
@@ -69,7 +70,7 @@ func OpenMapped(f Fetcher, cache *Cache, file nzb.File, segs []MapSeg, ra ReadAh
 		avg = size / int64(n)
 	}
 	m := &MappedFile{name: file.Name, fetch: f, cache: cache, segs: segs, ids: ids, size: size,
-		readAhead: ra.segments(avg), prefetched: map[int]bool{}}
+		readAhead: ra.segments(avg), unit: avg, prefetched: map[int]bool{}}
 	if ra.MaxConns > 0 {
 		m.slots = make(chan struct{}, ra.MaxConns)
 	}
@@ -125,7 +126,8 @@ func (m *MappedFile) ReadAtCtx(ctx context.Context, prio nntp.Priority, p []byte
 		last = i
 	}
 	if prio != nntp.Prefetch && m.readAhead > 0 && last >= 0 {
-		m.startReadAhead(last + 1)
+		n, owner := aheadFor(ctx, m.readAhead, m.unit)
+		m.startReadAhead(owner, last+1, n)
 	}
 	if n < len(p) {
 		return n, io.EOF
@@ -133,8 +135,11 @@ func (m *MappedFile) ReadAtCtx(ctx context.Context, prio nntp.Priority, p []byte
 	return n, nil
 }
 
-func (m *MappedFile) startReadAhead(from int) {
-	for i := from; i < from+m.readAhead && i < len(m.segs); i++ {
+func (m *MappedFile) startReadAhead(owner context.Context, from, n int) {
+	if owner.Err() != nil {
+		return
+	}
+	for i := from; i < from+n && i < len(m.segs); i++ {
 		if m.ids[i] == "" {
 			continue
 		}
@@ -163,7 +168,7 @@ func (m *MappedFile) startReadAhead(from int) {
 				defer func() { <-m.slots }()
 			}
 			defer func() { recover() }() // a background prefetch must never take the mount down
-			if _, err := m.segment(context.Background(), nntp.Prefetch, i); err != nil {
+			if _, err := m.segment(owner, nntp.Prefetch, i); err != nil {
 				m.mu.Lock()
 				delete(m.prefetched, i)
 				m.mu.Unlock()

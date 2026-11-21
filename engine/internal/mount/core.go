@@ -30,6 +30,38 @@ type openFile struct {
 	e      *engine.Engine
 	log    *slog.Logger
 	stream uint64
+
+	// Read-ahead for this handle (stream/hint.go): ctx ends its prefetches
+	// on close; next/seq track how far it has read sequentially.
+	ctx    context.Context
+	cancel context.CancelFunc
+	mu     sync.Mutex
+	next   int64 // offset after the last read, -1 before the first
+	seq    int64 // bytes read sequentially since the last jump
+}
+
+const (
+	// minAhead: read-ahead for a handle that has not read sequentially yet
+	// (a probe, or playback right after a seek).
+	minAhead = 4 << 20
+	// seqSlack: reads this close to the last one count as sequential
+	// (kernel readahead reorders and overlaps them).
+	seqSlack = 4 << 20
+)
+
+// hint returns the read-ahead hint for a read of n bytes at off: twice
+// what this handle has read sequentially so far, at least minAhead.
+func (h *openFile) hint(off int64, n int) stream.ReadHint {
+	h.mu.Lock()
+	if h.next >= 0 && off >= h.next-seqSlack && off <= h.next+seqSlack {
+		h.seq += int64(n)
+		h.next = max(h.next, off+int64(n))
+	} else { // first read, or a jump: start counting again here
+		h.seq, h.next = int64(n), off+int64(n)
+	}
+	ahead := max(int64(minAhead), 2*h.seq)
+	h.mu.Unlock()
+	return stream.ReadHint{Ahead: ahead, Owner: h.ctx}
 }
 
 func openEntry(e *engine.Engine, log *slog.Logger, jobID string, en job.Entry) (*openFile, error) {
@@ -38,7 +70,8 @@ func openEntry(e *engine.Engine, log *slog.Logger, jobID string, en job.Entry) (
 		log.Warn("open failed", "job", jobID, "file", en.Name, "err", err)
 		return nil, err
 	}
-	h := &openFile{r: files.Entry(en), name: en.Name, jobID: jobID, e: e, log: log}
+	h := &openFile{r: files.Entry(en), name: en.Name, jobID: jobID, e: e, log: log, next: -1}
+	h.ctx, h.cancel = context.WithCancel(context.Background())
 	h.stream = e.OpenStream(jobID, en.Name, en.Size)
 	go e.PreCache(jobID, en)
 	return h, nil
@@ -49,6 +82,7 @@ func (h *openFile) readAt(ctx context.Context, dest []byte, off int64) (int, err
 	if off >= h.r.Size() {
 		return 0, nil
 	}
+	ctx = stream.WithReadHint(ctx, h.hint(off, len(dest)))
 	n, err := h.r.ReadAtCtx(ctx, h.e.ReadPriority(h.jobID, h.name), dest, off)
 	if err != nil && n < len(dest) && off+int64(n) < h.r.Size() {
 		h.log.Warn("read failed", "job", h.jobID, "file", h.name, "size", h.r.Size(), "offset", off, "len", len(dest), "err", err,
@@ -74,7 +108,10 @@ func (h *openFile) readAt(ctx context.Context, dest []byte, off int64) (int, err
 	return n, nil
 }
 
-func (h *openFile) close() { h.e.CloseStream(h.stream) }
+func (h *openFile) close() {
+	h.cancel() // the handle's read-ahead is for nobody now
+	h.e.CloseStream(h.stream)
+}
 
 // ---- path lookups (used by the path-based Windows mount) ------------------
 

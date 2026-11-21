@@ -113,9 +113,10 @@ func (r *RemoteFile) cached(i int) ([]byte, bool) {
 func (r *RemoteFile) waitStream(ctx context.Context, from, to int64, dst []byte) (int, error) {
 	r.smu.Lock()
 	defer r.smu.Unlock()
+	ahead := aheadBytesFor(ctx, r.aheadBytes())
 	d := r.downloaderFor(from)
 	d.lastUsed = time.Now()
-	d.target = max(d.target, min(to+r.aheadBytes(), r.size))
+	d.target = max(d.target, min(to+ahead, r.size))
 	r.scond.Broadcast()
 	for {
 		i := int(from / r.chunkSize)
@@ -140,7 +141,7 @@ func (r *RemoteFile) waitStream(ctx context.Context, from, to int64, dst []byte)
 			// a stream here.
 			d = r.downloaderFor(from)
 			d.lastUsed = time.Now()
-			d.target = max(d.target, min(to+r.aheadBytes(), r.size))
+			d.target = max(d.target, min(to+ahead, r.size))
 			r.scond.Broadcast()
 			continue
 		}
@@ -299,7 +300,14 @@ func (d *downloader) pump(ctx context.Context, start int64) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	req.Header.Set("Range", fmt.Sprintf("bytes=%d-", start))
+	// Ask for what is wanted now plus a margin, not the rest of the file:
+	// an open-ended response keeps arriving into socket buffers while the
+	// stream waits, megabytes nobody may read (a probe). Playback asks for
+	// more as it goes; the next response starts where this one ended.
+	r.smu.Lock()
+	end := min(max(d.target, start)+streamWindow, r.size) - 1
+	r.smu.Unlock()
+	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
 	if r.userAgent != "" {
 		req.Header.Set("User-Agent", r.userAgent)
 	}
@@ -328,9 +336,9 @@ func (d *downloader) pump(ctx context.Context, start int64) (int, error) {
 			r.smu.Unlock()
 			return 0, errStreamStopped
 		}
-		if d.pos >= r.size {
+		if d.pos >= r.size || d.pos > end {
 			r.smu.Unlock()
-			return resp.StatusCode, nil
+			return resp.StatusCode, nil // the end, or of this response's range
 		}
 		if d.pos >= d.target {
 			// Far enough ahead: hold the connection (TCP pushes back) and
@@ -349,7 +357,7 @@ func (d *downloader) pump(ctx context.Context, start int64) (int, error) {
 			}
 		}
 		chunkEnd := min(int64(d.chunk+1)*r.chunkSize, r.size)
-		want := min(int64(len(block)), chunkEnd-d.pos)
+		want := min(int64(len(block)), chunkEnd-d.pos, end+1-d.pos)
 		r.smu.Unlock()
 
 		m, err := io.ReadFull(resp.Body, block[:want])
@@ -379,7 +387,7 @@ func (d *downloader) pump(ctx context.Context, start int64) (int, error) {
 		if err != nil {
 			if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {
 				r.smu.Lock()
-				ended := d.pos >= r.size
+				ended := d.pos >= r.size || d.pos > end
 				r.smu.Unlock()
 				if ended {
 					return resp.StatusCode, nil

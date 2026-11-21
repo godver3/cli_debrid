@@ -576,6 +576,31 @@ func (e *Engine) PreCache(jobID string, en job.Entry) {
 		return
 	}
 	r := files.Entry(en)
+	if files.Remote(en) {
+		// Debrid: prefetch-priority reads fetch whole cache chunks (8 MB
+		// each end, for every scanner open). Start the playback streams
+		// at the head and the tail instead, n bytes deep; the player's
+		// reads join them.
+		ctx, cancel := context.WithTimeout(e.ctx, 2*time.Minute)
+		defer cancel()
+		hctx := stream.WithReadHint(ctx, stream.ReadHint{Ahead: n})
+		var wg sync.WaitGroup
+		for _, off := range []int64{0, max(en.Size-n, 0)} {
+			wg.Add(1)
+			go func(off int64) {
+				defer wg.Done()
+				defer func() {
+					if p := recover(); p != nil {
+						e.log.Error("pre-cache crashed", "job", jobID, "file", en.Name, "panic", p)
+					}
+				}()
+				buf := make([]byte, min(64<<10, en.Size-off))
+				r.ReadAtCtx(hctx, nntp.Read, buf, off) // errors surface on the real read
+			}(off)
+		}
+		wg.Wait()
+		return
+	}
 	const chunk = 512 << 10
 	var ranges [][2]int64
 	add := func(from, to int64) {

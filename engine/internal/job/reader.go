@@ -76,6 +76,23 @@ func (fs *Files) Entry(e Entry) *EntryReader {
 	return r
 }
 
+// Remote reports whether e is read from a debrid service (every piece is
+// a remote source).
+func (fs *Files) Remote(e Entry) bool {
+	if len(e.Pieces) == 0 {
+		return false
+	}
+	for _, pc := range e.Pieces {
+		if pc.Source < 0 || pc.Source >= len(fs.sources) {
+			return false
+		}
+		if _, ok := fs.sources[pc.Source].(*stream.RemoteFile); !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // EntryReader reads an entry across its pieces.
 type EntryReader struct {
 	fs     *Files

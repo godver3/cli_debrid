@@ -162,7 +162,8 @@ func (r *File) ReadAtCtx(ctx context.Context, prio nntp.Priority, p []byte, off 
 		last = idx
 	}
 	if prio != nntp.Prefetch && r.readAhead > 0 && last >= 0 {
-		r.startReadAhead(last + 1)
+		n, owner := aheadFor(ctx, r.readAhead, r.layout.PartSize)
+		r.startReadAhead(owner, last+1, n)
 	}
 	if n < len(p) {
 		return n, io.EOF
@@ -201,10 +202,14 @@ func (r *File) segment(ctx context.Context, prio nntp.Priority, idx int) ([]byte
 	})
 }
 
-// startReadAhead prefetches the next readAhead segments in the background.
-func (r *File) startReadAhead(from int) {
+// startReadAhead prefetches the next n segments in the background, until
+// owner is done.
+func (r *File) startReadAhead(owner context.Context, from, n int) {
+	if owner.Err() != nil {
+		return
+	}
 	total := int((r.layout.Size + r.layout.PartSize - 1) / r.layout.PartSize)
-	for idx := from; idx < from+r.readAhead && idx < total; idx++ {
+	for idx := from; idx < from+n && idx < total; idx++ {
 		seg, ok := r.byNumber[idx+1]
 		if !ok {
 			continue
@@ -235,7 +240,7 @@ func (r *File) startReadAhead(from int) {
 				defer func() { <-r.slots }()
 			}
 			defer func() { recover() }() // a background prefetch must never take the mount down
-			if _, err := r.segment(context.Background(), nntp.Prefetch, idx); err != nil {
+			if _, err := r.segment(owner, nntp.Prefetch, idx); err != nil {
 				// A failed prefetch may be retried by a later read-ahead.
 				r.mu.Lock()
 				delete(r.prefetched, idx)
