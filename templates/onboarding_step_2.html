@@ -40,17 +40,23 @@
             <div id="panel-usenet" style="display:none;">
                 <label for="usenet_backend" class="onboarding-label">Usenet Mount:</label>
                 <select id="usenet_backend" name="usenet_backend" class="onboarding-input">
-                    <option value="builtin" {% if usenet_backend == 'builtin' %}selected{% endif %}>Built-in mount (recommended: usenet + debrid, no extra container)</option>
-                    <option value="climount" {% if usenet_backend == 'climount' %}selected{% endif %}>cli_mount (external container)</option>
+                    <option value="builtin" {% if usenet_backend == 'builtin' %}selected{% endif %}>Built-in mount (recommended: usenet + debrid, {% if is_windows %}nothing else to install{% else %}no extra container{% endif %})</option>
+                    <option value="climount" {% if usenet_backend == 'climount' %}selected{% endif %}>cli_mount ({% if is_windows %}separate app{% else %}external container{% endif %})</option>
                     <option value="nzbdav" {% if usenet_backend == 'nzbdav' %}selected{% endif %}>NzbDAV</option>
                     <option value="zurg" {% if usenet_backend == 'zurg' %}selected{% endif %}>Zurg 2.0</option>
                 </select>
                 <div id="builtin-note" style="display:none;">
                 <div class="settings-description">
+                    {% if is_windows %}
+                    cli_debrid runs its own mount engine on this PC, no separate app needed.
+                    It also streams your debrid account (if you added one above), so you don't need Zurg, rclone or cli_mount.
+                    It needs <a href="https://winfsp.dev" target="_blank" rel="noopener">WinFsp</a> installed, and shows your files as drive <code>M:</code>.
+                    {% else %}
                     cli_debrid runs its own mount engine in this container, no separate app needed.
                     It also streams your debrid account (if you added one above), so you don't need Zurg, rclone or cli_mount.
                     The container needs <code>devices: [/dev/fuse]</code> and <code>cap_add: [SYS_ADMIN]</code>,
                     and its mount path (default <code>/mnt/clid</code>) bound with rshared propagation so Plex sees it.
+                    {% endif %}
                     Enter your usenet server below; add more servers (backups, fill servers) later on the <strong>Mount</strong> page.
                 </div>
                 <label for="bm_host" class="onboarding-label">Usenet server:</label>
@@ -99,7 +105,7 @@
             </div>
             <label for="mount_tool" class="onboarding-label">Mount tool:</label>
             <select id="mount_tool" name="mount_tool" class="onboarding-input">
-                <option value="builtin">Built-in mount (this container: debrid + usenet)</option>
+                <option value="builtin">Built-in mount ({% if is_windows %}drive M: on this PC{% else %}this container{% endif %}: debrid + usenet)</option>
                 <option value="climount">cli_mount (debrid + usenet, recommended)</option>
                 <option value="decypharr">Decypharr</option>
                 <option value="zurg">Zurg + rclone</option>
@@ -107,9 +113,15 @@
                 <option value="other">Something else</option>
             </select>
             <div id="builtin-host-problems" class="settings-description" style="display:none; color: var(--warning-color, #e0a800);">
+                {% if is_windows %}
+                <b>The built-in mount can't run on this PC yet:</b>
+                <ul>{% for p in builtin_host_problems %}<li>{{ p }}</li>{% endfor %}</ul>
+                Fix that and restart cli_debrid, or pick another mount tool.
+                {% else %}
                 <b>The built-in mount can't run in this container yet:</b>
                 <ul>{% for p in builtin_host_problems %}<li>{{ p }}</li>{% endfor %}</ul>
                 Use the built-in compose file (<code>docker-compose.builtin.yml</code>), which already has these lines, or pick another mount tool.
+                {% endif %}
             </div>
             <label for="original_files_path" class="onboarding-label">Mount Path:</label>
             <div class="settings-description" id="mount-path-hint"></div>
@@ -124,9 +136,13 @@
                     <i class="fas fa-chevron-down toggle-icon"></i>
                 </div>
                 <div class="advice-content">
+                    {% if is_windows %}
+                    The path is checked on this PC, so use the drive letter or folder your mount tool shows in Explorer (the built-in mount uses <code>M:\__all__</code>). If the mount runs on another machine, map it as a network drive first. cli_debrid and Plex must see the files at exactly the same path.
+                    {% else %}
                     The path is checked from inside cli_debrid's container, so it has to be mapped in your docker-compose.yml. cli_debrid and your media server must see the mount (and the symlink folder) at exactly the same path. The easiest way is to pass<br><br>
                     <code style="background: #1a1a1a; padding: 8px; border-radius: 4px; display: block;">/mnt:/mnt</code><br>
                     into both containers.
+                    {% endif %}
                 </div>
             </div>
         </div>
@@ -144,16 +160,17 @@
             <div class="windows-override-section" style="margin-top: 10px; padding: 10px; border-radius: 5px; background-color: #e9ecef; border: 1px solid #ced4da;">
                 <input type="checkbox" id="windows_symlink_override" style="margin-right: 5px;">
                 <label for="windows_symlink_override" style="color: #495057; font-weight: normal;">Allow Symlinks on Windows (Requires Admin/Developer Mode)</label>
-                <p style="font-size: 0.8em; color: #6c757d; margin-top: 5px; margin-bottom: 0;">Overrides the default behavior which uses hard links. Enable this only if you have the necessary permissions.</p>
+                <p style="font-size: 0.8em; color: #6c757d; margin-top: 5px; margin-bottom: 0;">Plex for Windows skips symlinked files, so this is only useful with Jellyfin or Emby. Needs Developer Mode or running as admin.</p>
             </div>
 
             <div id="windows-symlink-warning" class="windows-warning" {% if allow_windows_symlinks %}style="display: none;"{% endif %}>
-                <strong>Warning:</strong> Symlinked/Local management is normally disabled on Windows due to Plex limitations and permission requirements. Use the override above if you understand the implications.
+                <strong>Note:</strong> Symlinked/Local is off on Windows because Plex for Windows skips symlinked files, so they never show up in Plex. Use Plex below. Turn on the override only for Jellyfin or Emby.
             </div>
             {% endif %}
 
             <div id="plex-description" class="settings-description">
                 Plex reads straight from your mount, and cli_debrid uses Plex to track what's in your library. Plex only.
+                {% if is_windows %}With the built-in mount, point your Plex libraries at <code>M:\Movies</code> and <code>M:\TV Shows</code>.{% endif %}
             </div>
             <div id="local-description" class="settings-description" style="display: none;">
                 cli_debrid makes a tidy folder of symlinks pointing into your mount, and your media server scans that folder. Works with Plex, Jellyfin and Emby.
@@ -345,6 +362,7 @@ window.TPL_ONBOARDING_STEP_2 = {
     builtin_host_problems: {{ (not builtin_host_problems) | tojson }},
     builtin_enabled: {{ builtin_enabled | tojson }},
     builtin_all_path: {{ builtin_all_path | tojson }},
+    is_windows: {{ is_windows | tojson }},
     url_for: '{{ url_for("onboarding.onboarding_step", step=2) }}',
     url_for_2: '{{ url_for("onboarding.onboarding_step", step=3) }}',
 };

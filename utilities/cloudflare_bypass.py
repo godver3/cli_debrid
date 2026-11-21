@@ -19,6 +19,7 @@ a `None` cookie and should degrade gracefully.
 import json
 import logging
 import os
+import sys
 import time
 from threading import Lock
 from typing import Dict, Optional
@@ -170,6 +171,12 @@ def _save_cache(data: Dict):
     os.replace(tmp_path, _CACHE_FILE)
 
 
+def _needs_virtual_display() -> bool:
+    """Only Linux needs Xvfb; Windows and macOS have a desktop (and no Xvfb,
+    so trying to start one just failed on every attempt)."""
+    return sys.platform.startswith('linux')
+
+
 def _solve_challenge(url: str, timeout_seconds: int = 60) -> Optional[Dict]:
     """
     Launch a real, headed Chrome (via Xvfb) to solve the Cloudflare challenge
@@ -186,25 +193,30 @@ def _solve_challenge(url: str, timeout_seconds: int = 60) -> Optional[Dict]:
     import tempfile
     import shutil
 
-    # pyvirtualdisplay wraps Xvfb lifecycle management; fall back to raw Xvfb
-    # subprocess if it's not installed.
+    # Linux (Docker) has no screen: headed Chrome runs on an Xvfb virtual
+    # display (pyvirtualdisplay manages it). Windows and macOS have a desktop
+    # and no Xvfb, so Chrome opens there directly, off-screen.
     display = None
-    try:
-        from pyvirtualdisplay import Display
-        _clean_stale_x11_sockets()
-        display = Display(visible=False, size=(1280, 800))
-        display.start()
-    except ImportError:
-        logging.warning("[CloudflareBypass] pyvirtualdisplay not installed — cannot create virtual display")
-        return None
-    except Exception as e:
-        logging.warning(f"[CloudflareBypass] Failed to start virtual display: {e}")
-        return None
+    if _needs_virtual_display():
+        try:
+            from pyvirtualdisplay import Display
+            _clean_stale_x11_sockets()
+            display = Display(visible=False, size=(1280, 800))
+            display.start()
+        except ImportError:
+            logging.warning("[CloudflareBypass] pyvirtualdisplay not installed — cannot create virtual display")
+            return None
+        except Exception as e:
+            logging.warning(f"[CloudflareBypass] Failed to start virtual display: {e}")
+            return None
 
     user_data_dir = tempfile.mkdtemp(prefix='cf_bypass_')
     # Chrome/Chromium refuses to start as root without --no-sandbox — cli_debrid's
     # Docker container runs as root by default (see Dockerfile PUID/PGID handling).
     launch_args = ['--no-sandbox'] if hasattr(os, 'geteuid') and os.geteuid() == 0 else []
+    if display is None:
+        # Real desktop: keep the window out of the user's way.
+        launch_args += ['--window-position=-32000,-32000', '--window-size=1280,800']
     # Chrome's crashpad_handler subprocess has been observed failing to
     # initialize in this container environment ("Target page, context or
     # browser has been closed", "crashpad recvmsg: Connection reset by peer").
@@ -224,7 +236,7 @@ def _solve_challenge(url: str, timeout_seconds: int = 60) -> Optional[Dict]:
             try:
                 context = p.chromium.launch_persistent_context(
                     user_data_dir,
-                    headless=False,  # headed mode under Xvfb is required — headless fails the challenge
+                    headless=False,  # headed mode is required (under Xvfb on Linux) — headless fails the challenge
                     no_viewport=True,
                     args=launch_args,
                     env=browser_env,

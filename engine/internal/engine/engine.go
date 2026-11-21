@@ -918,6 +918,7 @@ func (e *Engine) rebuildTreeWith(becoming string) {
 		if len(entries) == 0 {
 			continue
 		}
+		entries = markExtras(entries)
 		show = append(show, placed{j, entries})
 	}
 	names := make(map[string]string, len(show)) // job id -> folder name

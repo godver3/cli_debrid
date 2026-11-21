@@ -692,7 +692,15 @@ document.addEventListener('DOMContentLoaded', function() {
     const mountPath = document.getElementById('original_files_path');
     const BUILTIN_ALL = TPL_ONBOARDING_STEP_2.builtin_all_path;
     const SCHEMA_DEFAULT_PATH = '/mnt/zurg/__all__';
-    const MOUNT_HINTS = {
+    const IS_WINDOWS = !!TPL_ONBOARDING_STEP_2.is_windows;
+    const MOUNT_HINTS = IS_WINDOWS ? {
+        builtin: ['The built-in mount runs on this PC (drive M:, needs WinFsp) and streams your debrid account and usenet downloads itself, no other mount tool needed. cli_debrid reads its files from the mount\'s \\__all__ folder.', BUILTIN_ALL],
+        climount: ['cli_mount\'s mount as this PC sees it (a drive letter or mapped network drive), plus \\__all__. Debrid and usenet files both show up there.', 'Z:\\__all__'],
+        decypharr: ['Decypharr\'s mount folder for your debrid service as this PC sees it, ending in \\__all__.', 'Z:\\__all__'],
+        zurg: ['Your rclone mount of Zurg (rclone mount on Windows also uses WinFsp), ending in \\__all__.', 'Z:\\__all__'],
+        nzbdav: ['Your rclone mount of NzbDAV\'s WebDAV share.', 'Z:\\'],
+        other: ['The drive or folder where your debrid/usenet files appear on this PC.', ''],
+    } : {
         builtin: ['The built-in mount runs in this container and streams your debrid account and usenet downloads itself, no other mount tool needed. cli_debrid reads its files from its mount path plus /__all__.', BUILTIN_ALL],
         climount: ['cli_mount\'s mount path as cli_debrid sees it, plus /__all__. Debrid and usenet files both show up there.', '/mnt/cli_mount/__all__'],
         decypharr: ['Decypharr\'s mount folder for your debrid service, ending in /__all__.', '/mnt/decypharr/__all__'],
@@ -726,7 +734,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (path.includes(tool)) return tool;
         }
         if (useUsenet.checked && usenetBackend.value !== 'climount') return usenetBackend.value;
-        // Fresh install: the built-in mount when this container can run it.
+        // Fresh install: the built-in mount when this machine/container can run it.
         return path ? 'other' : (BUILTIN_HOST_OK ? 'builtin' : 'climount');
     }
 

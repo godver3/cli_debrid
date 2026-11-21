@@ -136,3 +136,43 @@ class TestCleanStaleX11Sockets(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class DesktopNoVirtualDisplayTests(unittest.TestCase):
+    """Windows/macOS: no Xvfb attempt; Chrome opens headed, off-screen."""
+
+    def _solve_on(self, platform):
+        import sys as _sys
+        from utilities import cloudflare_bypass as cb
+        launched = {}
+
+        class _Chromium:
+            def launch_persistent_context(self, _dir, **kw):
+                launched.update(kw)
+                raise RuntimeError('stop here')
+
+        class _PW:
+            chromium = _Chromium()
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+
+        fake_patchright = Mock()
+        fake_patchright.sync_api.sync_playwright = lambda: _PW()
+        display_cls = Mock()
+        with patch.object(_sys, 'platform', platform), \
+             patch.dict(_sys.modules, {'patchright': fake_patchright, 'patchright.sync_api': fake_patchright.sync_api,
+                                       'pyvirtualdisplay': Mock(Display=display_cls)}):
+            self.assertIsNone(cb._solve_challenge('https://example.invalid/'))
+        return launched, display_cls
+
+    def test_windows_skips_virtual_display(self):
+        launched, display_cls = self._solve_on('win32')
+        display_cls.assert_not_called()
+        self.assertIn('--window-position=-32000,-32000', launched['args'])
+        self.assertFalse(launched['headless'])
+
+    def test_linux_still_uses_virtual_display(self):
+        with patch('utilities.cloudflare_bypass._clean_stale_x11_sockets'):
+            launched, display_cls = self._solve_on('linux')
+        display_cls.assert_called_once()
+        self.assertNotIn('--window-position=-32000,-32000', launched['args'])
