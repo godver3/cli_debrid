@@ -25,6 +25,7 @@ INSTRUCTIONS = (
     "Read-only access to a cli_debrid install (media automation: watchlists -> scrapers -> debrid/usenet -> "
     "library/symlinks -> Plex/Jellyfin). Start with get_overview. Use explain_setting/list_settings to explain "
     "settings, search_logs/recent_errors to diagnose problems, lookup_item to follow one movie or episode. "
+    "To help report a bug, use prepare_issue_report; for how a feature works, get_help. "
     "Secrets are always masked. Nothing can be changed through this server: tell the user which setting to change "
     "and where (Settings page section/key, or the Mount page for 'Built-in Mount')."
 )
@@ -286,6 +287,85 @@ def tool_lookup_item(query: str, season: Optional[int] = None, episode: Optional
     return out
 
 
+_HELP_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'help_content')
+DOCS_URL = 'https://godver3.github.io/cli_docs/'
+DISCORD_URL = 'https://discord.gg/ynqnXGJ4hU'
+ISSUES_URL = 'https://github.com/godver3/cli_debrid/issues'
+
+
+def _help_topics() -> Dict[str, str]:
+    """topic -> first heading of each built-in help page."""
+    out = {}
+    try:
+        names = sorted(n for n in os.listdir(_HELP_DIR) if n.endswith('.md'))
+    except OSError:
+        return out
+    for n in names:
+        title = ''
+        try:
+            with open(os.path.join(_HELP_DIR, n), encoding='utf-8') as f:
+                for line in f:
+                    if line.strip().startswith('#'):
+                        title = line.strip('# \n')
+                        break
+        except OSError:
+            continue
+        out[n[:-3]] = title
+    return out
+
+
+def tool_get_help(topic: str = '') -> dict:
+    """The in-app help pages (the same text the "?" help panel shows)."""
+    topics = _help_topics()
+    if not topic:
+        return {'topics': topics, 'docs': DOCS_URL,
+                'hint': 'Call again with topic=<name>. The online docs cover setup and every setting in more depth.'}
+    name = re.sub(r'[^a-z0-9_]', '', str(topic).lower().replace('-', '_').replace(' ', '_'))
+    if name not in topics:
+        close = [t for t in topics if name and (name in t or t in name)]
+        return {'error': f'no help topic {topic!r}', 'did_you_mean': close or sorted(topics)}
+    with open(os.path.join(_HELP_DIR, name + '.md'), encoding='utf-8') as f:
+        return {'topic': name, 'text': f.read()[:60000], 'docs': DOCS_URL}
+
+
+REPORT_TIPS = [
+    'Say what you did, what you expected and what happened instead; for one movie/episode, give its title (and S/E).',
+    'Include the time it happened (with timezone) so the matching log lines can be found.',
+    'Attach logs: Logs page -> "Share cli_debrid Logs" (and the Mount tab\'s share button if streaming or playback '
+    'is involved). Sharing uploads the redacted logs plus a settings snapshot to paste.c-net.org and gives a link '
+    'to paste into the report. This assistant cannot upload anything itself.',
+    'Share soon after it happens: the shared logs are the most recent lines. For mount/playback problems turn on '
+    'Mount page -> Advanced -> Debug logging, reproduce, then share (cli_debrid\'s own log already includes debug lines).',
+    'Never paste API keys, tokens or passwords; the shared logs and this report already mask them.',
+    f'Ask in Discord ({DISCORD_URL}) first for setup questions; file bugs at {ISSUES_URL}.',
+]
+
+
+def tool_prepare_issue_report(description: str = '', item: str = '') -> dict:
+    """Everything a bug report needs, in one go (read-only; nothing is sent)."""
+    out = {'tips': REPORT_TIPS, 'where': {'discord': DISCORD_URL, 'github_issues': ISSUES_URL, 'docs': DOCS_URL},
+           'description': description, 'overview': tool_get_overview()}
+    try:
+        from utilities.ai_context import get_diagnostic_settings_snapshot
+        out['settings_snapshot'] = get_diagnostic_settings_snapshot()
+    except Exception as e:
+        out['settings_snapshot'] = f'unavailable: {e}'
+    out['recent_app_problems'] = tool_search_logs('', 'warning', 'app', 40)['entries']
+    if tool_mount_status().get('built_in_mount'):
+        out['recent_mount_problems'] = tool_search_logs('', 'warning', 'mount', 40)['entries']
+    if item:
+        out['item'] = tool_lookup_item(item, limit=5)
+    out['draft'] = (
+        '**What happened**\n' + (description or '<describe the problem>') + '\n\n'
+        '**Expected**\n<what you expected>\n\n'
+        '**When**\n<date/time and timezone>\n\n'
+        f"**Version / setup**\ncli_debrid {out['overview'].get('version')}, "
+        f"{out['overview'].get('library_mode')}, media server {out['overview'].get('media_server')}, "
+        f"debrid {out['overview'].get('debrid_provider') or 'none'}, usenet {out['overview'].get('usenet_provider') or 'none'}\n\n"
+        '**Logs**\n<link from Logs page -> Share>')
+    return out
+
+
 # ---- registry -----------------------------------------------------------------
 
 def _obj(props: dict, required: Optional[List[str]] = None) -> dict:
@@ -332,6 +412,18 @@ TOOLS: Dict[str, Dict[str, Any]] = {
         'fn': tool_connection_health,
         'description': 'Which services (debrid, Plex, scrapers, content sources...) are reachable.',
         'schema': _obj({})},
+    'get_help': {
+        'fn': tool_get_help,
+        'description': "cli_debrid's built-in help pages (what each page and feature does, tips). Without topic: "
+                       'the list of topics. Use it to explain features and suggest fixes.',
+        'schema': _obj({'topic': {'type': 'string', 'description': 'e.g. "queues", "debrid_manager", "logs_logs"'}})},
+    'prepare_issue_report': {
+        'fn': tool_prepare_issue_report,
+        'description': 'Gathers what a bug report needs: version and setup, the redacted settings snapshot, '
+                       'recent warnings/errors (app and mount), the item involved, reporting tips and a draft '
+                       'report. Nothing is sent anywhere; the user shares logs from the Logs page.',
+        'schema': _obj({'description': {'type': 'string', 'description': "the user's own words about the problem"},
+                        'item': {'type': 'string', 'description': 'title or IMDb id of the movie/show involved'}})},
     'lookup_item': {
         'fn': tool_lookup_item,
         'description': 'Find movies/episodes by title or IMDb id: state, version, the release and file it was '

@@ -56,6 +56,31 @@ class ProtocolTests(unittest.TestCase):
             self.assertTrue(mcp.call_tool('boom', {})['isError'])
 
 
+class HelpAndReportTests(unittest.TestCase):
+    def test_help_topics_and_page(self):
+        out = mcp.tool_get_help()
+        self.assertIn('queues', out['topics'])
+        page = mcp.tool_get_help('Queues')
+        self.assertTrue(page['text'].strip())
+        self.assertIn('did_you_mean', mcp.tool_get_help('queue'))
+        self.assertIn('error', mcp.tool_get_help('../../etc/passwd'))
+
+    def test_issue_report_bundle(self):
+        with mock.patch.object(mcp, 'tool_get_overview', return_value={'version': '0.7.89', 'library_mode': 'Symlinked/Local',
+                                                                         'media_server': 'plex', 'debrid_provider': 'RealDebrid'}), \
+                mock.patch('utilities.ai_context.get_diagnostic_settings_snapshot', return_value='App version: 0.7.89'), \
+                mock.patch.object(mcp, 'tool_search_logs', return_value={'entries': [{'message': 'boom'}]}) as logs, \
+                mock.patch.object(mcp, 'tool_mount_status', return_value={'built_in_mount': True}), \
+                mock.patch.object(mcp, 'tool_lookup_item', return_value={'items': []}) as item:
+            out = mcp.tool_prepare_issue_report('Friends S10 plays the wrong episode', 'Friends')
+        self.assertIn('Friends S10 plays the wrong episode', out['draft'])
+        self.assertIn('cli_debrid 0.7.89, Symlinked/Local', out['draft'])
+        self.assertEqual(out['settings_snapshot'], 'App version: 0.7.89')
+        self.assertEqual({c.args[2] for c in logs.call_args_list}, {'app', 'mount'})
+        item.assert_called_once_with('Friends', limit=5)
+        self.assertTrue(any('Share' in t for t in out['tips']))
+
+
 class RedactionTests(unittest.TestCase):
     def test_secrets_masked_in_dicts_lists_and_json_strings(self):
         servers = json.dumps([{'host': 'news.x', 'username': 'me', 'password': 'hunter2'}])
