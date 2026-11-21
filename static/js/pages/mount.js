@@ -176,7 +176,7 @@
       const idle = !(x.bytes_read > 0);
       const logs = '/logs?source=climount&q=' + encodeURIComponent(x.file || '');
       return '<tr' + (idle ? ' style="color:#888"' : '') + '><td title="' + esc(x.folder) + '">' + esc(x.file) +
-             ' <a href="' + logs + '" title="Mount log lines for this file" style="font-size:.8em;margin-left:4px">logs</a></td><td>' + esc(x.protocol) +
+             ' <a href="' + logs + '" title="Mount log lines for this file" style="font-size:.8em;margin-left:4px;color:#bbb">logs</a></td><td>' + esc(x.protocol) +
              '</td><td>' + openedFor(x.opened_at) + ' ago</td><td>' + fmtBytes(x.bytes_read || 0) + (idle ? ' (idle)' : '') +
              '</td><td>' + pct + '%</td><td>' + (x.rate_bytes ? fmtBytes(x.rate_bytes) + '/s' : '—') + '</td><td>' + (prot ? '<span class="ok">protected</span>' : '') + '</td></tr>';
     }).join('') : '<tr><td colspan="7" style="color:#888">Nothing open.</td></tr>';
