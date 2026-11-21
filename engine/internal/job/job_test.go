@@ -329,3 +329,52 @@ func TestMissingSideFileDoesNotProveRelease(t *testing.T) {
 		t.Fatalf("got %v, want ErrInconclusive", err)
 	}
 }
+
+func TestRARSetInsideSevenZip(t *testing.T) {
+	// Tulsa King S02E07 BROADCAST: a stored, split 7z whose members are a
+	// RAR set. The mount must show the file inside the RAR set, read
+	// straight off the posted 7z volumes.
+	sevenZ, err := exec.LookPath("7z")
+	if err != nil {
+		t.Skip("7z not installed")
+	}
+	dir := t.TempDir()
+	members, vols := rarSet(t)
+	var names []string
+	for i, v := range vols {
+		n := fmt.Sprintf("show.part%02d.rar", i+1)
+		names = append(names, n)
+		if err := os.WriteFile(filepath.Join(dir, n), v, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	os.WriteFile(filepath.Join(dir, "show.nfo"), []byte("nfo"), 0o644)
+	cmd := exec.Command(sevenZ, append([]string{"a", "-mx=0", "-v120k", "outer.7z", "show.nfo"}, names...)...)
+	cmd.Dir = dir
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%v\n%s", err, b)
+	}
+	parts, _ := filepath.Glob(filepath.Join(dir, "outer.7z.*"))
+	e := newEnv(t)
+	for _, p := range parts {
+		b, _ := os.ReadFile(p)
+		e.post(filepath.Base(p), filepath.Base(p), b)
+	}
+	res, err := e.build()
+	if err != nil {
+		t.Fatalf("%v (notes %v failures %v)", err, res.Notes, res.Failures)
+	}
+	got := map[string]Entry{}
+	for _, en := range res.Entries {
+		got[en.Name] = en
+	}
+	if _, ok := got["show.part01.rar"]; ok {
+		t.Fatalf("inner RAR volumes still listed: %v", entryNames(res))
+	}
+	for _, m := range members {
+		en, ok := got[filepath.Base(m.Name)]
+		if !ok || !bytes.Equal(e.read(res, en), m.Data) {
+			t.Fatalf("%s: missing or wrong content; entries %v notes %v", m.Name, entryNames(res), res.Notes)
+		}
+	}
+}

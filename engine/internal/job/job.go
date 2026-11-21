@@ -301,6 +301,13 @@ func Build(ctx context.Context, f stream.Fetcher, cache *stream.Cache, n *nzb.NZ
 		addSet(setLabel(sevenZ), sevenZ, set, err)
 	}
 
+	// A RAR set packed inside a 7z (Tulsa King S02E07 BROADCAST: a 7z of
+	// .rar/.r00-.r45): open the inner set over the 7z members and map its
+	// files back onto the posted articles, as cli_mount's 7z parser does.
+	if len(res.Sources) > 0 {
+		failedArchive = max(failedArchive, unnestRAR(ctx, res, todo, opt.Parallel, note))
+	}
+
 	// Media files rebuilt from archives must start with their container's
 	// header: obfuscated volumes put in the wrong order still "parse" but
 	// yield a file starting mid-stream that players can't open. A wrong
@@ -388,6 +395,102 @@ func isContent(p *posted) bool {
 		n += int64(sg.Bytes)
 	}
 	return n >= contentMinBytes || p.layout.Size >= contentMinBytes
+}
+
+// unnestRAR replaces entries that are RAR volumes extracted from another
+// archive with the files of that inner RAR set. Their pieces are the outer
+// members' pieces sliced to each inner extent, so nothing is copied. It
+// returns the size of an inner set that failed (for the leftover guard).
+func unnestRAR(ctx context.Context, res *Result, todo []*posted, parallel int, note func(string, ...any)) int64 {
+	sets := map[string][]int{} // outer archive + inner set key -> entry indexes
+	for i, e := range res.Entries {
+		if e.FromArchive == "" || !reRarName.MatchString(e.Name) {
+			continue
+		}
+		key := e.FromArchive + "\x00" + strings.ToLower(reRarName.ReplaceAllString(e.Name, ""))
+		sets[key] = append(sets[key], i)
+	}
+	if len(sets) == 0 {
+		return 0
+	}
+	byIdx := map[int]*posted{}
+	for _, p := range todo {
+		byIdx[p.idx] = p
+	}
+	fs := &Files{}
+	for _, s := range res.Sources {
+		fs.sources = append(fs.sources, byIdx[s.NZBIndex].sf)
+	}
+	keys := make([]string, 0, len(sets))
+	for k := range sets {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	drop := map[int]bool{}
+	var added []Entry
+	var failed int64
+	for _, k := range keys {
+		idxs := sets[k]
+		vols := make([]archive.Volume, len(idxs))
+		var total int64
+		for i, ei := range idxs {
+			e := res.Entries[ei]
+			vols[i] = archive.Volume{Name: e.Name, R: fs.Entry(e), Size: e.Size, ID: ei}
+			total += e.Size
+		}
+		label := res.Entries[idxs[0]].Name
+		set, err := archive.OpenRAR(ctx, vols, parallel)
+		if err != nil {
+			note("inner archive %s (%d volumes inside %s): %v", label, len(vols), res.Entries[idxs[0]].FromArchive, err)
+			res.Failures = append(res.Failures, Failure{Name: label, Size: total, Error: err.Error()})
+			failed = max(failed, total)
+			continue
+		}
+		note("inner archive %s: %d volumes, %d files inside", label, len(set.Volumes), len(set.Members))
+		for _, ei := range idxs {
+			drop[ei] = true
+		}
+		for _, m := range set.Members {
+			if m.Err != nil {
+				res.Failures = append(res.Failures, Failure{Name: m.Name, Size: m.Size, Error: m.Err.Error()})
+				failed = max(failed, m.Size)
+				continue
+			}
+			e := Entry{Name: path.Base(m.Name), Size: m.Size, FromArchive: label}
+			for _, x := range m.Extents {
+				outer := res.Entries[set.Volumes[x.Volume].ID]
+				e.Pieces = append(e.Pieces, slicePieces(outer.Pieces, x.Offset, x.Length)...)
+			}
+			added = append(added, e)
+		}
+	}
+	kept := res.Entries[:0]
+	for i, e := range res.Entries {
+		if !drop[i] {
+			kept = append(kept, e)
+		}
+	}
+	res.Entries = append(kept, added...)
+	return failed
+}
+
+// slicePieces returns the pieces covering [off, off+n) of the bytes that
+// pcs describe in order.
+func slicePieces(pcs []Piece, off, n int64) []Piece {
+	var out []Piece
+	pos := int64(0)
+	for _, pc := range pcs {
+		end := pos + pc.Length
+		if n > 0 && off < end {
+			in := max(off-pos, 0)
+			take := min(pc.Length-in, n)
+			out = append(out, Piece{Source: pc.Source, Offset: pc.Offset + in, Length: take})
+			off += take
+			n -= take
+		}
+		pos = end
+	}
+	return out
 }
 
 // LeftoverOnly reports whether the largest streamable file is too small,
