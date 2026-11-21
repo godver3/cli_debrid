@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"math/rand"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/godver3/cli_debrid/engine/internal/job"
 	"github.com/godver3/cli_debrid/engine/internal/nntp"
@@ -16,11 +18,14 @@ import (
 // fail with a network-style error.
 type fakeStat struct {
 	missing, flaky map[string]bool
+	mu             sync.Mutex
 	asked          []string
 }
 
 func (f *fakeStat) Stat(ctx context.Context, prio nntp.Priority, id string) (bool, error) {
+	f.mu.Lock()
 	f.asked = append(f.asked, id)
+	f.mu.Unlock()
 	if prio != nntp.Prefetch {
 		panic("health checks must not compete with playback")
 	}
@@ -90,7 +95,7 @@ func TestHealthyJobSamplesFirstLastAndSome(t *testing.T) {
 func TestStopsAtFirstConfirmedMiss(t *testing.T) {
 	n, res := twoFiles()
 	st := &fakeStat{missing: map[string]bool{"m.1": true}}
-	rep, _ := Check(context.Background(), st, n, res, Options{Full: true})
+	rep, _ := Check(context.Background(), st, n, res, Options{Full: true, Parallel: 1})
 	if rep.Status != Broken || rep.Files[0].Status != Broken || rep.Files[0].Segment != "m.1" || rep.Files[1].Status != Healthy {
 		t.Fatalf("%+v", rep)
 	}
@@ -129,8 +134,51 @@ func TestArchiveMemberOnlyChecksItsOwnRange(t *testing.T) {
 	// A member using segments 41..60 of source 0 only.
 	res.Entries = []job.Entry{{Name: "member.mkv", Size: 20_000, Pieces: []job.Piece{{Source: 0, Offset: 40_000, Length: 20_000}}}}
 	st := &fakeStat{missing: map[string]bool{"m.1": true, "m.100": true}} // outside its range
-	rep, _ := Check(context.Background(), st, n, res, Options{Full: true})
+	rep, _ := Check(context.Background(), st, n, res, Options{Full: true, Parallel: 1})
 	if rep.Status != Healthy || len(st.asked) != 20 || st.asked[0] != "m.41" || st.asked[1] != "m.60" {
 		t.Fatalf("%+v asked %v", rep, st.asked)
+	}
+}
+
+// slowStat answers after a delay and records how many STATs ran at once.
+type slowStat struct {
+	fakeStat
+	mu2            sync.Mutex
+	inFlight, peak int
+}
+
+func (f *slowStat) Stat(ctx context.Context, prio nntp.Priority, id string) (bool, error) {
+	f.mu2.Lock()
+	f.inFlight++
+	f.peak = max(f.peak, f.inFlight)
+	f.mu2.Unlock()
+	defer func() { f.mu2.Lock(); f.inFlight--; f.mu2.Unlock() }()
+	select {
+	case <-time.After(5 * time.Millisecond):
+	case <-ctx.Done():
+		return false, ctx.Err()
+	}
+	return f.fakeStat.Stat(ctx, prio, id)
+}
+
+func TestSampleRunsInParallelAndStopsOnMiss(t *testing.T) {
+	// Regretting You / Stranger Things: a 10% sample checked one article at
+	// a time outran the 5-minute import timeout on a ~1 s/article server.
+	n, res := twoFiles()
+	st := &slowStat{}
+	rep, err := Check(context.Background(), st, n, res, Options{Full: true, Parallel: 8})
+	if err != nil || rep.Status != Healthy || rep.Checked != 103 || st.peak < 2 || st.peak > 8 {
+		t.Fatalf("%+v err %v peak %d", rep, err, st.peak)
+	}
+	st = &slowStat{fakeStat: fakeStat{missing: map[string]bool{"m.1": true}}}
+	rep, _ = Check(context.Background(), st, n, res, Options{Full: true, Parallel: 8})
+	movie := 0
+	for _, id := range st.asked {
+		if id[0] == 'm' {
+			movie++
+		}
+	}
+	if rep.Files[0].Status != Broken || rep.Files[0].Segment != "m.1" || movie >= 100 {
+		t.Fatalf("%+v asked %d movie articles", rep, movie)
 	}
 }

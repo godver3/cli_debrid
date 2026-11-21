@@ -11,10 +11,10 @@ package health
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math/rand"
 	"sort"
+	"sync"
 
 	"github.com/godver3/cli_debrid/engine/internal/job"
 	"github.com/godver3/cli_debrid/engine/internal/nntp"
@@ -35,6 +35,10 @@ type Options struct {
 	Max        int
 	Full       bool
 	Rand       *rand.Rand // for tests; random sampling otherwise
+	// Parallel is how many STATs run at once per file (default 16). One at
+	// a time, a 10% sample of a 7 GB release (~1000 articles at ~1 s each
+	// on a slow server) outran the 5-minute import timeout.
+	Parallel int
 }
 
 // Result statuses.
@@ -98,43 +102,31 @@ func Check(ctx context.Context, c Stater, n *nzb.NZB, res *job.Result, opt Optio
 			ids[i][seg.Number] = seg.ID
 		}
 	}
+	if opt.Parallel <= 0 {
+		opt.Parallel = 16
+	}
 	rep := Report{}
 	known := map[string]bool{} // article id -> exists (shared by entries)
 	for _, e := range res.Entries {
+		if err := ctx.Err(); err != nil {
+			return rep, err
+		}
 		fr := FileResult{Name: e.Name, Status: Healthy}
-		conclusive := 0
-		for _, p := range sample(res, e, opt) {
-			if err := ctx.Err(); err != nil {
-				return rep, err
-			}
-			id, listed := ids[p.source][p.number]
-			if !listed {
+		probes := sample(res, e, opt)
+		for _, p := range probes {
+			if _, listed := ids[p.source][p.number]; !listed {
 				fr.Status, fr.Reason = Broken, fmt.Sprintf("segment %d of %s not listed in the NZB", p.number, res.Sources[p.source].Name)
 				break
 			}
-			exists, seen := known[id]
-			if !seen {
-				var err error
-				exists, err = c.Stat(ctx, nntp.Prefetch, id)
-				if err != nil {
-					if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-						return rep, err
-					}
-					rep.Inconclusive++
-					continue
-				}
-				known[id] = exists
-				rep.Checked++
-			}
-			conclusive++
-			if !exists {
-				fr.Status, fr.Segment = Broken, id
-				fr.Reason = fmt.Sprintf("article missing on every provider (segment %d of %s)", p.number, res.Sources[p.source].Name)
-				break
-			}
 		}
-		if fr.Status == Healthy && conclusive == 0 {
-			fr.Status = Unknown
+		if fr.Status == Healthy {
+			conclusive, err := checkProbes(ctx, c, probes, ids, res, known, &rep, &fr, opt.Parallel)
+			if err != nil {
+				return rep, err
+			}
+			if fr.Status == Healthy && conclusive == 0 {
+				fr.Status = Unknown
+			}
 		}
 		rep.Files = append(rep.Files, fr)
 	}
@@ -152,6 +144,76 @@ func Check(ctx context.Context, c Stater, n *nzb.NZB, res *job.Result, opt Optio
 		rep.Status = Unknown
 	}
 	return rep, nil
+}
+
+// checkProbes STATs one entry's probes, parallel ones at a time, and stops
+// at the first article proven missing (marking fr broken). It returns how
+// many probes got a conclusive answer; an error only when ctx ended.
+func checkProbes(ctx context.Context, c Stater, probes []probe, ids []map[int]string, res *job.Result,
+	known map[string]bool, rep *Report, fr *FileResult, parallel int) (int, error) {
+	run, stop := context.WithCancel(ctx)
+	defer stop()
+	var (
+		mu         sync.Mutex
+		wg         sync.WaitGroup
+		conclusive int
+		next       int
+	)
+	take := func() (probe, bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		if next >= len(probes) || fr.Status == Broken {
+			return probe{}, false
+		}
+		next++
+		return probes[next-1], true
+	}
+	for w := 0; w < min(parallel, len(probes)); w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				p, ok := take()
+				if !ok || run.Err() != nil {
+					return
+				}
+				id := ids[p.source][p.number]
+				mu.Lock()
+				exists, seen := known[id]
+				mu.Unlock()
+				if !seen {
+					var err error
+					exists, err = c.Stat(run, nntp.Prefetch, id)
+					if err != nil {
+						if run.Err() != nil {
+							return // missing found elsewhere, or ctx ended
+						}
+						mu.Lock()
+						rep.Inconclusive++
+						mu.Unlock()
+						continue
+					}
+					mu.Lock()
+					known[id] = exists
+					rep.Checked++
+					mu.Unlock()
+				}
+				mu.Lock()
+				conclusive++
+				if !exists && fr.Status != Broken {
+					fr.Status, fr.Segment = Broken, id
+					fr.Reason = fmt.Sprintf("article missing on every provider (segment %d of %s)", p.number, res.Sources[p.source].Name)
+					stop()
+				}
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	if err := ctx.Err(); err != nil {
+		return conclusive, err
+	}
+	return conclusive, nil
 }
 
 // sample picks which segments to check for an entry: first and last of
