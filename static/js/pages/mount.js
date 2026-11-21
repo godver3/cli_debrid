@@ -359,13 +359,18 @@
   const PER = 50;
   const ago = t => { const d = (Date.now() - new Date(t)) / 1000; if (!t || isNaN(d)) return ''; if (d < 60) return 'just now'; if (d < 3600) return Math.floor(d / 60) + 'm ago'; if (d < 86400) return Math.floor(d / 3600) + 'h ago'; return Math.floor(d / 86400) + 'd ago'; };
   const stateLabel = j => j.status === 'queued' && j.attempts ? 'retrying (' + j.attempts + ')' : j.status;
+  // Category column: usenet or debrid (engine jobs carry protocol "debrid"; "" = usenet).
+  const DEBRID_NAMES = {rd: 'Real-Debrid', tb: 'TorBox', ad: 'AllDebrid', pm: 'Premiumize', dl: 'Debrid-Link', hw: 'HighWay'};
+  const jobKind = j => j.protocol === 'debrid' ? 'Debrid' : 'Usenet';
+  const kindLabel = j => j.protocol === 'debrid' && j.provider
+    ? 'Debrid (' + (DEBRID_NAMES[j.provider] || j.provider.toUpperCase()) + ')' : jobKind(j);
   async function loadJobs() {
     try {
       const r = await fetch(TPL_MOUNT.url_for_2);
       const d = await r.json();
       if (!d.success) { $('#qInfo').textContent = d.error || 'Could not load jobs'; jobs = []; renderJobs(); return; }
       jobs = d.jobs || [];
-      const cats = [...new Set(jobs.map(j => j.category).filter(Boolean))].sort();
+      const cats = [...new Set(jobs.map(jobKind))].sort();
       const sel = $('#qCategory'), keep = sel.value;
       sel.innerHTML = '<option value="">All categories</option>' + cats.map(c => '<option>' + esc(c) + '</option>').join('');
       sel.value = cats.includes(keep) ? keep : '';
@@ -375,7 +380,7 @@
   }
   function filtered() {
     const q = $('#qSearch').value.trim().toLowerCase(), st = $('#qStatus').value, cat = $('#qCategory').value, so = $('#qSort').value;
-    const out = jobs.filter(j => (!q || (j.name || '').toLowerCase().includes(q)) && (!st || j.status === st) && (!cat || j.category === cat));
+    const out = jobs.filter(j => (!q || (j.name || '').toLowerCase().includes(q)) && (!st || j.status === st) && (!cat || jobKind(j) === cat));
     const cmp = {added_desc: (a, b) => new Date(b.created_at) - new Date(a.created_at), added_asc: (a, b) => new Date(a.created_at) - new Date(b.created_at),
                  name_asc: (a, b) => (a.name || '').localeCompare(b.name || ''), name_desc: (a, b) => (b.name || '').localeCompare(a.name || ''),
                  size_desc: (a, b) => (b.size || 0) - (a.size || 0), size_asc: (a, b) => (a.size || 0) - (b.size || 0)}[so];
@@ -390,7 +395,7 @@
       return '<tr data-id="' + esc(j.id) + '"><td><input type="checkbox" class="qSel"></td>' +
         '<td class="nm"><span class="link" data-open="' + esc(j.id) + '">' + esc(j.name) + '</span>' + (j.error ? '<div class="err">' + esc(j.error) + '</div>' : '') + '</td>' +
         '<td><span class="pill ' + esc(j.status) + '">' + esc(stateLabel(j)) + '</span></td>' +
-        '<td>' + (j.size ? fmtBytes(j.size) : '—') + '</td><td>' + esc(j.category || '—') + '</td>' +
+        '<td>' + (j.size ? fmtBytes(j.size) : '—') + '</td><td' + (j.category ? ' title="' + esc('Engine category: ' + j.category) + '"' : '') + '>' + esc(kindLabel(j)) + '</td>' +
         '<td title="' + esc(j.created_at) + '">' + ago(j.created_at) + '</td>' +
         '<td>' + (h ? '<span class="pill ' + esc(h) + '">' + esc(h) + '</span>' : '—') + '</td>' +
         '<td style="white-space:nowrap">' + (j.status === 'failed' ? '<button class="rowbtn" data-act="retry">Retry</button>' : '') +
