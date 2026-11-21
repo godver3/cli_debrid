@@ -236,6 +236,13 @@
                     </div>
                 </div>
 
+                {% if builtin_mount_selected() %}
+                <!-- Mount (built-in mount engine only) -->
+                <div class="st-nav-item" id="st-dd-mount">
+                    <a class="st-nav-btn" href="{{ url_for('mount.index') }}" style="text-decoration:none">Mount</a>
+                </div>
+                {% endif %}
+
                 <!-- Tools -->
                 <div class="st-nav-item" id="st-dd-tools">
                     <button class="st-nav-btn" onclick="stToggleDD('st-dd-tools')">Tools <i class="fa-solid fa-chevron-down st-arr"></i></button>
@@ -248,13 +255,6 @@
                         <a class="st-nav-dd-item" href="{{ url_for('overlay_page.overlays_page') }}"><i class="fa-solid fa-layer-group"></i> Overlays</a>
                     </div>
                 </div>
-
-                {% if builtin_mount_selected() %}
-                <!-- Mount (built-in mount engine only) -->
-                <div class="st-nav-item" id="st-dd-mount">
-                    <a class="st-nav-btn" href="{{ url_for('mount.index') }}" style="text-decoration:none">Mount</a>
-                </div>
-                {% endif %}
 
                 <!-- Users -->
                 <div class="st-nav-item" id="st-dd-users">
@@ -408,6 +408,13 @@
                         </div>
                     </div>
 
+                    {% if builtin_mount_selected() %}
+                    <!-- Mount -->
+                    <div class="st-nav-acc-section" id="st-acc-mount">
+                        <a class="st-nav-mob-item" href="{{ url_for('mount.index') }}"><i class="fa-solid fa-hard-drive"></i> Mount</a>
+                    </div>
+                    {% endif %}
+
                     <!-- Tools -->
                     <div class="st-nav-acc-section" id="st-acc-tools">
                         <div class="st-nav-acc-hdr" onclick="stToggleAcc('st-acc-tools')">
@@ -421,13 +428,6 @@
                             <a class="st-nav-mob-item" href="{{ url_for('overlay_page.overlays_page') }}"><i class="fa-solid fa-layer-group"></i> Overlays</a>
                         </div>
                     </div>
-
-                    {% if builtin_mount_selected() %}
-                    <!-- Mount -->
-                    <div class="st-nav-acc-section" id="st-acc-mount">
-                        <a class="st-nav-mob-item" href="{{ url_for('mount.index') }}"><i class="fa-solid fa-hard-drive"></i> Mount</a>
-                    </div>
-                    {% endif %}
 
                     <!-- Users -->
                     <div class="st-nav-acc-section" id="st-acc-users">
