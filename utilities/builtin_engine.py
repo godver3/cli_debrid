@@ -20,6 +20,7 @@ import secrets
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 IS_WINDOWS = sys.platform == 'win32'
@@ -406,10 +407,43 @@ def state() -> str:
     return 'UNKNOWN'
 
 
+# The nav Mount button (every open tab, every 10 s) and the Mount page (every
+# 4 s) poll the engine state. Each live state() forks supervisorctl (~170 ms
+# of Python startup), so the UI polls share one recent answer instead.
+_STATE_CACHE_TTL = 3.0
+_state_cache_lock = threading.Lock()
+_state_cache = {'at': 0.0, 'state': None}
+
+
+def cached_state(max_age: float = _STATE_CACHE_TTL) -> str:
+    """state() for UI polling: reuses an answer up to max_age seconds old.
+    Concurrent callers wait for one supervisorctl call rather than each
+    starting their own. control() clears it, so start/stop shows at once."""
+    with _state_cache_lock:
+        if _state_cache['state'] is not None and time.monotonic() - _state_cache['at'] < max_age:
+            return _state_cache['state']
+        st = state()
+        _state_cache['state'] = st
+        _state_cache['at'] = time.monotonic()
+        return st
+
+
+def _clear_state_cache():
+    with _state_cache_lock:
+        _state_cache['state'] = None
+
+
 def control(action: str) -> str:
     """start, stop or restart the engine process (supervisord in Docker; a
     detached process on Windows, which keeps running across cli_debrid
     restarts just like the supervised one)."""
+    try:
+        return _control(action)
+    finally:
+        _clear_state_cache()
+
+
+def _control(action: str) -> str:
     if IS_WINDOWS:
         return {'start': _proc_start, 'stop': _proc_stop, 'restart': _proc_restart}[action]()
     return _supervisorctl(action, PROGRAM)

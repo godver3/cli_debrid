@@ -299,7 +299,7 @@ def _default_vfolders():
 @admin_required
 def status():
     from utilities import builtin_engine
-    out = {'selected': builtin_selected(), 'state': builtin_engine.state(),
+    out = {'selected': builtin_selected(), 'state': builtin_engine.cached_state(),
            'stopped_by_user': builtin_engine.stopped_by_user(),
            'problems': builtin_engine.problems(), 'last_sync': dict(_last_sync),
            'settings': _public_settings(), 'engine': None, 'stats': None}
@@ -779,7 +779,7 @@ def migrate_export():
 def engine_state():
     """Cheap state for the nav button."""
     from utilities import builtin_engine
-    return jsonify({'selected': builtin_selected(), 'state': builtin_engine.state(),
+    return jsonify({'selected': builtin_selected(), 'state': builtin_engine.cached_state(),
                     'stopped_by_user': builtin_engine.stopped_by_user()})
 
 

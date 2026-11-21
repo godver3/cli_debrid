@@ -1144,7 +1144,9 @@
                 .finally(function () { setTimeout(poll, 1500); });
         });
         poll();
-        setInterval(poll, 10000);
+        // Hidden tabs don't poll; catch up as soon as the tab is shown again.
+        setInterval(function () { if (!document.hidden) poll(); }, 10000);
+        document.addEventListener('visibilitychange', function () { if (!document.hidden) poll(); });
     })();
     </script>
     {% block scripts %}{% endblock %}

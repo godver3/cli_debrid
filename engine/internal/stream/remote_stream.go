@@ -32,6 +32,11 @@ const (
 	streamRetries = 4
 )
 
+// streamFailHold: after a stream gives up, reads of the same file fail
+// with its error for this long before a new stream tries again (cli_mount
+// answers a refused link at once too). A var for tests.
+var streamFailHold = 30 * time.Second
+
 var errStreamStopped = errors.New("stream: downloader stopped")
 
 // downloader is one sequential HTTP stream. Guarded by RemoteFile.smu.
@@ -113,6 +118,12 @@ func (r *RemoteFile) cached(i int) ([]byte, bool) {
 func (r *RemoteFile) waitStream(ctx context.Context, from, to int64, dst []byte) (int, error) {
 	r.smu.Lock()
 	defer r.smu.Unlock()
+	if r.failErr != nil {
+		if time.Since(r.failAt) < streamFailHold {
+			return 0, r.failErr
+		}
+		r.failErr = nil
+	}
 	ahead := aheadBytesFor(ctx, r.aheadBytes())
 	d := r.downloaderFor(from)
 	d.lastUsed = time.Now()
@@ -208,6 +219,14 @@ func (d *downloader) run(ctx context.Context) {
 		r.smu.Lock()
 		d.done = true
 		d.cancel()
+		// Let go of the buffers: a stopped stream stays in r.streams until
+		// the file's next seek, and the file stays built while its job is
+		// open, so a played pack kept a chunk or two per file it ever read
+		// (found live: 684 MB with nothing playing, the heap over the GC
+		// limit). Completed chunks are in the cache; waitStream falls back
+		// to it, or starts a new stream, once it sees done.
+		d.buf, d.prevBuf = nil, nil
+		d.bufFrom = d.pos
 		r.scond.Broadcast()
 		r.smu.Unlock()
 	}()
@@ -232,6 +251,11 @@ func (d *downloader) run(ctx context.Context) {
 
 		status, err := d.pump(ctx, start)
 		if ctx.Err() != nil {
+			return
+		}
+		var dead *DeadFileError
+		if errors.As(err, &dead) {
+			d.fail(err) // the service proved it gone: retrying can't help
 			return
 		}
 		if err == nil {
@@ -282,6 +306,7 @@ func (d *downloader) run(ctx context.Context) {
 func (d *downloader) fail(err error) {
 	d.r.smu.Lock()
 	d.err = err
+	d.r.failErr, d.r.failAt = err, time.Now()
 	d.r.smu.Unlock()
 }
 
@@ -383,8 +408,17 @@ func (d *downloader) pump(parent context.Context, start int64) (int, error) {
 		st.bytes.Add(int64(m))
 		r.smu.Lock()
 		if m > 0 {
+			if d.buf == nil {
+				// Sized once for the rest of this chunk: growing by 64 KB
+				// appends copied each chunk several times over (GC churn)
+				// and left the cached array up to a quarter larger than
+				// its bytes.
+				end := min(int64(d.chunk+1)*r.chunkSize, r.size)
+				d.buf = make([]byte, 0, max(end-d.bufFrom, int64(m)))
+			}
 			d.buf = append(d.buf, block[:m]...)
 			d.pos += int64(m)
+			r.failErr = nil
 			if d.pos == chunkEnd { // chunk complete: cache it (whole chunks only), move on
 				if d.bufFrom == int64(d.chunk)*r.chunkSize {
 					r.cache.Put(r.key(d.chunk), d.buf)
