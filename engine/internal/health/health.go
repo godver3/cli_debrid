@@ -93,12 +93,16 @@ func Check(ctx context.Context, c Stater, n *nzb.NZB, res *job.Result, opt Optio
 	}
 	// Segment id by (source, number); absent = not listed in the NZB.
 	ids := make([]map[int]string, len(res.Sources))
+	files, err := res.SourceFiles(n)
+	if err != nil {
+		return Report{}, fmt.Errorf("health: %w", err)
+	}
 	for i, s := range res.Sources {
-		if s.NZBIndex < 0 || s.NZBIndex >= len(n.Files) {
-			return Report{}, fmt.Errorf("health: source %q points at NZB file %d", s.Name, s.NZBIndex)
+		if files[i] == nil {
+			return Report{}, fmt.Errorf("health: source %q is not a usenet file", s.Name)
 		}
 		ids[i] = map[int]string{}
-		for _, seg := range n.Files[s.NZBIndex].Segments {
+		for _, seg := range files[i].Segments {
 			ids[i][seg.Number] = seg.ID
 		}
 	}

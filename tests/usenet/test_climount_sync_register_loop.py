@@ -253,3 +253,40 @@ def test_abandoned_item_is_not_relinked_via_cli_debrid_ids(sync_env):
     row = _row(get_conn, 1)
     assert row["filled_by_torrent_id"] is None
     assert row["filled_by_file"] is None
+
+
+def test_replaced_job_does_not_pull_item_back(sync_env):
+    """Found live 2026-11-21 (Dark Matter S02E10): a repair moved the item to
+    a new NZB job; the old job still listed the item in its cli_debrid_ids,
+    and when it changed (marked broken) the sync wrote the old job's id and
+    folder back onto the item."""
+    sync, mount, _ = sync_env
+    conn = sys.modules["database.core"].get_db_connection()
+    conn.execute(
+        "UPDATE media_items SET filled_by_torrent_id='nzb:newjob', debrid_folder_name='Show.S01E01.NEW', "
+        "original_scraped_torrent_title='Show.S01E01.1080p' WHERE id=1")
+    conn.commit()
+    conn.close()
+    entry = mount.entries[HASH]
+    entry["cli_debrid_ids"] = {"Show.S01E01.1080p.mkv": 1}   # left over from before the repair
+    entry["updated_at"] = time.time()
+
+    sync.sync_changes_from_climount(force_full=True)
+
+    row = _row(sys.modules["database.core"].get_db_connection, 1)
+    assert (row["filled_by_torrent_id"], row["debrid_folder_name"]) == ("nzb:newjob", "Show.S01E01.NEW")
+    assert mount.register_calls == 0
+
+
+def test_item_without_nzb_id_is_still_filled(sync_env):
+    sync, mount, _ = sync_env
+    conn = sys.modules["database.core"].get_db_connection()
+    conn.execute("UPDATE media_items SET filled_by_torrent_id=NULL WHERE id=1")
+    conn.commit()
+    conn.close()
+    mount.entries[HASH]["cli_debrid_ids"] = {"Show.S01E01.1080p.mkv": 1}
+
+    sync.sync_changes_from_climount(force_full=True)
+
+    row = _row(sys.modules["database.core"].get_db_connection, 1)
+    assert row["filled_by_torrent_id"] == f"nzb:{HASH}"

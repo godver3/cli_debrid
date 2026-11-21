@@ -27,8 +27,12 @@ import (
 
 // Source is one posted file the entries read from.
 type Source struct {
-	NZBIndex int           `json:"nzb_index"` // index into nzb.NZB.Files
-	Name     string        `json:"name"`      // best known name
+	NZBIndex int `json:"nzb_index"` // index into nzb.NZB.Files
+	// FirstSeg is the message-ID of the file's first article: SourceFiles
+	// finds the NZB file by it, so the file order can't mislead a reader.
+	// Empty on jobs imported before it existed.
+	FirstSeg string        `json:"first_seg,omitempty"`
+	Name     string        `json:"name"` // best known name
 	Layout   stream.Layout `json:"layout"`
 	// Map, when set, places the file's bytes in its articles directly
 	// (jobs migrated from cli_mount); Layout then only carries the size.
@@ -271,7 +275,7 @@ func Build(ctx context.Context, f stream.Fetcher, cache *stream.Cache, n *nzb.NZ
 		if i, ok := sourceOf[p.idx]; ok {
 			return i
 		}
-		res.Sources = append(res.Sources, Source{NZBIndex: p.idx, Name: p.name, Layout: p.layout})
+		res.Sources = append(res.Sources, Source{NZBIndex: p.idx, Name: p.name, Layout: p.layout, FirstSeg: firstSeg(p.file)})
 		sourceOf[p.idx] = len(res.Sources) - 1
 		return len(res.Sources) - 1
 	}
