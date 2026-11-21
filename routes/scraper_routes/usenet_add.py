@@ -701,8 +701,12 @@ def _add_nzb_to_usenet(nzb_url, title, year, media_type, season, episode, versio
                 pass
 
         def _place_nzb_in_adding(item_id_to_place):
-            """Put a freshly-created item into Adding state with NZB fields set for health-check polling."""
-            update_media_item_state(item_id_to_place, 'Adding')
+            """Put a freshly-created item into Adding state with NZB fields set for health-check polling.
+
+            Fields first, state last: the Adding queue can pick the row up the
+            moment it is Adding, and a row there without its NZB id looked like
+            a duplicate of the episode's old copy and was marked Collected with
+            no health check and no symlink (Dragon Ball Kai S02E03, 2026-11-21)."""
             _place_seg_kwargs = {'nzb_segment_id': _nzb_seg_id} if _nzb_seg_id else {}
             update_media_item(item_id_to_place,
                 filled_by_torrent_id=checking_id,
@@ -711,6 +715,7 @@ def _add_nzb_to_usenet(nzb_url, title, year, media_type, season, episode, versio
                 original_scraped_torrent_title=nzb_title,
                 **_place_seg_kwargs,
             )
+            update_media_item_state(item_id_to_place, 'Adding')
             _record_manual_grab(item_id_to_place, 'nzb', nzb_title)
             logging.info(f'[NZB] Item {item_id_to_place} placed in Adding queue for health check (checking_id={checking_id})')
 
