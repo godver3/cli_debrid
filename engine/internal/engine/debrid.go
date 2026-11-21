@@ -60,6 +60,7 @@ func (e *Engine) AddDebrid(id, name, category, provider string, files []DebridFi
 		e.Store.Delete(id)
 		return store.Job{}, err
 	}
+	e.log.Info("debrid job received", "job", id, "name", j.Name, "provider", provider, "files", len(files))
 	return j, nil
 }
 

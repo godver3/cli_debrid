@@ -404,6 +404,7 @@ func (e *Engine) Submit(data []byte, name, category, id string) (store.Job, erro
 	if err != nil {
 		return store.Job{}, err
 	}
+	e.log.Info("job received", "job", j.ID, "name", j.Name, "category", category, "files", len(parsed.Files), "queued", len(e.queue))
 	e.queue <- j.ID
 	return j, nil
 }
@@ -425,9 +426,12 @@ func (e *Engine) importJob(id string) {
 	if err != nil {
 		return // deleted while queued
 	}
-	if _, err := e.Store.Update(id, func(j *store.Job) { j.Status = store.Importing }); err != nil {
+	started, err := e.Store.Update(id, func(j *store.Job) { j.Status = store.Importing })
+	if err != nil {
 		return
 	}
+	e.log.Info("import started", "job", id, "name", started.Name, "attempt", started.Attempts+1,
+		"since_received", time.Since(started.CreatedAt).Round(time.Second))
 	start := time.Now()
 	fail := func(err error) {
 		// Only failures that prove nothing may be retried (dead-marking
