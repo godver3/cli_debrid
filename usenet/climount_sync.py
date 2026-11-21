@@ -87,30 +87,20 @@ def _iter_change_pages(since_ts: int, state: dict = None):
     state['complete'] = False
     try:
         from usenet.climount_client import get_climount_client
-        from routes.api_tracker import api
+        from usenet.base import supports, SYNC_FEED
         client = get_climount_client()
-        if not client or not client.is_enabled():
+        if not client or not client.is_enabled() or not supports(client, SYNC_FEED):
             state['complete'] = True
             return
-        url = f'{client.base_url}/api/sync/changes'
         page = 1
         while True:
-            params = {'page': page, 'limit': _SYNC_PAGE_SIZE}
-            if since_ts > 0:
-                params['since'] = since_ts
-            r = api.get(
-                url,
-                params=params,
-                headers=client._headers(),
-                timeout=60,
-            )
-            if r.status_code != 200:
+            status, payload = client.fetch_sync_changes_page(page, _SYNC_PAGE_SIZE, since_ts, timeout=60)
+            if status != 200:
                 logger.warning(
-                    f'[CMSync] /api/sync/changes page {page} returned HTTP {r.status_code}'
+                    f'[CMSync] /api/sync/changes page {page} returned HTTP {status}'
                 )
                 return
 
-            payload = r.json() or []
             if isinstance(payload, list):
                 # Legacy cli_mount: page/limit were ignored and this is the
                 # complete response. Do not request it repeatedly.

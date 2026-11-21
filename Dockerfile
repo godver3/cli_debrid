@@ -63,6 +63,21 @@ RUN --mount=type=cache,target=/root/.npm \
     fi
 
 # ---------------------------------------------------------------------------
+# Optional built-in mount engine (engine/, Go). Same Debian release as the
+# runtime image, so the CGO build (rapidyenc's SIMD yEnc decoder) links
+# against the same glibc/libstdc++. Only started when Usenet Provider =
+# builtin; containers without /dev/fuse run exactly as before.
+# ---------------------------------------------------------------------------
+FROM golang:1.26-trixie AS engine
+
+WORKDIR /src
+COPY engine/go.mod engine/go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+COPY engine/ ./
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o /out/clid-engine ./cmd/clid-engine
+
+# ---------------------------------------------------------------------------
 # Runtime image.
 # ---------------------------------------------------------------------------
 FROM python:3.11-slim
@@ -83,6 +98,8 @@ WORKDIR /app
 #
 # fonts-dejavu-core: last-resort system-font fallback for poster overlay text
 # (see overlays/font_manager.py's _LOCAL_FONT_MAP).
+#
+# fuse3 (fusermount3): the optional built-in mount engine.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         gosu ffmpeg psmisc procps \
@@ -90,7 +107,9 @@ RUN apt-get update && \
         libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 libxcomposite1 \
         libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2 libpango-1.0-0 \
         libcairo2 libatspi2.0-0 \
-        fonts-dejavu-core && \
+        fonts-dejavu-core \
+        fuse3 && \
+    (grep -q '^user_allow_other' /etc/fuse.conf || echo user_allow_other >> /etc/fuse.conf) && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -125,6 +144,7 @@ RUN mkdir -p /user/db_content /user/config /user/logs /etc/supervisor/conf.d && 
     sed -i 's/^clear/# clear/' /etc/profile
 
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+COPY --from=engine /out/clid-engine /app/bin/clid-engine
 COPY --from=nodebuild /build/node_modules /app/phalanx_db_hyperswarm/node_modules
 
 # App code last: this is the only layer a code-only change invalidates.

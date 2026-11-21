@@ -175,6 +175,20 @@ jobs:
           pip install -r requirements.txt
           pip install psutil
           
+      - name: Set up Go (built-in mount engine)
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: engine/go.mod
+          cache-dependency-path: engine/go.sum
+
+      - name: Build built-in mount engine
+        shell: cmd
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          cd engine
+          go build -trimpath -ldflags="-s -w" -o clid-engine.exe ./cmd/clid-engine
+
       - name: Build Windows executable
         shell: cmd
         run: |

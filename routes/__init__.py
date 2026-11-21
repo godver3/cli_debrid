@@ -27,6 +27,7 @@ from .video_routes import video_routes
 from routes.api_tracker import is_rate_limited, get_blocked_domains, APIRateLimiter, api  # Add this import at the top of the file
 from routes.extensions import app
 from .content_requestor_routes import content_requestor_bp
+from .mount_routes import mount_bp
 from .base_routes import base_bp  # Add this import
 from .library_management_routes import library_management
 from .library_routes import library_bp
@@ -45,9 +46,9 @@ from .bazarr_spoofing_routes import bazarr_bp
 from .overlay_routes import overlay_bp, overlay_page_bp
 from .debrid_manager_routes import debrid_manager_bp
 from .upgrade_hub_routes import upgrade_hub_bp
-# AI Assistant disabled: the AI Butler routes (/api/ai/*) are not registered.
-# from .ai_routes import ai_bp
+from .ai_routes import ai_bp
 from .tracker_account_routes import tracker_account_bp
+from .mcp_routes import mcp_bp
 from .oidc_routes import oidc_bp
 
 tooltip_bp = Blueprint('tooltip', __name__)
@@ -159,6 +160,7 @@ def register_blueprints(app):
         (over_usage_bp, '/over_usage'),
         (video_routes, '/video'),
         (content_requestor_bp, '/content'),
+        (mount_bp, '/mount'),
         (base_bp, '/base'),
         (root_bp, '/'),
         (library_management, '/library_management'),
@@ -179,9 +181,10 @@ def register_blueprints(app):
         (overlay_bp, ''),  # Mounted at root for /api/overlays/* paths (includes prefix in blueprint)
         (debrid_manager_bp, '/debrid_manager'),
         (upgrade_hub_bp, '/upgrade_hub'),
-        # (ai_bp, ''),  # /api/ai/* routes (AI Assistant disabled)
+        (ai_bp, ''),  # /api/ai/* routes
         (oidc_bp, '/auth/oidc'),  # OIDC SSO routes
         (tracker_account_bp, '/tracking'),  # Simkl sign-in, Floppy test
+        (mcp_bp, '/mcp'),  # read-only MCP endpoint (own token) + setup page
     ]
     
     for blueprint, url_prefix in blueprints:

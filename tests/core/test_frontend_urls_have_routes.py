@@ -24,17 +24,12 @@ _CALL = re.compile(
     r"""(['"`])(/[^'"`]*)\1(\s*\+)?""")
 
 
-# Files of features that are switched off and never loaded: their routes are not
-# registered on purpose (the AI Assistant is commented out in routes/__init__.py).
-_DISABLED_FEATURE_FILES = {'ai_butler.js', 'ai_butler.html'}
-
-
 def _frontend_urls():
     found = []
     for folder, exts in (('static/js', ('.js',)), ('templates', ('.html',))):
         for root, _dirs, files in os.walk(os.path.join(ROOT, folder)):
             for name in files:
-                if not name.endswith(exts) or name in _DISABLED_FEATURE_FILES:
+                if not name.endswith(exts):
                     continue
                 path = os.path.join(root, name)
                 with open(path, encoding='utf-8') as f:

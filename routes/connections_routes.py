@@ -586,9 +586,9 @@ def check_climount_connection():
     Uses the provider factory so NzbDAV is checked (and its ensure_categories()
     side-effect runs) when NzbDAV is the active provider.
     """
-    enabled = get_setting('Usenet Provider', 'enabled', default=False)
+    from usenet import usenet_configured
     url = get_setting('Usenet Provider', 'url', '').strip().rstrip('/')
-    if not enabled or not url:
+    if not usenet_configured(get_setting):
         return None
     try:
         from usenet import get_usenet_client, get_usenet_provider_display_name
@@ -1454,6 +1454,8 @@ def api_check_system():
     results.setdefault('climount_status', None)
     results.setdefault('scrob_status', None)
     results.setdefault('trakt_status', None)
+    from utilities import connection_health
+    connection_health.record('system', results)
     return jsonify(results)
 
 
@@ -1474,6 +1476,8 @@ def api_check_scrapers():
                     log.error(f"Scraper check error: {exc}")
         except TimeoutError:
             pass
+    from utilities import connection_health
+    connection_health.record('scrapers', results['scraper_statuses'])
     return jsonify(results)
 
 
@@ -1484,10 +1488,21 @@ def api_check_content_sources():
     from flask import jsonify
     try:
         statuses = check_content_sources_connections()
+        from utilities import connection_health
+        connection_health.record('content_sources', statuses)
     except Exception as exc:
         log.error(f"Content sources check error: {exc}")
         statuses = []
     return jsonify({'content_source_statuses': statuses})
+
+
+@connections_bp.route('/api/health')
+@user_required
+def api_health():
+    """Cached connection summary for the home page's Connections tile."""
+    from flask import jsonify
+    from utilities import connection_health
+    return jsonify(connection_health.summary())
 
 
 @connections_bp.route('/api/stream/scrapers')
@@ -1509,7 +1524,10 @@ def api_stream_scrapers():
         except Exception:
             all_scrapers = []
 
+        from utilities import connection_health
+        seen = []
         if not all_scrapers:
+            connection_health.record('scrapers', seen)
             yield "event: done\ndata: {}\n\n"
             return
 
@@ -1523,14 +1541,17 @@ def api_stream_scrapers():
                     try:
                         result = future.result()
                         if result:
+                            seen.append(result)
                             yield f"event: scraper\ndata: {json.dumps(result)}\n\n"
                     except Exception as exc:
                         sid, cfg = future_to_scraper[future]
                         scraper_type = cfg.get('type', sid)
                         name = f"{scraper_type} ({sid})"
+                        seen.append({'name': name, 'connected': False, 'error': str(exc)})
                         yield f"event: scraper\ndata: {json.dumps({'name': name, 'connected': False, 'error': str(exc)})}\n\n"
             except TimeoutError:
                 pass
+        connection_health.record('scrapers', seen)
         yield "event: done\ndata: {}\n\n"
 
     return Response(generate(), mimetype='text/event-stream',
@@ -1556,7 +1577,10 @@ def api_stream_content_sources():
         except Exception:
             pass
 
+        from utilities import connection_health
+        seen = []
         if not all_sources:
+            connection_health.record('content_sources', seen)
             yield "event: done\ndata: {}\n\n"
             return
 
@@ -1570,14 +1594,17 @@ def api_stream_content_sources():
                     try:
                         result = future.result()
                         if result:
+                            seen.append(result)
                             yield f"event: source\ndata: {json.dumps(result)}\n\n"
                     except Exception as exc:
                         sid, cfg = future_to_source[future]
                         display_name = cfg.get('display_name')
                         name = f"{display_name} ({sid})" if display_name else sid
+                        seen.append({'name': name, 'connected': False, 'error': str(exc)})
                         yield f"event: source\ndata: {json.dumps({'name': name, 'connected': False, 'error': str(exc), 'details': {}})}\n\n"
             except TimeoutError:
                 pass
+        connection_health.record('content_sources', seen)
         yield "event: done\ndata: {}\n\n"
 
     return Response(generate(), mimetype='text/event-stream',

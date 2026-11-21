@@ -50,8 +50,8 @@ def _load_fix_match_module():
     Route decorators are dropped (ast puts them outside the node's source
     segment), so the view functions are plain callables here.
     """
-    with open(LIBRARY_ROUTES_PATH, encoding='utf-8') as handle:
-        source = handle.read()
+    from tests._source import project_source
+    source = project_source('routes/library_routes.py')
     tree = ast.parse(source, filename=LIBRARY_ROUTES_PATH)
 
     segments = {}

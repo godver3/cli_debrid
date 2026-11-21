@@ -573,6 +573,19 @@ def _execute_start_program(skip_connectivity_check: bool = False, is_restart: bo
             logging.warning(f"[_execute_start_program] Attempt to start while program is stopping (runner ID: {id(runner_instance)}).")
             return {"status": "error", "message": "Program is currently stopping. Cannot start at this moment."}
 
+        # The built-in mount loads its jobs before mounting (about a minute
+        # after a container start); wait for it so the original files path
+        # check below doesn't fail and pause the queue.
+        try:
+            from utilities import builtin_engine
+            if builtin_engine.wanted(None) and not builtin_engine.fuse_mounted(
+                    builtin_engine.mount_path(get_setting('Built-in Mount') or {})):
+                logging.info("[_execute_start_program] Waiting for the built-in mount to come up...")
+                mounted = builtin_engine.wait_until_mounted()
+                logging.info(f"[_execute_start_program] Built-in mount {'is up' if mounted else 'still not mounted after waiting'}.")
+        except Exception as exc:
+            logging.warning(f"[_execute_start_program] Built-in mount wait skipped: {exc}")
+
         # Service connectivity check (optional)
         if not skip_connectivity_check:
             check_result, failed_services_info = check_service_connectivity()
@@ -703,15 +716,14 @@ def start_program():
         # but for start_program, most errors imply a server-side issue or conflict.
 
     logging.info(f"--- /api/start_program HTTP endpoint returning jsonify(result) with status {http_status_code} ---")
-    # AI Assistant disabled: habit tracking (utilities/ai_habits.py) is off.
-    # if result.get('status') != 'error':
-        # try:
-        #     from flask_login import current_user as _cu
-        #     from utilities.ai_habits import track_action
-        #     _uid = _cu.username if _cu.is_authenticated else 'system'
-        #     track_action('program_start' if not is_restart else 'program_restart', user_id=_uid)
-        # except Exception:
-        #     pass
+    if result.get('status') != 'error':
+        try:
+            from flask_login import current_user as _cu
+            from utilities.ai_habits import track_action
+            _uid = _cu.username if _cu.is_authenticated else 'system'
+            track_action('program_start' if not is_restart else 'program_restart', user_id=_uid)
+        except Exception:
+            pass
     return jsonify(result), http_status_code
 
 def stop_program():
@@ -805,15 +817,14 @@ def stop_program_route():
         # Other errors could be 500 if critical, but stop tends to succeed or be a conflict.
     
     logging.info(f"--- /api/stop_program HTTP endpoint returning: {result} with status {http_status_code} ---")
-    # AI Assistant disabled: habit tracking (utilities/ai_habits.py) is off.
-    # if result.get('status') != 'error':
-        # try:
-        #     from flask_login import current_user as _cu
-        #     from utilities.ai_habits import track_action
-        #     _uid = _cu.username if _cu.is_authenticated else 'system'
-        #     track_action('program_stop', user_id=_uid)
-        # except Exception:
-        #     pass
+    if result.get('status') != 'error':
+        try:
+            from flask_login import current_user as _cu
+            from utilities.ai_habits import track_action
+            _uid = _cu.username if _cu.is_authenticated else 'system'
+            track_action('program_stop', user_id=_uid)
+        except Exception:
+            pass
     return jsonify(result), http_status_code
 
 @program_operation_bp.route('/api/update_program_state', methods=['POST'])
@@ -877,7 +888,8 @@ def check_program_conditions():
 
     # Require at least one of: Debrid Provider OR Usenet Provider (cli_mount)
     debrid_ok = bool(get_setting('Debrid Provider', 'provider') and get_setting('Debrid Provider', 'api_key'))
-    usenet_ok = bool(get_setting('Usenet Provider', 'enabled') and get_setting('Usenet Provider', 'url'))
+    from usenet import usenet_configured
+    usenet_ok = usenet_configured(get_setting)
     if not debrid_ok and not usenet_ok:
         missing_fields.append("Debrid Provider or Usenet Provider")
 

@@ -96,6 +96,26 @@ def _other_season_episodes_pending(item: Dict[str, Any]) -> bool:
         return True
 
 
+def _aired_target(item, season, episode, item_identifier=''):
+    """Aired (season, episode) for an item of a show set to a non-default
+    episode order, else None. scraper.scrape searches such shows by the aired
+    numbering, so releases come back named that way and have to be matched
+    against it (Dragon Ball Kai S5E1 = aired S2E1). Absolute numbers stay
+    the show's own."""
+    if season is None or episode is None:
+        return None
+    try:
+        from scraper.functions.episode_order_mapping import order_mapping
+        mapping = order_mapping(item.get('imdb_id'))
+        aired = mapping.aired_of(season, episode) if mapping else None
+    except Exception as exc:
+        logging.debug(f"Episode order lookup failed for {item_identifier}: {exc}")
+        return None
+    if aired:
+        logging.info(f"Episode order: matching {item_identifier} (S{season}E{episode}) against aired S{aired[0]}E{aired[1]}")
+    return aired
+
+
 class ScrapingQueue:
     # How long an item waits after being deferred for a sibling in Adding
     DEFER_SECONDS = 60
@@ -1567,6 +1587,8 @@ class ScrapingQueue:
         # For episodes, filter by exact season/episode match, considering XEM mapping
         if item['type'] == 'episode' and not is_multi_pack:
             # Filter results based on scene mapping if available, otherwise original item S/E
+            # (or its aired S/E for a show set to a non-default episode order)
+            first_order_aired = _aired_target(item, original_season, original_episode, item_identifier)
             filtered_results_using_mapping = []
             for r in results:
                 if r.get('movie_episode'):
@@ -1588,6 +1610,8 @@ class ScrapingQueue:
                     target_season = scene_mapping.get('season')
                     target_episode = scene_mapping.get('episode')
                     # logging.debug(f"Using scene mapping S{target_season}E{target_episode} for result: {r.get('original_title')}")
+                elif first_order_aired: # Non-default episode order: releases use the aired numbers
+                    target_season, target_episode = first_order_aired
                 else: # Fallback to original item numbers if no mapping attached
                     target_season = original_season
                     target_episode = original_episode
@@ -1654,6 +1678,9 @@ class ScrapingQueue:
                             # Use XEM-mapped S/E if available, otherwise use original item S/E
                             base_season = target_season  # This is already XEM-mapped if scene_mapping exists
                             base_episode = target_episode  # This is already XEM-mapped if scene_mapping exists
+                            if first_order_aired and not scene_mapping:
+                                # The absolute number is the show's own, not the aired one's
+                                base_season, base_episode = original_season, original_episode
 
                             target_absolute_episode = absolute_episode_for(
                                 base_season, base_episode, season_episode_counts,
@@ -1800,6 +1827,8 @@ class ScrapingQueue:
         season = original_season # Ensure we use the original item season number here
         episode = original_episode # Ensure we use the original item episode number here
         
+        order_aired = _aired_target(item, season, episode, item_identifier)
+
         if season is not None and episode is not None:
             date_based_results = []
             regular_results = []
@@ -1838,6 +1867,9 @@ class ScrapingQueue:
                     target_season = scene_mapping.get('season')
                     target_episode = scene_mapping.get('episode')
                     logging.debug(f"{log_prefix} Using XEM S{target_season}E{target_episode}. PTT S{parsed_seasons}E{parsed_episodes}.")
+                elif order_aired: # Non-default episode order: releases use the aired numbers
+                    target_season, target_episode = order_aired
+                    logging.debug(f"{log_prefix} Using aired S{target_season}E{target_episode} (item S{season}E{episode}). PTT S{parsed_seasons}E{parsed_episodes}.")
                 else: # Fallback to original item numbers
                     target_season = season # Uses the original item season from above
                     target_episode = episode # Uses the original item episode from above
@@ -1905,6 +1937,9 @@ class ScrapingQueue:
                                 # Use XEM-mapped S/E if available, otherwise use original item S/E
                                 base_season = target_season  # This is already XEM-mapped if scene_mapping exists
                                 base_episode = target_episode  # This is already XEM-mapped if scene_mapping exists
+                                if order_aired and not scene_mapping:
+                                    # The absolute number is the show's own, not the aired one's
+                                    base_season, base_episode = season, episode
 
                                 target_absolute_episode = absolute_episode_for(
                                     base_season, base_episode, season_episode_counts,

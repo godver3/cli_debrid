@@ -277,13 +277,58 @@ def validate_trakt_credentials(client_id, client_secret):
         else:
             return False, f"Error validating Trakt credentials: {error_msg} - Please ensure your Client ID and Secret are correct"
 
-USENET_BACKEND_NAMES = {'climount': 'cli_mount', 'nzbdav': 'NzbDAV', 'zurg': 'Zurg'}
+USENET_BACKEND_NAMES = {'climount': 'cli_mount', 'nzbdav': 'NzbDAV', 'zurg': 'Zurg', 'builtin': 'Built-in mount'}
 
 
-def validate_usenet_provider(backend, url, token=''):
+def validate_usenet_provider(backend, url, token='', wait=15):
     """Check that the chosen usenet backend answers at url, and that the token works."""
     backend = (backend or 'climount').strip().lower()
     name = USENET_BACKEND_NAMES.get(backend, 'Usenet provider')
+    if backend == 'builtin':
+        # Runs inside this container; no URL. Report why it can't run, or
+        # whether its API answers.
+        from utilities import builtin_engine
+        issues = builtin_engine.problems()
+        if issues:
+            return False, "Built-in mount can't run: " + '; '.join(issues)
+        from usenet.builtin_client import BuiltinClient
+        import time
+        client = BuiltinClient()
+        # Just (re)started (e.g. onboarding saved a server): give it a moment.
+        deadline = time.monotonic() + (wait if builtin_engine.state() in ('STARTING', 'RUNNING') else 0)
+        while True:
+            ok, err = client.check_connectivity()
+            if ok or time.monotonic() >= deadline:
+                break
+            time.sleep(0.5)
+        if not ok:
+            return False, f"Built-in mount engine: {err}"
+        # The engine opens a few connections per server at start (min_idle;
+        # backups open none): a server with nothing open and an error has bad
+        # details (login, host, port, SSL). Wait for each warmed server's first
+        # answer before judging.
+        try:
+            import json as _json
+            with open(builtin_engine.config_path()) as f:
+                warmed = {p.get('name') for p in _json.load(f).get('providers') or [] if p.get('min_idle')}
+        except Exception:
+            warmed = set()
+        while True:
+            code, body = client._call('GET', '/status', timeout=10)
+            pools = ((body or {}).get('providers') or []) if code == 200 else []
+            # "open" includes connections still dialing; a server that has no
+            # idle connection, fetched nothing and reported no error hasn't
+            # answered yet.
+            pending = [p for p in pools if p.get('name') in warmed and not p.get('idle') and not p.get('articles')
+                       and not (p.get('errors') or p.get('last_error'))]
+            if not pending or time.monotonic() >= deadline:
+                break
+            time.sleep(0.5)
+        bad = [p for p in pools if not p.get('open') and (p.get('errors') or p.get('last_error'))]
+        if bad:
+            return False, 'Built-in mount is running, but it can\'t connect to ' + '; '.join(
+                f"{p.get('name')}: {p.get('last_error') or 'connection failed'}" for p in bad)
+        return True, "Built-in mount engine is running"
     url = (url or '').strip().rstrip('/')
     if not url:
         return False, f"{name} URL is required"

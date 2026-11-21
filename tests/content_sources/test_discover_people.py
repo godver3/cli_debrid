@@ -3,6 +3,7 @@ import os
 import sys
 import unittest
 from unittest import mock
+from tests._patching import patch_in_package
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -48,8 +49,8 @@ class DiscoverPeopleRoutesTests(unittest.TestCase):
         }
         for patch in [
             mock.patch.object(models, 'is_user_system_enabled', return_value=False),
-            mock.patch.object(dr, 'get_setting', side_effect=self._setting),
-            mock.patch.object(dr, 'add_db_status_and_episode_info',
+            patch_in_package(dr, 'get_setting', side_effect=self._setting),
+            patch_in_package(dr, 'add_db_status_and_episode_info',
                               side_effect=lambda results, use_battery=False: None),
         ]:
             patch.start()
@@ -62,7 +63,7 @@ class DiscoverPeopleRoutesTests(unittest.TestCase):
         return block.get(key, default)
 
     def test_people_search_returns_matches(self):
-        with mock.patch.object(self.dr, 'get_tmdb_json', return_value={
+        with patch_in_package(self.dr, 'get_tmdb_json', return_value={
             'results': [{'id': 31, 'name': 'Tom Hanks', 'known_for_department': 'Acting',
                          'known_for': [{'title': 'Forrest Gump'}]}],
         }) as tmdb:
@@ -71,14 +72,14 @@ class DiscoverPeopleRoutesTests(unittest.TestCase):
         self.assertIn('search/person', tmdb.call_args[0][0])
 
     def test_person_filmography(self):
-        with mock.patch.object(self.dr, 'get_tmdb_json', return_value=PERSON):
+        with patch_in_package(self.dr, 'get_tmdb_json', return_value=PERSON):
             data = self.client.get('/discover/api/person/525?role=directing').get_json()
         self.assertEqual(data['person']['name'], 'Christopher Nolan')
         self.assertEqual(data['results'][0]['title'], 'Inception')
         self.assertEqual(data['counts']['directing'], 1)
 
     def test_request_batch_adds_wanted_items(self):
-        with mock.patch.object(self.dr, '_request_filmography_item',
+        with patch_in_package(self.dr, '_request_filmography_item',
                                return_value={'id': '27205', 'title': 'Inception', 'ok': True, 'items_added': 1}):
             data = self.client.post('/discover/api/request-batch', json={
                 'versions': ['1080p'],
@@ -95,7 +96,7 @@ class DiscoverPeopleRoutesTests(unittest.TestCase):
 
     def test_plex_collection_uses_filmography(self):
         created = {'collections': [{'name': 'Christopher Nolan', 'added': 1, 'missing': 0}]}
-        with mock.patch.object(self.dr, 'get_tmdb_json', return_value=PERSON), \
+        with patch_in_package(self.dr, 'get_tmdb_json', return_value=PERSON), \
              mock.patch('database.plex_collections.create_named_collections_from_tmdb', return_value=created) as create:
             data = self.client.post('/discover/api/person/525/plex-collection', json={'role': 'directing'}).get_json()
         self.assertTrue(data['success'])
@@ -107,7 +108,7 @@ class DiscoverPeopleRoutesTests(unittest.TestCase):
     def test_plex_collection_remembers_the_person_for_later_fills(self):
         created = {'collections': [{'name': 'Tom Hanks', 'added': 0, 'missing': 1}]}
         person = dict(PERSON, id=31, name='Tom Hanks')
-        with mock.patch.object(self.dr, 'get_tmdb_json', return_value=person), \
+        with patch_in_package(self.dr, 'get_tmdb_json', return_value=person), \
              mock.patch('database.plex_collections.create_named_collections_from_tmdb', return_value=created), \
              mock.patch('database.plex_collections.remember_person_collection') as remember:
             data = self.client.post('/discover/api/person/31/plex-collection', json={'role': 'acting'}).get_json()

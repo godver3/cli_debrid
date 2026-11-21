@@ -10,6 +10,7 @@ wrapper's behaviour, not provider I/O.
 """
 
 import unittest
+from unittest import mock
 import sys
 import os
 import types
@@ -201,25 +202,16 @@ class TestResolveStatsMode(unittest.TestCase):
 
 class TestBrokenSplit(unittest.TestCase):
     def _split(self, total, status=200, entries=None, exc=None):
-        class _Resp:
-            status_code = status
-            def json(self):
-                return entries
-        def _get(*a, **k):
-            if exc:
-                raise exc
-            return _Resp()
-        requests_stub = types.ModuleType('requests')
-        requests_stub.get = _get
-        orig = sys.modules.get('requests')
-        sys.modules['requests'] = requests_stub
-        try:
+        # The broken list comes from the usenet client's list_repair_health
+        # (None when the call fails).
+        class _Client:
+            def list_repair_health(self, timeout=60, status=''):
+                if exc:
+                    raise exc
+                return entries if status_code == 200 else None
+        status_code = status
+        with mock.patch('usenet.get_usenet_client', return_value=_Client()):
             return st._fetch_climount_broken_split(total)
-        finally:
-            if orig is not None:
-                sys.modules['requests'] = orig
-            else:
-                sys.modules.pop('requests', None)
 
     def test_splits_by_protocol(self):
         entries = [{'protocol': 'torrent'}] * 5 + [{'protocol': 'nzb'}] * 2 + [{}]

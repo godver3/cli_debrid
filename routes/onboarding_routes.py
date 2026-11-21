@@ -7,6 +7,7 @@ from queues.config_manager import add_scraper, add_content_source, load_config
 import logging
 import os
 import platform
+import time
 from routes.trakt_routes import check_trakt_auth_status
 import json
 import requests
@@ -15,7 +16,7 @@ from .models import admin_required
 
 onboarding_bp = Blueprint('onboarding', __name__)
 
-USENET_BACKENDS = ('climount', 'nzbdav', 'zurg')
+USENET_BACKENDS = ('climount', 'nzbdav', 'zurg', 'builtin')
 # New configs get this placeholder debrid key; it doesn't mean debrid is set up.
 DEBRID_PLACEHOLDER_KEY = 'demo_key'
 
@@ -27,7 +28,8 @@ def _debrid_configured():
     return bool(get_setting('Debrid Provider', 'provider') and _real_debrid_key(load_config()))
 
 def _usenet_configured():
-    return bool(get_setting('Usenet Provider', 'enabled') and get_setting('Usenet Provider', 'url'))
+    from usenet import usenet_configured
+    return usenet_configured(get_setting)
 
 def _media_provider_configured():
     """Return True if either a debrid provider or usenet provider is configured."""
@@ -115,11 +117,39 @@ def _save_required_settings(form):
     usenet = config.setdefault('Usenet Provider', {})
     usenet['enabled'] = use_usenet
     if use_usenet:
-        backend = form.get('usenet_backend', 'climount').strip().lower()
-        usenet['provider'] = backend if backend in USENET_BACKENDS else 'climount'
+        backend = form.get('usenet_backend', 'builtin').strip().lower()
+        usenet['provider'] = backend if backend in USENET_BACKENDS else 'builtin'
         usenet['url'] = form.get('usenet_url', '').strip().rstrip('/')
         usenet['api_token'] = form.get('usenet_api_token', '').strip()
+        if usenet['provider'] == 'builtin':
+            # The engine runs in this container: no URL/token. Its files show
+            # under <mount_path>/__all__, which is the original-files path.
+            usenet['url'] = ''
+            usenet['api_token'] = ''
+            from utilities.builtin_engine import all_path as _builtin_all
+            all_path = _builtin_all(config.get('Built-in Mount', {}) or {})
+            fm = config.setdefault('File Management', {})
+            if not (fm.get('original_files_path') or '').strip():
+                fm['original_files_path'] = all_path
+                config.setdefault('Plex', {})['mounted_file_location'] = all_path
+            _save_builtin_server(config, form)
 
+    # The mount tool picked in step 2. Built-in turns the engine on even
+    # for debrid alone; any other tool turns that off again (usenet =
+    # builtin still runs it).
+    mount_tool = (form.get('mount_tool') or '').strip().lower()
+    if mount_tool:
+        bm = config.setdefault('Built-in Mount', {})
+        bm['enabled'] = mount_tool == 'builtin'
+        if mount_tool == 'builtin':
+            from utilities.builtin_engine import all_path as _builtin_all
+            all_path = _builtin_all(bm)
+            fm = config.setdefault('File Management', {})
+            if not (fm.get('original_files_path') or '').strip():
+                fm['original_files_path'] = all_path
+                config.setdefault('Plex', {})['mounted_file_location'] = all_path
+    builtin_selected = (use_usenet and usenet.get('provider') == 'builtin') \
+        or bool((config.get('Built-in Mount') or {}).get('enabled'))
     for section, field in (('TVDB', 'tvdb_api_key'), ('TMDB', 'tmdb_api_key')):
         if field in form:
             config.setdefault(section, {})['api_key'] = form.get(field, '').strip()
@@ -140,6 +170,65 @@ def _save_required_settings(form):
             reset_usenet_client()
         except Exception as e:
             logging.debug(f"Could not reset usenet client after onboarding save: {e}")
+    if builtin_selected or mount_tool:
+        # Start (or restart, or stop) the engine with what was just saved,
+        # before the page validates, so the check sees the new server.
+        try:
+            from utilities import builtin_engine
+            logging.info(f"Built-in mount after onboarding save: {builtin_engine.sync()}")
+        except Exception as e:
+            logging.debug(f"Could not start the built-in mount after onboarding save: {e}")
+
+
+def _builtin_first_server(config):
+    """The first built-in mount server for step 2's fields (no password)."""
+    from routes.mount_routes import _servers
+    rows = [r for r in _servers((config.get('Built-in Mount') or {}).get('servers')) if isinstance(r, dict)]
+    first = rows[0] if rows else {}
+    return {'host': first.get('host', ''), 'port': first.get('port') or 563,
+            'connections': first.get('connections') or 20, 'ssl': bool(first.get('ssl', True)),
+            'username': first.get('username', ''), 'password_set': bool(first.get('password'))}
+
+
+def _builtin_host_problems():
+    try:
+        from utilities.builtin_engine import host_problems
+        return host_problems()
+    except Exception as e:
+        return [str(e)]
+
+
+def _builtin_all_path(config):
+    from utilities.builtin_engine import all_path
+    return all_path(config.get('Built-in Mount') or {})
+
+
+def _save_builtin_server(config, form):
+    """Step 2's server fields become (or replace) the first server in the
+    Mount page's list; other servers are kept. An empty password keeps the
+    saved one. Raises ValueError on bad input."""
+    from routes.mount_routes import _merge_servers, _servers
+    host = form.get('bm_host', '').strip()
+    if not host:
+        return
+    bm = config.setdefault('Built-in Mount', {})
+    old = [r for r in _servers(bm.get('servers')) if isinstance(r, dict)]
+    try:
+        port = int(form.get('bm_port') or 563)
+        conns = int(form.get('bm_connections') or 20)
+    except ValueError:
+        raise ValueError('Usenet server port and connections must be numbers')
+    first = {'host': host, 'port': port, 'ssl': form.get('bm_ssl') in ('on', 'true', '1', True),
+             'username': form.get('bm_username', '').strip(), 'password': form.get('bm_password', ''),
+             'connections': conns, 'backup': bool(old[0].get('backup')) if old else False}
+    # Fields step 2 doesn't show stay as the Mount page set them (backbone,
+    # plan end, auto-renew) while it is still the same server.
+    if old and str(old[0].get('host') or '').strip().lower() == host.lower():
+        for k in ('backbone', 'expires', 'auto_renew'):
+            if k in old[0]:
+                first[k] = old[0][k]
+    bm['servers'] = json.dumps(_merge_servers([first] + old[1:], old))
+
 
 def get_next_onboarding_step():
     """The first onboarding step that still needs doing, so a returning user resumes there."""
@@ -256,7 +345,7 @@ def onboarding_step(step):
         trakt_status = json.loads(check_trakt_auth_status().get_data(as_text=True))
         allow_windows_symlinks_value = config.get('Debug', {}).get('use_symlinks_on_windows', False)
         usenet = config.get('Usenet Provider', {})
-        usenet_backend = (usenet.get('provider') or 'climount').strip().lower()
+        usenet_backend = (usenet.get('provider') or 'builtin').strip().lower()
 
         return render_template('onboarding_step_2.html', 
                                current_step=step_num, 
@@ -269,7 +358,11 @@ def onboarding_step(step):
                                use_debrid=bool(_real_debrid_key(config)),
                                debrid_api_key=_real_debrid_key(config),
                                use_usenet=bool(usenet.get('enabled')),
-                               usenet_backend=usenet_backend if usenet_backend in USENET_BACKENDS else 'climount')
+                               usenet_backend=usenet_backend if usenet_backend in USENET_BACKENDS else 'builtin',
+                               builtin_server=_builtin_first_server(config),
+                               builtin_all_path=_builtin_all_path(config),
+                               builtin_enabled=bool((config.get('Built-in Mount') or {}).get('enabled')),
+                               builtin_host_problems=_builtin_host_problems())
 
     elif step_num == 3:
         config = load_config()
@@ -605,10 +698,10 @@ def _onboarding_summary(config):
     providers = []
     if _real_debrid_key(config):
         providers.append(debrid.get('provider', 'RealDebrid'))
-    if usenet.get('enabled') and usenet.get('url'):
-        backend = (usenet.get('provider') or 'climount').lower()
-        providers.append({'climount': 'cli_mount', 'nzbdav': 'NzbDAV', 'zurg': 'Zurg'}.get(backend, backend)
-                         + ' (usenet)')
+    backend = (usenet.get('provider') or 'climount').lower()
+    if usenet.get('enabled') and (usenet.get('url') or backend == 'builtin'):
+        providers.append({'climount': 'cli_mount', 'nzbdav': 'NzbDAV', 'zurg': 'Zurg',
+                          'builtin': 'Built-in mount'}.get(backend, backend) + ' (usenet)')
     if mode == 'Symlinked/Local':
         if config.get('Debug', {}).get('emby_jellyfin_url'):
             media_server = 'Jellyfin / Emby'
@@ -681,8 +774,8 @@ def onboarding_health():
     if _real_debrid_key(config):
         add(f"Debrid ({debrid.get('provider', 'RealDebrid')})",
             *validate_debrid_api_key(_real_debrid_key(config), debrid.get('provider', 'RealDebrid')))
-    if usenet.get('enabled') and usenet.get('url'):
-        add('Usenet mount', *validate_usenet_provider(usenet.get('provider'), usenet['url'],
+    if usenet.get('enabled') and (usenet.get('url') or (usenet.get('provider') or '').lower() == 'builtin'):
+        add('Usenet mount', *validate_usenet_provider(usenet.get('provider'), usenet.get('url', ''),
                                                          usenet.get('api_token', '')))
     if not checks:
         add('Provider', False, 'No debrid or usenet provider is set up (step 2)')
@@ -694,6 +787,38 @@ def onboarding_health():
         add('Mount', ok, message, warning)
     else:
         add('Mount', False, 'No mount path set. cli_debrid can\'t see your files without one (step 2)', True)
+
+    # Built-in mount without usenet (debrid only): its own row, since the
+    # usenet row above doesn't cover it.
+    try:
+        from utilities import builtin_engine
+        builtin_on = builtin_engine.selected(config)
+        if builtin_on and not builtin_engine.usenet_selected(config):
+            issues = builtin_engine.problems(config)
+            state = builtin_engine.state()
+            for _ in range(20):  # just saved in step 2: give it a moment to start
+                if issues or state not in ('STARTING', 'BACKOFF', 'UNKNOWN'):
+                    break
+                time.sleep(0.5)
+                state = builtin_engine.state()
+            add('Built-in mount', not issues and state == 'RUNNING',
+                '; '.join(issues) if issues else ('Running' if state == 'RUNNING' else f'Engine is {state.lower()}'))
+    except Exception as e:
+        builtin_on = False
+        logging.debug(f'Built-in mount check failed: {e}')
+
+    # Host paths: mapped to the host, and seen by the media server at the
+    # same path (utilities/path_checks.py).
+    try:
+        from utilities import path_checks
+        bm_path = None
+        if builtin_on:
+            from utilities.builtin_engine import mount_path as _bm_path
+            bm_path = _bm_path(config.get('Built-in Mount') or {})
+        for name, (ok, message, warning) in path_checks.onboarding_checks(config, bm_path):
+            add(name, ok, message, warning)
+    except Exception as e:
+        logging.warning(f'Host path checks failed: {e}')
 
     if file_management.get('file_collection_management') == 'Symlinked/Local':
         symlink_path = file_management.get('symlinked_files_path', '')

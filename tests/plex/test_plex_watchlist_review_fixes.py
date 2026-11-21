@@ -497,7 +497,7 @@ class TestLabelSyncIsReadOnly(unittest.TestCase):
 
 class TestDebugDispatcherMatchesScheduledRun(unittest.TestCase):
     def _run(self, source, fetched_items):
-        import routes.debug_routes as dbg
+        import routes.debug_routes.wanted_content as dbg
         seen = {}
 
         def fake_metadata(items):
@@ -540,7 +540,7 @@ class TestDebugDispatcherMatchesScheduledRun(unittest.TestCase):
         if _delegated_to_clean_interpreter(self):
             return
         source = {'versions': ['1080p'], 'media_type': 'All', 'cutoff_date': '2000-01-01', 'enabled': True}
-        import routes.debug_routes as dbg
+        import routes.debug_routes.wanted_content as dbg
 
         def fake_metadata(items):
             return {'movies': [{'imdb_id': 'tt1', 'media_type': 'movie', 'release_date': 'unknown'},
@@ -741,7 +741,7 @@ class TestPipelineSummaryIsLogged(unittest.TestCase):
     def test_debug_dispatcher_logs_a_plex_run_summary_naming_filtered_items(self):
         if _delegated_to_clean_interpreter(self):
             return
-        import routes.debug_routes as dbg
+        import routes.debug_routes.wanted_content as dbg
         source = {'versions': ['1080p'], 'media_type': 'All', 'cutoff_date': '2000-01-01', 'enabled': True}
 
         def fake_metadata(items):

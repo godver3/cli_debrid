@@ -21,6 +21,7 @@ import plexapi
 from utilities.plex_functions import remove_file_from_plex
 from utilities.plex_functions import claim_plex_mode_scan, plex_mode_scan_due, PLEX_MODE_SCAN_COOLDOWN
 from utilities import plex_health
+from utilities.paths import media_file_at
 from database.symlink_verification import update_removal_status
 
 
@@ -38,6 +39,41 @@ def _category_folder_paths(base_path, folder_names, filename):
             if job_dir and os.path.dirname(job_dir) != os.path.normpath(base_path):
                 found.append((candidate, os.path.join(job_dir, filename)))
     return found
+
+
+_TYPED_FOLDER_HINTS = {
+    'episode': ('shows', 'tv shows', 'tv', 'series'),
+    'movie': ('movies', 'films', 'movie'),
+}
+_MOUNT_SYSTEM_FOLDERS = {'__all__', '__bad__', 'nzbs', 'torrents'}
+
+
+def _typed_mount_path(raw_loc, item_type):
+    """Turn <mount>/__all__/<rest> into the typed folder that really holds the
+    file (e.g. <mount>/shows/<rest> or the built-in mount's "TV Shows"). The
+    folder names are the mount's own, so check which sibling has the file,
+    preferring the usual names for the item type. Falls back to the old fixed
+    movies/shows rewrite when none does (or the mount can't be listed)."""
+    base, rest = raw_loc.split('/__all__/', 1)
+    hints = _TYPED_FOLDER_HINTS['episode' if item_type == 'episode' else 'movie']
+    other = _TYPED_FOLDER_HINTS['movie' if item_type == 'episode' else 'episode']
+    try:
+        tops = [t for t in os.listdir(base) if t.lower() not in _MOUNT_SYSTEM_FOLDERS]
+    except OSError:
+        tops = []
+
+    def rank(name):
+        low = name.lower()
+        if low in hints:
+            return 0
+        return 2 if low in other else 1
+    for top in sorted(tops, key=rank):
+        if rank(top) == 2:
+            break
+        candidate = f'{base}/{top}/{rest}'
+        if os.path.exists(candidate):
+            return candidate
+    return f"{base}/{'shows' if item_type == 'episode' else 'movies'}/{rest}"
 
 
 class PlexTasks:
@@ -382,9 +418,10 @@ class PlexTasks:
                 for idx, potential_path in enumerate(paths_to_check):
                     checked_paths_log.append(potential_path)
                     logging.debug(f"Plex Check Attempt {idx+1}: Checking path: {potential_path}")
-                    if os.path.exists(potential_path):
+                    found_path = media_file_at(potential_path)
+                    if found_path:
                         file_found_on_disk = True
-                        actual_file_path = potential_path
+                        actual_file_path = found_path
                         logging.info(f"Plex Check: Found file for item {item_id} at: {actual_file_path} (Attempt {idx+1})")
                         break # Found it, stop checking
 
@@ -652,9 +689,10 @@ class PlexTasks:
                     potential_path = p_info['path']
                     log_checked_paths.append(potential_path) 
                     logging.debug(f"Plex Check (checks enabled) Attempt {idx+1}: Checking path: {potential_path} (using folder '{p_info['name']}', type: {p_info['type']})")
-                    if os.path.exists(potential_path):
+                    found_path = media_file_at(potential_path)
+                    if found_path:
                         file_found_on_disk = True
-                        actual_file_path = potential_path
+                        actual_file_path = found_path
                         folder_name_for_plex_scan = p_info['name'] 
                         found_path_type_log = p_info['type']
                         item_title_for_log = (item_dict['title'] or 'N/A')
@@ -738,9 +776,7 @@ class PlexTasks:
                             # Never store __all__ paths — replace with typed folder (movies/shows).
                             _raw_loc = _plex_location or actual_file_path
                             if _raw_loc and '/__all__/' in _raw_loc:
-                                _typed = 'shows' if item_dict.get('type') == 'episode' else 'movies'
-                                _mount_base = _raw_loc.split('/__all__/')[0]
-                                _raw_loc = _raw_loc.replace('/__all__/', f'/{_typed}/', 1)
+                                _raw_loc = _typed_mount_path(_raw_loc, item_dict.get('type'))
                             _location_to_store = _raw_loc
                             if _location_to_store:
                                 if _plex_rating_key:
@@ -822,7 +858,8 @@ class PlexTasks:
                                                         try:
                                                             from usenet import get_usenet_client
                                                             _dc = get_usenet_client()
-                                                            if not hasattr(_dc, 'rename_nzb'):
+                                                            from usenet.base import supports, RENAME
+                                                            if not supports(_dc, RENAME):
                                                                 return  # active usenet provider (e.g. nzbdav) has no rename semantics
                                                             for _a in range(5):
                                                                 # This short loop (5 attempts x 10s = 50s total) isn't long

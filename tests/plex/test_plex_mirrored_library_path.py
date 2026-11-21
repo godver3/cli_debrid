@@ -60,6 +60,7 @@ if __name__ == '__main__':
 
 from unittest import mock
 import utilities.plex_functions as pf
+from tests._patching import patch_in_package
 
 
 class _Section:
@@ -82,8 +83,8 @@ class TestPlexUpdateItemUsesMirror(unittest.TestCase):
                     ('File Management', 'plex_token_for_symlink'): 'tok',
                     ('File Management', 'plex_section_update_timeout'): 5,
                     ('Plex', 'shows_libraries'): 'TV Shows-DB'}
-        with mock.patch.object(pf, 'PlexServer', return_value=server), \
-             mock.patch.object(pf, 'get_setting', side_effect=lambda s, k, d='', **kw: settings.get((s, k), d if d is not None else '')), \
+        with patch_in_package(pf, 'PlexServer', return_value=server), \
+             patch_in_package(pf, 'get_setting', side_effect=lambda s, k, d='', **kw: settings.get((s, k), d if d is not None else '')), \
              mock.patch.object(pf.time, 'sleep'):
             ok = pf.plex_update_item({'full_path': os.path.join(root, '__all__', rel), 'type': 'episode'})
         self.assertTrue(ok)

@@ -110,4 +110,13 @@ if __name__ == '__main__':
     # Control the program state directly
     control_phalanx_db(enable_phalanx)
     # If in limited environment, stop the secondary_app (battery)
-    control_secondary_app(not limited_env) 
+    control_secondary_app(not limited_env)
+    # Optional built-in mount engine: started only when it is the selected
+    # usenet backend (never required).
+    try:
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from utilities import builtin_engine
+        print(f"Built-in mount engine: {builtin_engine.startup()}")
+    except Exception as e:
+        print(f"Built-in mount engine sync failed: {e}")

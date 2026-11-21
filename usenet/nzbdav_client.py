@@ -40,6 +40,7 @@ from typing import Optional, Dict, Any, Tuple, List
 
 from utilities.settings import get_setting
 from routes.api_tracker import api
+from usenet.base import UnsupportedFeaturesMixin
 
 
 # Video-file extensions used for "is this a media file" checks in browse helpers.
@@ -235,7 +236,7 @@ def _detect_category_from_title(title: str, is_anime: bool = False, media_type: 
     return 'movies'
 
 
-class NzbdavClient:
+class NzbdavClient(UnsupportedFeaturesMixin):
     """Submits NZBs to nzbdav and polls for completion.
 
     Mirrors the CliMountClient interface 1:1 so cli-debrid call sites are

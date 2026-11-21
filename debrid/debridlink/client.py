@@ -393,6 +393,51 @@ class DebridLinkProvider(DebridProvider):
             logger.error(f"Debrid-Link get_torrent_info error for {torrent_id}: {e}")
             return None
 
+    # ---- built-in mount ---------------------------------------------------
+
+    supports_mount_links = True
+    MOUNT_LINK_TTL = 24 * 3600
+
+    def mount_files(self, torrent_id: str) -> Optional[Tuple[str, List[Dict]]]:
+        info = self.get_torrent_info(torrent_id)
+        if not info or info.get('status') != str(TorrentStatus.DOWNLOADED.value):
+            return None
+        files = [{'name': f.get('path') or f.get('name') or '', 'size': int(f.get('bytes') or 0), 'file_id': str(i)}
+                 for i, f in enumerate(info.get('files') or []) if f.get('link')]
+        return (info.get('filename') or str(torrent_id), files) if files else None
+
+    def mount_link(self, torrent_id: str, file_id: str) -> Tuple[str, int]:
+        # Debrid-Link's downloadUrl is already a direct link; re-read it so a
+        # link that changed since the listing is picked up.
+        info = self.get_torrent_info(torrent_id) or {}
+        files = info.get('files') or []
+        try:
+            url = files[int(file_id)].get('link')
+        except (ValueError, IndexError):
+            url = None
+        if not url:
+            raise ValueError(f'Debrid-Link gave no download link for {torrent_id}/{file_id}')
+        return url, self.MOUNT_LINK_TTL
+
+    def mount_check(self, torrent_id: str, file_id: str) -> Tuple[str, str]:
+        """cli_mount's Debrid-Link CheckFile: the file's link answering 404 or
+        410 = gone; a file without a link = missing_provider_link."""
+        from debrid.mount_proof import BROKEN, UNKNOWN, MISSING_PROVIDER_LINK, link_status, from_link_status
+        try:
+            info = self.get_torrent_info(torrent_id)
+        except Exception as exc:
+            return UNKNOWN, f'torrent info: {exc}'
+        if not info:
+            return UNKNOWN, 'torrent not listed'
+        files = info.get('files') or []
+        try:
+            url = files[int(file_id)].get('link')
+        except (ValueError, IndexError):
+            return BROKEN, MISSING_PROVIDER_LINK
+        if not url:
+            return BROKEN, MISSING_PROVIDER_LINK
+        return from_link_status(link_status(url), 'Debrid-Link link')
+
     def get_torrent_info_with_status(self, torrent_id: str) -> TorrentInfoStatus:
         try:
             info = self.get_torrent_info(torrent_id)

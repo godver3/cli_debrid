@@ -10,6 +10,7 @@ import os
 import sys
 import unittest
 from unittest import mock
+from tests._patching import patch_in_package
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -54,15 +55,15 @@ class DiscoverEpisodeOrderTests(unittest.TestCase):
             (mock.patch.object(cr.DirectAPI, 'get_show_seasons', side_effect=self._show_seasons), None),
             (mock.patch.object(cr, 'add_wanted_items', return_value=78), None),
             (mock.patch('metadata.metadata.process_metadata', return_value={'episodes': [{'imdb_id': 'tt1207808'}]}), None),
-            (mock.patch.object(mr, '_saved_episode_order', return_value='default'), None),
-            (mock.patch.object(mr, '_seasons_for_order', return_value=DVD_SEASONS), None),
-            (mock.patch.object(mr, '_save_episode_order', self.saved), None),
-            (mock.patch.object(mr, '_sync_plex_order_for_new_show',
+            (patch_in_package(mr, '_saved_episode_order', return_value='default'), None),
+            (patch_in_package(mr, '_seasons_for_order', return_value=DVD_SEASONS), None),
+            (patch_in_package(mr, '_save_episode_order', self.saved), None),
+            (patch_in_package(mr, '_sync_plex_order_for_new_show',
                                return_value='Once the show appears in Plex, set its episode ordering there to match.'), None),
         ]:
             target.start()
             self.addCleanup(target.stop)
-        self.rows = mock.patch.object(mr, '_library_episode_rows', return_value=0)
+        self.rows = patch_in_package(mr, '_library_episode_rows', return_value=0)
         self.rows.start()
         self.addCleanup(self.rows.stop)
 
@@ -86,19 +87,19 @@ class DiscoverEpisodeOrderTests(unittest.TestCase):
         self.saved.assert_not_called()
 
     def test_current_order_is_not_saved_again(self):
-        with mock.patch.object(self.mr, '_saved_episode_order', return_value='tvdb:dvd'):
+        with patch_in_package(self.mr, '_saved_episode_order', return_value='tvdb:dvd'):
             self.assertEqual(self._request(episode_order='tvdb:dvd').status_code, 200)
         self.saved.assert_not_called()
 
     def test_show_in_library_must_use_show_options(self):
-        with mock.patch.object(self.mr, '_library_episode_rows', return_value=61):
+        with patch_in_package(self.mr, '_library_episode_rows', return_value=61):
             response = self._request(episode_order='tvdb:dvd')
         self.assertEqual(response.status_code, 409)
         self.assertIn('Show options', response.get_json()['error'])
         self.saved.assert_not_called()
 
     def test_order_that_cannot_load_is_not_saved(self):
-        with mock.patch.object(self.mr, '_seasons_for_order', return_value=None):
+        with patch_in_package(self.mr, '_seasons_for_order', return_value=None):
             self.assertEqual(self._request(episode_order='tvdb:dvd').status_code, 502)
         self.saved.assert_not_called()
 
@@ -144,8 +145,8 @@ class EpisodeOrderPlexSupportTests(unittest.TestCase):
                 mock.patch('metadata.metadata.get_imdb_id_if_missing', return_value='tt1409055'), \
                 mock.patch('cli_battery.app.episode_order.list_episode_orders', return_value=orders), \
                 mock.patch('cli_battery.app.tvdb_client.is_available', return_value=True), \
-                mock.patch.object(mr, '_saved_episode_order', return_value='default'), \
-                mock.patch.object(mr, '_library_episode_rows', return_value=0):
+                patch_in_package(mr, '_saved_episode_order', return_value='default'), \
+                patch_in_package(mr, '_library_episode_rows', return_value=0):
             data = app.test_client().get('/magnet/episode_orders?tmdb_id=61709').get_json()
         self.assertEqual({o['id']: o['plex_supported'] for o in data['orders']}, {
             'default': True, 'tvdb:dvd': True, 'tvdb:absolute': True,
@@ -178,7 +179,7 @@ class DiscoverShowsSavedOrderTests(unittest.TestCase):
             {'episode_number': 1, 'name': 'TMDB numbering', 'still_path': '/wrong.jpg', 'overview': 'other episode'}]}
         for patch in [
             mock.patch.object(models, 'is_user_system_enabled', return_value=False),
-            mock.patch.object(dr, 'get_setting', side_effect=lambda section, key=None, default=None: 'key'),
+            patch_in_package(dr, 'get_setting', side_effect=lambda section, key=None, default=None: 'key'),
             mock.patch.object(dr.requests, 'get', return_value=tmdb_season),
             mock.patch('cli_battery.app.direct_api.DirectAPI.tmdb_to_imdb', return_value=('tt1409055', 'test')),
             mock.patch('database.core.get_db_connection', return_value=conn),
@@ -198,7 +199,7 @@ class DiscoverShowsSavedOrderTests(unittest.TestCase):
             self.assertIsNone(self.dr._show_order_seasons('tt1409055'))
 
     def test_season_tab_lists_the_saved_order(self):
-        with mock.patch.object(self.dr, '_show_order_seasons', return_value=self.ORDERED):
+        with patch_in_package(self.dr, '_show_order_seasons', return_value=self.ORDERED):
             data = self.client.get('/discover/details/61709/tv/season/1').get_json()
         self.assertEqual([e['name'] for e in data['episodes']], ['Prologue', 'Second'])
         self.assertEqual(data['episodes'][0]['air_date'], '2009-04-05')
@@ -206,11 +207,11 @@ class DiscoverShowsSavedOrderTests(unittest.TestCase):
         self.assertIsNone(data['episodes'][0]['still_path'])
 
     def test_season_missing_from_the_saved_order(self):
-        with mock.patch.object(self.dr, '_show_order_seasons', return_value=self.ORDERED):
+        with patch_in_package(self.dr, '_show_order_seasons', return_value=self.ORDERED):
             self.assertEqual(self.client.get('/discover/details/61709/tv/season/3').status_code, 404)
 
     def test_default_order_unchanged(self):
-        with mock.patch.object(self.dr, '_show_order_seasons', return_value=None), \
+        with patch_in_package(self.dr, '_show_order_seasons', return_value=None), \
                 mock.patch('cli_battery.app.tvdb_client.get_show_data', return_value=None):
             data = self.client.get('/discover/details/61709/tv/season/1').get_json()
         self.assertEqual([e['name'] for e in data['episodes']], ['TMDB numbering'])

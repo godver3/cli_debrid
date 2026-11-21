@@ -1,6 +1,5 @@
 from flask import Blueprint, render_template, jsonify, request, Response, stream_with_context
 from .models import admin_required, onboarding_required
-from .api_tracker import api
 from datetime import datetime
 import os
 from collections import deque
@@ -33,8 +32,9 @@ upload_tasks = {}
 def logs():
     # No server-rendered lines: on load the page clears #log-entries and fills
     # it from /api/logs/stream, so rendering 1000 lines here was thrown away.
-    climount_available = _get_active_climount_client() is not None
-    return render_template('logs.html', logs=[], climount_available=climount_available)
+    client = _get_active_climount_client()
+    label = 'Mount' if getattr(client, 'PROVIDER_NAME', '').startswith('Built-in') else 'cli_mount'
+    return render_template('logs.html', logs=[], climount_available=client is not None, mount_log_label=label)
 
 @logs_bp.route('/api/logs')
 @admin_required
@@ -78,13 +78,13 @@ def _get_active_climount_client():
         return _climount_client_cache['client']
     try:
         from utilities.settings import get_setting
+        from usenet import get_usenet_client
+        from usenet.base import supports, LOGS
         cfg = get_setting('Usenet Provider') or {}
-        if not cfg.get('enabled') or cfg.get('provider', 'climount') != 'climount':
-            client = None
-        else:
-            from usenet.climount_client import CliMountClient
-            candidate = CliMountClient()
-            client = candidate if candidate.is_enabled() else None
+        candidate = get_usenet_client() if cfg.get('enabled') else None
+        # Any backend that serves its own logs (cli_mount today).
+        client = candidate if (candidate is not None and supports(candidate, LOGS)
+                               and candidate.is_enabled()) else None
     except Exception as e:
         logging.error(f"Error building cli_mount client: {e}")
         client = None
@@ -103,14 +103,8 @@ def api_climount_logs():
     lines = request.args.get('lines', default=1000, type=int)
     level = request.args.get('level', default='all').lower()
 
-    params = {'lines': lines}
-    if level != 'all':
-        params['level'] = level
-
     try:
-        r = api.get(f'{client.base_url}/api/logs', headers=client._headers(), params=params, timeout=15)
-        r.raise_for_status()
-        resp = jsonify(r.json())
+        resp = jsonify(client.fetch_logs(lines=lines, level=level))
     except Exception as e:
         logging.error(f"Error fetching cli_mount logs: {e}")
         resp = jsonify({'error': f'Failed to fetch cli_mount logs: {e}'})
@@ -157,12 +151,7 @@ def process_climount_log_upload(task_id, client):
     try:
         upload_tasks[task_id].update({'status': 'uploading_to_pastebin', 'progress': 50,
                                        'message': 'Uploading cli_mount logs to paste.c-net.org...'})
-        r = api.post(f'{client.base_url}/api/logs/share', headers=client._headers(), timeout=310)
-        r.raise_for_status()
-        data = r.json()
-        url = data.get('url')
-        if not url:
-            raise Exception('cli_mount did not return a share URL')
+        url = client.share_logs()
 
         logging.info(f"Task {task_id}: cli_mount logs uploaded: {url}")
         upload_tasks[task_id].update({

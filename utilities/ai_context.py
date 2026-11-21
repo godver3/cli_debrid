@@ -81,14 +81,26 @@ def _redact_value(key_name: str, value):
 def _redact_config(obj, _depth=0):
     """
     Recursively walk a config dict and redact sensitive values.
-    Non-sensitive scalar values are kept. Nested dicts are walked.
-    Lists are kept as-is (they're usually non-sensitive option lists).
+    Non-sensitive scalar values are kept. Nested dicts, lists and JSON-text
+    values are walked.
     """
     if _depth > 10:
         return '...'
     if isinstance(obj, dict):
         return {k: _redact_config(v, _depth + 1) if not _is_sensitive(k) else _redact_value(k, v)
                 for k, v in obj.items()}
+    if isinstance(obj, list):
+        # Lists of dicts carry credentials too (fallback debrid providers).
+        return [_redact_config(v, _depth + 1) for v in obj]
+    if isinstance(obj, str) and obj.lstrip()[:1] in ('[', '{'):
+        # Settings stored as JSON text: Built-in Mount.servers holds every
+        # news server's username/password (they reached shared log bundles).
+        try:
+            parsed = json.loads(obj)
+        except ValueError:
+            return obj
+        if isinstance(parsed, (dict, list)):
+            return json.dumps(_redact_config(parsed, _depth + 1))
     return obj
 
 
@@ -102,18 +114,17 @@ def _read_help(filename):
 
 
 def _get_queue_state():
+    """Item counts per queue. Queues are media_items.state values; QueueManager
+    has no <name>_queue attributes, so reading those always came back empty."""
     try:
-        from queues.queue_manager import QueueManager
-        qm = QueueManager()
-        counts = {}
-        for name in ['Wanted', 'Scraping', 'Adding', 'Checking', 'Collecting', 'Upgrading', 'Sleeping', 'Blacklisted']:
-            q = getattr(qm, f'{name.lower()}_queue', None)
-            if q is not None:
-                try:
-                    counts[name] = q.qsize()
-                except Exception:
-                    counts[name] = '?'
-        return counts
+        from database import get_db_connection
+        conn = get_db_connection()
+        try:
+            rows = conn.execute(
+                "SELECT state, COUNT(*) FROM media_items GROUP BY state ORDER BY 2 DESC").fetchall()
+        finally:
+            conn.close()
+        return {r[0]: r[1] for r in rows if r[0]}
     except Exception as e:
         logger.debug(f"AI context: queue state unavailable: {e}")
         return {}
@@ -782,8 +793,13 @@ def _get_habit_summary() -> str:
         return '  (unavailable)'
 
 
-def build_system_prompt(page: str = '', page_data: dict = None) -> str:
-    """Build the full system prompt with live app state injected."""
+def build_system_prompt(page: str = '', page_data: dict = None, is_admin: bool = True) -> str:
+    """Build the full system prompt with live app state injected.
+
+    is_admin=False (a non-admin user with the user system on) leaves out the
+    config, extended logs and writable-settings schema, as if Settings
+    Assistant and Share Full Config were off.
+    """
     page_data = page_data or {}
 
     # Read feature toggles
@@ -799,6 +815,9 @@ def build_system_prompt(page: str = '', page_data: dict = None) -> str:
         _phase2 = _phase4 = _phase5 = _fullcfg = True
         _display_name = 'AI Butler'
         _public_url = ''
+
+    if not is_admin:
+        _phase2 = _fullcfg = False
 
     queue_state = _get_queue_state()
     uptime = _get_program_uptime()

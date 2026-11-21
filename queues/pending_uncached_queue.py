@@ -207,7 +207,8 @@ class PendingUncachedQueue:
                             try:
                                 from usenet import get_usenet_client
                                 _dc3 = get_usenet_client()
-                                if not hasattr(_dc3, 'rename_nzb'):
+                                from usenet.base import supports, RENAME
+                                if not supports(_dc3, RENAME):
                                     return  # active usenet provider (e.g. nzbdav) has no rename semantics
                                 # cli_mount only registers an entry as queryable-by-hash after its
                                 # own periodic sync (default ~10 min) — a 404 in the first several

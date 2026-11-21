@@ -236,6 +236,13 @@
                     </div>
                 </div>
 
+                {% if builtin_mount_selected() %}
+                <!-- Mount (built-in mount engine only) -->
+                <div class="st-nav-item" id="st-dd-mount">
+                    <a class="st-nav-btn" href="{{ url_for('mount.index') }}" style="text-decoration:none">Mount</a>
+                </div>
+                {% endif %}
+
                 <!-- Tools -->
                 <div class="st-nav-item" id="st-dd-tools">
                     <button class="st-nav-btn" onclick="stToggleDD('st-dd-tools')">Tools <i class="fa-solid fa-chevron-down st-arr"></i></button>
@@ -279,6 +286,11 @@
                         <i class="fas fa-file-alt"></i>
                     </button>
                     {% if current_user.role == 'admin' %}
+                    {% if builtin_mount_selected() %}
+                    <button id="st_mountControlButton" class="st-nav-act-btn st-btn-starting" title="Built-in mount: start or stop it (the program and the mount run separately)" disabled>
+                        <i class="fa-solid fa-hard-drive"></i><span>Mount…</span>
+                    </button>
+                    {% endif %}
                         {% set program_status = get_program_status() %}
                         <button id="st_programControlButton" class="st-nav-act-btn {% if program_status == 'Running' %}st-btn-stop{% elif program_status in ['Starting', 'Stopping'] %}st-btn-starting{% else %}st-btn-start{% endif %}" data-status="{{ program_status }}" {% if program_status in ['Starting', 'Stopping'] %}disabled{% endif %}>
                             <i class="fas {% if program_status == 'Running' %}fa-stop{% elif program_status in ['Starting', 'Stopping'] %}fa-spinner fa-spin{% else %}fa-play{% endif %}"></i>
@@ -297,6 +309,11 @@
                     <button class="st-nav-icon-btn" id="st_releaseNotesButton" title="Release notes on Discord" data-tooltip="global.releaseNotesButton">
                         <i class="fas fa-file-alt"></i>
                     </button>
+                    {% if builtin_mount_selected() %}
+                    <button id="st_mountControlButton" class="st-nav-act-btn st-btn-starting" title="Built-in mount: start or stop it (the program and the mount run separately)" disabled>
+                        <i class="fa-solid fa-hard-drive"></i><span>Mount…</span>
+                    </button>
+                    {% endif %}
                     {% set program_status = get_program_status() %}
                     <button id="st_programControlButton" class="st-nav-act-btn {% if program_status == 'Running' %}st-btn-stop{% elif program_status in ['Starting', 'Stopping'] %}st-btn-starting{% else %}st-btn-start{% endif %}" data-status="{{ program_status }}" {% if program_status in ['Starting', 'Stopping'] %}disabled{% endif %}>
                         <i class="fas {% if program_status == 'Running' %}fa-stop{% elif program_status in ['Starting', 'Stopping'] %}fa-spinner fa-spin{% else %}fa-play{% endif %}"></i>
@@ -390,6 +407,13 @@
                             {% endif %}
                         </div>
                     </div>
+
+                    {% if builtin_mount_selected() %}
+                    <!-- Mount -->
+                    <div class="st-nav-acc-section" id="st-acc-mount">
+                        <a class="st-nav-mob-item" href="{{ url_for('mount.index') }}"><i class="fa-solid fa-hard-drive"></i> Mount</a>
+                    </div>
+                    {% endif %}
 
                     <!-- Tools -->
                     <div class="st-nav-acc-section" id="st-acc-tools">
@@ -1095,6 +1119,34 @@
         </div>
     </div>
 
+    <script>
+    // Built-in mount button: separate from the program Start/Stop.
+    (function () {
+        var b = document.getElementById('st_mountControlButton');
+        if (!b) return;
+        var cur = null;
+        function show(st) {
+            cur = st;
+            var running = st.state === 'RUNNING' || st.state === 'STARTING';
+            b.disabled = false;
+            b.className = 'st-nav-act-btn ' + (running ? 'st-btn-stop' : 'st-btn-start');
+            b.innerHTML = '<i class="fa-solid ' + (running ? 'fa-stop' : 'fa-play') + '"></i><span>' + (running ? 'Stop mount' : 'Start mount') + '</span>';
+        }
+        function poll() { fetch('/mount/api/state').then(function (r) { return r.json(); }).then(show).catch(function () {}); }
+        b.addEventListener('click', function () {
+            if (!cur) return;
+            var running = cur.state === 'RUNNING' || cur.state === 'STARTING';
+            if (running && !confirm('Stop the built-in mount? Anything playing from it stops, and it stays stopped until you start it again.')) return;
+            b.disabled = true;
+            b.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i><span>Mount…</span>';
+            fetch('/mount/api/' + (running ? 'stop' : 'start'), {method: 'POST'}).then(function (r) { return r.json(); })
+                .then(function (j) { if (!j.success) alert(j.error || 'Mount action failed'); })
+                .finally(function () { setTimeout(poll, 1500); });
+        });
+        poll();
+        setInterval(poll, 10000);
+    })();
+    </script>
     {% block scripts %}{% endblock %}
     <script>
     // Suppress unhandled promise rejections from browser extensions (e.g. Bitwarden autofill)

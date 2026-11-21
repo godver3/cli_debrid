@@ -23,6 +23,7 @@ from database.not_wanted_magnets import add_to_not_wanted
 from utilities.phalanx_db_cache_manager import PhalanxDBClassManager
 from utilities.settings import get_setting
 from .exceptions import RealDebridAuthError, RealDebridAPIError
+from . import blocked_hashes as rd_blocked_hashes
 
 # Import the new types and function from the .torrent module
 from .torrent import (
@@ -487,10 +488,10 @@ class RealDebridProvider(DebridProvider):
         """Get stored torrent title for a cached hash"""
         return self._cached_torrent_titles.get(hash_value)
 
-    def list_active_torrents(self) -> List[Dict]:
-        """List all active torrents"""
+    def list_active_torrents(self, strict: bool = False) -> List[Dict]:
+        """List all active torrents (strict: raise if a page fails)"""
         from .torrent import list_active_torrents
-        return list_active_torrents(self.api_key)
+        return list_active_torrents(self.api_key, strict=strict)
 
     def add_torrent(self, magnet_link: Optional[str], temp_file_path: Optional[str] = None) -> Optional[str]:
         """Add a torrent to Real-Debrid"""
@@ -513,7 +514,13 @@ class RealDebridProvider(DebridProvider):
             
             if not hash_value:
                 logging.error("Could not extract hash from magnet link or torrent file")
-            
+
+            # RD refused this hash with 451 recently: answer the same way without
+            # another addMagnet call (each one counts toward RD's rate limit).
+            if hash_value and rd_blocked_hashes.is_blocked(hash_value):
+                logging.info(f"Real-Debrid blocked hash {hash_value} with 451 recently - not re-adding")
+                raise ProviderUnavailableError("Request failed: 451 Client Error: Unavailable For Legal Reasons (remembered)")
+
             # Handle torrent file upload
             if temp_file_path:
                 if not os.path.exists(temp_file_path):
@@ -523,7 +530,12 @@ class RealDebridProvider(DebridProvider):
                 # Add the torrent file directly
                 with open(temp_file_path, 'rb') as f:
                     file_content = f.read()
-                    result = make_request('PUT', '/torrents/addTorrent', self.api_key, data=file_content)
+                    try:
+                        result = make_request('PUT', '/torrents/addTorrent', self.api_key, data=file_content)
+                    except ProviderUnavailableError as e:
+                        if '451' in str(e) and hash_value:
+                            rd_blocked_hashes.mark_blocked(hash_value)
+                        raise
             # Handle magnet link only if no temp file was used
             elif magnet_link:
                 # Don't URL decode - requests library handles encoding for POST form data
@@ -532,7 +544,12 @@ class RealDebridProvider(DebridProvider):
                 # Add magnet link
                 logging.debug(f"Adding magnet with hash {hash_value[:16] if hash_value else 'unknown'}...")
                 data = {'magnet': magnet_link}
-                result = make_request('POST', '/torrents/addMagnet', self.api_key, data=data)
+                try:
+                    result = make_request('POST', '/torrents/addMagnet', self.api_key, data=data)
+                except ProviderUnavailableError as e:
+                    if '451' in str(e) and hash_value:
+                        rd_blocked_hashes.mark_blocked(hash_value)
+                    raise
             else:
                 logging.error("Neither magnet_link nor temp_file_path provided")
                 raise ValueError("Either magnet_link or temp_file_path must be provided")
@@ -853,6 +870,115 @@ class RealDebridProvider(DebridProvider):
                 logging.error(f"Error getting torrent info: {str(e)}")
                 self.update_status(torrent_id, TorrentStatus.ERROR)
             return None
+
+    # ---- built-in mount ---------------------------------------------------
+
+    supports_mount_links = True
+
+    @staticmethod
+    def _mount_selected(info: Dict) -> List[Dict]:
+        """Selected files in RD's link order (by file id)."""
+        return sorted((f for f in info.get('files') or [] if f.get('selected')), key=lambda f: f.get('id', 0))
+
+    def mount_files(self, torrent_id: str) -> Optional[Tuple[str, List[Dict]]]:
+        info = make_request('GET', f'/torrents/info/{torrent_id}', self.api_key)
+        if not info or info.get('status') != 'downloaded':
+            return None
+        sel, links = self._mount_selected(info), info.get('links') or []
+        if not sel or len(links) != len(sel):
+            return None  # RD packed the files into one archive link: not streamable per file
+        return info.get('filename') or info.get('original_filename') or str(torrent_id), [
+            {'name': f.get('path', ''), 'size': int(f.get('bytes') or 0), 'file_id': str(f.get('id'))} for f in sel]
+
+    def _mount_rd_link(self, torrent_id: str, file_id: str) -> str:
+        """The file's RD hoster link. MountFileGone(missing_provider_link)
+        when the torrent no longer has the file; other errors prove nothing."""
+        from debrid.mount_proof import MountFileGone, MISSING_PROVIDER_LINK
+        info = make_request('GET', f'/torrents/info/{torrent_id}', self.api_key)
+        sel, links = self._mount_selected(info or {}), (info or {}).get('links') or []
+        ids = [str(f.get('id')) for f in sel]
+        if info and str(file_id) not in ids:
+            raise MountFileGone(MISSING_PROVIDER_LINK, f'file {file_id} is no longer in torrent {torrent_id}')
+        if len(links) != len(sel):
+            raise ValueError(f'torrent {torrent_id} has {len(links)} links for {len(sel)} files')
+        return links[ids.index(str(file_id))]
+
+    def _mount_rd_post(self, endpoint: str, data: Dict, api_key: Optional[str] = None) -> Tuple[int, Dict]:
+        """(status, body) of an RD POST without make_request's error mapping,
+        which drops the body and with it RD's error_code."""
+        from routes.api_tracker import api as _api
+        from .api import _wait_for_rate_limit
+        _wait_for_rate_limit()
+        r = _api.post(f'https://api.real-debrid.com/rest/1.0{endpoint}', data=data,
+                      headers={'Authorization': f'Bearer {api_key or self.api_key}'}, timeout=30)
+        try:
+            body = r.json()
+        except ValueError:
+            body = {}
+        return r.status_code, body if isinstance(body, dict) else {}
+
+    #: RD error codes cli_mount counts as the file being gone.
+    MOUNT_GONE_CODES = (19, 24, 35)  # hoster unavailable, file unavailable, infringing file
+
+    #: RD answers meaning "this account can't unrestrict right now"
+    #: (too many requests, fair-usage / traffic limit): try the next key.
+    MOUNT_KEY_LIMIT_CODES = (34, 36)
+
+    def _mount_download_keys(self) -> List[str]:
+        """The account key, then Built-in Mount.debrid_download_api_keys
+        (cli_mount's download_api_keys), starting with the last one that
+        worked."""
+        import re
+        try:
+            from utilities.settings import get_setting
+            extra = get_setting('Built-in Mount', 'debrid_download_api_keys', '') or ''
+        except Exception:
+            extra = ''
+        keys = []
+        for k in [self.api_key] + re.split(r'[\s,;]+', str(extra)):
+            if k and k not in keys:
+                keys.append(k)
+        start = keys.index(RealDebridProvider._mount_key_ok) if RealDebridProvider._mount_key_ok in keys else 0
+        return keys[start:] + keys[:start]
+
+    _mount_key_ok: Optional[str] = None
+
+    def mount_link(self, torrent_id: str, file_id: str) -> Tuple[str, int]:
+        from debrid.mount_proof import MountFileGone, HOSTER_UNAVAILABLE
+        link = self._mount_rd_link(torrent_id, file_id)
+        keys = self._mount_download_keys()
+        for i, key in enumerate(keys):
+            code, out = self._mount_rd_post('/unrestrict/link', {'link': link}, api_key=key)
+            url = out.get('download') if code == 200 else None
+            if url:
+                RealDebridProvider._mount_key_ok = key
+                return url, 12 * 3600
+            limited = out.get('error_code') in self.MOUNT_KEY_LIMIT_CODES or (
+                code in (429, 503) and out.get('error_code') not in self.MOUNT_GONE_CODES)
+            if not limited or i == len(keys) - 1:
+                break
+            logging.info(f'[mount] Real-Debrid download key {i + 1} of {len(keys)} is limited '
+                         f'(HTTP {code} {out.get("error") or ""}); trying the next one')
+        if out.get('error_code') in self.MOUNT_GONE_CODES:
+            raise MountFileGone(HOSTER_UNAVAILABLE, f"Real-Debrid error {out.get('error_code')}: {out.get('error')}")
+        raise ValueError(f'Real-Debrid gave no download link for {torrent_id}/{file_id}: HTTP {code} {out.get("error") or ""}')
+
+    def mount_check(self, torrent_id: str, file_id: str) -> Tuple[str, str]:
+        """cli_mount's RD CheckFile: /unrestrict/check answering 404 = gone."""
+        from debrid.mount_proof import MountFileGone, BROKEN, HEALTHY, UNKNOWN, HOSTER_UNAVAILABLE
+        try:
+            link = self._mount_rd_link(torrent_id, file_id)
+        except MountFileGone as gone:
+            return BROKEN, gone.reason
+        except Exception as exc:
+            return UNKNOWN, f'torrent info: {exc}'
+        try:
+            code, _ = self._mount_rd_post('/unrestrict/check', {'link': link})
+        except Exception as exc:
+            return UNKNOWN, f'unrestrict/check: {exc}'
+        if code == 404:
+            return BROKEN, HOSTER_UNAVAILABLE
+        return (HEALTHY, '') if code == 200 else (UNKNOWN, f'unrestrict/check answered HTTP {code}')
 
     def get_torrent_info_with_status(self, torrent_id: str) -> TorrentInfoStatus:
         """

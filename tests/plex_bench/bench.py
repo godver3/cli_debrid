@@ -322,17 +322,18 @@ class PlexBench:
         from queues.queue_manager import QueueManager
         from queues import run_program
         from utilities import plex_functions, plex_health
+        from tests._patching import setattr_in_package
         mp.setattr(debrid, '_provider_instance', None, raising=False)
         mp.setattr(debrid, '_provider_list', None, raising=False)
         mp.setattr(CheckingQueue, '_instance', None)
         mp.setattr(QueueManager, '_instance', None)
         mp.setattr(run_program.ProgramRunner, '_instance', None)
         mp.setattr(run_program, '_last_plex_recent_scan_time', None)
-        mp.setattr(plex_functions, '_plex_mode_scans', {})
-        mp.setattr(plex_functions, '_scanning_cache', {'at': 0.0, 'value': None})
+        setattr_in_package(mp, plex_functions, '_plex_mode_scans', {})
+        setattr_in_package(mp, plex_functions, '_scanning_cache', {'at': 0.0, 'value': None})
         # fetch_data waits RETRY_DELAY real seconds between attempts; simulated
         # time doesn't move during a task, so waiting buys nothing here.
-        mp.setattr(plex_functions, 'RETRY_DELAY', 0)
+        setattr_in_package(mp, plex_functions, 'RETRY_DELAY', 0)
         plex_health._reset_for_tests()
 
         # Threads the Checking queue starts for its Plex scan run inline, so a run

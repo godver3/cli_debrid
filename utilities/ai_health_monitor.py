@@ -123,16 +123,13 @@ class AIHealthMonitor:
     def _check_stuck_queue(self):
         """Alert if any processing queue hasn't changed in STUCK_QUEUE_UNCHANGED_MINUTES."""
         try:
-            from queues.queue_manager import QueueManager
-            qm = QueueManager()
-            snapshot = {}
-            for name in ['Scraping', 'Adding', 'Checking', 'Collecting']:
-                q = getattr(qm, f'{name.lower()}_queue', None)
-                if q is not None:
-                    try:
-                        snapshot[name] = q.qsize()
-                    except Exception:
-                        pass
+            # Queue counts are media_items.state counts (QueueManager has no
+            # <name>_queue attributes, so the old lookup never saw a queue).
+            # Checking is left out: items wait there for downloads, so a
+            # steady count is normal.
+            from utilities.ai_context import _get_queue_state
+            counts = _get_queue_state()
+            snapshot = {name: counts.get(name, 0) for name in ('Scraping', 'Adding')}
 
             now = time.time()
 

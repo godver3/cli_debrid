@@ -45,6 +45,14 @@ _PUBLIC_ENDPOINTS = frozenset({
     'static', 'favicon', 'dynamic_favicon', 'manifest', 'redirect_placeholder',
     'auth.login', 'auth.unauthorized', 'oidc.login', 'oidc.callback',
     'over_usage.index', 'tooltip.get_tooltips',
+    # The built-in mount engine's callbacks (debrid link, repair check): they
+    # check the engine's own token and localhost (_engine_caller_ok), and the
+    # engine has no login session, so the login gate made every debrid read
+    # fail with 401 whenever the user system was on.
+    'mount.internal_link', 'mount.internal_check',
+    # MCP clients have no session; the endpoint checks its own token
+    # (routes/mcp_routes.py) whether or not the user system is on.
+    'mcp.endpoint',
 })
 _PUBLIC_BLUEPRINTS = frozenset({'webhook'})
 _BAZARR_PATHS = ('/api/v3/', '/signalr')

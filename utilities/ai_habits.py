@@ -66,13 +66,15 @@ def track_action(action: str, detail: str = '', user_id: str = 'system'):
       'queue_pause'             — user paused the queue
       'queue_resume'            — user resumed the queue
     """
-    # Respect the Phase 5 toggle — bail early if disabled
+    # Only while the AI Assistant is on and the Phase 5 toggle is on: with the
+    # Assistant off nothing is recorded (and no ai_habits table is created).
     try:
         from utilities.settings import get_setting
-        if not get_setting('AI Assistant', 'enable_habit_tracking', True):
+        if not (get_setting('AI Assistant', 'enabled', False)
+                and get_setting('AI Assistant', 'enable_habit_tracking', True)):
             return
     except Exception:
-        pass
+        return
     try:
         from database import get_db_connection
         conn = get_db_connection()

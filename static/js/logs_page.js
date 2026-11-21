@@ -567,7 +567,7 @@ function fetchClimountLogs() {
 
         const lastPolled = document.getElementById('climount-last-polled');
         if (lastPolled) {
-            lastPolled.textContent = `cli_mount polled ${new Date().toLocaleTimeString()}`;
+            lastPolled.textContent = `${window.MOUNT_LOG_LABEL || 'cli_mount'} polled ${new Date().toLocaleTimeString()}`;
             lastPolled.style.display = 'inline';
         }
 
@@ -598,7 +598,7 @@ function fetchClimountLogs() {
 
         logEntries.innerHTML = '';
         if (fragment.childNodes.length === 0) {
-            renderClimountMessage('No cli_mount log lines found.', 'info');
+            renderClimountMessage(`No ${window.MOUNT_LOG_LABEL || 'cli_mount'} log lines found.`, 'info');
             renderChips();
         } else {
             logEntries.appendChild(fragment);
@@ -675,7 +675,16 @@ document.getElementById('log-search').addEventListener('input', filterLogs);
 function initialLoad() {
     loadSavedLogLevel();
     const logEntries = document.getElementById('log-entries');
-    updateLogs(true);
+    // /logs?source=climount&q=<name>: open the mount tab filtered to one file
+    // (links from Now playing / the Mount page's open streams).
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('q')) document.getElementById('log-search').value = params.get('q');
+    const tab = params.get('source') && document.querySelector('.log-source-tab[data-source="' + params.get('source') + '"]');
+    if (tab && params.get('source') !== currentSource) {
+        tab.click();
+    } else {
+        updateLogs(true);
+    }
     // Initial scroll to bottom and check position
     setTimeout(() => {
         scrollToBottom(logEntries);
@@ -839,8 +848,8 @@ if (shareBothBtn) {
                 ? `cli_debrid: ${cliDebridResult.value}`
                 : `cli_debrid: FAILED (${cliDebridResult.reason.message})`);
             lines.push(climountResult.status === 'fulfilled'
-                ? `cli_mount: ${climountResult.value}`
-                : `cli_mount: FAILED (${climountResult.reason.message})`);
+                ? `${window.MOUNT_LOG_LABEL || 'cli_mount'}: ${climountResult.value}`
+                : `${window.MOUNT_LOG_LABEL || 'cli_mount'}: FAILED (${climountResult.reason.message})`);
 
             const bothFailed = cliDebridResult.status === 'rejected' && climountResult.status === 'rejected';
             showPopup({

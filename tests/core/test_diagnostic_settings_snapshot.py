@@ -51,6 +51,20 @@ class TestDiagnosticSettingsSnapshot(unittest.TestCase):
         self.assertNotIn('rd-secret-key-value', snapshot)
         self.assertNotIn('Bela_I', snapshot)
 
+    def test_redacts_credentials_inside_json_text_and_lists(self):
+        """Built-in Mount.servers is JSON text holding every news server's
+        login; it reached shared log bundles verbatim."""
+        cfg = dict(FAKE_CONFIG, **{
+            'Built-in Mount': {'servers': json.dumps([{'host': 'news.example.com', 'username': 'nwsuser77',
+                                                       'password': 'nntp-pass-123', 'connections': 30}])},
+            'Debrid Provider': {'fallback_providers': [{'provider': 'Torbox', 'api_key': 'tb-fallback-key'}]},
+        })
+        with patch('utilities.settings.load_config', return_value=cfg):
+            snapshot = get_diagnostic_settings_snapshot()
+        for secret in ('nwsuser77', 'nntp-pass-123', 'tb-fallback-key'):
+            self.assertNotIn(secret, snapshot)
+        self.assertIn('news.example.com', snapshot, 'non-secret server fields stay for debugging')
+
     @patch('utilities.settings.load_config', return_value=FAKE_CONFIG)
     def test_keeps_non_sensitive_debugging_relevant_fields(self, mock_config):
         snapshot = get_diagnostic_settings_snapshot()
