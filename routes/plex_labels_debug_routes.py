@@ -1559,7 +1559,7 @@ def test_plex_search(imdb_id):
         from utilities.settings import get_setting
         from plexapi.server import PlexServer
 
-        plex_url = get_setting('Plex', 'url')
+        plex_url = (get_setting('Plex', 'url') or '').rstrip('/')
         plex_token = get_setting('Plex', 'token')
 
         if not plex_url or not plex_token:

@@ -22,7 +22,7 @@ async def get_watch_history_from_plex():
         }
         
         # Get Plex connection details
-        plex_url = get_setting('Plex', 'url')
+        plex_url = (get_setting('Plex', 'url') or '').rstrip('/')
         plex_token = get_setting('Plex', 'token')
         
         if not plex_url or not plex_token:
