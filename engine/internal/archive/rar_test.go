@@ -164,7 +164,7 @@ func TestCompressedAndEncryptedMembersAreRefused(t *testing.T) {
 		{Name: "b.mkv", Length: 10, Unpacked: 10, Stored: true, Encrypted: true},
 		{Name: "c.mkv", Length: 10, Unpacked: 10, Stored: true},
 	}}}
-	got := stitch(infos)
+	got := stitch(infos, "")
 	if !errors.Is(got[0].Err, ErrCompressed) || !errors.Is(got[1].Err, ErrEncrypted) || got[2].Err != nil {
 		t.Fatalf("%v / %v / %v", got[0].Err, got[1].Err, got[2].Err)
 	}

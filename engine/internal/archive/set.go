@@ -31,6 +31,9 @@ type Member struct {
 	Name    string
 	Size    int64
 	Extents []Extent
+	// Encryption is set for a password-protected member: Extents then hold
+	// AES-CBC ciphertext (padded to whole blocks), Size is the plaintext size.
+	Encryption *Encryption
 	// Err is set when the member cannot be streamed (compressed, encrypted,
 	// incomplete). Size and Name are still filled in for reporting.
 	Err error
@@ -45,12 +48,23 @@ type Set struct {
 	OrderedByHeaders bool
 }
 
-// ReaderAt returns a reader over a member's data.
-func (s *Set) ReaderAt(m Member) io.ReaderAt { return &extentReader{vols: s.Volumes, ext: m.Extents} }
+// ReaderAt returns a reader over a member's (plaintext) data.
+func (s *Set) ReaderAt(m Member) io.ReaderAt {
+	r := &extentReader{vols: s.Volumes, ext: m.Extents}
+	if m.Encryption == nil {
+		return r
+	}
+	return &decryptReader{src: r, enc: *m.Encryption, size: m.Size, cipher: extentsLen(m.Extents)}
+}
 
 // OpenRAR parses every volume (in parallel, at most `parallel` at once) and
 // stitches members across them.
 func OpenRAR(ctx context.Context, vols []Volume, parallel int) (*Set, error) {
+	return OpenRARPassword(ctx, vols, parallel, "")
+}
+
+// OpenRARPassword is OpenRAR for sets that may be password protected.
+func OpenRARPassword(ctx context.Context, vols []Volume, parallel int, password string) (*Set, error) {
 	if len(vols) == 0 {
 		return nil, fmt.Errorf("archive: no volumes")
 	}
@@ -72,7 +86,7 @@ func OpenRAR(ctx context.Context, vols []Volume, parallel int) (*Set, error) {
 				return
 			}
 			defer func() { <-sem }()
-			infos[i], errs[i] = ParseVolume(vols[i].R, vols[i].Size)
+			infos[i], errs[i] = ParseVolumePassword(vols[i].R, vols[i].Size, password)
 		}(i)
 	}
 	wg.Wait()
@@ -89,7 +103,7 @@ func OpenRAR(ctx context.Context, vols []Volume, parallel int) (*Set, error) {
 		set.Volumes = append(set.Volumes, vols[idx])
 		ordered[i] = infos[idx]
 	}
-	set.Members = stitch(ordered)
+	set.Members = stitch(ordered, password)
 	return set, nil
 }
 
@@ -144,8 +158,10 @@ func volumeNameKey(name string) string {
 	return strings.ToLower(name) + "|"
 }
 
-// stitch joins each member's parts across ordered volumes.
-func stitch(infos []*VolumeInfo) []Member {
+// stitch joins each member's parts across ordered volumes. An encrypted
+// RAR5 member is one AES-CBC stream across its parts, keyed from its first
+// part's record (as unrar and 7-Zip read it).
+func stitch(infos []*VolumeInfo, password string) []Member {
 	var members []Member
 	open := map[string]int{} // name -> index in members, while SplitAfter
 	for vi, in := range infos {
@@ -167,10 +183,20 @@ func stitch(infos []*VolumeInfo) []Member {
 			m := &members[idx]
 			switch {
 			case m.Err != nil:
-			case p.Encrypted:
-				m.Err = fmt.Errorf("%w: %s", ErrEncrypted, p.Name)
+			case p.Encrypted && p.Crypt == nil:
+				m.Err = fmt.Errorf("%w: %s (RAR4 encryption is not supported)", ErrEncrypted, p.Name)
 			case !p.Stored:
 				m.Err = fmt.Errorf("%w: %s", ErrCompressed, p.Name)
+			case p.Encrypted && !p.SplitBefore:
+				key, err := p.Crypt.open(password)
+				if err != nil {
+					m.Err = fmt.Errorf("%w: %s", err, p.Name)
+					break
+				}
+				m.Encryption = &Encryption{Key: key, IV: p.Crypt.IV}
+				m.Extents = append(m.Extents, Extent{Volume: vi, Offset: p.Offset, Length: p.Length})
+			case p.Encrypted != (m.Encryption != nil):
+				m.Err = fmt.Errorf("%w: %s is encrypted in some volumes only", ErrCorrupt, p.Name)
 			default:
 				m.Extents = append(m.Extents, Extent{Volume: vi, Offset: p.Offset, Length: p.Length})
 			}
@@ -186,11 +212,14 @@ func stitch(infos []*VolumeInfo) []Member {
 		if m.Err != nil {
 			continue
 		}
-		var got int64
-		for _, e := range m.Extents {
-			got += e.Length
-		}
-		if got != m.Size {
+		got := extentsLen(m.Extents)
+		switch {
+		case m.Encryption != nil:
+			// Ciphertext is the plaintext padded to whole AES blocks.
+			if got != roundBlock(m.Size) {
+				m.Err = fmt.Errorf("%w: %s has %d of %d encrypted bytes", ErrIncomplete, m.Name, got, roundBlock(m.Size))
+			}
+		case got != m.Size:
 			m.Err = fmt.Errorf("%w: %s has %d of %d bytes", ErrIncomplete, m.Name, got, m.Size)
 		}
 	}
@@ -222,6 +251,57 @@ func (r *extentReader) ReadAt(p []byte, off int64) (int, error) {
 		}
 		pos = end
 	}
+	if n < len(p) {
+		return n, io.EOF
+	}
+	return n, nil
+}
+
+func extentsLen(ext []Extent) int64 {
+	var n int64
+	for _, e := range ext {
+		n += e.Length
+	}
+	return n
+}
+
+// decryptReader serves the plaintext of an encrypted member (archive
+// parsing and tests; the mount decrypts in package stream).
+type decryptReader struct {
+	src    io.ReaderAt
+	enc    Encryption
+	size   int64 // plaintext member size
+	cipher int64 // ciphertext bytes in src
+}
+
+func (d *decryptReader) ReadAt(p []byte, off int64) (int, error) {
+	if off < 0 {
+		return 0, fmt.Errorf("archive: negative offset")
+	}
+	if off >= d.size {
+		return 0, io.EOF
+	}
+	end := min(off+int64(len(p)), d.size)
+	const bs = 16
+	lo, hi := off+d.enc.Skip, end+d.enc.Skip // in the decrypted stream
+	aStart := lo - lo%bs
+	aEnd := min(roundBlock(hi), d.cipher)
+	from := max(aStart-bs, 0)
+	buf := make([]byte, aEnd-from)
+	if n, err := d.src.ReadAt(buf, from); n < len(buf) {
+		if err == nil || err == io.EOF {
+			err = fmt.Errorf("%w: encrypted data ends at %d, need %d", ErrIncomplete, from+int64(n), aEnd)
+		}
+		return 0, err
+	}
+	iv, ct := d.enc.IV, buf
+	if aStart > 0 {
+		iv, ct = buf[:bs], buf[bs:]
+	}
+	if err := decryptCBC(d.enc.Key, iv, ct); err != nil {
+		return 0, err
+	}
+	n := copy(p, ct[lo-aStart:hi-aStart])
 	if n < len(p) {
 		return n, io.EOF
 	}

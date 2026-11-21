@@ -7,12 +7,14 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -399,9 +401,29 @@ var ErrNoAllowedFiles = errors.New("engine: no file with an allowed extension")
 // Submit stores an NZB and queues its import. id may be given (migration
 // keeps cli_mount's job ids); otherwise one is generated.
 func (e *Engine) Submit(data []byte, name, category, id string) (store.Job, error) {
+	return e.SubmitPassword(data, name, category, id, "")
+}
+
+// SubmitPassword is Submit with an archive password. A password may also
+// come as "Name{{password}}" (SABnzbd's convention) or in the NZB's own
+// <meta type="password">. It is kept in the stored NZB's head, so retries,
+// health checks and a copy back to cli_mount all see it, and never in the
+// job record or folder name.
+func (e *Engine) SubmitPassword(data []byte, name, category, id, password string) (store.Job, error) {
+	name, fromName := splitNamePassword(name)
+	if password == "" {
+		password = fromName
+	}
 	parsed, err := nzb.Parse(bytes.NewReader(data))
 	if err != nil {
 		return store.Job{}, fmt.Errorf("%w: %v", ErrBadNZB, err)
+	}
+	if password != "" && job.NZBPassword(parsed) == "" {
+		if withPw, ok := withPasswordMeta(data, password); ok {
+			data = withPw
+		} else {
+			e.log.Warn("job received: could not store the archive password in the NZB", "name", name)
+		}
 	}
 	if strings.TrimSpace(name) == "" {
 		name = parsed.Meta["title"]
@@ -1019,6 +1041,51 @@ func uniqueEntries(in []job.Entry) []job.Entry {
 }
 
 // cleanFolderName makes a string safe as one path component.
+var reNamePassword = regexp.MustCompile(`\{\{(.*?)\}\}`)
+
+// splitNamePassword takes a "{{password}}" out of a job name.
+func splitNamePassword(name string) (string, string) {
+	m := reNamePassword.FindStringSubmatchIndex(name)
+	if m == nil {
+		return name, ""
+	}
+	pw := name[m[2]:m[3]]
+	rest := strings.TrimSpace(name[:m[0]] + name[m[1]:])
+	rest = strings.TrimSuffix(rest, ".nzb")
+	return strings.TrimSpace(rest), pw
+}
+
+// withPasswordMeta adds <meta type="password"> to an NZB's head (creating
+// the head if needed). ok is false when the result doesn't parse back to
+// the same password; the NZB is then left alone.
+func withPasswordMeta(data []byte, password string) ([]byte, bool) {
+	var esc bytes.Buffer
+	if err := xml.EscapeText(&esc, []byte(password)); err != nil {
+		return data, false
+	}
+	meta := `<meta type="password">` + esc.String() + `</meta>`
+	low := bytes.ToLower(data)
+	var out []byte
+	if i := bytes.Index(low, []byte("<head>")); i >= 0 {
+		at := i + len("<head>")
+		out = append(append(append([]byte(nil), data[:at]...), "\n  "+meta...), data[at:]...)
+	} else if i := bytes.Index(low, []byte("<nzb")); i >= 0 {
+		j := bytes.IndexByte(data[i:], '>')
+		if j < 0 {
+			return data, false
+		}
+		at := i + j + 1
+		out = append(append(append([]byte(nil), data[:at]...), "\n<head>"+meta+"</head>"...), data[at:]...)
+	} else {
+		return data, false
+	}
+	parsed, err := nzb.Parse(bytes.NewReader(out))
+	if err != nil || job.NZBPassword(parsed) != password {
+		return data, false
+	}
+	return out, true
+}
+
 func cleanFolderName(s string) string {
 	s = strings.Map(func(r rune) rune {
 		if r == '/' || r == '\\' || r == 0 {

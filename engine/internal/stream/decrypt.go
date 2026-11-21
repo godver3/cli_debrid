@@ -16,11 +16,14 @@ type ReaderAtCtx interface {
 }
 
 // Encryption is an AES-CBC key and IV for one encrypted archive member
-// (RAR5: AES-256, key already derived from the password). The whole member
-// is one CBC stream, the way cli_mount reads it.
+// (RAR5 or 7z: AES-256, key already derived from the password). The whole
+// member is one CBC stream, the way cli_mount reads it. Skip is where the
+// member's plaintext starts in the decrypted stream (a 7z folder holding
+// several files; 0 for RAR).
 type Encryption struct {
-	Key []byte `json:"key,omitempty"`
-	IV  []byte `json:"iv,omitempty"`
+	Key  []byte `json:"key,omitempty"`
+	IV   []byte `json:"iv,omitempty"`
+	Skip int64  `json:"skip,omitempty"`
 }
 
 // Enabled reports whether there's anything to decrypt.
@@ -36,6 +39,9 @@ func (e Encryption) Validate() error {
 	if len(e.IV) != aes.BlockSize {
 		return fmt.Errorf("stream: AES IV is %d bytes, want %d", len(e.IV), aes.BlockSize)
 	}
+	if e.Skip < 0 {
+		return fmt.Errorf("stream: negative plaintext offset %d", e.Skip)
+	}
 	return nil
 }
 
@@ -48,6 +54,7 @@ type DecryptedFile struct {
 	block cipher.Block
 	iv    []byte
 	size  int64
+	skip  int64 // plaintext offset of the member in the decrypted stream
 	enc   int64 // ciphertext size available in src
 }
 
@@ -56,14 +63,14 @@ func NewDecryptedFile(src ReaderAtCtx, e Encryption, size, encSize int64) (*Decr
 	if err := e.Validate(); err != nil {
 		return nil, err
 	}
-	if size < 0 || size > encSize {
-		return nil, fmt.Errorf("stream: plaintext size %d exceeds ciphertext size %d", size, encSize)
+	if size < 0 || e.Skip+size > encSize {
+		return nil, fmt.Errorf("stream: plaintext size %d (at %d) exceeds ciphertext size %d", size, e.Skip, encSize)
 	}
 	b, err := aes.NewCipher(e.Key)
 	if err != nil {
 		return nil, err
 	}
-	return &DecryptedFile{src: src, block: b, iv: append([]byte(nil), e.IV...), size: size, enc: encSize}, nil
+	return &DecryptedFile{src: src, block: b, iv: append([]byte(nil), e.IV...), size: size, skip: e.Skip, enc: encSize}, nil
 }
 
 // Size is the plaintext size.
@@ -78,6 +85,8 @@ func (d *DecryptedFile) ReadAtCtx(ctx context.Context, prio nntp.Priority, p []b
 		return 0, io.EOF
 	}
 	end := min(off+int64(len(p)), d.size)
+	n0 := end - off
+	off, end = off+d.skip, end+d.skip // positions in the decrypted stream
 	const bs = aes.BlockSize
 	aStart := off - off%bs
 	aEnd := min((end+bs-1)/bs*bs, d.enc)
@@ -102,7 +111,7 @@ func (d *DecryptedFile) ReadAtCtx(ctx context.Context, prio nntp.Priority, p []b
 	}
 	plain := make([]byte, len(ct))
 	cipher.NewCBCDecrypter(d.block, iv).CryptBlocks(plain, ct)
-	n := copy(p, plain[off-aStart:end-aStart])
+	n := copy(p, plain[off-aStart:off-aStart+n0])
 	if n < len(p) {
 		return n, io.EOF
 	}

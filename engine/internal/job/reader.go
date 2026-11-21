@@ -56,13 +56,32 @@ func Open(res *Result, n *nzb.NZB, f stream.Fetcher, cache *stream.Cache, readAh
 	return out, nil
 }
 
-// Entry returns a reader for one entry.
-func (fs *Files) Entry(e Entry) *EntryReader { return &EntryReader{fs: fs, e: e} }
+// Entry returns a reader for one entry. An encrypted entry's pieces are
+// read as ciphertext and decrypted.
+func (fs *Files) Entry(e Entry) *EntryReader {
+	r := &EntryReader{fs: fs, e: e}
+	if e.Encryption == nil || !e.Encryption.Enabled() {
+		return r
+	}
+	var cipherSize int64
+	for _, pc := range e.Pieces {
+		cipherSize += pc.Length
+	}
+	raw := e
+	raw.Size, raw.Encryption = cipherSize, nil
+	r.dec, r.decErr = stream.NewDecryptedFile(&EntryReader{fs: fs, e: raw}, *e.Encryption, e.Size, cipherSize)
+	if r.decErr != nil {
+		r.decErr = fmt.Errorf("job: %s: %w", e.Name, r.decErr)
+	}
+	return r
+}
 
 // EntryReader reads an entry across its pieces.
 type EntryReader struct {
-	fs *Files
-	e  Entry
+	fs     *Files
+	e      Entry
+	dec    *stream.DecryptedFile // encrypted entries
+	decErr error
 }
 
 // Size is the entry's size.
@@ -75,6 +94,12 @@ func (r *EntryReader) ReadAt(p []byte, off int64) (int, error) {
 
 // ReadAtCtx reads len(p) bytes at off with the given priority.
 func (r *EntryReader) ReadAtCtx(ctx context.Context, prio nntp.Priority, p []byte, off int64) (int, error) {
+	if r.decErr != nil {
+		return 0, r.decErr
+	}
+	if r.dec != nil {
+		return r.dec.ReadAtCtx(ctx, prio, p, off)
+	}
 	if off >= r.e.Size {
 		return 0, io.EOF
 	}

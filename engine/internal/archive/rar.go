@@ -1,8 +1,10 @@
 // Package archive maps files stored inside RAR and 7z sets to byte ranges
 // of the posted volumes, so they can be streamed without extracting.
 //
-// Only stored (uncompressed, unencrypted) members can be streamed; that is
-// how nearly every usenet video release is packed. Anything else is
+// Only stored (uncompressed) members can be streamed; that is how nearly
+// every usenet video release is packed. RAR5 and 7z sets protected with a
+// password (data only, or headers too) stream when the password is known;
+// RAR4 encryption is not supported. Anything that can't be streamed is
 // reported with a clear error rather than served as garbage.
 //
 // Header layouts follow the RAR 4 and RAR 5 technical notes; volume-number
@@ -14,6 +16,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"strings"
 )
@@ -56,13 +59,16 @@ func DetectRAR(head []byte) Version {
 
 // Part is one member's slice of data inside one volume.
 type Part struct {
-	Name        string
-	Offset      int64 // where the data starts in the volume
-	Length      int64 // bytes of member data in this volume
-	Unpacked    int64 // whole member size
-	Stored      bool
-	Dir         bool
-	Encrypted   bool
+	Name      string
+	Offset    int64 // where the data starts in the volume
+	Length    int64 // bytes of member data in this volume
+	Unpacked  int64 // whole member size
+	Stored    bool
+	Dir       bool
+	Encrypted bool
+	// Crypt is a RAR5 file's encryption record (nil for RAR4, whose
+	// encryption isn't supported, and for unencrypted files).
+	Crypt       *rar5Crypt
 	SplitBefore bool // continues from the previous volume
 	SplitAfter  bool // continues in the next volume
 }
@@ -74,13 +80,16 @@ type VolumeInfo struct {
 	Number int
 	First  bool // headers mark it as the first volume
 	Multi  bool // part of a multi-volume set
-	Parts  []Part
+	// HeadersEncrypted: the volume's headers were encrypted (RAR5 -hp).
+	HeadersEncrypted bool
+	Parts            []Part
 }
 
 // reader reads header bytes at absolute offsets with bounds checks.
 type reader struct {
-	r    io.ReaderAt
-	size int64
+	r        io.ReaderAt
+	size     int64
+	password string
 }
 
 func (rd reader) at(off int64, n int) ([]byte, error) {
@@ -97,7 +106,13 @@ func (rd reader) at(off int64, n int) ([]byte, error) {
 // ParseVolume reads one volume's headers. Only header bytes are read: for
 // stored data that is the start of the volume and the end-of-archive block.
 func ParseVolume(r io.ReaderAt, size int64) (*VolumeInfo, error) {
-	rd := reader{r: r, size: size}
+	return ParseVolumePassword(r, size, "")
+}
+
+// ParseVolumePassword is ParseVolume for sets that may be password
+// protected: the password opens RAR5 encrypted headers.
+func ParseVolumePassword(r io.ReaderAt, size int64, password string) (*VolumeInfo, error) {
+	rd := reader{r: r, size: size, password: password}
 	head, err := rd.at(0, min(8, int(size)))
 	if err != nil {
 		return nil, err
@@ -159,7 +174,7 @@ func parseRAR4(rd reader) (*VolumeInfo, error) {
 			v.Multi = flags&rar4MainVolume != 0
 			v.First = flags&rar4MainFirstVol != 0
 			if flags&rar4MainPassword != 0 {
-				return nil, fmt.Errorf("%w: RAR4 headers are encrypted", ErrEncrypted)
+				return nil, fmt.Errorf("%w: RAR4 headers are encrypted (RAR4 encryption is not supported)", ErrEncrypted)
 			}
 		case rar4File:
 			p, n, err := parseRAR4File(hdr, flags)
@@ -351,22 +366,14 @@ func rar5MainVolumeNumber(body []byte) int {
 func parseRAR5(rd reader) (*VolumeInfo, error) {
 	v := &VolumeInfo{Version: RAR5, Number: -1}
 	off := int64(len(rar5Sig))
+	var hdrKey []byte // set once an encryption header was opened
 	for off+5 < rd.size {
-		// CRC32 (4) + header size vint (<= 3 bytes for any sane header).
-		pre, err := rd.at(off, int(min(int64(7), rd.size-off)))
+		hdr, disk, err := readRAR5Header(rd, off, hdrKey)
 		if err != nil {
 			return nil, err
 		}
-		hsize, n := vint(pre[4:])
-		if n == 0 || hsize == 0 || hsize > rar5MaxHeaderLen {
-			return nil, fmt.Errorf("%w: RAR5 header size at %d", ErrCorrupt, off)
-		}
-		total := int64(4+n) + int64(hsize)
-		hdr, err := rd.at(off, int(total))
-		if err != nil {
-			return nil, err
-		}
-		f := &fields{b: hdr, pos: 4 + n}
+		f := &fields{b: hdr, pos: 4}
+		f.next() // header size, already checked
 		typ := f.next()
 		hflags := f.next()
 		var extraSize, dataSize uint64
@@ -392,21 +399,80 @@ func parseRAR5(rd reader) (*VolumeInfo, error) {
 			v.Number = rar5MainVolumeNumber(body)
 			v.First = v.Number == 0
 		case rar5Encryption:
-			return nil, fmt.Errorf("%w: RAR5 headers are encrypted", ErrEncrypted)
+			if hdrKey != nil {
+				return nil, fmt.Errorf("%w: second RAR5 encryption header", ErrCorrupt)
+			}
+			c, err := parseRAR5Crypt(hdr[f.pos:bodyEnd], false)
+			if err != nil {
+				return nil, err
+			}
+			key, err := c.open(rd.password)
+			if err != nil {
+				return nil, fmt.Errorf("RAR5 headers are encrypted: %w", err)
+			}
+			hdrKey = key
+			v.HeadersEncrypted = true
 		case rar5File:
 			p, err := parseRAR5File(&fields{b: hdr[:bodyEnd], pos: f.pos}, hdr[bodyEnd:], hflags)
 			if err != nil {
 				return nil, err
 			}
-			p.Offset = off + total
+			p.Offset = off + disk
 			p.Length = int64(dataSize)
 			v.Parts = append(v.Parts, p)
 		case rar5End:
 			return v, nil
 		}
-		off += total + int64(dataSize)
+		off += disk + int64(dataSize)
 	}
 	return v, nil
+}
+
+// readRAR5Header returns the header at off (CRC32 + size vint + body) and
+// how many bytes it takes on disk. With key set, headers are encrypted:
+// each is a 16-byte IV followed by the header padded to whole AES blocks.
+func readRAR5Header(rd reader, off int64, key []byte) ([]byte, int64, error) {
+	if key == nil {
+		// CRC32 (4) + header size vint (<= 3 bytes for any sane header).
+		pre, err := rd.at(off, int(min(int64(7), rd.size-off)))
+		if err != nil {
+			return nil, 0, err
+		}
+		hsize, n := vint(pre[4:])
+		if n == 0 || hsize == 0 || hsize > rar5MaxHeaderLen {
+			return nil, 0, fmt.Errorf("%w: RAR5 header size at %d", ErrCorrupt, off)
+		}
+		total := int64(4+n) + int64(hsize)
+		hdr, err := rd.at(off, int(total))
+		return hdr, total, err
+	}
+	const bs = 16
+	first, err := rd.at(off, 2*bs)
+	if err != nil {
+		return nil, 0, err
+	}
+	iv := first[:bs]
+	blk := append([]byte(nil), first[bs:]...)
+	if err := decryptCBC(key, iv, blk); err != nil {
+		return nil, 0, err
+	}
+	hsize, n := vint(blk[4:])
+	if n == 0 || hsize == 0 || hsize > rar5MaxHeaderLen {
+		return nil, 0, fmt.Errorf("%w: encrypted RAR5 header size at %d (wrong password?)", ErrCorrupt, off)
+	}
+	total := int64(4+n) + int64(hsize)
+	padded := roundBlock(total)
+	raw, err := rd.at(off+bs, int(padded))
+	if err != nil {
+		return nil, 0, err
+	}
+	if err := decryptCBC(key, iv, raw); err != nil {
+		return nil, 0, err
+	}
+	if crc32.ChecksumIEEE(raw[4:total]) != binary.LittleEndian.Uint32(raw[:4]) {
+		return nil, 0, fmt.Errorf("%w: encrypted RAR5 header at %d fails its CRC (wrong password?)", ErrCorrupt, off)
+	}
+	return raw[:total], bs + padded, nil
 }
 
 func parseRAR5File(f *fields, extra []byte, hflags uint64) (Part, error) {
@@ -426,32 +492,40 @@ func parseRAR5File(f *fields, extra []byte, hflags uint64) (Part, error) {
 	if f.err != nil {
 		return Part{}, f.err
 	}
-	return Part{
+	p := Part{
 		Name:        cleanName(string(name)),
 		Unpacked:    int64(unp),
 		Stored:      (comp>>7)&0x7 == 0,
 		Dir:         fileFlags&rar5FileDir != 0,
-		Encrypted:   rar5ExtraHasCrypt(extra),
 		SplitBefore: hflags&rar5HdrSplitBef != 0,
 		SplitAfter:  hflags&rar5HdrSplitAft != 0,
-	}, nil
+	}
+	if rec := rar5ExtraCryptRecord(extra); rec != nil {
+		p.Encrypted = true
+		c, err := parseRAR5Crypt(rec, true)
+		if err != nil {
+			return Part{}, err
+		}
+		p.Crypt = c
+	}
+	return p, nil
 }
 
-// rar5ExtraHasCrypt reports whether a file header's extra area holds a
-// file encryption record.
-func rar5ExtraHasCrypt(extra []byte) bool {
+// rar5ExtraCryptRecord returns the body (after the type) of a file
+// header's encryption record, nil if there is none.
+func rar5ExtraCryptRecord(extra []byte) []byte {
 	for len(extra) > 0 {
 		size, n := vint(extra)
 		if n == 0 || size == 0 || int(size) > len(extra)-n {
-			return false
+			return nil
 		}
 		rec := extra[n : n+int(size)]
 		if typ, m := vint(rec); m > 0 && typ == rar5ExtraCrypt {
-			return true
+			return rec[m:]
 		}
 		extra = extra[n+int(size):]
 	}
-	return false
+	return nil
 }
 
 // cleanName normalises member paths: forward slashes, no leading slash.

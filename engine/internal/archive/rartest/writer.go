@@ -5,6 +5,10 @@ package rartest
 
 import (
 	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/binary"
 	"hash/crc32"
 )
@@ -47,9 +51,186 @@ type Member struct {
 	Data []byte
 }
 
+// Options add RAR5 encryption (ignored for RAR4).
+type Options struct {
+	// Password encrypts every file's data with AES-256 (rar -p).
+	Password string
+	// EncryptHeaders also encrypts the headers (rar -hp).
+	EncryptHeaders bool
+	// NoPasswordCheck leaves the password check value out.
+	NoPasswordCheck bool
+}
+
 // Write stores members (format RAR4 or RAR5) in volumes holding at most
 // volData bytes of member data each and returns the volume images.
 func Write(v int, members []Member, volData int) [][]byte {
+	return WriteOptions(v, members, volData, Options{})
+}
+
+// Test KDF settings: real rar uses 15; tests use the same so the default
+// path is exercised.
+const testKdf = 15
+
+var (
+	fileSalt = bytes.Repeat([]byte{0xa5}, 16)
+	hdrSalt  = bytes.Repeat([]byte{0x3c}, 16)
+)
+
+// WriteOptions is Write with encryption options. With a password, each
+// member's data is one AES-CBC stream (padded to whole blocks) split over
+// the volumes, and volData counts ciphertext bytes.
+func WriteOptions(v int, members []Member, volData int, opt Options) [][]byte {
+	enc := v == RAR5 && opt.Password != ""
+	var fileKey []byte
+	var fileCheck []byte
+	stored := members
+	if enc {
+		fileKey, fileCheck = keys(opt.Password, fileSalt)
+		stored = make([]Member, len(members))
+		for i, m := range members {
+			stored[i] = Member{Name: m.Name, Data: encrypt(fileKey, ivFor(i), m.Data)}
+		}
+	}
+	var hdrKey, hdrCheck []byte
+	if enc && opt.EncryptHeaders {
+		hdrKey, hdrCheck = keys(opt.Password, hdrSalt)
+	}
+	if opt.NoPasswordCheck {
+		fileCheck, hdrCheck = nil, nil
+	}
+	ivN := 0
+	nextIV := func() []byte { ivN++; return ivFor(1000 + ivN) }
+	return write(v, members, stored, volData, func(b *bytes.Buffer) *rar5Out {
+		if !enc {
+			return &rar5Out{b: b}
+		}
+		o := &rar5Out{b: b, key: hdrKey, nextIV: nextIV}
+		if hdrKey != nil {
+			o.writeEncryptionHeader(hdrCheck)
+		}
+		o.fileCrypt = func(i int) []byte { return cryptRecord(ivFor(i), fileCheck) }
+		return o
+	})
+}
+
+// rar5Out writes RAR5 headers, encrypted when key is set.
+type rar5Out struct {
+	b         *bytes.Buffer
+	key       []byte
+	nextIV    func() []byte
+	fileCrypt func(member int) []byte // extra-area encryption record, nil = none
+}
+
+func (o *rar5Out) writeEncryptionHeader(check []byte) {
+	var body []byte
+	body = putVint(body, 0) // version: AES-256
+	var flags uint64
+	if check != nil {
+		flags = 1
+	}
+	body = putVint(body, flags)
+	body = append(body, testKdf)
+	body = append(body, hdrSalt...)
+	body = append(body, check...)
+	rar5Block(o.b, 4, 0, 0, body)
+}
+
+// header writes one RAR5 header (encrypting it when headers are encrypted).
+func (o *rar5Out) header(typ, flags uint64, dataSize int, body, extra []byte) {
+	var hb bytes.Buffer
+	if extra != nil {
+		flags |= 0x01
+	}
+	var h []byte
+	h = putVint(h, typ)
+	h = putVint(h, flags)
+	if extra != nil {
+		h = putVint(h, uint64(len(extra)))
+	}
+	if flags&rar5HdrData != 0 {
+		h = putVint(h, uint64(dataSize))
+	}
+	h = append(h, body...)
+	h = append(h, extra...)
+	sized := putVint(nil, uint64(len(h)))
+	sized = append(sized, h...)
+	crc := make([]byte, 4)
+	binary.LittleEndian.PutUint32(crc, crc32.ChecksumIEEE(sized))
+	hb.Write(crc)
+	hb.Write(sized)
+	if o.key == nil {
+		o.b.Write(hb.Bytes())
+		return
+	}
+	iv := o.nextIV()
+	o.b.Write(iv)
+	o.b.Write(encrypt(o.key, iv, hb.Bytes()))
+}
+
+// keys derives the RAR5 AES key and the 12-byte check value (written
+// independently of package archive's derivation; 7z extraction checks both).
+func keys(password string, salt []byte) (key, check []byte) {
+	mac := hmac.New(sha256.New, []byte(password))
+	mac.Write(salt)
+	mac.Write([]byte{0, 0, 0, 1})
+	u := mac.Sum(nil)
+	acc := append([]byte(nil), u...)
+	var stage [3][]byte
+	for s, n := range []int{1<<testKdf - 1, 16, 16} {
+		for i := 0; i < n; i++ {
+			mac.Reset()
+			mac.Write(u)
+			u = mac.Sum(nil)
+			for j := range acc {
+				acc[j] ^= u[j]
+			}
+		}
+		stage[s] = append([]byte(nil), acc...)
+	}
+	c := make([]byte, 8)
+	for i := 0; i < 32; i++ {
+		c[i&7] ^= stage[2][i]
+	}
+	sum := sha256.Sum256(c)
+	return stage[0], append(c, sum[:4]...)
+}
+
+func cryptRecord(iv, check []byte) []byte {
+	var r []byte
+	r = putVint(r, 0x01) // record type: file encryption
+	r = putVint(r, 0)    // version: AES-256
+	var flags uint64
+	if check != nil {
+		flags = 1
+	}
+	r = putVint(r, flags)
+	r = append(r, testKdf)
+	r = append(r, fileSalt...)
+	r = append(r, iv...)
+	r = append(r, check...)
+	return append(putVint(nil, uint64(len(r))), r...)
+}
+
+func ivFor(i int) []byte {
+	iv := make([]byte, 16)
+	binary.LittleEndian.PutUint64(iv, uint64(i)*0x9e3779b97f4a7c15+1)
+	binary.LittleEndian.PutUint64(iv[8:], uint64(i)+0x1234)
+	return iv
+}
+
+// encrypt pads data with zeros to whole blocks and AES-CBC encrypts it.
+func encrypt(key, iv, data []byte) []byte {
+	out := make([]byte, (len(data)+15)/16*16)
+	copy(out, data)
+	blk, err := aes.NewCipher(key)
+	if err != nil {
+		panic(err)
+	}
+	cipher.NewCBCEncrypter(blk, iv).CryptBlocks(out, out)
+	return out
+}
+
+func write(v int, members, stored []Member, volData int, out5 func(*bytes.Buffer) *rar5Out) [][]byte {
 	type piece struct {
 		m                       int
 		from, to                int
@@ -58,7 +239,7 @@ func Write(v int, members []Member, volData int) [][]byte {
 	// Lay pieces into volumes.
 	var vols [][]piece
 	cur, room := []piece{}, volData
-	for mi, m := range members {
+	for mi, m := range stored {
 		from := 0
 		for {
 			if room == 0 { // volume full: never leave an empty piece in it
@@ -100,17 +281,22 @@ func Write(v int, members []Member, volData int) [][]byte {
 			writeRAR4End(&b, !last, vi)
 		} else {
 			b.Write(rar5Sig)
-			writeRAR5Main(&b, multi, vi)
+			o := out5(&b)
+			o.writeMain(multi, vi)
 			for _, p := range pieces {
 				m := members[p.m]
-				part := m.Data[p.from:p.to]
+				part := stored[p.m].Data[p.from:p.to]
 				crc := crc32.ChecksumIEEE(part)
 				if !p.splitAfter {
 					crc = crc32.ChecksumIEEE(m.Data)
 				}
-				writeRAR5File(&b, m.Name, part, len(m.Data), crc, p.splitBefore, p.splitAfter)
+				var extra []byte
+				if o.fileCrypt != nil {
+					extra = o.fileCrypt(p.m)
+				}
+				o.writeFile(m.Name, part, len(m.Data), crc, p.splitBefore, p.splitAfter, extra)
 			}
-			writeRAR5End(&b, !last)
+			o.writeEnd(!last)
 		}
 		out[vi] = b.Bytes()
 	}
@@ -197,7 +383,7 @@ func rar5Block(b *bytes.Buffer, typ, flags uint64, dataSize int, body []byte) {
 	b.Write(sized)
 }
 
-func writeRAR5Main(b *bytes.Buffer, multi bool, vol int) {
+func (o *rar5Out) writeMain(multi bool, vol int) {
 	var flags uint64
 	var body []byte
 	if multi {
@@ -210,10 +396,10 @@ func writeRAR5Main(b *bytes.Buffer, multi bool, vol int) {
 	if flags&rar5MainVolNum != 0 {
 		body = putVint(body, uint64(vol))
 	}
-	rar5Block(b, rar5Main, 0, 0, body)
+	o.header(rar5Main, 0, 0, body, nil)
 }
 
-func writeRAR5File(b *bytes.Buffer, name string, part []byte, unp int, crc uint32, before, after bool) {
+func (o *rar5Out) writeFile(name string, part []byte, unp int, crc uint32, before, after bool, extra []byte) {
 	hflags := uint64(rar5HdrData)
 	if before {
 		hflags |= rar5HdrSplitBef
@@ -232,14 +418,14 @@ func writeRAR5File(b *bytes.Buffer, name string, part []byte, unp int, crc uint3
 	body = putVint(body, 0) // host OS: Windows
 	body = putVint(body, uint64(len(name)))
 	body = append(body, name...)
-	rar5Block(b, rar5File, hflags, len(part), body)
-	b.Write(part)
+	o.header(rar5File, hflags, len(part), body, extra)
+	o.b.Write(part)
 }
 
-func writeRAR5End(b *bytes.Buffer, more bool) {
+func (o *rar5Out) writeEnd(more bool) {
 	var flags uint64
 	if more {
 		flags = 1
 	}
-	rar5Block(b, rar5End, 0, 0, putVint(nil, flags))
+	o.header(rar5End, 0, 0, putVint(nil, flags), nil)
 }

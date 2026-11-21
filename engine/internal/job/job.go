@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"path"
 	"regexp"
@@ -69,6 +70,9 @@ type Entry struct {
 	Pieces []Piece `json:"pieces"`
 	// FromArchive names the archive set it came from ("" for plain files).
 	FromArchive string `json:"from_archive,omitempty"`
+	// Encryption is set for a member of a password-protected archive:
+	// Pieces then hold AES-CBC ciphertext and Size is the plaintext size.
+	Encryption *stream.Encryption `json:"encryption,omitempty"`
 }
 
 // Failure is something that could not be made streamable.
@@ -120,6 +124,9 @@ const leftoverRatio = 0.25
 // Options tune Build.
 type Options struct {
 	Parallel int // concurrent probes / volume parses (default 8)
+	// Password opens password-protected RAR5/7z sets. Empty falls back to
+	// the NZB's <meta type="password">.
+	Password string
 }
 
 var (
@@ -143,6 +150,9 @@ type posted struct {
 func Build(ctx context.Context, f stream.Fetcher, cache *stream.Cache, n *nzb.NZB, opt Options) (*Result, error) {
 	if opt.Parallel <= 0 {
 		opt.Parallel = 8
+	}
+	if opt.Password == "" {
+		opt.Password = NZBPassword(n)
 	}
 	files := make([]*posted, len(n.Files))
 	for i, nf := range n.Files {
@@ -172,6 +182,9 @@ func Build(ctx context.Context, f stream.Fetcher, cache *stream.Cache, n *nzb.NZ
 	res := &Result{}
 	note := func(format string, a ...any) { res.Notes = append(res.Notes, fmt.Sprintf(format, a...)) }
 	note("%d files in the NZB, %d PAR2 recovery volumes skipped", len(files), len(files)-len(todo))
+	if opt.Password != "" {
+		note("archive password known")
+	}
 	// PAR2 index files (named *.par2 or recognised by magic) give real names.
 	var descs []par2.FileDesc
 	for _, p := range todo {
@@ -281,7 +294,7 @@ func Build(ctx context.Context, f stream.Fetcher, cache *stream.Cache, n *nzb.NZ
 				failedArchive = max(failedArchive, m.Size)
 				continue
 			}
-			e := Entry{Name: path.Base(m.Name), Size: m.Size, FromArchive: label}
+			e := Entry{Name: path.Base(m.Name), Size: m.Size, FromArchive: label, Encryption: entryEncryption(m)}
 			for _, x := range m.Extents {
 				e.Pieces = append(e.Pieces, Piece{Source: src(byID[set.Volumes[x.Volume].ID]),
 					Offset: x.Offset, Length: x.Length})
@@ -296,11 +309,11 @@ func Build(ctx context.Context, f stream.Fetcher, cache *stream.Cache, n *nzb.NZ
 	sort.Strings(keys)
 	for _, k := range keys {
 		vols := rarSets[k]
-		set, err := archive.OpenRAR(ctx, volumesOf(vols), opt.Parallel)
+		set, err := archive.OpenRARPassword(ctx, volumesOf(vols), opt.Parallel, opt.Password)
 		addSet(setLabel(vols), vols, set, err)
 	}
 	if len(sevenZ) > 0 {
-		set, err := archive.OpenSevenZip(volumesOf(sevenZ))
+		set, err := archive.OpenSevenZipPassword(volumesOf(sevenZ), opt.Password)
 		addSet(setLabel(sevenZ), sevenZ, set, err)
 	}
 
@@ -308,7 +321,7 @@ func Build(ctx context.Context, f stream.Fetcher, cache *stream.Cache, n *nzb.NZ
 	// .rar/.r00-.r45): open the inner set over the 7z members and map its
 	// files back onto the posted articles, as cli_mount's 7z parser does.
 	if len(res.Sources) > 0 {
-		failedArchive = max(failedArchive, unnestRAR(ctx, res, todo, opt.Parallel, note))
+		failedArchive = max(failedArchive, unnestRAR(ctx, res, todo, opt.Parallel, opt.Password, note))
 	}
 
 	// Media files rebuilt from archives must start with their container's
@@ -404,10 +417,16 @@ func isContent(p *posted) bool {
 // archive with the files of that inner RAR set. Their pieces are the outer
 // members' pieces sliced to each inner extent, so nothing is copied. It
 // returns the size of an inner set that failed (for the leftover guard).
-func unnestRAR(ctx context.Context, res *Result, todo []*posted, parallel int, note func(string, ...any)) int64 {
+func unnestRAR(ctx context.Context, res *Result, todo []*posted, parallel int, password string, note func(string, ...any)) int64 {
 	sets := map[string][]int{} // outer archive + inner set key -> entry indexes
 	for i, e := range res.Entries {
 		if e.FromArchive == "" || !reRarName.MatchString(e.Name) {
+			continue
+		}
+		if e.Encryption != nil {
+			// Inner files would be slices of decrypted bytes, which pieces
+			// of posted articles can't describe.
+			note("inner archive %s inside an encrypted archive is not supported", e.Name)
 			continue
 		}
 		key := e.FromArchive + "\x00" + strings.ToLower(reRarName.ReplaceAllString(e.Name, ""))
@@ -442,7 +461,7 @@ func unnestRAR(ctx context.Context, res *Result, todo []*posted, parallel int, n
 			total += e.Size
 		}
 		label := res.Entries[idxs[0]].Name
-		set, err := archive.OpenRAR(ctx, vols, parallel)
+		set, err := archive.OpenRARPassword(ctx, vols, parallel, password)
 		if err != nil {
 			note("inner archive %s (%d volumes inside %s): %v", label, len(vols), res.Entries[idxs[0]].FromArchive, err)
 			res.Failures = append(res.Failures, Failure{Name: label, Size: total, Error: err.Error()})
@@ -459,7 +478,7 @@ func unnestRAR(ctx context.Context, res *Result, todo []*posted, parallel int, n
 				failed = max(failed, m.Size)
 				continue
 			}
-			e := Entry{Name: path.Base(m.Name), Size: m.Size, FromArchive: label}
+			e := Entry{Name: path.Base(m.Name), Size: m.Size, FromArchive: label, Encryption: entryEncryption(m)}
 			for _, x := range m.Extents {
 				outer := res.Entries[set.Volumes[x.Volume].ID]
 				e.Pieces = append(e.Pieces, slicePieces(outer.Pieces, x.Offset, x.Length)...)
@@ -494,6 +513,33 @@ func slicePieces(pcs []Piece, off, n int64) []Piece {
 		pos = end
 	}
 	return out
+}
+
+// entryEncryption copies an archive member's decryption parameters.
+func entryEncryption(m archive.Member) *stream.Encryption {
+	if m.Encryption == nil {
+		return nil
+	}
+	return &stream.Encryption{Key: m.Encryption.Key, IV: m.Encryption.IV, Skip: m.Encryption.Skip}
+}
+
+// NZBPassword returns the archive password an NZB carries in its head
+// (<meta type="password">), "" if none.
+func NZBPassword(n *nzb.NZB) string {
+	if n == nil {
+		return ""
+	}
+	for k, v := range n.Meta {
+		if strings.EqualFold(k, "password") {
+			// nzbparser keeps the raw inner XML: undo CDATA and entities.
+			v = strings.TrimSpace(v)
+			if strings.HasPrefix(v, "<![CDATA[") && strings.HasSuffix(v, "]]>") {
+				return v[len("<![CDATA[") : len(v)-len("]]>")]
+			}
+			return html.UnescapeString(v)
+		}
+	}
+	return ""
 }
 
 // LeftoverOnly reports whether the largest streamable file is too small,

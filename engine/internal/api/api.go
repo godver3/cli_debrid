@@ -309,7 +309,11 @@ func (a *api) submit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	j, err := a.e.Submit(data, q.Get("name"), q.Get("category"), q.Get("id"))
+	password := q.Get("password")
+	if password == "" {
+		password = r.FormValue("password") // multipart field keeps it out of URLs/logs
+	}
+	j, err := a.e.SubmitPassword(data, q.Get("name"), q.Get("category"), q.Get("id"), password)
 	if err != nil {
 		storeErr(w, err)
 		return
