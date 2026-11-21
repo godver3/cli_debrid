@@ -607,8 +607,11 @@ function _usenetPollRepairProgress() {
                 _usenetPollRepairProgress();
             } else if (d.status === 'done' && d.summary) {
                 barEl.style.width = '100%';
-                statusEl.textContent =
-                    `Done — ${d.summary.replaced} replaced, ${d.summary.not_found} not found, ${d.summary.errors} errors`;
+                // The automatic repair holds the same lock: a click while it runs
+                // returns {skipped: 'already_running'} with no counts.
+                statusEl.textContent = d.summary.skipped === 'already_running'
+                    ? 'The automatic repair was already running, so this click did nothing. Its results are in the activity list below.'
+                    : `Done — ${d.summary.replaced || 0} replaced, ${d.summary.not_found || 0} not found, ${d.summary.errors || 0} errors`;
                 fixBtn.disabled = false;
                 fixBtn.innerHTML = '<i class="fa-solid fa-check" style="color:#4ade80"></i> Done';
                 setTimeout(() => { fixBtn.innerHTML = '<i class="fa-solid fa-wrench" style="color:#e8601c"></i> Fix Broken'; }, 3000);
