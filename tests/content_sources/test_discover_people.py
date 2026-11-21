@@ -36,7 +36,12 @@ PERSON = {
 @unittest.skipUnless(Flask, 'flask not installed')
 class DiscoverPeopleRoutesTests(unittest.TestCase):
     def setUp(self):
+        # The app imports database first; routes.models first is a circular
+        # import (debrid -> database.statistics -> debrid) when this test
+        # runs on its own.
+        import database  # noqa: F401
         import routes.models as models
+        import routes.utils as route_utils
         import routes.discover_routes as dr
         self.dr = dr
         dr._prewarm_timer.cancel()
@@ -49,6 +54,9 @@ class DiscoverPeopleRoutesTests(unittest.TestCase):
         }
         for patch in [
             mock.patch.object(models, 'is_user_system_enabled', return_value=False),
+            # request_batch reads it from routes.utils itself; unpatched, the
+            # test followed the machine's config (user system on -> 500).
+            mock.patch.object(route_utils, 'is_user_system_enabled', return_value=False),
             patch_in_package(dr, 'get_setting', side_effect=self._setting),
             patch_in_package(dr, 'add_db_status_and_episode_info',
                               side_effect=lambda results, use_battery=False: None),
