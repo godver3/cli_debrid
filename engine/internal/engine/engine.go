@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -122,9 +123,25 @@ type Config struct {
 	DeobfuscateMode string `json:"deobfuscate_mode"`
 	// VirtualFolders: extra top folders of the jobs matching their filters.
 	VirtualFolders map[string]VirtualFolder `json:"virtual_folders"`
+	// MemoryLimitMB is the Go runtime's soft memory limit. 0 = the memory
+	// cache plus 768 MB; -1 = no limit. Without it the default GC lets the
+	// heap grow to twice the live data, and the memory cache alone is live:
+	// found live, 2.7 GB of heap for a 1 GB cache.
+	MemoryLimitMB int `json:"memory_limit_mb"`
 	// RetryBackoff: waits before re-importing after an unproven failure
 	// (default 1m, 5m, 15m); once used up the job fails, still retryable.
 	RetryBackoff []time.Duration `json:"-"`
+}
+
+// memoryLimit returns the soft memory limit in bytes (0 = none).
+func (c Config) memoryLimit() int64 {
+	switch {
+	case c.MemoryLimitMB < 0:
+		return 0
+	case c.MemoryLimitMB > 0:
+		return int64(c.MemoryLimitMB) << 20
+	}
+	return c.MemCacheBytes + 768<<20
 }
 
 func (c *Config) defaults() {
@@ -307,6 +324,10 @@ func New(cfg Config, log *slog.Logger) (*Engine, error) {
 	cfg.defaults()
 	if log == nil {
 		log = slog.Default()
+	}
+	if lim := cfg.memoryLimit(); lim > 0 {
+		debug.SetMemoryLimit(lim)
+		log.Info("memory limit", "mb", lim>>20)
 	}
 	st, err := store.Open(cfg.DataDir)
 	if err != nil {

@@ -378,3 +378,48 @@ func TestRARSetInsideSevenZip(t *testing.T) {
 		}
 	}
 }
+
+// Stored ZIPs stream like cli_mount's: a spanned set (zip -s: .z01...,
+// .zip) and a byte-split one (7z -tzip -v: .zip.001...).
+func TestZipSetsStream(t *testing.T) {
+	cases := []struct {
+		tool string
+		args []string
+		glob string
+	}{
+		{"zip", []string{"-q", "-0", "-s", "70k", "film.zip", "Film.mkv"}, "film.z*"},
+		{"7z", []string{"a", "-tzip", "-mx=0", "-v70k", "film.zip", "Film.mkv"}, "film.zip.*"},
+	}
+	for _, c := range cases {
+		t.Run(c.tool, func(t *testing.T) {
+			bin, err := exec.LookPath(c.tool)
+			if err != nil {
+				t.Skip(c.tool + " not installed")
+			}
+			dir := t.TempDir()
+			movie := random(7, 250_000)
+			os.WriteFile(filepath.Join(dir, "Film.mkv"), movie, 0o644)
+			cmd := exec.Command(bin, c.args...)
+			cmd.Dir = dir
+			if b, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("%v\n%s", err, b)
+			}
+			parts, _ := filepath.Glob(filepath.Join(dir, c.glob))
+			if len(parts) < 3 {
+				t.Fatalf("expected several volumes, got %v", parts)
+			}
+			e := newEnv(t)
+			for _, p := range parts {
+				b, _ := os.ReadFile(p)
+				e.post(filepath.Base(p), filepath.Base(p), b)
+			}
+			res, err := e.build()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(res.Entries) != 1 || res.Entries[0].Name != "Film.mkv" || !bytes.Equal(e.read(res, res.Entries[0]), movie) {
+				t.Fatalf("entries %v failures %v", entryNames(res), res.Failures)
+			}
+		})
+	}
+}

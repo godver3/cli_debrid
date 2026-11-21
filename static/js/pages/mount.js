@@ -20,6 +20,7 @@
       '<td><input data-k="password" type="password" autocomplete="new-password" placeholder="' + (s.password_set ? 'unchanged' : '') + '"></td>' +
       '<td><input data-k="connections" type="number" value="' + esc(s.connections ?? 10) + '" style="width:70px"></td>' +
       '<td><input data-k="backup" type="checkbox"' + (s.backup ? ' checked' : '') + ' style="width:auto"></td>' +
+      '<td><input data-k="backbone" value="' + esc(s.backbone || '') + '" placeholder="e.g. omicron" title="Servers with the same backbone share one article store: when one says an article is missing, the others are not asked." style="width:110px"></td>' +
       '<td><input data-k="expires" type="date" value="' + esc(s.expires || '') + '" style="width:auto"></td>' +
       '<td><input data-k="auto_renew" type="checkbox"' + (s.auto_renew ? ' checked' : '') + ' style="width:auto"></td>' +
       '<td><button type="button" class="btn sec rm" style="padding:4px 10px">Remove</button></td>';

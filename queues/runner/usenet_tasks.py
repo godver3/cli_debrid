@@ -98,7 +98,24 @@ class UsenetTasks:
                 since = _wait_since.setdefault(job_id, _now_mono)
                 return count, _now_mono - since
 
-            def _find_folder(job_id):
+            def _title_claimed_elsewhere(job_id, title):
+                """Another item holds a release of this name under a different
+                job id: a folder found by name may be that job's, not this one's."""
+                try:
+                    from database import get_db_connection as _gdb_ff
+                    _c = _gdb_ff()
+                    try:
+                        row = _c.execute(
+                            "SELECT 1 FROM media_items WHERE filled_by_file=? AND filled_by_torrent_id IS NOT NULL "
+                            "AND filled_by_torrent_id NOT IN (?, ?) LIMIT 1",
+                            (title, job_id, f'nzb:{job_id}')).fetchone()
+                    finally:
+                        _c.close()
+                    return bool(row)
+                except Exception:
+                    return False
+
+            def _find_folder(job_id, ghost=False):
                 items_for_job = _job_groups[job_id]
                 nzb_title = items_for_job[0].get('filled_by_file', '') or items_for_job[0].get('original_scraped_torrent_title', '')
                 by_job = getattr(_nzb_client, 'get_nzb_file_info_for_job', None)
@@ -111,6 +128,10 @@ class UsenetTasks:
                             return result[0], result[2]
                     except Exception:
                         pass
+                if ghost and by_job is None and nzb_title and _title_claimed_elsewhere(job_id, nzb_title):
+                    # Job gone from the provider queue and its name belongs to
+                    # another job too: matching by name could take that job's folder.
+                    return None, None
                 try:
                     result = _nzb_client.get_nzb_file_info(
                         nzb_title or job_id, fast_check=True, include_size=True
@@ -158,7 +179,7 @@ class UsenetTasks:
                                 # The confirmed-complete memory is lost on restart, and the
                                 # provider drops finished jobs from its queue. A job whose
                                 # folder is there finished; it is not a ghost.
-                                entry_name, actual_file_size = _find_folder(job_id)
+                                entry_name, actual_file_size = _find_folder(job_id, ghost=True)
                             if entry_name:
                                 progress = 100
                             elif job_id not in self._nzb_confirmed_complete:

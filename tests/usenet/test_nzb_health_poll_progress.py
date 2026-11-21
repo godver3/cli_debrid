@@ -226,6 +226,18 @@ class NzbHealthPollProgressTests(unittest.TestCase):
             self._assert_no_stall(runner, client)
             self.assertEqual(ProgramRunner._nzb_confirmed_complete.get('job0'), 'Movie.0')
 
+    def test_dropped_job_does_not_take_another_jobs_same_named_folder(self):
+        # Another item holds 'Movie.0' under a different job: the folder by that
+        # name may be its folder, so this dropped job must not claim it.
+        runner, _ = _runner(1)
+        client = _FakeClimountClient(progress=1.0, folder='Movie.0')
+        client.get_job_status = lambda job_id: {'state': 'completed', 'progress': 100, 'raw': {}}
+        with mock.patch.object(ProgramRunner, '_nzb_confirmed_complete', {}), \
+             mock.patch('database.get_db_connection') as gdb:
+            gdb.return_value.execute.return_value.fetchone.return_value = (1,)
+            self._tick(runner, client)
+            self.assertNotIn('job0', ProgramRunner._nzb_confirmed_complete)
+
     def test_folder_wait_needs_wall_clock_time_not_just_ticks(self):
         runner, _ = _runner(1)
         client = _FakeClimountClient(progress=1.0)

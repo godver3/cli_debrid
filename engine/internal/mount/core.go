@@ -140,8 +140,14 @@ func (h *openFile) readAt(ctx context.Context, dest []byte, off int64) (int, err
 	return n, nil
 }
 
+// closeGrace: a closed handle's read-ahead keeps running this long
+// (cli_mount's release grace). Plex closes a file and reopens it at once
+// (probe, then playback); cancelling straight away threw away articles
+// already on the wire that the reopened handle then fetched again.
+var closeGrace = 2 * time.Second
+
 func (h *openFile) close() {
-	h.cancel() // the handle's read-ahead is for nobody now
+	time.AfterFunc(closeGrace, h.cancel) // then the read-ahead is for nobody
 	h.e.CloseStream(h.stream)
 }
 

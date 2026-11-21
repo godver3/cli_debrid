@@ -350,3 +350,30 @@ class SpaceTests(unittest.TestCase):
 
     def test_durations(self):
         self.assertEqual([bm._seconds(x) for x in ('10s', '5m', '3d', '1h30m', '', 'junk')], [10, 300, 259200, 5400, None, None])
+
+
+class BackboneTests(unittest.TestCase):
+    """cli_mount's per-server backbones carry over to the built-in servers."""
+
+    def test_backbones_read_and_applied_by_host(self):
+        import json
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, 'config.json'), 'w') as f:
+                json.dump({'usenet': {'providers': [
+                    {'host': 'News.Newshosting.com', 'backbone': 'omicron'},
+                    {'host': 'news.easynews.com', 'backbone': ' omicron '},
+                    {'host': 'news.tweaknews.eu'}]}}, f)
+            got = bm.climount_repair_settings(d)
+        bb = got[bm.BACKBONES_KEY]
+        self.assertEqual(bb, {'news.newshosting.com': 'omicron', 'news.easynews.com': 'omicron'})
+        servers = [{'host': 'news.newshosting.com'}, {'host': 'news.easynews.com', 'backbone': 'mine'},
+                   {'host': 'news.tweaknews.eu'}]
+        out, changed = bm.apply_backbones(servers, bb)
+        self.assertEqual(changed, 1)
+        self.assertEqual([s.get('backbone') for s in out], ['omicron', 'mine', None])
+        self.assertNotIn('backbone', servers[0])  # input not modified
+
+    def test_engine_config_passes_backbone(self):
+        from utilities.builtin_engine import servers
+        got = servers({'servers': [{'host': 'a', 'backbone': ' omicron '}, {'host': 'b'}]})
+        self.assertEqual([s['backbone'] for s in got], ['omicron', ''])

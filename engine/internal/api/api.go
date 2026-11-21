@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/pprof"
 	"strconv"
 	"strings"
 	"time"
@@ -79,6 +80,10 @@ func Handler(e *engine.Engine) http.Handler {
 	mux.HandleFunc("DELETE /jobs/{id}/health", a.healthClear)
 	mux.HandleFunc("POST /replacements/verify", a.verify)
 	mux.HandleFunc("POST /replacements/ack", a.ack)
+	// Profiling (token-protected like the rest; the API listens on loopback).
+	mux.HandleFunc("GET /debug/pprof/", pprof.Index)
+	mux.HandleFunc("GET /debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("GET /debug/pprof/trace", pprof.Trace)
 	return a.logged(a.auth(mux))
 }
 

@@ -222,8 +222,41 @@ def climount_repair_settings(data_path: str) -> Dict[str, object]:
             if isinstance(v, int) and 0 < v <= 100:
                 out[dst] = v
         out.update(_climount_streaming_settings(cfg))
+        backbones = climount_backbones(cfg)
+        if backbones:
+            out[BACKBONES_KEY] = backbones
         return out
     return {}
+
+
+#: Key of the {host: backbone} map in climount_repair_settings' result; not
+#: a setting itself: apply_backbones puts it on the matching servers.
+BACKBONES_KEY = '_server_backbones'
+
+
+def climount_backbones(cfg: dict) -> Dict[str, str]:
+    """cli_mount's per-server backbone names ({host (lowercase): backbone})."""
+    out = {}
+    for p in (cfg.get('usenet') or {}).get('providers') or []:
+        if isinstance(p, dict) and str(p.get('host') or '').strip() and str(p.get('backbone') or '').strip():
+            out[str(p['host']).strip().lower()] = str(p['backbone']).strip()
+    return out
+
+
+def apply_backbones(servers: list, backbones: Dict[str, str]) -> Tuple[list, int]:
+    """Servers with cli_mount's backbone set where the host matches and the
+    server has none yet (a backbone typed on the Mount page wins). Returns
+    (servers, how many changed)."""
+    out, changed = [], 0
+    for s in servers or []:
+        s = dict(s) if isinstance(s, dict) else s
+        if isinstance(s, dict) and not str(s.get('backbone') or '').strip():
+            bb = backbones.get(str(s.get('host') or '').strip().lower())
+            if bb:
+                s['backbone'] = bb
+                changed += 1
+        out.append(s)
+    return out, changed
 
 
 def _size_mb(v) -> Optional[int]:

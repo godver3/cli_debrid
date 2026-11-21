@@ -206,6 +206,35 @@ func (pl *pool) passOn(s *slot) {
 	pl.idle = append(pl.idle, s.c)
 }
 
+// enqueue takes a free connection (or a slot to dial) when there is one;
+// otherwise it registers a waiter and returns its channel. ch is nil when
+// ok is true or the pool is closed.
+func (pl *pool) enqueue(prio Priority) (c *conn, dial, ok bool, ch chan *slot) {
+	pl.mu.Lock()
+	defer pl.mu.Unlock()
+	if pl.closed {
+		return nil, false, false, nil
+	}
+	if c, dial, ok := pl.takeLocked(prio); ok {
+		return c, dial, true, nil
+	}
+	ch = make(chan *slot, 1)
+	pl.queues[prio] = append(pl.queues[prio], ch)
+	return nil, false, false, ch
+}
+
+// leave withdraws a waiter; a slot already handed to it goes to the next.
+func (pl *pool) leave(prio Priority, ch chan *slot) {
+	pl.mu.Lock()
+	pl.removeWaiter(prio, ch)
+	pl.mu.Unlock()
+	select {
+	case s := <-ch:
+		pl.passOn(s)
+	default:
+	}
+}
+
 func (pl *pool) removeWaiter(prio Priority, ch chan *slot) {
 	q := pl.queues[prio]
 	for i, w := range q {

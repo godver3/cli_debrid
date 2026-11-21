@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -136,9 +137,18 @@ func (c *Client) attempt(ctx context.Context, prio Priority, id string,
 	left := append([]*pool(nil), c.pools...)
 	for len(left) > 0 {
 		k, pre, preErr, got := pick(ctx, left, prio)
+		if !got {
+			// Every server of this tier is busy: take whichever frees a
+			// connection first (cli_mount races them), not only the first.
+			k, pre, preErr = acquireAny(ctx, left, tier(left), prio)
+			if preErr != nil && ctx.Err() != nil {
+				return ctx.Err()
+			}
+			got = true
+		}
 		pl := left[k]
 		left = append(left[:k:k], left[k+1:]...)
-		answered, gotNotFound, gotMismatch := false, false, false
+		answered, gotNotFound, gotMismatch, got430 := false, false, false, false
 		// One retry per provider: an idle connection the server already
 		// closed fails on first use, which says nothing about the article.
 		for try := 0; try < 2 && !answered; try++ {
@@ -176,6 +186,7 @@ func (c *Client) attempt(ctx context.Context, prio Priority, id string,
 				pl.release(cn)
 				gotNotFound = true
 				answered = true
+				got430 = IsNotFound(err)
 			case errors.Is(err, ErrAuth):
 				pl.discard(cn)
 				last = fmt.Errorf("%s: %w", pl.p.Name, err)
@@ -204,6 +215,19 @@ func (c *Client) attempt(ctx context.Context, prio Priority, id string,
 		if gotNotFound {
 			notFound++
 		}
+		if got430 && pl.p.backbone() != "" {
+			// Same backbone, same article store: its other servers would
+			// answer the same, so they count as asked.
+			keep := left[:0]
+			for _, o := range left {
+				if o.p.backbone() == pl.p.backbone() {
+					notFound++
+					continue
+				}
+				keep = append(keep, o)
+			}
+			left = keep
+		}
 		if gotMismatch {
 			mismatched++
 		}
@@ -231,6 +255,18 @@ func (c *Client) attempt(ctx context.Context, prio Priority, id string,
 // When got is true, pre/preErr is the connection already taken from
 // left[k].
 func pick(ctx context.Context, left []*pool, prio Priority) (k int, pre *conn, preErr error, got bool) {
+	idx := tier(left)
+	for _, i := range idx {
+		if c, ok, err := left[i].tryAcquire(ctx, prio); ok {
+			return i, c, err, true
+		}
+	}
+	return idx[0], nil, nil, false
+}
+
+// tier: indexes into left of the servers to ask now: the primaries, or the
+// backups once no primary is left. Never empty for a non-empty left.
+func tier(left []*pool) []int {
 	backups := true
 	for _, pl := range left {
 		if !pl.p.Backup {
@@ -238,19 +274,55 @@ func pick(ctx context.Context, left []*pool, prio Priority) (k int, pre *conn, p
 			break
 		}
 	}
-	first := -1
+	var idx []int
 	for i, pl := range left {
-		if pl.p.Backup != backups {
-			continue
-		}
-		if first < 0 {
-			first = i
-		}
-		if c, ok, err := pl.tryAcquire(ctx, prio); ok {
-			return i, c, err, true
+		if pl.p.Backup == backups {
+			idx = append(idx, i)
 		}
 	}
-	return first, nil, nil, false
+	return idx
+}
+
+// acquireAny waits on every server in idx at once and returns the first
+// connection (or dial slot, then dialed) handed out; the other waits are
+// withdrawn and any slot they got meanwhile is passed on.
+func acquireAny(ctx context.Context, left []*pool, idx []int, prio Priority) (k int, c *conn, err error) {
+	chans := make([]chan *slot, len(idx))
+	won := -1
+	defer func() {
+		for i, ch := range chans {
+			if ch != nil && i != won {
+				left[idx[i]].leave(prio, ch)
+			}
+		}
+	}()
+	for i, j := range idx {
+		c, dial, ok, ch := left[j].enqueue(prio)
+		if ok {
+			won = i
+			if dial {
+				c, err = left[j].dial(ctx)
+			}
+			return j, c, err
+		}
+		chans[i] = ch
+	}
+	cases := make([]reflect.SelectCase, 0, len(idx)+1)
+	for _, ch := range chans {
+		cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ch)})
+	}
+	cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ctx.Done())})
+	chosen, v, _ := reflect.Select(cases)
+	if chosen == len(idx) {
+		return idx[0], nil, ctx.Err()
+	}
+	won = chosen
+	j := idx[chosen]
+	if s := v.Interface().(*slot); s.c != nil {
+		return j, s.c, nil
+	}
+	c, err = left[j].dial(ctx)
+	return j, c, err
 }
 
 // A reused connection that fails after sitting idle at least staleIdleAge

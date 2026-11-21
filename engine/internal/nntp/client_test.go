@@ -422,3 +422,65 @@ func TestBusyPrimarySpillsToNextPrimary(t *testing.T) {
 		t.Fatalf("idle request skipped the first primary: a=%d b=%d", a.Bodies.Load(), b.Bodies.Load())
 	}
 }
+
+// Every primary busy: the third request takes whichever frees first (b,
+// fast) instead of queueing on the first (a, slow), like cli_mount.
+func TestAllPrimariesBusyTakesFirstFreed(t *testing.T) {
+	arts := nntptest.Post("w", "w.bin", awkward(500), 500)
+	a := nntptest.Start(t, arts...)
+	b := nntptest.Start(t, arts...)
+	a.SetDelay(1500 * time.Millisecond)
+	b.SetDelay(200 * time.Millisecond)
+	c, _ := NewClient([]Provider{provider(a, "a", 1), provider(b, "b", 1)})
+	defer c.Close()
+	var wg sync.WaitGroup
+	for range 2 { // occupy both
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c.Body(context.Background(), Live, arts[0].ID)
+		}()
+	}
+	time.Sleep(50 * time.Millisecond)
+	start := time.Now()
+	if _, _, err := c.Body(context.Background(), Live, arts[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("waited %s: queued on the slow first server", d)
+	}
+	wg.Wait()
+	if b.Bodies.Load() != 2 {
+		t.Fatalf("a=%d b=%d, want the third request on b", a.Bodies.Load(), b.Bodies.Load())
+	}
+}
+
+// A "no such article" from one server of a backbone stands for its other
+// servers (same article store): they aren't asked. Another backbone is
+// still asked, and with every backbone answered "missing" that is proof.
+func TestBackboneNotFoundSkipsSameBackbone(t *testing.T) {
+	arts := nntptest.Post("v", "v.bin", awkward(500), 500)
+	a := nntptest.Start(t)          // 430
+	b := nntptest.Start(t, arts...) // same backbone as a: not asked
+	o := nntptest.Start(t, arts...) // other backbone: asked
+	pa, pb, po := provider(a, "a", 1), provider(b, "b", 1), provider(o, "o", 1)
+	pa.Backbone, pb.Backbone, po.Backbone = "Omicron", " omicron", "abavia"
+	c, _ := NewClient([]Provider{pa, pb, po})
+	defer c.Close()
+	if _, _, err := c.Body(context.Background(), Live, arts[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if b.Bodies.Load() != 0 || o.Bodies.Load() != 1 {
+		t.Fatalf("same backbone asked %d times, other backbone %d (want 0, 1)", b.Bodies.Load(), o.Bodies.Load())
+	}
+
+	// Without the other backbone: a's answer covers b, so it is proof.
+	c2, _ := NewClient([]Provider{pa, pb})
+	defer c2.Close()
+	if _, _, err := c2.Body(context.Background(), Live, arts[0].ID); !IsNotFound(err) {
+		t.Fatalf("got %v, want proof", err)
+	}
+	if b.Bodies.Load() != 0 {
+		t.Fatal("same backbone was asked")
+	}
+}

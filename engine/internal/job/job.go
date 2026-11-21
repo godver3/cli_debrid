@@ -134,6 +134,7 @@ var (
 	reRarName = regexp.MustCompile(`(?i)(\.part\d+\.rar|\.rar|\.r\d{2,3})$`)
 	re7zName  = regexp.MustCompile(`(?i)\.7z(\.\d{3})?$`)
 	reSplit   = regexp.MustCompile(`(?i)\.\d{3}$`)
+	reZipVol  = regexp.MustCompile(`(?i)(\.zip(\.\d{3})?|\.z\d{2,3})$`)
 )
 
 type posted struct {
@@ -227,6 +228,7 @@ func Build(ctx context.Context, f stream.Fetcher, cache *stream.Cache, n *nzb.NZ
 	var plain []*posted
 	rarSets := map[string][]*posted{}
 	var sevenZ []*posted
+	zipSets := map[string][]*posted{}
 	for _, p := range todo {
 		switch {
 		case p.name == "":
@@ -241,6 +243,14 @@ func Build(ctx context.Context, f stream.Fetcher, cache *stream.Cache, n *nzb.NZ
 			rarSets[key] = append(rarSets[key], p)
 		case archive.IsSevenZip(p.head) || (re7zName.MatchString(p.name) && reSplit.MatchString(p.name)):
 			sevenZ = append(sevenZ, p)
+		case archive.IsZipName(p.name) || archive.IsZip(p.head):
+			// One set per base name (x.zip, x.zip.001..., x.z01...); an
+			// obfuscated ZIP (detected by its header only) is its own set.
+			key := strings.ToLower(reZipVol.ReplaceAllString(p.name, ""))
+			if !archive.IsZipName(p.name) {
+				key = "\x00" + p.name
+			}
+			zipSets[key] = append(zipSets[key], p)
 		default:
 			plain = append(plain, p)
 		}
@@ -315,6 +325,16 @@ func Build(ctx context.Context, f stream.Fetcher, cache *stream.Cache, n *nzb.NZ
 	if len(sevenZ) > 0 {
 		set, err := archive.OpenSevenZipPassword(volumesOf(sevenZ), opt.Password)
 		addSet(setLabel(sevenZ), sevenZ, set, err)
+	}
+	zipKeys := make([]string, 0, len(zipSets))
+	for k := range zipSets {
+		zipKeys = append(zipKeys, k)
+	}
+	sort.Strings(zipKeys)
+	for _, k := range zipKeys {
+		vols := zipSets[k]
+		set, err := archive.OpenZip(volumesOf(vols))
+		addSet(setLabel(vols), vols, set, err)
 	}
 
 	// A RAR set packed inside a 7z (Tulsa King S02E07 BROADCAST: a 7z of

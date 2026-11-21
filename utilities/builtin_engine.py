@@ -148,6 +148,7 @@ def servers(bm: dict) -> list:
             'password': str(e.get('password') or ''),
             'max_conns': conns,
             'backup': bool(e.get('backup', False)),
+            'backbone': str(e.get('backbone') or '').strip(),
         })
     return out
 

@@ -39,7 +39,15 @@ type Provider struct {
 	// MinIdle connections are dialled ahead of time and kept open, so the
 	// first read of a session skips the TCP/TLS/AUTH handshake.
 	MinIdle int `json:"min_idle"`
+	// Backbone names the article store this server shares with others
+	// (e.g. "omicron"). When one server of a backbone answers "no such
+	// article", the others on it have the same store and are not asked:
+	// they count as having answered the same (cli_mount's backbone
+	// exclusion). Empty = its own backbone.
+	Backbone string `json:"backbone,omitempty"`
 }
+
+func (p Provider) backbone() string { return strings.ToLower(strings.TrimSpace(p.Backbone)) }
 
 func (p Provider) addr() string { return net.JoinHostPort(p.Host, strconv.Itoa(p.Port)) }
 

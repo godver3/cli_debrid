@@ -189,7 +189,7 @@
   <form id="mntForm" autocomplete="off">
   <div class="card fold"><h3>Usenet servers</h3><div class="body">
     <p style="color:#8f8f8f;font-size:12px;margin-top:0">Main servers share the load: a request uses the first one from the top with a free connection, and when a server lacks an article the next one is asked. Servers marked <strong>Backup</strong> (block accounts) are asked only after every main server. Use the arrows to reorder. Leave a password empty to keep the saved one. <strong>Plan ends</strong> and <strong>Auto-renews</strong> are only reminders: they show on the Overview tab and never change how a server is used.</p>
-    <div class="srv"><table id="servers"><thead><tr><th></th><th>Host</th><th>Port</th><th>SSL</th><th>Username</th><th>Password</th><th>Connections</th><th>Backup</th><th>Plan ends</th><th>Auto-renews</th><th></th></tr></thead><tbody></tbody></table></div>
+    <div class="srv"><table id="servers"><thead><tr><th></th><th>Host</th><th>Port</th><th>SSL</th><th>Username</th><th>Password</th><th>Connections</th><th>Backup</th><th title="Servers with the same backbone share one article store: when one says an article is missing, the others are not asked.">Backbone</th><th>Plan ends</th><th>Auto-renews</th><th></th></tr></thead><tbody></tbody></table></div>
     <button type="button" class="btn sec" id="addServer" style="margin-top:8px">Add server</button>
   </div></div>
   {% for title, fields in groups %}

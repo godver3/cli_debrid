@@ -56,6 +56,9 @@ func Mount(e *engine.Engine, dir string, opt Options, log *slog.Logger) (*fuse.S
 			Debug: opt.Debug,
 			// Larger reads mean fewer round trips for players.
 			MaxReadAhead: 1 << 20,
+			// No extended attributes here: answering ENOSYS once stops the
+			// kernel asking on every lookup (cli_mount sets it too).
+			DisableXAttrs: true,
 		},
 	})
 }

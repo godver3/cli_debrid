@@ -196,7 +196,10 @@ def _merge_servers(new_list, old_list) -> list:
             continue  # blank row
         row = {'host': host, 'port': s.get('port') or 563, 'ssl': bool(s.get('ssl', True)),
                'username': str(s.get('username') or '').strip(), 'connections': s.get('connections') or 10,
-               'backup': bool(s.get('backup', False)), 'password': str(s.get('password') or '')}
+               'backup': bool(s.get('backup', False)), 'password': str(s.get('password') or ''),
+               # Servers sharing an article store (same backbone name) answer
+               # "missing" for each other: the engine asks only one of them.
+               'backbone': str(s.get('backbone') or '').strip()}
         # Plan end + auto-renew are notes for the Mount page only; the
         # engine never sees them (builtin_engine.servers drops them).
         expires = str(s.get('expires') or '').strip()
@@ -667,7 +670,17 @@ def migrate_import():
     if have_url and have_token:
         copied.pop('plex_url', None)
         copied.pop('plex_token', None)
+    backbones = copied.pop(bm.BACKBONES_KEY, None) or {}
+    if backbones:
+        # cli_mount's backbone names go onto the servers with the same host.
+        current = _servers((get_setting(SECTION) or {}).get('servers'))
+        updated, changed = bm.apply_backbones(current, backbones)
+        if changed:
+            set_setting(SECTION, 'servers', json.dumps(updated))
+            copied['server_backbones'] = f'{changed} server(s)'
     for key, value in copied.items():
+        if key == 'server_backbones':
+            continue
         set_setting(SECTION, key, value)
     if copied:
         _sync_in_background()
