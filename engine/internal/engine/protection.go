@@ -9,7 +9,9 @@ import (
 
 // Plex playback protection (cli_mount's feature). cli_debrid polls Plex's
 // /status/sessions and posts the mount files Plex says are playing. While
-// at least one is, only reads of those files are Live and may use the
+// at least one is AND an import is queued or running (cli_mount's
+// background-contention rule: with no imports there is nothing for playback
+// to be protected from), only reads of those files are Live and may use the
 // playback reserve; every other mount read (Plex scanner, thumbnails,
 // intro detection, ffprobe) is Read: ahead of prefetch, outside the
 // reserve. Without a fresh, successful poll everything stays Live, so a
@@ -47,10 +49,16 @@ func (e *Engine) SetProtected(files []ProtectedFile, ok bool, pollErr string) {
 	e.protect.mu.Unlock()
 }
 
-// active: protection applies right now (enabled, fresh good poll, and
-// something is playing).
+// active: protection applies right now (enabled, fresh good poll,
+// something is playing, and imports are competing for connections).
 func (e *Engine) protectionActive() bool {
-	return e.cfg.PlexProtection && e.protect.ok && time.Since(e.protect.at) < ProtectionTTL && len(e.protect.files) > 0
+	return e.cfg.PlexProtection && e.protect.ok && time.Since(e.protect.at) < ProtectionTTL &&
+		len(e.protect.files) > 0 && e.importContention()
+}
+
+// importContention: an import is running or waiting in the queue.
+func (e *Engine) importContention() bool {
+	return e.importsActive.Load() > 0 || len(e.queue) > 0
 }
 
 // ReadPriority is the NNTP priority of a mount read of jobID/file.

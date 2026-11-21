@@ -160,15 +160,17 @@
         (o.health.healthy || 0) + ' healthy · ' + (o.health.unchecked || 0) + ' unchecked') +
       tile('Plex protection', !o.plex_protection.enabled ? 'off' : (o.plex_protection.active ? o.plex_protection.files.length + ' protected' : 'on'),
         o.plex_protection.enabled && !o.plex_protection.poll_ok && o.plex_protection.error ? 'mid' : '',
-        !o.plex_protection.enabled ? '' : (o.plex_protection.active ? 'stream(s) playing' :
-          (o.plex_protection.poll_ok ? 'nothing playing' : esc(o.plex_protection.error || 'waiting for Plex')))) +
+        !o.plex_protection.enabled ? '' : (o.plex_protection.active ? 'stream(s) playing while importing' :
+          (!o.plex_protection.poll_ok ? esc(o.plex_protection.error || 'waiting for Plex') :
+            ((o.plex_protection.files || []).length ? 'playing, no imports to protect from' : 'nothing playing')))) +
       tile('Memory cache', fmtBytes((s.mem_cache || {}).bytes || 0), '', ((s.mem_cache || {}).segments || 0) + ' segments') +
       tile('Uptime', dur(o.uptime_seconds), '', fmtBytes(o.runtime.heap_bytes || 0) + ' heap · ' + (o.runtime.goroutines || 0) + ' goroutines')
     ) : '';
     const pools = (s && s.pools) || (e && e.providers) || [];
     const openedFor = iso => { const t = Date.parse(iso); if (!t || t < 0) return '—'; const sec = Math.max(0, Math.round((Date.now() - t) / 1000));
       return sec < 60 ? sec + 's' : (sec < 3600 ? Math.floor(sec / 60) + 'm' : Math.floor(sec / 3600) + 'h ' + Math.floor(sec / 60) % 60 + 'm'); };
-    const protectedFiles = (o && o.plex_protection && o.plex_protection.files) || [];
+    // Only while protection is active (playing AND an import is running).
+    const protectedFiles = (o && o.plex_protection && o.plex_protection.active && o.plex_protection.files) || [];
     const streams = (st.streams || []).slice().sort((a, b) => (b.rate_bytes || 0) - (a.rate_bytes || 0) || (b.bytes_read || 0) - (a.bytes_read || 0));
     $('#streams tbody').innerHTML = streams.length ? streams.map(x => {
       const pct = x.size ? Math.min(100, Math.round(100 * (x.position || 0) / x.size)) : 0;

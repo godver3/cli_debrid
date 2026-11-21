@@ -25,8 +25,13 @@ func TestReadPriorityFollowsPlexProtection(t *testing.T) {
 		t.Fatal("nothing playing: the scanner may use the reserve")
 	}
 	e.SetProtected([]ProtectedFile{{JobID: "a", File: "x.mkv"}}, true, "")
+	if e.ReadPriority("b", "y.mkv") != nntp.Live || e.Protection().Active {
+		t.Fatal("playing but no import running: nothing to protect from, everything Live")
+	}
+	e.importsActive.Add(1) // an import is running
+	defer e.importsActive.Add(-1)
 	if e.ReadPriority("a", "x.mkv") != nntp.Live || e.ReadPriority("b", "y.mkv") != nntp.Read {
-		t.Fatal("while Plex plays a/x.mkv only it is Live")
+		t.Fatal("while Plex plays a/x.mkv during an import only it is Live")
 	}
 	e.SetProtected([]ProtectedFile{{JobID: "a", File: "x.mkv"}}, false, "plex down")
 	if e.ReadPriority("b", "y.mkv") != nntp.Live {

@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/godver3/cli_debrid/engine/internal/diskcache"
@@ -272,10 +273,14 @@ type Engine struct {
 	// an older tree over a newer one.
 	rebuildMu sync.Mutex
 	protect   protection // Plex playback protection
-	started   time.Time
-	vfolders  []namedFolder                 // compiled VirtualFolders, by name
-	tree      map[string]map[string]*Folder // top folder -> folder name -> job folder
-	tops      []string                      // top folders in listing order
+	// importsActive: imports running right now. Plex protection only applies
+	// while an import is queued or running (cli_mount's background-contention
+	// rule); with no imports nothing competes with playback.
+	importsActive atomic.Int32
+	started       time.Time
+	vfolders      []namedFolder                 // compiled VirtualFolders, by name
+	tree          map[string]map[string]*Folder // top folder -> folder name -> job folder
+	tops          []string                      // top folders in listing order
 
 	healthSem chan struct{}
 	prober    mediaProber
@@ -429,6 +434,8 @@ func (e *Engine) worker() {
 }
 
 func (e *Engine) importJob(id string) {
+	e.importsActive.Add(1)
+	defer e.importsActive.Add(-1)
 	data, err := e.Store.NZB(id)
 	if err != nil {
 		return // deleted while queued
