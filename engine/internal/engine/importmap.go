@@ -64,7 +64,8 @@ func (e *Engine) ImportMapped(id, name, category string, tags []string, files []
 		if err != nil {
 			return store.Job{}, fmt.Errorf("%w: %s: %v", ErrBadNZB, f.Name, err)
 		}
-		src := job.Source{NZBIndex: i, Name: f.Name, Layout: stream.Layout{Size: size}, Map: segs}
+		src := job.Source{NZBIndex: i, Name: f.Name, Layout: stream.Layout{Size: size}, Map: segs,
+			FirstSeg: strings.TrimSpace(strings.Trim(f.Segments[0].ID, "<>"))}
 		if len(f.Key) > 0 || len(f.IV) > 0 {
 			enc := stream.Encryption{Key: f.Key, IV: f.IV}
 			if err := enc.Validate(); err != nil {

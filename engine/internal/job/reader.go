@@ -24,7 +24,8 @@ type Files struct {
 // was built from; no network traffic happens until something is read.
 func Open(res *Result, n *nzb.NZB, f stream.Fetcher, cache *stream.Cache, readAhead stream.ReadAhead, links ...stream.LinkSource) (*Files, error) {
 	out := &Files{}
-	for _, s := range res.Sources {
+	var nf []*nzb.File
+	for i, s := range res.Sources {
 		if s.Remote != "" {
 			if len(links) == 0 || links[0] == nil {
 				return nil, fmt.Errorf("job: %q is a debrid file but no link source is configured", s.Name)
@@ -35,11 +36,15 @@ func Open(res *Result, n *nzb.NZB, f stream.Fetcher, cache *stream.Cache, readAh
 		if n == nil {
 			return nil, fmt.Errorf("job: source %q needs the NZB", s.Name)
 		}
-		if s.NZBIndex < 0 || s.NZBIndex >= len(n.Files) {
-			return nil, fmt.Errorf("job: source %q points at NZB file %d of %d", s.Name, s.NZBIndex, len(n.Files))
+		if nf == nil {
+			var err error
+			if nf, err = res.SourceFiles(n); err != nil {
+				return nil, err
+			}
 		}
+		file := *nf[i]
 		if len(s.Map) > 0 {
-			m := stream.OpenMapped(f, cache, n.Files[s.NZBIndex], s.Map, readAhead)
+			m := stream.OpenMapped(f, cache, file, s.Map, readAhead)
 			if s.Encryption != nil && s.Encryption.Enabled() {
 				d, err := stream.NewDecryptedFile(m, *s.Encryption, s.Layout.Size, m.Size())
 				if err != nil {
@@ -51,7 +56,7 @@ func Open(res *Result, n *nzb.NZB, f stream.Fetcher, cache *stream.Cache, readAh
 			out.sources = append(out.sources, m)
 			continue
 		}
-		out.sources = append(out.sources, stream.Open(f, cache, n.Files[s.NZBIndex], s.Layout, readAhead))
+		out.sources = append(out.sources, stream.Open(f, cache, file, s.Layout, readAhead))
 	}
 	return out, nil
 }
