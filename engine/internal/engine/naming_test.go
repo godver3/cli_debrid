@@ -142,3 +142,21 @@ func TestDefaultVirtualFoldersPartition(t *testing.T) {
 		}
 	}
 }
+
+func TestReleaseWithNoAllowedFileFails(t *testing.T) {
+	// Grantchester S05E05 4PLAY: only a .ts. Plex can't use it, so the
+	// import fails for good and cli_debrid picks another release.
+	s := nntptest.Start(t)
+	e := newEngine(t, s, func(c *Config) { c.AllowedExt = DefaultAllowedExt })
+	j, _ := e.Submit(nntptest.PostNZB(s, "g", nntptest.File{Name: "Show.S05E05.ts", Data: data(3, 300_000)}), "Show.S05E05", "tv", "")
+	got := waitDone(t, e, j.ID)
+	if got.Status != store.Failed || got.Retryable || !strings.Contains(got.Error, "no file with an allowed extension") || !strings.Contains(got.Error, "has ts") {
+		t.Fatalf("got %+v", got)
+	}
+	// A debrid torrent with only hidden files is flagged, not mounted.
+	e.AddDebrid("rd-9", "Only.Ts", "", "rd", []DebridFile{{Name: "a.ts", Size: 5, Ref: "9:1"}})
+	_, res, _ := e.Store.Get("rd-9")
+	if !e.HiddenByExtension(res) || e.FolderPath("rd-9") != "" {
+		t.Fatal("debrid job with only .ts should be hidden by extension")
+	}
+}

@@ -384,6 +384,10 @@ func NewID() string {
 // ErrBadNZB means the submitted data is not a usable NZB.
 var ErrBadNZB = errors.New("engine: invalid NZB")
 
+// ErrNoAllowedFiles: the release imported but none of its files has an
+// allowed extension, so the mount would show nothing.
+var ErrNoAllowedFiles = errors.New("engine: no file with an allowed extension")
+
 // Submit stores an NZB and queues its import. id may be given (migration
 // keeps cli_mount's job ids); otherwise one is generated.
 func (e *Engine) Submit(data []byte, name, category, id string) (store.Job, error) {
@@ -478,6 +482,12 @@ func (e *Engine) importJob(id string) {
 	}
 	if err == nil && e.cfg.ImportSample > 0 {
 		err = e.importSample(ctx, parsed, res)
+	}
+	if err == nil && e.HiddenByExtension(res) {
+		// Nothing the mount would show: the library can't use this release,
+		// so fail it (final) and let cli_debrid pick another one.
+		err = fmt.Errorf("%w (has %s; allowed: %s)", ErrNoAllowedFiles,
+			strings.Join(entryExts(res.Entries), ", "), strings.Join(e.cfg.AllowedExt, ", "))
 	}
 	if err == nil && ctx.Err() != nil {
 		// The deadline hit part-way: files not yet probed failed with a

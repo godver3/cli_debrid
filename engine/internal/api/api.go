@@ -173,9 +173,12 @@ type entryOut struct {
 
 type jobOut struct {
 	store.Job
-	Path     string     `json:"path,omitempty"` // job folder in the mount
-	Entries  []entryOut `json:"entries,omitempty"`
-	Failures any        `json:"failures,omitempty"`
+	Path string `json:"path,omitempty"` // job folder in the mount
+	// HiddenByExtension: ready, but every file has an extension the mount
+	// doesn't show (no folder will ever appear).
+	HiddenByExtension bool       `json:"hidden_by_extension,omitempty"`
+	Entries           []entryOut `json:"entries,omitempty"`
+	Failures          any        `json:"failures,omitempty"`
 }
 
 func (a *api) render(j store.Job, detail bool) jobOut {
@@ -184,6 +187,7 @@ func (a *api) render(j store.Job, detail bool) jobOut {
 		return out
 	}
 	if _, res, err := a.e.Store.Get(j.ID); err == nil && res != nil {
+		out.HiddenByExtension = out.Path == "" && a.e.HiddenByExtension(res)
 		if len(res.Failures) > 0 {
 			out.Failures = res.Failures
 		}

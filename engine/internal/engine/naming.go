@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -387,4 +388,36 @@ func sortFolders(fs []namedFolder) {
 			fs[j], fs[j-1] = fs[j-1], fs[j]
 		}
 	}
+}
+
+// HiddenByExtension reports whether res has files but the allowed
+// extensions hide every one of them.
+func (e *Engine) HiddenByExtension(res *job.Result) bool {
+	if res == nil || len(res.Entries) == 0 || len(e.cfg.AllowedExt) == 0 {
+		return false
+	}
+	for _, en := range res.Entries {
+		if extAllowed(e.cfg.AllowedExt, en.Name) {
+			return false
+		}
+	}
+	return true
+}
+
+// entryExts lists the distinct extensions of entries, for error messages.
+func entryExts(entries []job.Entry) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, en := range entries {
+		x := strings.TrimPrefix(strings.ToLower(path.Ext(en.Name)), ".")
+		if x == "" {
+			x = "(none)"
+		}
+		if !seen[x] {
+			seen[x] = true
+			out = append(out, x)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
