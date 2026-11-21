@@ -126,17 +126,20 @@ func (c *Cache) put(key string, data []byte) {
 		c.ll.MoveToFront(el)
 		return
 	}
-	if int64(len(data)) > c.max {
+	// Budget by capacity, not length: the whole backing array stays in
+	// memory (an NNTP body is read into an 800 KB buffer), so counting len
+	// let the cache hold more than its budget.
+	if int64(cap(data)) > c.max {
 		return
 	}
 	c.items[key] = c.ll.PushFront(&entry{key: key, data: data})
-	c.used += int64(len(data))
+	c.used += int64(cap(data))
 	for c.used > c.max {
 		el := c.ll.Back()
 		e := el.Value.(*entry)
 		c.ll.Remove(el)
 		delete(c.items, e.key)
-		c.used -= int64(len(e.data))
+		c.used -= int64(cap(e.data))
 	}
 }
 

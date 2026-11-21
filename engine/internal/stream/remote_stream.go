@@ -208,6 +208,14 @@ func (d *downloader) run(ctx context.Context) {
 		r.smu.Lock()
 		d.done = true
 		d.cancel()
+		// Let go of the buffers: a stopped stream stays in r.streams until
+		// the file's next seek, and the file stays built while its job is
+		// open, so a played pack kept a chunk or two per file it ever read
+		// (found live: 684 MB with nothing playing, the heap over the GC
+		// limit). Completed chunks are in the cache; waitStream falls back
+		// to it, or starts a new stream, once it sees done.
+		d.buf, d.prevBuf = nil, nil
+		d.bufFrom = d.pos
 		r.scond.Broadcast()
 		r.smu.Unlock()
 	}()
@@ -383,6 +391,14 @@ func (d *downloader) pump(parent context.Context, start int64) (int, error) {
 		st.bytes.Add(int64(m))
 		r.smu.Lock()
 		if m > 0 {
+			if d.buf == nil {
+				// Sized once for the rest of this chunk: growing by 64 KB
+				// appends copied each chunk several times over (GC churn)
+				// and left the cached array up to a quarter larger than
+				// its bytes.
+				end := min(int64(d.chunk+1)*r.chunkSize, r.size)
+				d.buf = make([]byte, 0, max(end-d.bufFrom, int64(m)))
+			}
 			d.buf = append(d.buf, block[:m]...)
 			d.pos += int64(m)
 			if d.pos == chunkEnd { // chunk complete: cache it (whole chunks only), move on

@@ -228,7 +228,7 @@ func (r *RemoteFile) get(parent context.Context, url string, start, n int64) ([]
 		st.fail(err)
 		return nil, resp.StatusCode, err
 	}
-	data, err := io.ReadAll(io.LimitReader(progressReader{r: resp.Body, w: wd}, n+1))
+	data, err := readExact(progressReader{r: resp.Body, w: wd}, n)
 	st.bytes.Add(int64(len(data)))
 	if err != nil {
 		if wd.stalled() {
@@ -312,4 +312,25 @@ func (r *RemoteFile) startReadAhead(from int) {
 			}
 		}(i)
 	}
+}
+
+// readExact reads a body that should be exactly n bytes into one n-byte
+// array (io.ReadAll grew it from 512 bytes: several copies per chunk and a
+// cached array up to a quarter larger than its data). It returns what it
+// got; len != n means the body was short, or longer than n (one byte past
+// is read to tell).
+func readExact(r io.Reader, n int64) ([]byte, error) {
+	data := make([]byte, n)
+	m, err := io.ReadFull(r, data)
+	if err == io.ErrUnexpectedEOF || err == io.EOF {
+		return data[:m], nil
+	}
+	if err != nil {
+		return data[:m], err
+	}
+	var one [1]byte
+	if k, _ := r.Read(one[:]); k > 0 {
+		return append(data, one[0]), nil // too long: caller reports the size
+	}
+	return data, nil
 }
