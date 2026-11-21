@@ -602,7 +602,8 @@
   $('#mgExportCancel').onclick = () => exJob && fetch('/mount/api/migrate/job/' + exJob + '/cancel', {method: 'POST'});
 
   refresh();
-  setInterval(refresh, 4000);
+  setInterval(() => { if (!document.hidden) refresh(); }, 4000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
   setInterval(() => { if (tab === 'queue' && !document.hidden) loadJobs(); }, 10000);
   const start = (location.hash || '').slice(1);
   if (['queue', 'browse', 'settings', 'migrate'].includes(start)) showTab(start);
