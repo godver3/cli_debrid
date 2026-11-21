@@ -107,7 +107,9 @@ class UsenetTasks:
                     try:
                         row = _c.execute(
                             "SELECT 1 FROM media_items WHERE filled_by_file=? AND filled_by_torrent_id IS NOT NULL "
-                            "AND filled_by_torrent_id NOT IN (?, ?) LIMIT 1",
+                            "AND filled_by_torrent_id NOT IN (?, ?) "
+                            # rows that hold a release now, not a stale id on a dropped one
+                            "AND state IN ('Collected', 'Checking', 'Adding', 'Upgrading') LIMIT 1",
                             (title, job_id, f'nzb:{job_id}')).fetchone()
                     finally:
                         _c.close()

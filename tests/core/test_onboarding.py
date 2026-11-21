@@ -141,7 +141,8 @@ class TestSaveRequiredSettings(unittest.TestCase):
         import json
         routes = _routes()
         fake = _FakeConfig({'Built-in Mount': {'servers': json.dumps([
-            {'host': 'old.example', 'port': 563, 'ssl': True, 'username': 'u', 'password': 'secret', 'connections': 10},
+            {'host': 'old.example', 'port': 563, 'ssl': True, 'username': 'u', 'password': 'secret', 'connections': 10,
+             'backbone': 'omicron', 'expires': '2027-01-31', 'auto_renew': True},
             {'host': 'fill.example', 'port': 119, 'ssl': False, 'username': 'f', 'password': 'fp', 'connections': 5,
              'backup': True}])}})
         base = {'use_debrid': 'off', 'use_usenet': 'on', 'usenet_backend': 'builtin', 'file_collection_management': 'Plex'}
@@ -154,11 +155,14 @@ class TestSaveRequiredSettings(unittest.TestCase):
             self.assertEqual([(r['host'], r['password'], r['connections']) for r in rows],
                              [('old.example', 'secret', 30), ('fill.example', 'fp', 5)])
             self.assertTrue(rows[1]['backup'])
+            # Mount page fields step 2 doesn't show are kept for the same server
+            self.assertEqual((rows[0]['backbone'], rows[0]['expires'], rows[0]['auto_renew']), ('omicron', '2027-01-31', True))
             # new server replaces the first; SSL unchecked is saved as off
             routes._save_required_settings(_Form({**base, 'bm_host': 'news.new', 'bm_port': '119',
                                                   'bm_username': 'n', 'bm_password': 'np', 'bm_connections': '8'}))
             rows = json.loads(fake.config['Built-in Mount']['servers'])
             self.assertEqual((rows[0]['host'], rows[0]['ssl'], rows[0]['password'], len(rows)), ('news.new', False, 'np', 2))
+            self.assertEqual(rows[0].get('backbone'), '')  # a different server: not the old one's backbone
             self.assertEqual(fake.config['File Management']['original_files_path'], '/mnt/clid/__all__')
             with self.assertRaises(ValueError):
                 routes._save_required_settings(_Form({**base, 'bm_host': 'x', 'bm_port': 'abc'}))
