@@ -106,7 +106,7 @@
     const r = speed[kind + ':' + name];
     let text = '';
     if (r && r.running) text = 'testing…';
-    else if (r && r.ok) text = '<span class="ok">' + r.mb_per_second + ' MB/s</span> · ' + Math.round(r.latency_ms) + ' ms · ' + esc(r.tested_at || '');
+    else if (r && r.ok) text = '<span class="ok">' + (+r.mb_per_second || 0).toFixed(r.mb_per_second >= 10 ? 0 : 1) + ' MB/s</span> · ' + Math.round(r.latency_ms) + ' ms · ' + esc(r.tested_at || '');
     else if (r) text = '<span class="no" title="' + esc(r.error || '') + '">failed</span> ' + esc(r.tested_at || '');
     return '<td style="white-space:nowrap"><button type="button" class="btn sec speedtest" data-kind="' + esc(kind) + '" data-name="' + esc(name) +
            '"' + (r && r.running ? ' disabled' : '') + ' style="padding:2px 8px;font-size:12px">Test</button> <span style="font-size:12px">' + text + '</span></td>';
