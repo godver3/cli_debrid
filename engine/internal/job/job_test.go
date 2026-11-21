@@ -300,3 +300,32 @@ func TestBadMediaHeaderInArchiveIsRejected(t *testing.T) {
 		t.Fatal("mpg is never judged; avi needs RIFF")
 	}
 }
+
+func TestProvenMissingContentBeatsUncheckedFile(t *testing.T) {
+	// Regretting You playHD: one volume couldn't be fetched (502 Too many
+	// connections) while the others were gone on every server. cli_mount
+	// fails such an NZB at once; retrying it only delays the next release.
+	e := newEnv(t)
+	gone := e.post("movie.mkv.001", "movie.mkv.001", random(11, 6<<20))
+	flaky := e.post("movie.mkv.002", "movie.mkv.002", random(12, 6<<20))
+	e.s.Remove(gone.Segments[0].ID)
+	e.s.Drop(flaky.Segments[0].ID)
+	_, err := e.build()
+	if !errors.Is(err, ErrMissingContent) || errors.Is(err, ErrInconclusive) {
+		t.Fatalf("got %v, want ErrMissingContent", err)
+	}
+}
+
+func TestMissingSideFileDoesNotProveRelease(t *testing.T) {
+	// A lost .nfo says nothing about the video; with the video unchecked
+	// the import stays retryable.
+	e := newEnv(t)
+	nfo := e.post("movie.nfo", "movie.nfo", random(13, 2_000))
+	video := e.post("movie.mkv", "movie.mkv", random(14, 6<<20))
+	e.s.Remove(nfo.Segments[0].ID)
+	e.s.Drop(video.Segments[0].ID)
+	_, err := e.build()
+	if !errors.Is(err, ErrInconclusive) {
+		t.Fatalf("got %v, want ErrInconclusive", err)
+	}
+}

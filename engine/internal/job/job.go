@@ -101,6 +101,11 @@ var ErrInconclusive = errors.New("job: import inconclusive")
 // with its container's header (archive volumes out of order).
 var ErrBadMediaHeader = errors.New("job: media file does not start with a valid container header (archive volumes likely out of order)")
 
+// ErrMissingContent means a posted file is proven missing (articles gone
+// on every server) while another could not be checked: the release is dead
+// either way, so the failure is final.
+var ErrMissingContent = errors.New("job: content missing on every server")
+
 // ErrNothingStreamable means no file could be served at all.
 var ErrNothingStreamable = errors.New("job: nothing streamable")
 
@@ -328,11 +333,27 @@ func Build(ctx context.Context, f stream.Fetcher, cache *stream.Cache, n *nzb.NZ
 	// Proof (articles missing everywhere, bad archives) is final; a probe
 	// that failed for network reasons only means "not yet". Even with other
 	// files streamable, such a job is retried rather than made ready
-	// without the file (an episode silently missing from a pack).
+	// without the file (an episode silently missing from a pack). But when
+	// another posted file is already proven missing, the release is dead
+	// whatever the unchecked file holds: fail now, like cli_mount's
+	// fail-fast availability check, instead of retrying a dead NZB.
+	var unsure, missing *posted
 	for _, p := range todo {
-		if p.err != nil && !nntp.IsNotFound(p.err) && !errors.Is(p.err, stream.ErrLayout) {
-			return res, fmt.Errorf("%w: %s: %v", ErrInconclusive, p.name, p.err)
+		switch {
+		case p.err == nil:
+		case nntp.IsNotFound(p.err) || errors.Is(p.err, stream.ErrLayout):
+			if missing == nil && isContent(p) {
+				missing = p
+			}
+		case unsure == nil:
+			unsure = p
 		}
+	}
+	if unsure != nil {
+		if missing == nil {
+			return res, fmt.Errorf("%w: %s: %v", ErrInconclusive, unsure.name, unsure.err)
+		}
+		return res, fmt.Errorf("%w: %s: %v (%s could not be checked: %v)", ErrMissingContent, missing.name, missing.err, unsure.name, unsure.err)
 	}
 	if len(res.Entries) == 0 {
 		why := res.Notes
@@ -346,6 +367,27 @@ func Build(ctx context.Context, f stream.Fetcher, cache *stream.Cache, n *nzb.NZ
 			ErrLeftoverOnly, res.Entries[0].Name, res.Entries[0].Size, failedArchive)
 	}
 	return res, nil
+}
+
+// reSideFile: posted files whose loss says nothing about the release
+// (cli_mount skips par2/ignore files in its availability check too).
+var reSideFile = regexp.MustCompile(`(?i)\.(par2|nfo|txt|sfv|srr|nzb|md5|url|jpe?g|png|srt|sub|idx|ass)$`)
+
+// contentMinBytes: smaller posted files are treated as side files even
+// with an obfuscated name.
+const contentMinBytes = 5 << 20
+
+// isContent reports whether p is real release content (media or an archive
+// volume), so its articles missing everywhere prove the release dead.
+func isContent(p *posted) bool {
+	if reSideFile.MatchString(p.name) {
+		return false
+	}
+	var n int64
+	for _, sg := range p.file.Segments {
+		n += int64(sg.Bytes)
+	}
+	return n >= contentMinBytes || p.layout.Size >= contentMinBytes
 }
 
 // LeftoverOnly reports whether the largest streamable file is too small,
