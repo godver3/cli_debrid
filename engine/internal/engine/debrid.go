@@ -71,9 +71,13 @@ type callbackLinks struct {
 	mu         sync.Mutex
 	cache      map[string]cachedLink
 	pending    map[string]*linkCall
-	names      func(ref string) string
-	opts       stream.RemoteOptions
-	log        *slog.Logger
+	// failed remembers a recent refusal per ref, so every reader (a player's
+	// 128 KB reads, a scanner) doesn't ask cli_debrid and the provider again:
+	// found live, one dead Real-Debrid file asked for 16 times in 15 s.
+	failed map[string]failedLink
+	names  func(ref string) string
+	opts   stream.RemoteOptions
+	log    *slog.Logger
 }
 
 // RemoteOptions: the debrid streaming settings every file gets.
@@ -93,12 +97,27 @@ type cachedLink struct {
 	expires time.Time
 }
 
+type failedLink struct {
+	err   error
+	until time.Time
+}
+
+// How long a refused link is answered from memory: cli_debrid answered
+// but had no link (provider 5xx, rate limit...), or the provider proved
+// the file gone (the engine marks it broken; repair replaces it). cli_debrid
+// being unreachable is not remembered: that wait is callbackWait's. Vars
+// for tests.
+var (
+	linkFailHold = 30 * time.Second
+	linkDeadHold = 10 * time.Minute
+)
+
 func newCallbackLinks(url, token string, log *slog.Logger) *callbackLinks {
 	if log == nil {
 		log = slog.Default()
 	}
 	return &callbackLinks{url: url, token: token, client: &http.Client{Timeout: 30 * time.Second},
-		cache: map[string]cachedLink{}, pending: map[string]*linkCall{}, log: log}
+		cache: map[string]cachedLink{}, pending: map[string]*linkCall{}, failed: map[string]failedLink{}, log: log}
 }
 
 // name is the "job/file" a ref belongs to, for log lines ("" when unknown).
@@ -123,6 +142,13 @@ func (c *callbackLinks) Link(ctx context.Context, ref string, refresh bool) (str
 	if c.url == "" {
 		c.mu.Unlock()
 		return "", errors.New("no link callback configured")
+	}
+	if f, ok := c.failed[ref]; ok {
+		if time.Now().Before(f.until) {
+			c.mu.Unlock()
+			return "", f.err // a refresh too: asking again so soon gets the same answer
+		}
+		delete(c.failed, ref)
 	}
 	if call, ok := c.pending[key]; ok {
 		c.mu.Unlock()
@@ -208,14 +234,18 @@ func (c *callbackLinks) fetch(ctx context.Context, ref string, refresh bool) (st
 	decErr := json.NewDecoder(resp.Body).Decode(&out)
 	if resp.StatusCode == http.StatusGone && decErr == nil && out.Dead && out.Reason != "" {
 		c.log.Warn("debrid file gone", "file", c.name(ref), "ref", ref, "reason", out.Reason, "err", out.Error)
-		return "", &stream.DeadFileError{Reason: out.Reason, Detail: out.Error}
+		err := &stream.DeadFileError{Reason: out.Reason, Detail: out.Error}
+		c.remember(ref, err, linkDeadHold)
+		return "", err
 	}
 	if decErr != nil || resp.StatusCode != http.StatusOK || out.URL == "" {
 		if out.Error == "" {
 			out.Error = fmt.Sprintf("HTTP %d", resp.StatusCode)
 		}
 		c.log.Warn("no debrid link", "file", c.name(ref), "ref", ref, "refresh", refresh, "status", resp.StatusCode, "err", out.Error)
-		return "", fmt.Errorf("no link: %s", out.Error)
+		err := fmt.Errorf("no link: %s", out.Error)
+		c.remember(ref, err, linkFailHold)
+		return "", err
 	}
 	c.log.Debug("debrid link", "file", c.name(ref), "ref", ref, "refresh", refresh, "expires_in", out.ExpiresIn,
 		"took", time.Since(start).Round(time.Millisecond))
@@ -225,8 +255,18 @@ func (c *callbackLinks) fetch(ctx context.Context, ref string, refresh bool) (st
 	}
 	c.mu.Lock()
 	c.cache[ref] = cachedLink{url: out.URL, expires: time.Now().Add(ttl)}
+	delete(c.failed, ref)
 	c.mu.Unlock()
 	return out.URL, nil
+}
+
+func (c *callbackLinks) remember(ref string, err error, hold time.Duration) {
+	c.mu.Lock()
+	if c.failed == nil {
+		c.failed = map[string]failedLink{}
+	}
+	c.failed[ref] = failedLink{err: err, until: time.Now().Add(hold)}
+	c.mu.Unlock()
 }
 
 // Check asks cli_debrid whether a debrid file still exists, by the same

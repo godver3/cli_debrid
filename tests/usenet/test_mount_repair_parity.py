@@ -19,6 +19,58 @@ from utilities import mount_debrid as md  # noqa: E402
 KEY = mock.PropertyMock(return_value='k')
 
 
+class RealDebridRulesThroughApiPost(unittest.TestCase):
+    """The proof rules through the real _mount_rd_post. api.post raises
+    requests.HTTPError on every 4xx/5xx; the answer used to be lost with it,
+    so error 19/24/35 and /unrestrict/check's 404 never counted (found live
+    2026-11-21: War of the Worlds kept answering 503 and was retried every
+    2 s, never marked broken)."""
+    INFO = {'status': 'downloaded', 'filename': 'M', 'links': ['L2'],
+            'files': [{'id': 2, 'path': '/M/m.mkv', 'bytes': 10, 'selected': 1}]}
+
+    def rd_raising(self, status, body):
+        import requests
+        from debrid.real_debrid import client as rdc
+        from routes import api_tracker
+
+        def post(url, **kw):
+            r = requests.Response()
+            r.status_code = status
+            r._content = __import__('json').dumps(body).encode()
+            r.url = url
+            if status >= 400:
+                raise requests.HTTPError(f'{status} Server Error for url: {url}', response=r)
+            return r
+        rd = rdc.RealDebridProvider.__new__(rdc.RealDebridProvider)
+        for x in (mock.patch.object(rdc, 'make_request', return_value=self.INFO),
+                  mock.patch.object(api_tracker.api, 'post', side_effect=post),
+                  mock.patch('debrid.real_debrid.api._wait_for_rate_limit'),
+                  mock.patch.object(type(rd), 'api_key', new_callable=lambda: KEY)):
+            x.start()
+            self.addCleanup(x.stop)
+        return rd
+
+    def test_dead_codes_survive_the_raising_client(self):
+        for code in (19, 24, 35):
+            rd = self.rd_raising(503, {'error': 'unavailable_file', 'error_code': code})
+            with self.assertRaises(MountFileGone) as gone:
+                rd.mount_link('T', '2')
+            self.assertEqual(gone.exception.reason, 'hoster_unavailable')
+
+    def test_plain_503_still_proves_nothing(self):
+        rd = self.rd_raising(503, {'error': 'service_unavailable', 'error_code': 25})
+        with self.assertRaises(ValueError):
+            rd.mount_link('T', '2')
+
+    def test_check_404_is_broken(self):
+        rd = self.rd_raising(404, {'error': 'unknown_ressource', 'error_code': 7})
+        self.assertEqual(rd.mount_check('T', '2'), (BROKEN, 'hoster_unavailable'))
+
+    def test_success_still_works(self):
+        rd = self.rd_raising(200, {'download': 'https://dl/x'})
+        self.assertEqual(rd.mount_link('T', '2'), ('https://dl/x', 43200))
+
+
 class RealDebridRules(unittest.TestCase):
     INFO = {'status': 'downloaded', 'filename': 'M', 'links': ['L2'],
             'files': [{'id': 2, 'path': '/M/m.mkv', 'bytes': 10, 'selected': 1}]}

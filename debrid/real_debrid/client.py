@@ -906,11 +906,21 @@ class RealDebridProvider(DebridProvider):
     def _mount_rd_post(self, endpoint: str, data: Dict, api_key: Optional[str] = None) -> Tuple[int, Dict]:
         """(status, body) of an RD POST without make_request's error mapping,
         which drops the body and with it RD's error_code."""
+        import requests
         from routes.api_tracker import api as _api
         from .api import _wait_for_rate_limit
         _wait_for_rate_limit()
-        r = _api.post(f'https://api.real-debrid.com/rest/1.0{endpoint}', data=data,
-                      headers={'Authorization': f'Bearer {api_key or self.api_key}'}, timeout=30)
+        try:
+            r = _api.post(f'https://api.real-debrid.com/rest/1.0{endpoint}', data=data,
+                          headers={'Authorization': f'Bearer {api_key or self.api_key}'}, timeout=30)
+        except requests.HTTPError as exc:
+            # api.post raises on every 4xx/5xx; the answer (and RD's
+            # error_code) is on the exception. Without this, error 19/24/35
+            # and /unrestrict/check's 404 never reached the proof rules, so
+            # a dead RD file was never marked broken.
+            if exc.response is None:
+                raise
+            r = exc.response
         try:
             body = r.json()
         except ValueError:

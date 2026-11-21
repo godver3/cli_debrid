@@ -82,6 +82,12 @@ type RemoteFile struct {
 	smu     sync.Mutex
 	scond   *sync.Cond
 	streams []*downloader
+	// failErr is the last stream's final error (guarded by smu): reads in
+	// the next streamFailHold get it at once instead of each paying the
+	// whole retry cycle again (~15 s on a file the service keeps refusing:
+	// a player's 128 KB reads stacked into minutes).
+	failErr error
+	failAt  time.Time
 }
 
 // OpenRemote wraps a debrid file of the given size.
