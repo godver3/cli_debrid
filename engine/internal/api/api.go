@@ -67,6 +67,7 @@ func Handler(e *engine.Engine) http.Handler {
 	mux.HandleFunc("GET /stats", a.stats)
 	mux.HandleFunc("GET /streams", a.streams)
 	mux.HandleFunc("POST /prewarm", a.prewarm)
+	mux.HandleFunc("GET /find", a.findFile)
 	mux.HandleFunc("POST /speedtest", a.speedTest)
 	mux.HandleFunc("POST /shutdown", a.shutdown)
 	mux.HandleFunc("GET /health", a.healthList)
@@ -550,6 +551,17 @@ func (a *api) prewarm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "prewarming"})
+}
+
+// findFile looks a mount file up by name (?name=, repeatable, tried in
+// order): {"job_id", "file"}, or 404.
+func (a *api) findFile(w http.ResponseWriter, r *http.Request) {
+	id, file, ok := a.e.FindFile(r.URL.Query()["name"])
+	if !ok {
+		writeErr(w, http.StatusNotFound, fmt.Errorf("no mount file by that name"))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"job_id": id, "file": file})
 }
 
 // speedTest measures one usenet server ({"provider": name}).

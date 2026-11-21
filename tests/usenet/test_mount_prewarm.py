@@ -48,6 +48,10 @@ class FakeClient:
         self.calls.append((job_id, file, n))
         return True
 
+    def find_file(self, names):
+        self.find_calls = getattr(self, 'find_calls', []) + [names]
+        return None
+
 
 def settings(*a, **k):
     if a == ('Built-in Mount',):
@@ -88,13 +92,36 @@ class PrewarmTests(unittest.TestCase):
 
     def test_prewarms_next_episode_once_past_the_trigger(self):
         client, out = self._run(750)
-        self.assertEqual(out, [('Show.S01E02.1080p', 'Show.S01E02.1080p.mkv', 256 << 20)], '20% capped at 256 MB')
+        self.assertEqual(out, [('job-Show.S01E02.1080p', 'Show.S01E02.1080p.mkv', 256 << 20)], '20% capped at 256 MB')
         self.assertEqual(client.calls[0][0], 'job-Show.S01E02.1080p')
         _, again = self._run(800)
         self.assertEqual(again, [], 'remembered: not prewarmed twice')
 
     def test_not_before_the_trigger(self):
         self.assertEqual(self._run(500)[1], [])
+
+    def test_name_candidates(self):
+        rel = 'Show.S01E02.1080p.mkv'
+        for name in (f'Show (2020) - S01E02 - Pilot - tt1 - 1080p - ({rel}).mkv',  # episode template
+                     f'Movie (2020) - tt1 - 1080p - ({rel}',                       # movie template
+                     f'Show - S01E02 ({rel})'):
+            self.assertEqual(mp.name_candidates('/lib/x/' + name), [name, rel], name)
+        self.assertEqual(mp.name_candidates('/lib/The Bear (2022) - S05E08 - Beef.mkv'), ['The Bear (2022) - S05E08 - Beef.mkv'])
+        self.assertEqual(mp.name_candidates('C:\\TV\\Show.S01E02.mkv'), ['Show.S01E02.mkv'])
+        self.assertEqual(mp.name_candidates(''), [])
+
+    def test_unmappable_path_falls_back_to_name_lookup(self):
+        class C(FakeClient):
+            def find_file(self, names):
+                self.names = names
+                return {'job_id': 'jx', 'file': 'Show.S01E02.1080p.mkv'}
+        c = C()
+        # Plex sees the mount through a virtual folder at its own path.
+        self.assertEqual(mp.resolve_mount_file(c, '/plexmnt/TV Shows/Show.S01E02.1080p/Show.S01E02.1080p.mkv'),
+                         ('jx', 'Show.S01E02.1080p.mkv'))
+        self.assertEqual(c.names, ['Show.S01E02.1080p.mkv'])
+        # A mappable path never needs the lookup.
+        self.assertEqual(mp.resolve_mount_file(c, '/x/__all__/F/f.mkv'), ('job-F', 'f.mkv'))
 
 
 

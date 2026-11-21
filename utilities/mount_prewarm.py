@@ -84,8 +84,45 @@ def mount_target(plex_file: str, mount_path: str) -> Optional[Tuple[str, str]]:
     return None
 
 
+def name_candidates(plex_file: str) -> list:
+    """Names to look a Plex file up by on the mount: its own basename, then
+    the release filename a cli_debrid symlink name carries after its last
+    "(" - "... - (Release.mkv" (movie template), "... - (Release.mkv).mkv"
+    (episode template) or "... (Release.mkv)". From cli_mount's
+    mountBasenameCandidates, which only knew the last shape."""
+    base = (plex_file or '').replace('\\', '/').rsplit('/', 1)[-1]
+    if not base:
+        return []
+    out = [base]
+    i = base.rfind('(')
+    if i >= 0:
+        inner = base[i + 1:].strip()
+        close = inner.rfind(')')
+        if close >= 0:
+            inner = inner[:close].strip()
+        if inner and '.' in inner and inner != base:
+            out.append(inner)
+    return out
+
+
+def resolve_mount_file(client, plex_file: str) -> Optional[Tuple[str, str]]:
+    """(job id, file) on the mount for a file Plex reports. By path first
+    (the symlink's target, or a path inside the mount); when Plex sees the
+    file at a path this process can't map (another container path, a
+    virtual folder), by name, as cli_mount did."""
+    target = mount_target(plex_file, client.mount_path)
+    if target:
+        job = client._job_by_folder(target[0])
+        if job:
+            return job['id'], target[1]
+    found = client.find_file(name_candidates(plex_file))
+    if found:
+        return found['job_id'], found['file']
+    return None
+
+
 def check_once(client, get_setting: Callable, now: Optional[float] = None) -> list:
-    """One poll. Returns what was prewarmed: [(folder, file, bytes)]."""
+    """One poll. Returns what was prewarmed: [(job id, file, bytes)]."""
     now = now or time.time()
     cfg = _settings(get_setting)
     if not cfg['enabled'] or cfg['percent'] <= 0 or cfg['max_mb'] <= 0:
@@ -111,19 +148,17 @@ def check_once(client, get_setting: Callable, now: Optional[float] = None) -> li
         item = lookup(str(nxt['ratingKey'])) or nxt
         for media in item.get('Media') or []:
             part = (media.get('Part') or [{}])[0]
-            target = mount_target(part.get('file', ''), client.mount_path)
-            if not target:
+            found = resolve_mount_file(client, part.get('file', ''))
+            if not found:
                 continue
-            job = client._job_by_folder(target[0])
-            if not job:
-                continue
+            job_id, file = found
             size = int(part.get('size') or 0)
             n = min(cfg['max_mb'] << 20, size * cfg['percent'] // 100) if size else cfg['max_mb'] << 20
-            if client.prewarm(job['id'], target[1], n):
+            if client.prewarm(job_id, file, n):
                 _done[str(nxt['ratingKey'])] = now
                 logging.info(f"[prewarm] {nxt.get('grandparentTitle', '')} S{int(nxt['parentIndex']):02d}"
-                             f"E{int(nxt['index']):02d}: fetching first {n >> 20} MB of {target[1]}")
-                out.append((target[0], target[1], n))
+                             f"E{int(nxt['index']):02d}: fetching first {n >> 20} MB of {file}")
+                out.append((job_id, file, n))
             break
     return out
 

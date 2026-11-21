@@ -3,6 +3,8 @@ package engine
 import (
 	"context"
 	"fmt"
+	"path"
+	"strings"
 	"sync"
 	"time"
 
@@ -80,4 +82,43 @@ func (e *Engine) Prewarm(jobID, file string, n int64) error {
 		e.log.Info("prewarmed", "job", jobID, "file", file, "bytes", n, "took", time.Since(start).Round(time.Millisecond))
 	}()
 	return nil
+}
+
+// minPlausibleVideo: smaller files (subtitles, samples, NFOs) are never
+// taken as a folder's only video.
+const minPlausibleVideo = 20 << 20
+
+// FindFile finds a mount file by name alone, for when the path Plex
+// reports can't be mapped onto the mount (Plex sees it at another path, or
+// through a virtual folder). Each name is tried in order against every job
+// folder: a file of that name (case-insensitive) wins; otherwise a folder
+// named after the file (without extension) holding exactly one video-sized
+// file, as releases are often named on the folder with the file inside
+// obfuscated. Ported from cli_mount's findFileByBasename.
+func (e *Engine) FindFile(names []string) (jobID, file string, ok bool) {
+	folders := e.Folders(AllFolder)
+	for _, name := range names {
+		want := strings.ToLower(strings.TrimSpace(name))
+		if want == "" {
+			continue
+		}
+		stem := strings.TrimSuffix(want, strings.ToLower(path.Ext(want)))
+		for _, f := range folders {
+			var only string
+			videos := 0
+			for _, en := range f.Entries {
+				if strings.ToLower(path.Base(en.Name)) == want {
+					return f.JobID, en.Name, true
+				}
+				if en.Size >= minPlausibleVideo {
+					videos++
+					only = en.Name
+				}
+			}
+			if videos == 1 && strings.ToLower(f.Name) == stem {
+				return f.JobID, only, true
+			}
+		}
+	}
+	return "", "", false
 }

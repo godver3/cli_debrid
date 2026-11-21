@@ -609,6 +609,15 @@ class BuiltinClient(UnsupportedFeaturesMixin):
         code, _ = self._call('POST', '/prewarm', timeout=5, json={'job_id': job_id, 'file': file, 'bytes': int(nbytes)})
         return code == 202
 
+    def find_file(self, names: List[str]) -> Optional[dict]:
+        """A mount file by name ({'job_id', 'file'}), the names tried in
+        order (engine GET /find), or None."""
+        names = [n for n in names if n]
+        if not names:
+            return None
+        code, body = self._call('GET', '/find', timeout=5, params={'name': names})
+        return body if code == 200 and isinstance(body, dict) and body.get('job_id') else None
+
     # ---- logs (capability LOGS) -------------------------------------------
 
     def fetch_logs(self, lines: int = 1000, level: str = 'all') -> dict:
