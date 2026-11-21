@@ -78,26 +78,57 @@ func newPool(p Provider) *pool {
 	return &pool{p: p}
 }
 
-// acquire returns a ready connection, dialing if allowed.
+// tryAcquire is acquire without waiting: ok is false when the pool has no
+// connection free for prio right now.
+func (pl *pool) tryAcquire(ctx context.Context, prio Priority) (c *conn, ok bool, err error) {
+	pl.mu.Lock()
+	c, dial, ok := pl.takeLocked(prio)
+	pl.mu.Unlock()
+	if !ok {
+		return nil, false, nil
+	}
+	if dial {
+		c, err = pl.dial(ctx)
+	}
+	return c, true, err
+}
+
+// takeLocked takes an idle connection, or a slot to dial (dial true), when
+// one is free for prio. pl.mu is held.
+func (pl *pool) takeLocked(prio Priority) (c *conn, dial, ok bool) {
+	if pl.closed {
+		return nil, false, false
+	}
+	busy := pl.open - len(pl.idle)
+	if prio != Live && !pl.prefetchMayTake(busy) {
+		return nil, false, false
+	}
+	if n := len(pl.idle); n > 0 {
+		c = pl.idle[n-1]
+		pl.idle = pl.idle[:n-1]
+		return c, false, true
+	}
+	if pl.open < pl.p.MaxConns {
+		pl.open++
+		return nil, true, true
+	}
+	return nil, false, false
+}
+
+// acquire returns a ready connection, dialing if allowed, waiting when the
+// pool is full.
 func (pl *pool) acquire(ctx context.Context, prio Priority) (*conn, error) {
 	pl.mu.Lock()
 	if pl.closed {
 		pl.mu.Unlock()
 		return nil, context.Canceled
 	}
-	busy := pl.open - len(pl.idle)
-	if prio == Live || pl.prefetchMayTake(busy) {
-		if n := len(pl.idle); n > 0 {
-			c := pl.idle[n-1]
-			pl.idle = pl.idle[:n-1]
-			pl.mu.Unlock()
-			return c, nil
-		}
-	}
-	if pl.open < pl.p.MaxConns && (prio == Live || pl.prefetchMayTake(busy)) {
-		pl.open++
+	if c, dial, ok := pl.takeLocked(prio); ok {
 		pl.mu.Unlock()
-		return pl.dial(ctx)
+		if dial {
+			return pl.dial(ctx)
+		}
+		return c, nil
 	}
 	ch := make(chan *slot, 1)
 	pl.queues[prio] = append(pl.queues[prio], ch)

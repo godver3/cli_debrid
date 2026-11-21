@@ -133,12 +133,22 @@ func (c *Client) attempt(ctx context.Context, prio Priority, id string,
 	}
 	notFound := 0
 	var last error
-	for _, pl := range c.pools {
+	left := append([]*pool(nil), c.pools...)
+	for len(left) > 0 {
+		k, pre, preErr, got := pick(ctx, left, prio)
+		pl := left[k]
+		left = append(left[:k:k], left[k+1:]...)
 		answered, gotNotFound := false, false
 		// One retry per provider: an idle connection the server already
 		// closed fails on first use, which says nothing about the article.
 		for try := 0; try < 2 && !answered; try++ {
-			cn, err := pl.acquire(ctx, prio)
+			var cn *conn
+			var err error
+			if try == 0 && got {
+				cn, err = pre, preErr
+			} else {
+				cn, err = pl.acquire(ctx, prio)
+			}
 			if err != nil {
 				if ctx.Err() != nil {
 					return ctx.Err()
@@ -199,6 +209,36 @@ func (c *Client) attempt(ctx context.Context, prio Priority, id string,
 		last = errors.New("no provider answered")
 	}
 	return &InconclusiveError{ID: id, Last: last}
+}
+
+// pick chooses the provider to ask next among those not asked yet. Like
+// cli_mount, primaries share the load: the first one in order with a free
+// connection is used, so a busy first server spills over to the next
+// instead of queueing; only when every primary is full does the request
+// wait, on the first. Backups are asked only once no primary is left.
+// When got is true, pre/preErr is the connection already taken from
+// left[k].
+func pick(ctx context.Context, left []*pool, prio Priority) (k int, pre *conn, preErr error, got bool) {
+	backups := true
+	for _, pl := range left {
+		if !pl.p.Backup {
+			backups = false
+			break
+		}
+	}
+	first := -1
+	for i, pl := range left {
+		if pl.p.Backup != backups {
+			continue
+		}
+		if first < 0 {
+			first = i
+		}
+		if c, ok, err := pl.tryAcquire(ctx, prio); ok {
+			return i, c, err, true
+		}
+	}
+	return first, nil, nil, false
 }
 
 // A reused connection that fails after sitting idle at least staleIdleAge

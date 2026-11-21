@@ -386,3 +386,39 @@ func TestStaleIdleConnectionsDroppedTogether(t *testing.T) {
 		t.Fatalf("a stale idle connection was reported as a provider problem:\n%s", logged.String())
 	}
 }
+
+// Primaries share the load like cli_mount: when the first primary has no
+// free connection, a request goes to the next one instead of waiting, and
+// a backup still stays idle.
+func TestBusyPrimarySpillsToNextPrimary(t *testing.T) {
+	arts := nntptest.Post("z", "z.bin", awkward(500), 500)
+	a := nntptest.Start(t, arts...)
+	b := nntptest.Start(t, arts...)
+	bk := nntptest.Start(t, arts...)
+	a.SetDelay(300 * time.Millisecond)
+	bp := provider(bk, "backup", 4)
+	bp.Backup = true
+	c, _ := NewClient([]Provider{provider(a, "a", 1), provider(b, "b", 1), bp})
+	defer c.Close()
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, _, err := c.Body(context.Background(), Live, arts[0].ID); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if a.Bodies.Load() != 1 || b.Bodies.Load() != 1 || bk.Bodies.Load() != 0 {
+		t.Fatalf("a=%d b=%d backup=%d, want 1/1/0", a.Bodies.Load(), b.Bodies.Load(), bk.Bodies.Load())
+	}
+	// Idle again: the first primary is used first.
+	if _, _, err := c.Body(context.Background(), Live, arts[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if a.Bodies.Load() != 2 {
+		t.Fatalf("idle request skipped the first primary: a=%d b=%d", a.Bodies.Load(), b.Bodies.Load())
+	}
+}
