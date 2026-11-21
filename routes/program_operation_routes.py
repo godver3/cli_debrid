@@ -284,7 +284,7 @@ def start_server():
 
 def check_service_connectivity():
     if get_setting('File Management', 'file_collection_management') == 'Plex':
-        plex_url = get_setting('Plex', 'url')
+        plex_url = (get_setting('Plex', 'url') or '').rstrip('/')
         plex_token = get_setting('Plex', 'token')
     # Get debrid provider settings
     debrid_provider = get_setting('Debrid Provider', 'provider')

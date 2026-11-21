@@ -43,7 +43,7 @@ def refresh_plex_show_cache():
 
     try:
         # Get Plex connection details
-        plex_url = get_setting('Plex', 'url')
+        plex_url = (get_setting('Plex', 'url') or '').rstrip('/')
         plex_token = get_setting('Plex', 'token')
 
         if not plex_url or not plex_token:
@@ -156,7 +156,7 @@ def refresh_plex_movie_cache():
 
     try:
         # Get Plex connection details
-        plex_url = get_setting('Plex', 'url')
+        plex_url = (get_setting('Plex', 'url') or '').rstrip('/')
         plex_token = get_setting('Plex', 'token')
 
         if not plex_url or not plex_token:
@@ -262,7 +262,7 @@ def get_plex_item(item_id: int):
 
     try:
         # Get Plex connection details
-        plex_url = get_setting('Plex', 'url')
+        plex_url = (get_setting('Plex', 'url') or '').rstrip('/')
         plex_token = get_setting('Plex', 'token')
 
         if not plex_url or not plex_token:
@@ -480,7 +480,7 @@ def get_plex_file_info(file_path: str) -> dict:
         file_management = get_setting('File Management', 'file_collection_management', default='Plex')
 
         if file_management == 'Plex':
-            plex_url = get_setting('Plex', 'url')
+            plex_url = (get_setting('Plex', 'url') or '').rstrip('/')
             plex_token = get_setting('Plex', 'token')
         else:
             plex_url = get_setting('File Management', 'plex_url_for_symlink')
