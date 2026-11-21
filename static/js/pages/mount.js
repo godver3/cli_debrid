@@ -356,6 +356,31 @@
 
   // ---- queue --------------------------------------------------------------
   let jobs = [], page = 0;
+  // Long engine errors (one line per file of a failed NZB) are cut to one
+  // line with a toggle; which ones are open survives the 4 s refresh.
+  const ERR_SHORT = 180, openErrs = new Set();
+  function errHtml(key, text, prefix) {
+    text = (prefix || '') + text;
+    if (text.length <= ERR_SHORT) return '<div class="err">' + esc(text) + '</div>';
+    const open = openErrs.has(key);
+    let shown = text;
+    if (!open) {
+      shown = text.slice(0, ERR_SHORT);
+      const sp = shown.lastIndexOf(' ');
+      if (sp > ERR_SHORT - 40) shown = shown.slice(0, sp);  // end on a whole word when one is near
+      shown += '…';
+    }
+    return '<div class="err' + (open ? ' full' : '') + '">' + esc(shown) +
+      ' <span class="errToggle" data-err="' + esc(key) + '">' + (open ? 'Show less' : 'Show full error') + '</span></div>';
+  }
+  function toggleErr(e, rerender) {
+    const t = e.target.closest('[data-err]');
+    if (!t) return false;
+    const k = t.dataset.err;
+    openErrs.has(k) ? openErrs.delete(k) : openErrs.add(k);
+    rerender();
+    return true;
+  }
   const PER = 50;
   const ago = t => { const d = (Date.now() - new Date(t)) / 1000; if (!t || isNaN(d)) return ''; if (d < 60) return 'just now'; if (d < 3600) return Math.floor(d / 60) + 'm ago'; if (d < 86400) return Math.floor(d / 3600) + 'h ago'; return Math.floor(d / 86400) + 'd ago'; };
   const stateLabel = j => j.status === 'queued' && j.attempts ? 'retrying (' + j.attempts + ')' : j.status;
@@ -393,7 +418,7 @@
     $('#qTable tbody').innerHTML = rows.length ? rows.map(j => {
       const h = j.health ? j.health.status : '';
       return '<tr data-id="' + esc(j.id) + '"><td><input type="checkbox" class="qSel"></td>' +
-        '<td class="nm"><span class="link" data-open="' + esc(j.id) + '">' + esc(j.name) + '</span>' + (j.error ? '<div class="err">' + esc(j.error) + '</div>' : '') + '</td>' +
+        '<td class="nm"><span class="link" data-open="' + esc(j.id) + '">' + esc(j.name) + '</span>' + (j.error ? errHtml('q:' + j.id, j.error) : '') + '</td>' +
         '<td><span class="pill ' + esc(j.status) + '">' + esc(stateLabel(j)) + '</span></td>' +
         '<td>' + (j.size ? fmtBytes(j.size) : '—') + '</td><td' + (j.category ? ' title="' + esc('Engine category: ' + j.category) + '"' : '') + '>' + esc(kindLabel(j)) + '</td>' +
         '<td title="' + esc(j.created_at) + '">' + ago(j.created_at) + '</td>' +
@@ -421,6 +446,7 @@
   $('#qDeleteSel').onclick = () => del([...document.querySelectorAll('.qSel:checked')].map(c => c.closest('tr').dataset.id));
   $('#qTable').addEventListener('change', e => { if (e.target.classList.contains('qSel')) updateSel(); });
   $('#qTable').addEventListener('click', async e => {
+    if (toggleErr(e, renderJobs)) return;
     const pg = e.target.closest('[data-page]');
     if (pg) { page = +pg.dataset.page; renderJobs(); return; }
     const open = e.target.closest('[data-open]');
@@ -488,7 +514,7 @@
         (broken.has(e.name) ? ' <span class="pill broken">broken</span>' : '') + '</td><td>' + fmtBytes(e.size) + '</td><td style="color:#999;font-size:12px">' +
         (e.from_archive ? 'inside ' + esc(e.from_archive) : 'plain file') + '</td><td><button class="rowbtn" data-copy="' + esc(e.path) + '">Copy path</button></td></tr>').join('')
       : '<tr><td colspan="4" style="color:#888">No files.</td></tr>') +
-      ((j.failures || []).length ? '<tr><td colspan="4"><div class="err">Not streamable: ' + j.failures.map(f => esc(f.name) + ' (' + esc(f.error) + ')').join('; ') + '</div></td></tr>' : '');
+      ((j.failures || []).length ? '<tr><td colspan="4">' + errHtml('b:' + j.id, j.failures.map(f => f.name + ' (' + f.error + ')').join('; '), 'Not streamable: ') + '</td></tr>' : '');
   }
   $('#bSearch').addEventListener('input', renderBrowse);
   $('#bCrumbs').addEventListener('click', e => {
@@ -500,6 +526,7 @@
     renderBrowse();
   });
   $('#bTable').addEventListener('click', e => {
+    if (toggleErr(e, renderBrowse)) return;
     const top = e.target.closest('[data-top]');
     if (top) { browseTop = top.dataset.top; browseJob = null; $('#bSearch').value = ''; renderBrowse(); return; }
     const open = e.target.closest('[data-open]');

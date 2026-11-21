@@ -39,8 +39,8 @@ var mediaExt = map[string]bool{".mkv": true, ".mp4": true, ".avi": true, ".m4v":
 func isMedia(name string) bool { return mediaExt[strings.ToLower(path.Ext(name))] }
 
 // VerifyReplacement checks the file of job jobID registered for cliID (or
-// its only media file): a full article check, then reads of the first and
-// last MiB through the validating reader.
+// its only media file): a sampled article check (health_sample_percent),
+// then reads of the first and last MiB through the validating reader.
 func (e *Engine) VerifyReplacement(ctx context.Context, cliID int, jobID string) (VerifyResult, error) {
 	if cliID <= 0 || jobID == "" {
 		return VerifyResult{}, &ReplacementError{"invalid_request", "cli_debrid_id and info_hash are required"}
@@ -81,7 +81,10 @@ func (e *Engine) VerifyReplacement(ctx context.Context, cliID int, jobID string)
 		return VerifyResult{}, err
 	}
 	one := &job.Result{Sources: res.Sources, Entries: []job.Entry{entry}}
-	rep, err := health.Check(ctx, e.Client, parsed, one, health.Options{Full: true})
+	// A sample, like cli_mount's verify (its availability sample percent):
+	// every article of an episode (~5000 STATs) took ~78 s and cli_debrid
+	// gives up at 75 s, so replacements were re-verified from zero forever.
+	rep, err := health.Check(ctx, e.Client, parsed, one, healthOptions(e.cfg.HealthSample, false))
 	if err != nil {
 		return VerifyResult{}, err
 	}
