@@ -9,6 +9,26 @@ except ImportError:
     pass
 
 import appdirs
+
+# Data folders first: the app imports below read USER_* at import time
+# (database, secret key, battery DB), so on Windows they must already
+# point at the user data dir, or C:\user\... gets a second copy.
+if sys.platform.startswith('win'):
+    app_name = "cli_debrid"  # Replace with your app's name
+    app_author = "cli_debrid"  # Replace with your company name
+    base_path = appdirs.user_data_dir(app_name, app_author)
+    os.environ['USER_CONFIG'] = os.path.join(base_path, 'config')
+    os.environ['USER_LOGS'] = os.path.join(base_path, 'logs')
+    os.environ['USER_DB_CONTENT'] = os.path.join(base_path, 'db_content')
+else:
+    os.environ.setdefault('USER_CONFIG', '/user/config')
+    os.environ.setdefault('USER_LOGS', '/user/logs')
+    os.environ.setdefault('USER_DB_CONTENT', '/user/db_content')
+
+# Ensure directories exist
+for dir_path in [os.environ['USER_CONFIG'], os.environ['USER_LOGS'], os.environ['USER_DB_CONTENT']]:
+    os.makedirs(dir_path, exist_ok=True)
+
 import threading
 import time
 import signal
@@ -34,22 +54,6 @@ from routes.notifications import (
     register_startup_handler,
 )
 from database import schema_management
-
-if sys.platform.startswith('win'):
-    app_name = "cli_debrid"  # Replace with your app's name
-    app_author = "cli_debrid"  # Replace with your company name
-    base_path = appdirs.user_data_dir(app_name, app_author)
-    os.environ['USER_CONFIG'] = os.path.join(base_path, 'config')
-    os.environ['USER_LOGS'] = os.path.join(base_path, 'logs')
-    os.environ['USER_DB_CONTENT'] = os.path.join(base_path, 'db_content')
-else:
-    os.environ.setdefault('USER_CONFIG', '/user/config')
-    os.environ.setdefault('USER_LOGS', '/user/logs')
-    os.environ.setdefault('USER_DB_CONTENT', '/user/db_content')
-
-# Ensure directories exist
-for dir_path in [os.environ['USER_CONFIG'], os.environ['USER_LOGS'], os.environ['USER_DB_CONTENT']]:
-    os.makedirs(dir_path, exist_ok=True)
 
 # Set environment mode flag - defaults to 'full' for current behavior
 os.environ.setdefault('CLI_DEBRID_ENVIRONMENT_MODE', 'full')
@@ -2187,6 +2191,17 @@ def main():
 
     # Always print this message
     print("Running in console mode.")
+
+    # Windows source runs (python main.py): bring the built-in mount up like
+    # Docker (supervisord) and the packaged exe (windows_wrapper) do.
+    if sys.platform.startswith('win') and not os.environ.get('CLID_ENGINE_STARTUP_DONE'):
+        def _sync_builtin_engine():
+            try:
+                from utilities import builtin_engine
+                logging.info(f"Built-in mount engine: {builtin_engine.startup()}")
+            except Exception as exc:
+                logging.warning(f"Built-in mount engine sync failed: {exc}")
+        threading.Thread(target=_sync_builtin_engine, name='builtin-engine-sync', daemon=True).start()
 
     if get_setting('Debug', 'auto_run_program'):
         # Add delay to ensure server is ready for app_context usage

@@ -24,6 +24,7 @@ from typing import Callable, Optional, Tuple
 import requests
 
 from utilities import mount_now_playing as np
+from utilities.paths import safe_realpath
 
 POLL_SECONDS = 20          # prewarm
 PROTECT_SECONDS = 10       # playback protection (engine forgets a set after 45 s)
@@ -72,7 +73,7 @@ def mount_target(plex_file: str, mount_path: str) -> Optional[Tuple[str, str]]:
     path = plex_file.replace('\\', '/')
     try:
         if os.path.lexists(plex_file):
-            path = os.path.realpath(plex_file)
+            path = safe_realpath(plex_file)
     except OSError:
         pass
     marker = '/__all__/'

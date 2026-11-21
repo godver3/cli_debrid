@@ -23,6 +23,7 @@ from utilities.plex_functions import (
 # Removed original plex_update_item as it's now imported
 
 from database.database_reading import get_media_item_by_id # Moved import here
+from utilities.paths import safe_realpath
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +53,7 @@ def verify_media_file(file_data: Dict[str, Any], media_library: Dict[str, List[D
 
         # Check if it's a symlink and if it's valid
         if os.path.islink(file_data['full_path']):
-            target_path = os.path.realpath(file_data['full_path'])
+            target_path = safe_realpath(file_data['full_path'])
             if not os.path.exists(target_path):
                 # Log changed from error to warning, handled later
                 logger.warning(f"Symlink target does not exist (checked early): {target_path} for symlink: {file_data['full_path']}")

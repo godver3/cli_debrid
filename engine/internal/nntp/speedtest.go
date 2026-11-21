@@ -42,10 +42,11 @@ func (c *Client) SpeedTest(ctx context.Context, provider string, ids []string, c
 	}
 	conns = min(max(conns, 1), max(pl.p.MaxConns-pl.reserve(), 1))
 	var (
-		mu      sync.Mutex
-		next    int
-		lastErr error
-		wg      sync.WaitGroup
+		mu         sync.Mutex
+		next       int
+		lastErr    error
+		wg         sync.WaitGroup
+		latencySet bool // a real 0 ms can happen (Windows timer ticks)
 	)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -95,8 +96,8 @@ func (c *Client) SpeedTest(ctx context.Context, provider string, ids []string, c
 				case err == nil:
 					res.Bytes += int64(len(data))
 					res.Articles++
-					if ms := float64(took.Microseconds()) / 1000; res.LatencyMs == 0 || ms < res.LatencyMs {
-						res.LatencyMs = ms
+					if ms := float64(took.Microseconds()) / 1000; !latencySet || ms < res.LatencyMs {
+						res.LatencyMs, latencySet = ms, true
 					}
 				case IsNotFound(err) || errors.Is(err, ErrTruncated):
 					res.Missing++

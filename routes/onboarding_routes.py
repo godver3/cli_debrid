@@ -126,12 +126,12 @@ def _save_required_settings(form):
             # under <mount_path>/__all__, which is the original-files path.
             usenet['url'] = ''
             usenet['api_token'] = ''
-            from utilities.builtin_engine import mount_path as _builtin_mount_path
-            mount = _builtin_mount_path(config.get('Built-in Mount', {}) or {})
+            from utilities.builtin_engine import all_path as _builtin_all
+            all_path = _builtin_all(config.get('Built-in Mount', {}) or {})
             fm = config.setdefault('File Management', {})
             if not (fm.get('original_files_path') or '').strip():
-                fm['original_files_path'] = f'{mount}/__all__'
-                config.setdefault('Plex', {})['mounted_file_location'] = f'{mount}/__all__'
+                fm['original_files_path'] = all_path
+                config.setdefault('Plex', {})['mounted_file_location'] = all_path
             _save_builtin_server(config, form)
 
     # The mount tool picked in step 2. Built-in turns the engine on even
@@ -142,8 +142,8 @@ def _save_required_settings(form):
         bm = config.setdefault('Built-in Mount', {})
         bm['enabled'] = mount_tool == 'builtin'
         if mount_tool == 'builtin':
-            from utilities.builtin_engine import mount_path as _builtin_mount_path
-            all_path = _builtin_mount_path(bm).rstrip('/') + '/__all__'
+            from utilities.builtin_engine import all_path as _builtin_all
+            all_path = _builtin_all(bm)
             fm = config.setdefault('File Management', {})
             if not (fm.get('original_files_path') or '').strip():
                 fm['original_files_path'] = all_path
@@ -199,8 +199,8 @@ def _builtin_host_problems():
 
 
 def _builtin_all_path(config):
-    from utilities.builtin_engine import mount_path
-    return mount_path(config.get('Built-in Mount') or {}).rstrip('/') + '/__all__'
+    from utilities.builtin_engine import all_path
+    return all_path(config.get('Built-in Mount') or {})
 
 
 def _save_builtin_server(config, form):

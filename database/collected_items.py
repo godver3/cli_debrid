@@ -19,6 +19,7 @@ from utilities.reverse_parser import parser_approximation
 from typing import Dict, Any, List
 from utilities.post_processing import handle_state_change
 from cli_battery.app.direct_api import DirectAPI
+from utilities.paths import safe_realpath
 
 def _cache_tmdb_artwork(media_items_batch):
     """
@@ -891,7 +892,7 @@ def _add_collected_items_impl(media_items_batch, recent=False, backfill=False, d
                                                 }
                                                 if _wanted_langs:
                                                     import os as _os
-                                                    _real = _os.path.realpath(_loc) if _os.path.islink(_loc) else _loc
+                                                    _real = safe_realpath(_loc) if _os.path.islink(_loc) else _loc
                                                     _embedded = get_embedded_subtitle_languages(_real)
                                                     if _wanted_langs and _wanted_langs.issubset(_embedded):
                                                         logging.info(f"Bazarr notification skipped — all configured subtitle languages already embedded in {_loc}")

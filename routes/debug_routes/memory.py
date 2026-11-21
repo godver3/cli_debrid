@@ -15,7 +15,10 @@ def memory_snapshot():
     """
     import gc
     import sys
-    import resource
+    try:
+        import resource  # Unix only
+    except ImportError:
+        resource = None
     from collections import Counter
 
     report = {}

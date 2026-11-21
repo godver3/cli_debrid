@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/godver3/cli_debrid/engine/internal/health"
@@ -80,6 +81,9 @@ func TestMediaProbeOffByDefault(t *testing.T) {
 }
 
 func TestClassifyProbeLikeCliMount(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fixtures are sh scripts")
+	}
 	run := func(script string) ([]byte, error) { return exec.Command("sh", "-c", script).Output() }
 	ctx := context.Background()
 	for script, want := range map[string]probeResult{

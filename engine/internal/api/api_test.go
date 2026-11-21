@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -330,6 +331,9 @@ func TestHealthForRepair(t *testing.T) {
 }
 
 func TestReplacementVerifyAndAck(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the ffprobe stub is a sh script")
+	}
 	h := newHarness(t)
 	// Replacements are always checked with ffprobe (as cli_mount does); a
 	// stub stands in for it: it says "playable" until rewritten below.

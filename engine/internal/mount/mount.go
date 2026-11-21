@@ -80,6 +80,7 @@ func ino(parts ...string) uint64 {
 func (n *node) dirAttr(out *fuse.Attr, t time.Time) {
 	out.Mode = syscall.S_IFDIR | 0o555&^n.opt.Umask
 	out.Owner = fuse.Owner{Uid: n.opt.UID, Gid: n.opt.GID}
+	t = stamp(t)
 	out.SetTimes(&t, &t, &t)
 }
 

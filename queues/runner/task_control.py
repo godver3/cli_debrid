@@ -18,7 +18,10 @@ import apscheduler.events
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED, EVENT_JOB_MAX_INSTANCES, EVENT_JOB_MISSED, EVENT_JOB_SUBMITTED
 from utilities.settings import get_setting
 from datetime import datetime, timezone
-import resource
+try:
+    import resource  # Unix only
+except ImportError:
+    resource = None
 from queues.runner import task_registry
 
 

@@ -183,7 +183,7 @@ SECTIONS = {
         "tab": "Required Settings",
         "file_collection_management": {
             "type": "string",
-            "description": "Select library management method. Note: On Windows systems, hardlinks will be used instead of symlinks when selecting Symlinked/Local option.",
+            "description": "Select library management method. On Windows with Plex use Plex: Plex Media Server for Windows skips symlinked files, so a Symlinked/Local library never appears in it.",
             "default": "Plex",
             "choices": ["Plex", "Symlinked/Local"]
         },

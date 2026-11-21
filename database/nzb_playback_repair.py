@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 
 from database.core import get_db_connection, retry_on_db_lock
 from usenet.base import EXACT_REMOVE, supports
+from utilities.paths import safe_realpath
 
 log = logging.getLogger(__name__)
 _worker_lock = threading.Lock()
@@ -563,7 +564,7 @@ def _symlink_matches(item, entry_name, file_name):
     if not link:
         return False
     if os.path.islink(link):
-        target = os.path.normpath(os.path.realpath(link))
+        target = os.path.normpath(safe_realpath(link))
     elif os.path.exists(link):
         target = os.path.normpath(link)
     else:

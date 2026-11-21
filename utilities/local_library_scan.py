@@ -1,6 +1,7 @@
 import logging
 from typing import List, Dict, Any, Optional, Callable, Tuple
 import os
+import sys
 from utilities.settings import get_setting
 import shutil
 import re
@@ -13,6 +14,7 @@ from database.symlink_verification import add_symlinked_file_for_verification, a
 from database.database_reading import get_all_media_items, get_media_item_by_id, get_season_year
 from scraper.functions.ptt_parser import parse_with_ptt
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from utilities.paths import safe_realpath
 
 # Check MediaInfo availability at module load (optional dependency)
 _MEDIAINFO_AVAILABLE = False
@@ -952,6 +954,23 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
         logging.error(f"[SymlinkPath] Error generating symlink path for item {item.get('id', '')}: {str(e)}", exc_info=True)
         return None
 
+_WINDOWS_PLEX_SYMLINK_WARNED = False
+
+
+def _warn_windows_plex_symlinks():
+    """Plex Media Server on Windows skips file symlinks while scanning, so a
+    symlinked library never shows up there (found testing #585 on Windows).
+    Say so once per run instead of letting items sit Collected but missing."""
+    global _WINDOWS_PLEX_SYMLINK_WARNED
+    if _WINDOWS_PLEX_SYMLINK_WARNED or not sys.platform.startswith('win'):
+        return
+    _WINDOWS_PLEX_SYMLINK_WARNED = True
+    if (get_setting('File Management', 'media_server_type', 'plex') or 'plex').lower() == 'plex':
+        logging.warning("Plex on Windows ignores symlinked files, so this library won't appear in Plex. "
+                        "Use File Management = Plex and point the Plex libraries at the mount's folders "
+                        "(e.g. M:\\Movies and M:\\TV Shows) instead.")
+
+
 def create_symlink(source_path: str, dest_path: str, media_item_id: int = None, skip_verification: bool = False) -> bool:
     """Creates a symlink from source_path to dest_path."""
     
@@ -973,7 +992,7 @@ def create_symlink(source_path: str, dest_path: str, media_item_id: int = None, 
     # If destination exists and is a symlink, check if it points to the correct source
     if os.path.islink(dest_path):
         try:
-            current_target = os.path.realpath(dest_path)
+            current_target = safe_realpath(dest_path)
             if current_target == source_path:
                 logging.info(f"Symlink already exists and points to the correct target: {dest_path}")
                 symlink_ok_or_created = True # Symlink is already correct
@@ -1013,6 +1032,7 @@ def create_symlink(source_path: str, dest_path: str, media_item_id: int = None, 
         try:
             os.symlink(source_path, dest_path)
             logging.info(f"Created symlink: {dest_path} -> {source_path}")
+            _warn_windows_plex_symlinks()
             symlink_ok_or_created = True # Symlink successfully created
         except Exception as e:
             logging.error(f"Failed to create symlink from {source_path} to {dest_path}: {e}")
@@ -2564,7 +2584,7 @@ def scan_for_broken_symlinks(library_path: str = None) -> Dict[str, Any]:
                 # Check if it's a symlink
                 if os.path.islink(file_path):
                     total_symlinks += 1
-                    target_path = os.path.realpath(file_path)
+                    target_path = safe_realpath(file_path)
                     relative_path = os.path.relpath(file_path, library_path)
                     
                     logging.debug(f"Checking symlink: {relative_path} -> {target_path}")
@@ -2640,7 +2660,7 @@ def repair_broken_symlink(symlink_path: str, new_target_path: str = None) -> Dic
                 'new_target': None
             }
             
-        old_target = os.path.realpath(symlink_path)
+        old_target = safe_realpath(symlink_path)
         
         # If no new target specified, try to find the file
         if not new_target_path:
@@ -2943,7 +2963,7 @@ def resync_symlinks_with_new_settings(
                 needs_recreate = False
                 if not os.path.lexists(db_symlink_location): needs_recreate = True
                 elif not os.path.islink(db_symlink_location): needs_recreate = True
-                elif os.path.realpath(db_symlink_location) != os.path.realpath(actual_source_file_to_use): needs_recreate = True
+                elif safe_realpath(db_symlink_location) != safe_realpath(actual_source_file_to_use): needs_recreate = True
                 
                 if needs_recreate:
                     symlink_recreated = create_symlink(actual_source_file_to_use, new_symlink_destination, item_id, skip_verification=True)

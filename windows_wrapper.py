@@ -677,6 +677,7 @@ def run_main():
             logging.info(f"Built-in mount engine: {builtin_engine.startup()}")
         except Exception as exc:
             logging.warning(f"Built-in mount engine sync failed: {exc}")
+    os.environ['CLID_ENGINE_STARTUP_DONE'] = '1'  # main.py then skips its own call
     threading.Thread(target=_sync_builtin_engine, name='builtin-engine-sync', daemon=True).start()
 
     # Override Phalanx port env var if provided via command line

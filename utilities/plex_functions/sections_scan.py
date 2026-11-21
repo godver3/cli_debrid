@@ -17,6 +17,7 @@ from ._common import logger
 from .collected import extract_show_ids, process_library_names
 from .recent import process_recent_episode, process_recent_movie
 from .scan_cleanup import plex_connection_settings
+from utilities.paths import safe_realpath
 
 def get_section_type(section: LibrarySection) -> Optional[str]:
     """Return the type of the Plex library section."""
@@ -30,7 +31,7 @@ def find_plex_library_and_section(plex: PlexServer, item_path: str) -> Tuple[Opt
     """Find the Plex library and section containing the given item path."""
     try:
         # Ensure item_path is absolute and symlinks are resolved
-        resolved_item_path = Path(item_path).resolve()
+        resolved_item_path = Path(safe_realpath(item_path))
         sections = plex.library.sections()
         # Keep track of the best match (longest common path)
         best_match_section = None
@@ -45,7 +46,7 @@ def find_plex_library_and_section(plex: PlexServer, item_path: str) -> Tuple[Opt
             for location in section.locations:
                 try:
                     # Ensure location is absolute and symlinks are resolved
-                    resolved_location = Path(location).resolve()
+                    resolved_location = Path(safe_realpath(location))
 
                     # Check if the item path is inside the location path
                     # Use Path.is_relative_to() for robust containment check

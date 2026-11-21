@@ -10,6 +10,7 @@ import threading
 from utilities.local_library_scan import convert_item_to_symlink
 from database.database_writing import RESET_COLLECTION_STATE_SQL
 from ._common import debug_bp, scan_progress
+from utilities.paths import safe_realpath
 
 @debug_bp.route('/convert_to_symlinks', methods=['POST'])
 @admin_required
@@ -102,7 +103,7 @@ def convert_to_symlinks():
                     if check_for_symlinks:
                         try:
                             if os.path.islink(current_location):
-                                real_path = os.path.realpath(current_location)
+                                real_path = safe_realpath(current_location)
                                 logging.info(f"Found symlink for {item_dict['title']}, using original path: {real_path}")
                                 # Store both the real path and the original filename
                                 item_dict['filename_real_path'] = os.path.basename(real_path)

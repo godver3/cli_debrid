@@ -15,6 +15,7 @@ from database.database_writing import update_media_item, RESET_COLLECTION_STATE_
 from database.symlink_verification import add_symlinked_file_for_verification
 from ._common import BATCH_SIZE, database_bp, queue_plex_removal_for_item, sync_queues_after_rescrape
 from .item_actions import delete_item
+from utilities.paths import safe_realpath
 
 @database_bp.route('/bulk_queue_action', methods=['POST'])
 @admin_required
@@ -744,7 +745,7 @@ def bulk_queue_action():
                         if item.get('original_path_for_symlink') and os.path.exists(item['original_path_for_symlink']):
                             source_file_path = item['original_path_for_symlink']
                         elif old_symlink_path and os.path.islink(old_symlink_path):
-                            source_file_path = os.path.realpath(old_symlink_path)
+                            source_file_path = safe_realpath(old_symlink_path)
                         else:
                             # Fallback – use whatever is stored if it exists
                             source_file_path = old_symlink_path if old_symlink_path and os.path.exists(old_symlink_path) else None

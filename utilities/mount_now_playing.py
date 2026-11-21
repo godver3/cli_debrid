@@ -17,6 +17,7 @@ import threading
 from typing import Callable, List, Optional
 
 import requests
+from utilities.paths import safe_realpath
 
 
 #: Where the mount's Plex URL/token come from, first match wins: the Mount
@@ -103,7 +104,7 @@ def match_stream(plex_file: str, streams: List[dict], mount_path: str) -> Option
     real = ''
     try:
         if os.path.lexists(plex_file):
-            real = os.path.realpath(plex_file)
+            real = safe_realpath(plex_file)
     except OSError:
         pass
     norm = plex_file.replace('\\', '/')

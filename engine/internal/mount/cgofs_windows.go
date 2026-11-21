@@ -84,7 +84,7 @@ func (f *cgoFS) fill(st *fuse.Stat_t, dir bool, size int64, mod time.Time) {
 		st.Blksize = 1 << 20
 		st.Blocks = (size + 511) / 512
 	}
-	ts := fuse.NewTimespec(mod)
+	ts := fuse.NewTimespec(stamp(mod))
 	st.Mtim, st.Ctim, st.Atim, st.Birthtim = ts, ts, ts, ts
 }
 

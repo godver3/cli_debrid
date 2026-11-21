@@ -3,11 +3,14 @@ package nntp
 import (
 	"context"
 	"errors"
+	"runtime"
 	"testing"
 
 	"github.com/godver3/cli_debrid/engine/internal/nntptest"
 )
 
+// On Windows the clock moves in timer ticks, so a loopback fetch can
+// measure 0 ms.
 func TestSpeedTestOneProviderOnly(t *testing.T) {
 	arts := nntptest.Post("st", "f.bin", awkward(40000), 4000)
 	a := nntptest.Start(t, arts...)
@@ -24,7 +27,7 @@ func TestSpeedTestOneProviderOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Articles != len(arts) || res.Missing != 1 || res.Bytes != 40000 || res.Error != "" || res.LatencyMs <= 0 {
+	if res.Articles != len(arts) || res.Missing != 1 || res.Bytes != 40000 || res.Error != "" || res.LatencyMs < 0 || (res.LatencyMs == 0 && runtime.GOOS != "windows") {
 		t.Fatalf("a: %+v", res)
 	}
 	// b is asked alone: it has none of them, and a is never consulted

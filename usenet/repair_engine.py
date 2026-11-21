@@ -692,6 +692,17 @@ def probe_file_playable(location_on_disk: str, timeout: int = 10, attempts: int 
         logger.debug(f'[NZBRepair] File not on mount: {file_path!r}')
         return False
 
+    # A job folder is not a file: its st_size is 0 (always on Windows), which
+    # read as "empty file" and rejected healthy releases. Probe the largest
+    # video in it; a folder without one says nothing about playability.
+    if _os.path.isdir(file_path):
+        from utilities.paths import media_file_at
+        inner = media_file_at(file_path)
+        if not inner:
+            logger.info(f'[NZBRepair] {file_path!r} is a folder with no video in it — not probing')
+            return True
+        file_path = inner
+
     # A file the mount itself lists as 0 bytes really is empty: it can't play,
     # and an empty read from it says nothing about the mount being stale. The
     # stale-mount case below is a file listed with its real size reading 0 bytes.

@@ -21,6 +21,7 @@ import plexapi
 from utilities.plex_functions import remove_file_from_plex
 from utilities.plex_functions import claim_plex_mode_scan, plex_mode_scan_due, PLEX_MODE_SCAN_COOLDOWN
 from utilities import plex_health
+from utilities.paths import media_file_at
 from database.symlink_verification import update_removal_status
 
 
@@ -417,9 +418,10 @@ class PlexTasks:
                 for idx, potential_path in enumerate(paths_to_check):
                     checked_paths_log.append(potential_path)
                     logging.debug(f"Plex Check Attempt {idx+1}: Checking path: {potential_path}")
-                    if os.path.exists(potential_path):
+                    found_path = media_file_at(potential_path)
+                    if found_path:
                         file_found_on_disk = True
-                        actual_file_path = potential_path
+                        actual_file_path = found_path
                         logging.info(f"Plex Check: Found file for item {item_id} at: {actual_file_path} (Attempt {idx+1})")
                         break # Found it, stop checking
 
@@ -687,9 +689,10 @@ class PlexTasks:
                     potential_path = p_info['path']
                     log_checked_paths.append(potential_path) 
                     logging.debug(f"Plex Check (checks enabled) Attempt {idx+1}: Checking path: {potential_path} (using folder '{p_info['name']}', type: {p_info['type']})")
-                    if os.path.exists(potential_path):
+                    found_path = media_file_at(potential_path)
+                    if found_path:
                         file_found_on_disk = True
-                        actual_file_path = potential_path
+                        actual_file_path = found_path
                         folder_name_for_plex_scan = p_info['name'] 
                         found_path_type_log = p_info['type']
                         item_title_for_log = (item_dict['title'] or 'N/A')

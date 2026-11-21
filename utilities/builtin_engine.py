@@ -52,7 +52,7 @@ def config_path() -> str:
 
 def _load_settings() -> dict:
     try:
-        with open(os.path.join(_config_dir(), 'config.json')) as f:
+        with open(os.path.join(_config_dir(), 'config.json'), encoding='utf-8') as f:
             return json.load(f)
     except Exception:
         return {}
@@ -161,6 +161,26 @@ def mount_path(bm: dict) -> str:
     return p.rstrip('/\\') if len(p) > 3 else p
 
 
+def all_path(bm: dict) -> str:
+    """<mount>/__all__, with the platform's separator (M:\\__all__ on
+    Windows, so it matches the paths os.path.join builds elsewhere)."""
+    m = mount_path(bm)
+    if IS_WINDOWS:
+        return m.rstrip('/\\') + '\\__all__'
+    return m.rstrip('/') + '/__all__'
+
+
+def cache_dir(bm: dict) -> str:
+    """The engine's disk cache folder. On Windows the Linux default
+    (/user/cache/engine) would land in C:\\user\\cache, so it goes next to
+    the other data folders instead."""
+    p = (bm.get('cache_dir') or '').strip()
+    if IS_WINDOWS and (not p or p.startswith('/')):
+        base = os.path.dirname(os.environ.get('USER_DB_CONTENT') or os.path.join(os.getcwd(), 'db_content'))
+        return os.path.join(base, 'cache', 'engine')
+    return p or '/user/cache/engine'
+
+
 def _int(v, default: int) -> int:
     try:
         return default if v in (None, '') else int(v)
@@ -211,7 +231,7 @@ def build_config(settings: dict) -> dict:
         umask = 0
     return {
         'data_dir': os.path.join(os.environ.get('USER_DB_CONTENT', '/user/db_content'), 'engine'),
-        'cache_dir': bm.get('cache_dir') or '/user/cache/engine',
+        'cache_dir': cache_dir(bm),
         'cache_bytes': cache_gb * (1 << 30),
         'mem_cache_bytes': max(64, num('buffer_memory_mb', 512)) << 20,
         'cache_expiry_seconds': num('cache_expiry_hours', 0) * 3600,
@@ -344,7 +364,7 @@ def write_config(cfg: dict, path: str = None) -> bool:
     path = path or config_path()
     data = json.dumps(cfg, indent=1, sort_keys=True)
     try:
-        with open(path) as f:
+        with open(path, encoding='utf-8') as f:
             if f.read() == data:
                 return False
     except OSError:
@@ -352,8 +372,9 @@ def write_config(cfg: dict, path: str = None) -> bool:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix='.engine-')
     try:
-        os.fchmod(fd, 0o600)
-        with os.fdopen(fd, 'w') as f:
+        if hasattr(os, 'fchmod'):  # POSIX only; on Windows the file inherits the user-only ACL
+            os.fchmod(fd, 0o600)
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
             f.write(data)
         os.replace(tmp, path)
     except Exception:
@@ -495,12 +516,33 @@ def user_start(settings: dict = None) -> str:
     return sync(settings)
 
 
+def _windows_fuse_mounted(path: str) -> bool:
+    """WinFsp drive letter (M:) or folder mount: GetVolumeInformationW on its
+    root names the filesystem. os.path.realpath raises WinError 1005 there
+    and os.path.ismount is True for every folder on the drive, so neither
+    can be used."""
+    root = (path or '').rstrip('/\\')
+    if not root:
+        return False
+    root += '\\'
+    try:
+        import ctypes
+        fs_name = ctypes.create_unicode_buffer(261)
+        ok = ctypes.windll.kernel32.GetVolumeInformationW(
+            ctypes.c_wchar_p(root), None, 0, None, None, None, fs_name, len(fs_name))
+    except Exception:
+        return False
+    return bool(ok) and fs_name.value.upper().startswith('FUSE')
+
+
 def fuse_mounted(path: str) -> bool:
     """A FUSE filesystem (cli_mount's, live or dead) sits on path. Inside
     Docker the folder is a bind mount, so os.path.ismount() is always True
     there and can't tell cli_mount apart from the bind; /proc/self/mountinfo
-    names the filesystem type. Without mountinfo (Windows) fall back to
-    ismount."""
+    names the filesystem type. On Windows ask the volume for its
+    filesystem name (WinFsp mounts report FUSE-<name>)."""
+    if IS_WINDOWS:
+        return _windows_fuse_mounted(path)
     target = os.path.realpath(path).rstrip('/') or '/'
     try:
         with open('/proc/self/mountinfo') as f:
