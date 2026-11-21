@@ -45,8 +45,8 @@ func (e *Engine) VerifyReplacement(ctx context.Context, cliID int, jobID string)
 	if cliID <= 0 || jobID == "" {
 		return VerifyResult{}, &ReplacementError{"invalid_request", "cli_debrid_id and info_hash are required"}
 	}
-	j, res, err := e.Store.Get(jobID)
-	if err != nil {
+	j, res, err := e.Store.Full(jobID) // full article check needs the maps
+	if err != nil || (j.Status == store.Ready && res == nil) {
 		return VerifyResult{Status: "unknown", Reason: "replacement_not_ready"}, nil
 	}
 	switch j.Status {

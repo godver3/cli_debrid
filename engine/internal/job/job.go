@@ -86,6 +86,9 @@ type Result struct {
 	// Notes say what Build did with the NZB's files (sets found, files
 	// skipped and why), for logs and for "nothing streamable" errors.
 	Notes []string `json:"notes,omitempty"`
+	// MapsFile: the sources' segment maps were moved to the store's
+	// maps.bin (this copy carries no Map); Store.Full puts them back.
+	MapsFile bool `json:"maps_file,omitempty"`
 }
 
 // ErrLeftoverOnly means only leftovers (sample, extras) were streamable

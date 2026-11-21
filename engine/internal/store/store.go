@@ -1,10 +1,14 @@
 // Package store keeps jobs on disk: one folder per job holding the
-// original NZB, the job's metadata and its import result. Everything is
-// loaded into memory at start and written atomically on change.
+// original NZB, the job's metadata and its import result. Metadata and
+// result summaries are held in memory (loaded at start, mostly from the
+// index); segment maps are read only when a job's files are opened or
+// checked. Every file is written atomically.
 //
 //	<dir>/jobs/<id>/meta.json
 //	<dir>/jobs/<id>/job.nzb
-//	<dir>/jobs/<id>/result.json
+//	<dir>/jobs/<id>/result.json  result without segment maps
+//	<dir>/jobs/<id>/maps.bin     segment maps of mapped (migrated) sources
+//	<dir>/index.gob             startup cache of meta + result summaries
 //	<dir>/deleted.json          tombstones for the changes feed
 package store
 
@@ -15,8 +19,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/godver3/cli_debrid/engine/internal/job"
@@ -109,17 +115,30 @@ const tombstoneKeep = 30 * 24 * time.Hour
 
 // Store is safe for concurrent use.
 type Store struct {
-	dir     string
-	mu      sync.RWMutex
+	dir string
+	mu  sync.RWMutex
+	// results hold summaries: mapped sources' segment maps stay in
+	// maps.bin until Full loads them.
 	jobs    map[string]*Job
 	results map[string]*job.Result
+	stamps  map[string]stamps
 	deleted []Tombstone
 	now     func() time.Time
+
+	dirty     atomic.Bool // index out of date
+	saveMu    sync.Mutex
+	stop      chan struct{}
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
-// Open loads every job under dir (created if missing).
+// Open loads every job under dir (created if missing): from the index for
+// jobs whose files are unchanged since it was saved, from their folders
+// otherwise. Results written before maps.bin existed (segment maps inline
+// in result.json) are converted on the way.
 func Open(dir string) (*Store, error) {
-	s := &Store{dir: dir, jobs: map[string]*Job{}, results: map[string]*job.Result{}, now: time.Now}
+	s := &Store{dir: dir, jobs: map[string]*Job{}, results: map[string]*job.Result{},
+		stamps: map[string]stamps{}, now: time.Now, stop: make(chan struct{}), done: make(chan struct{})}
 	if err := os.MkdirAll(filepath.Join(dir, "jobs"), 0o755); err != nil {
 		return nil, err
 	}
@@ -127,14 +146,31 @@ func Open(dir string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	idx := s.loadIndex()
+	var pending []string
 	for _, e := range ents {
 		if !e.IsDir() || !ValidID(e.Name()) {
 			continue
 		}
-		var j Job
-		if err := readJSON(s.path(e.Name(), "meta.json"), &j); err != nil {
-			continue // half-written job from a crash; ignore it
+		id := e.Name()
+		if rec, ok := idx[id]; ok && rec.Job.ID == id && rec.Stamps.Meta != (stamp{}) &&
+			statStamp(s.path(id, "meta.json")) == rec.Stamps.Meta &&
+			statStamp(s.path(id, "result.json")) == rec.Stamps.Result {
+			j := rec.Job
+			s.jobs[id] = &j
+			if rec.Result != nil {
+				s.results[id] = rec.Result
+			}
+			s.stamps[id] = rec.Stamps
+			continue
 		}
+		pending = append(pending, id)
+	}
+	if len(pending) > 0 || len(idx) != len(s.jobs) {
+		s.dirty.Store(true)
+	}
+	s.loadFolders(pending)
+	for _, j := range s.jobs {
 		if j.Status == Importing || j.Status == Queued {
 			j.Status = Queued // interrupted import: the engine re-runs it
 		}
@@ -144,16 +180,77 @@ func Open(dir string) (*Store, error) {
 				j.Health.Status = "broken"
 			}
 		}
-		s.jobs[j.ID] = &j
-		var r job.Result
-		if err := readJSON(s.path(j.ID, "result.json"), &r); err == nil {
-			s.results[j.ID] = &r
-		} else if j.Status == Ready && j.Protocol != "debrid" {
-			lostResult(&j, err, s.now()) // debrid: the engine drops it and the mirror adds it back
-		}
 	}
 	_ = readJSON(filepath.Join(dir, "deleted.json"), &s.deleted)
+	_ = s.saveIndex()
+	go s.saveLoop()
 	return s, nil
+}
+
+// loadFolders reads jobs from their folders, several at a time (the first
+// start after the maps.bin change converts every mapped result).
+func (s *Store) loadFolders(ids []string) {
+	if len(ids) == 0 {
+		return
+	}
+	work := make(chan string)
+	var wg sync.WaitGroup
+	for range min(len(ids), max(2, runtime.GOMAXPROCS(0))) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for id := range work {
+				j, r, st, ok := s.loadFolder(id)
+				if !ok {
+					continue
+				}
+				s.mu.Lock()
+				s.jobs[id] = j
+				if r != nil {
+					s.results[id] = r
+				}
+				s.stamps[id] = st
+				s.mu.Unlock()
+			}
+		}()
+	}
+	for _, id := range ids {
+		work <- id
+	}
+	close(work)
+	wg.Wait()
+}
+
+func (s *Store) loadFolder(id string) (*Job, *job.Result, stamps, bool) {
+	var j Job
+	if err := readJSON(s.path(id, "meta.json"), &j); err != nil || j.ID != id {
+		return nil, nil, stamps{}, false // half-written job from a crash; ignore it
+	}
+	st := stamps{Meta: statStamp(s.path(id, "meta.json"))}
+	var r job.Result
+	err := readJSON(s.path(id, "result.json"), &r)
+	if err != nil {
+		if j.Status == Ready && j.Protocol != "debrid" {
+			lostResult(&j, err, s.now()) // debrid: the engine drops it and the mirror adds it back
+		}
+		st.Result = statStamp(s.path(id, "result.json"))
+		return &j, nil, st, true
+	}
+	res := &r
+	if !r.MapsFile {
+		if sum, maps := splitMaps(&r); maps != nil {
+			// Old layout: maps inline. Write maps.bin first, so a crash
+			// leaves the old result.json (converted again next start).
+			if err := writeFile(s.path(id, mapsFile), maps); err == nil {
+				if err := writeJSON(s.path(id, "result.json"), sum); err == nil {
+					res = sum
+				}
+			}
+			// On a write error the full result stays in memory and works.
+		}
+	}
+	st.Result = statStamp(s.path(id, "result.json"))
+	return &j, res, st, true
 }
 
 // lostResult: a ready job whose file map (result.json) can't be read has
@@ -206,6 +303,8 @@ func (s *Store) Create(j Job, nzbData []byte) (Job, error) {
 		return Job{}, err
 	}
 	s.jobs[j.ID] = &j
+	s.stamps[j.ID] = stamps{Meta: statStamp(s.path(j.ID, "meta.json"))}
+	s.dirty.Store(true)
 	return j, nil
 }
 
@@ -225,6 +324,10 @@ func (s *Store) Update(id string, fn func(*Job)) (Job, error) {
 		return Job{}, err
 	}
 	*cur = next
+	st := s.stamps[id]
+	st.Meta = statStamp(s.path(id, "meta.json"))
+	s.stamps[id] = st
+	s.dirty.Store(true)
 	return next, nil
 }
 
@@ -237,14 +340,28 @@ func (s *Store) SetResult(id string, r *job.Result) (Job, error) {
 }
 
 // StoreResult saves an import result without changing the job's status
-// (the engine places the folder first, then calls MarkReady).
+// (the engine places the folder first, then calls MarkReady). Segment maps
+// go to maps.bin; the store keeps the rest in memory. r is not changed.
 func (s *Store) StoreResult(id string, r *job.Result) error {
-	if err := writeJSON(s.path(id, "result.json"), r); err != nil {
+	sum, maps := splitMaps(r)
+	if maps != nil {
+		if err := writeFile(s.path(id, mapsFile), maps); err != nil {
+			return err
+		}
+	}
+	if err := writeJSON(s.path(id, "result.json"), sum); err != nil {
 		return err
 	}
+	if maps == nil {
+		_ = os.Remove(s.path(id, mapsFile)) // replaced a mapped result
+	}
 	s.mu.Lock()
-	s.results[id] = r
+	s.results[id] = sum
+	st := s.stamps[id]
+	st.Result = statStamp(s.path(id, "result.json"))
+	s.stamps[id] = st
 	s.mu.Unlock()
+	s.dirty.Store(true)
 	return nil
 }
 
@@ -257,7 +374,8 @@ func (s *Store) MarkReady(id string, r *job.Result) (Job, error) {
 	return s.Update(id, func(j *Job) { j.Status, j.Error, j.Size = Ready, "", size })
 }
 
-// Get returns a job and its result (nil until ready).
+// Get returns a job and its result summary (nil until ready): mapped
+// sources carry no segment map; Full loads them.
 func (s *Store) Get(id string) (Job, *job.Result, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -266,6 +384,26 @@ func (s *Store) Get(id string) (Job, *job.Result, error) {
 		return Job{}, nil, ErrNotFound
 	}
 	return *j, s.results[id], nil
+}
+
+// Full returns a job and its complete result, segment maps included (read
+// from maps.bin): what streaming and article checks need.
+func (s *Store) Full(id string) (Job, *job.Result, error) {
+	j, r, err := s.Get(id)
+	if err != nil || r == nil || !r.MapsFile {
+		return j, r, err
+	}
+	full, err := withMaps(r, s.path(id, mapsFile))
+	if err != nil {
+		return j, nil, fmt.Errorf("store: job %s segment maps: %w", id, err)
+	}
+	return j, full, nil
+}
+
+// MarkUnreadable reports a ready job whose segment maps can't be read as
+// broken (usenet_manifest_invalid), so cli_debrid's repair replaces it.
+func (s *Store) MarkUnreadable(id string, cause error) (Job, error) {
+	return s.Update(id, func(j *Job) { lostResult(j, cause, s.now()) })
 }
 
 // NZB returns a job's stored NZB.
@@ -309,6 +447,8 @@ func (s *Store) Delete(id string) error {
 	}
 	delete(s.jobs, id)
 	delete(s.results, id)
+	delete(s.stamps, id)
+	s.dirty.Store(true)
 	now := s.now()
 	keep := s.deleted[:0]
 	for _, t := range s.deleted {

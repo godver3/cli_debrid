@@ -368,6 +368,9 @@ func (e *Engine) Close() {
 	e.wg.Wait()
 	e.Client.Close()
 	e.prober.close()
+	if err := e.Store.Close(); err != nil {
+		e.log.Warn("saving job index", "err", err)
+	}
 	if e.Disk != nil {
 		e.Disk.Flush()
 	}
@@ -668,7 +671,7 @@ func (e *Engine) Files(id string) (*job.Files, error) {
 		return oj.fs, nil
 	}
 	e.mu.Unlock()
-	j, res, err := e.Store.Get(id)
+	j, res, err := e.Store.Full(id) // segment maps load here, not at start
 	if err != nil {
 		return nil, err
 	}
@@ -1087,7 +1090,14 @@ func (e *Engine) runCheck(id string, full bool) {
 	case <-e.ctx.Done():
 		return
 	}
-	_, res, err := e.Store.Get(id)
+	j, res, err := e.Store.Full(id)
+	if err != nil && j.ID != "" && j.Status == store.Ready {
+		// maps.bin unreadable: like cli_mount's corrupt .meta, report it
+		// broken so repair replaces the release.
+		e.log.Warn("segment maps unreadable; marking job broken", "job", id, "err", err)
+		_, _ = e.Store.MarkUnreadable(id, err)
+		return
+	}
 	if err != nil || res == nil {
 		return
 	}
