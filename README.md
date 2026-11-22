@@ -1,125 +1,17 @@
 # cli_debrid
 
-cli_debrid is a successor to, and pays homage to, plex_debrid. It watches your lists, finds the best release for everything on them, gets it through your debrid service or Usenet, and keeps your Plex or Jellyfin library organised and upgraded, with no files downloaded to your server.
+[![Dev version](https://img.shields.io/github/v/release/godver3/cli_debrid?include_prereleases&label=dev&color=orange)](https://github.com/godver3/cli_debrid/releases)
+[![Main version](https://img.shields.io/github/v/release/godver3/cli_debrid?label=main)](https://github.com/godver3/cli_debrid/releases/latest)
+[![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/ynqnXGJ4hU)
 
-It works with **Real-Debrid, AllDebrid, TorBox, Premiumize, Debrid-Link and HighWay**, and with **Usenet (NZB)** through its built-in mount, cli_mount, NzbDAV or Zurg, for **Plex, Jellyfin and Emby**.
+cli_debrid is a successor to, and pays homage to, plex_debrid. It watches your lists, finds the best release for everything on them, gets it through your debrid service or Usenet, and keeps your Plex or Jellyfin library organised and upgraded, with no files downloaded to your server. Its **built-in mount** streams your debrid account and your Usenet server itself, so a single container is all you need.
 
-**📖 [Getting Started](https://godver3.github.io/cli_docs/getting-started/)** · [Documentation](https://godver3.github.io/cli_docs/) · [Discord](https://discord.gg/ynqnXGJ4hU)
+It works with **Real-Debrid, AllDebrid, TorBox, Premiumize, Debrid-Link and HighWay**, and with **Usenet (NZB)**, for **Plex, Jellyfin and Emby**. You can also use a separate mount: cli_mount, Decypharr, NzbDAV or Zurg.
+
+**📖 [Getting Started](#getting-started)** · [Documentation](https://godver3.github.io/cli_docs/) · [Discord](https://discord.gg/ynqnXGJ4hU)
 
 > [!IMPORTANT]
 > **The `dev` branch is recommended.** Run the `godver3/cli_debrid:dev` image (the compose files below already do). It gets new features and fixes first; `main` is updated less often. See [dev vs main](#dev-vs-main).
-
-## How can you support the project?
-
-[![](https://img.shields.io/static/v1?label=Sponsor&message=%E2%9D%A4&logo=GitHub&color=%23fe8e86)](https://github.com/sponsors/godver3)
-[![Support me on Patreon](https://img.shields.io/endpoint.svg?url=https%3A%2F%2Fshieldsio-patreon.vercel.app%2Fapi%3Fusername%3Dgodver3%26type%3Dpatrons&style=flat)](https://patreon.com/godver3)
-[![Support me on Ko-fi](https://img.shields.io/badge/Ko--fi-Support-29ABE0?style=flat&logo=ko-fi)](https://ko-fi.com/godver3)
-
-cli_debrid will always be free.
-
-## Version Information
-
-*Main Branch*
-
-![Main Branch Version](https://img.shields.io/endpoint?url=https://version.godver3.xyz/version/main)
-
-*Dev Branch*
-
-![Dev Branch Version](https://img.shields.io/endpoint?url=https://version.godver3.xyz/version/dev&color=orange&logoColor=orange)
-
-## Community
-
-- [Discord](https://discord.gg/ynqnXGJ4hU): join to ask questions or share ideas.
-
-## Screenshots
-
-**Dashboard:** library totals, what's airing, and what was just added or upgraded.
-
-![Dashboard](docs/screenshots/dashboard.png)
-
-**Discover:** browse trending titles, recommendations and lists, and request them in one click.
-
-![Discover](docs/screenshots/discover.png)
-
-**Database:** every movie and episode cli_debrid tracks, with filters, saved presets and bulk actions.
-
-![Database](docs/screenshots/database.png)
-
-**Queues:** what's wanted, unreleased, collected or blacklisted.
-
-![Queues](docs/screenshots/queues.png)
-
-## How it works
-
-```
-Content sources ──> Scrapers ──> Debrid / Usenet ──> Mount ──> Library ──> Plex / Jellyfin / Emby
- (what you want)    (find it)     (get it)            (stream)   (organise)  (watch)
-```
-
-1. **Content sources** say what you want: watchlists, lists, requests.
-2. **Scrapers** search torrent indexers and Usenet indexers. Results are ranked against your **Versions**, the quality profiles you define (resolution, size, codecs, languages, preferred groups).
-3. The best cached release goes to your **debrid service** or your **Usenet provider**.
-4. A **mount** (cli_debrid's built-in mount, or cli_mount, Decypharr or Zurg + rclone) streams the files from the cloud. Nothing is downloaded to your server.
-5. cli_debrid files them into your **library**, as Plex-tracked items or a symlinked folder tree, tells your media server to scan, and keeps looking for **upgrades**.
-
-## Coming from another setup?
-
-- **plex_debrid:** cli_debrid is its successor. It does the same job (watchlists in, cached releases out, Plex library kept up to date) with a web interface, a local database of what you have, and automatic upgrades and repairs.
-- **Sonarr/Radarr with a debrid downloader:** cli_debrid takes the place of the *arr apps and the download client. It scrapes, ranks releases against your Versions, sends them to your debrid service or Usenet provider, and builds the library. Bazarr can still connect to it as if it were Sonarr/Radarr.
-- **Usenet with SABnzbd or NZBGet:** NZBs are streamed from your news server through the mount, with nothing downloaded first. See the [built-in mount guide](https://godver3.github.io/cli_docs/integrations/builtin-mount/) (or the [cli_mount setup guide](https://godver3.github.io/cli_docs/integrations/cli_mount/) for a separate container).
-
-## Key Features
-
-### Getting content
-- **Debrid providers:** Real-Debrid, AllDebrid, Premiumize, TorBox, Debrid-Link and HighWay.
-- **Usenet:** NZBs from your Newznab indexers, streamed through the [built-in mount](https://godver3.github.io/cli_docs/integrations/builtin-mount/), [cli_mount](https://github.com/mash2k3/decypharr/tree/dev), NzbDAV or Zurg, with no download step. Usenet can be used alone or next to a debrid service.
-- **Scrapers:** Torrentio, Jackett, Prowlarr, Zilean, Nyaa, MediaFusion, AIOStreams and Newznab, with SeaDex for best-release anime picks.
-- **Content sources:** MDBList, Trakt (watchlists, lists, collection, friends), Plex (your watchlist, other users' and friends' watchlists, RSS), Seerr/Overseerr, Agregarr, Scrob, Adaptive Lists and your existing collection.
-- **Manual and magnet assign:** paste a magnet, torrent or NZB, then map the files to episodes yourself or let the matcher do it. It understands season packs, absolute-numbered anime packs and multi-episode files, and can replace episodes already in your library.
-
-### Keeping it healthy
-- **Upgrading:** collected items keep getting checked for better releases within your upgrade window.
-- **Repair:** broken or incomplete files (dead torrents, missing Usenet articles) are detected and replaced automatically.
-- **Blacklisting and not-wanted lists:** bad releases aren't picked again.
-- **Sync deletions:** removing something from your media server or a source can remove it from cli_debrid too.
-
-### Anime and TV
-- **Absolute numbering:** packs like `Show - 152.mkv` or `S01E152` are matched to the right season and episode.
-- **Episode orders:** each show can follow TVDB aired, DVD or absolute order, or any TMDB episode group. Collected files are renamed to match, and Plex's ordering is kept in sync.
-- **Per-show anime setting**, romaji and alternative-title searching, and seasons that are really movies (e.g. *Initial D Third Stage*).
-
-### Library and media servers
-- **Plex or symlinked library:** Plex mode tracks your library through Plex's API. Symlinked mode builds a clean folder tree from your mount, with naming templates, for Plex, Jellyfin or Emby.
-- **Plex extras:** collections, smart collections, labels, movie box sets and poster overlays.
-- **Subtitles:** built-in subtitle downloading, or let Bazarr connect to cli_debrid as if it were Radarr/Sonarr.
-
-### Web interface
-- **Library, Discover, Calendar, Upgrade Hub, Debrid Manager, Statistics and Task Manager.**
-- **Scraper Tester:** see exactly how each release is scored, and tune your Versions until the right one wins.
-- **Multiple users** with roles (admin, user, requester) and optional SSO (Authentik, Authelia or generic OIDC).
-- **AI Butler:** an optional chat assistant through [OpenClaw](https://godver3.github.io/cli_docs/integrations/openclaw/).
-- **Notifications:** Discord, Telegram, NTFY and Email.
-- **Metadata battery:** metadata is cached locally to keep external API calls to a minimum.
-
-## Usenet
-
-cli_debrid can use Usenet as a source alongside, or instead of, a debrid service:
-
-1. Add your Newznab indexers as scrapers ([guide](https://godver3.github.io/cli_docs/scrapers/newznab/)).
-2. Set up a Usenet provider. The **[built-in mount](https://godver3.github.io/cli_docs/integrations/builtin-mount/)** is the default for new installs: cli_debrid streams NZBs straight from your news server through its own mount, which also serves your debrid account, so nothing is downloaded first. **[cli_mount](https://github.com/mash2k3/decypharr/tree/dev)** ([setup guide](https://godver3.github.io/cli_docs/integrations/cli_mount/)) does the same in its own container, and NzbDAV and Zurg are also supported. Existing installs keep the provider they already use.
-3. Enable Usenet under **Settings → Required Settings → Usenet Provider**.
-
-NZB results are ranked with your torrent results using the same Versions. Releases with missing articles are caught and replaced automatically.
-
-## Firefox Extension
-
-cli_debrid offers a Firefox extension called **cli_debrid magnet assign** that integrates with [debridmediamanager.com](https://debridmediamanager.com) to pre-populate the magnet assignment tool with information from DMM.
-
-**Download**: [Firefox Add-on](https://addons.mozilla.org/firefox/downloads/file/4567721/baa7b13ad11b4c308b3e-1.2.xpi)
-
-**Requirements**: Minimum cli_debrid version 0.7.12
-
-Add your cli_debrid instance URL, username and password, and magnets you pick on DMM arrive in the assign tool already filled in.
 
 ## Getting Started
 
@@ -186,6 +78,115 @@ cli_debrid needs a mount for your debrid and/or Usenet files: its own built-in m
 **dev is recommended.** It gets new features and fixes first, and every new version is built and published from it.
 
 **main** is a snapshot of dev that's updated less often, at the end of each development cycle. Use it only if you'd rather update rarely.
+
+## Screenshots
+
+**Dashboard:** library totals, what's airing, and what was just added or upgraded.
+
+![Dashboard](docs/screenshots/dashboard.png)
+
+**Discover:** browse trending titles, recommendations and lists, and request them in one click.
+
+![Discover](docs/screenshots/discover.png)
+
+**Database:** every movie and episode cli_debrid tracks, with filters, saved presets and bulk actions.
+
+![Database](docs/screenshots/database.png)
+
+**Queues:** what's wanted, unreleased, collected or blacklisted.
+
+![Queues](docs/screenshots/queues.png)
+
+## How it works
+
+```
+Content sources ──> Scrapers ──> Debrid / Usenet ──> Mount ──> Library ──> Plex / Jellyfin / Emby
+ (what you want)    (find it)     (get it)            (stream)   (organise)  (watch)
+```
+
+1. **Content sources** say what you want: watchlists, lists, requests.
+2. **Scrapers** search torrent indexers and Usenet indexers. Results are ranked against your **Versions**, the quality profiles you define (resolution, size, codecs, languages, preferred groups).
+3. The best cached release goes to your **debrid service** or your **Usenet provider**.
+4. A **mount** (cli_debrid's built-in mount, or cli_mount, Decypharr or Zurg + rclone) streams the files from the cloud. Nothing is downloaded to your server.
+5. cli_debrid files them into your **library**, as Plex-tracked items or a symlinked folder tree, tells your media server to scan, and keeps looking for **upgrades**.
+
+## Coming from another setup?
+
+- **plex_debrid:** cli_debrid is its successor. It does the same job (watchlists in, cached releases out, Plex library kept up to date) with a web interface, a local database of what you have, and automatic upgrades and repairs.
+- **Sonarr/Radarr with a debrid downloader:** cli_debrid takes the place of the *arr apps and the download client. It scrapes, ranks releases against your Versions, sends them to your debrid service or Usenet provider, and builds the library. Bazarr can still connect to it as if it were Sonarr/Radarr.
+- **Usenet with SABnzbd or NZBGet:** NZBs are streamed from your news server through the mount, with nothing downloaded first. See the [built-in mount guide](https://godver3.github.io/cli_docs/integrations/builtin-mount/) (or the [cli_mount setup guide](https://godver3.github.io/cli_docs/integrations/cli_mount/) for a separate container).
+
+## Key Features
+
+### Built-in mount
+- **One container:** cli_debrid streams your debrid account and your Usenet server through its own mount, so you don't need rclone, Zurg or a separate mount container. Onboarding sets it up and checks that your media server sees the same folders.
+- **Made for streaming:** fast first play, the next episode warmed up before you reach it (Plex), and playing streams put ahead of library scans and imports.
+- **Mount page:** queue, file browser, live streams, per-server stats and the mount log, with Start and Stop that don't depend on the rest of the app.
+- **Health and repair:** missing Usenet articles and dead debrid links are proven, not guessed, and the release is replaced automatically.
+- **Extras:** WebDAV for a media server on another machine, Movies and TV Shows folders out of the box, password-protected RAR and 7z releases (password from the NZB), and a Migrate from cli_mount tab that keeps your existing jobs. See the [built-in mount guide](https://godver3.github.io/cli_docs/integrations/builtin-mount/).
+
+### Getting content
+- **Debrid providers:** Real-Debrid, AllDebrid, Premiumize, TorBox, Debrid-Link and HighWay.
+- **Usenet:** NZBs from your Newznab indexers, streamed through the [built-in mount](https://godver3.github.io/cli_docs/integrations/builtin-mount/), [cli_mount](https://github.com/mash2k3/decypharr/tree/dev), NzbDAV or Zurg, with no download step. Usenet can be used alone or next to a debrid service.
+- **Scrapers:** Torrentio, Jackett, Prowlarr, Zilean, Nyaa, MediaFusion, AIOStreams and Newznab, with SeaDex for best-release anime picks.
+- **Content sources:** MDBList, Trakt (watchlists, lists, collection, friends), Plex (your watchlist, other users' and friends' watchlists, RSS), Seerr/Overseerr, Agregarr, Scrob, Adaptive Lists and your existing collection.
+- **Manual and magnet assign:** paste a magnet, torrent or NZB, then map the files to episodes yourself or let the matcher do it. It understands season packs, absolute-numbered anime packs and multi-episode files, and can replace episodes already in your library.
+
+### Keeping it healthy
+- **Upgrading:** collected items keep getting checked for better releases within your upgrade window.
+- **Repair:** broken or incomplete files (dead torrents, missing Usenet articles) are detected and replaced automatically.
+- **Blacklisting and not-wanted lists:** bad releases aren't picked again.
+- **Sync deletions:** removing something from your media server or a source can remove it from cli_debrid too.
+
+### Anime and TV
+- **Absolute numbering:** packs like `Show - 152.mkv` or `S01E152` are matched to the right season and episode.
+- **Episode orders:** each show can follow TVDB aired, DVD or absolute order, or any TMDB episode group. Collected files are renamed to match, and Plex's ordering is kept in sync.
+- **Per-show anime setting**, romaji and alternative-title searching, and seasons that are really movies (e.g. *Initial D Third Stage*).
+
+### Library and media servers
+- **Plex or symlinked library:** Plex mode tracks your library through Plex's API. Symlinked mode builds a clean folder tree from your mount, with naming templates, for Plex, Jellyfin or Emby.
+- **Plex extras:** collections, smart collections, labels, movie box sets and poster overlays.
+- **Subtitle manager** (Tools → Subtitles): finds subtitles that match your exact release by file hash and release name, from OpenSubtitles, SubDL, SubSource and more. See what each item has, search and compare scores, pick one or let it choose, fill in everything that's missing in one go, and import your existing subtitles from Bazarr. Bazarr can still connect to cli_debrid as if it were Radarr/Sonarr.
+
+### Web interface
+- **Library, Discover, Calendar, Upgrade Hub, Debrid Manager, Statistics and Task Manager.**
+- **Scraper Tester:** see exactly how each release is scored, and tune your Versions until the right one wins.
+- **Multiple users** with roles (admin, user, requester) and optional SSO (Authentik, Authelia or generic OIDC).
+- **AI Butler:** an optional chat assistant through [OpenClaw](https://godver3.github.io/cli_docs/integrations/openclaw/).
+- **Notifications:** Discord, Telegram, NTFY and Email.
+- **Metadata battery:** metadata is cached locally to keep external API calls to a minimum.
+
+## Usenet
+
+cli_debrid can use Usenet as a source alongside, or instead of, a debrid service:
+
+1. Add your Newznab indexers as scrapers ([guide](https://godver3.github.io/cli_docs/scrapers/newznab/)).
+2. Set up a Usenet provider. The **[built-in mount](https://godver3.github.io/cli_docs/integrations/builtin-mount/)** is the default for new installs: cli_debrid streams NZBs straight from your news server through its own mount, which also serves your debrid account, so nothing is downloaded first. **[cli_mount](https://github.com/mash2k3/decypharr/tree/dev)** ([setup guide](https://godver3.github.io/cli_docs/integrations/cli_mount/)) does the same in its own container, and NzbDAV and Zurg are also supported. Existing installs keep the provider they already use.
+3. Enable Usenet under **Settings → Required Settings → Usenet Provider**.
+
+NZB results are ranked with your torrent results using the same Versions. Releases with missing articles are caught and replaced automatically.
+
+## Firefox Extension
+
+cli_debrid offers a Firefox extension called **cli_debrid magnet assign** that integrates with [debridmediamanager.com](https://debridmediamanager.com) to pre-populate the magnet assignment tool with information from DMM.
+
+**Download**: [Firefox Add-on](https://addons.mozilla.org/firefox/downloads/file/4567721/baa7b13ad11b4c308b3e-1.2.xpi)
+
+**Requirements**: Minimum cli_debrid version 0.7.12
+
+Add your cli_debrid instance URL, username and password, and magnets you pick on DMM arrive in the assign tool already filled in.
+
+## How can you support the project?
+
+[![Sponsor on GitHub](https://img.shields.io/static/v1?label=Sponsor&message=%E2%9D%A4&logo=GitHub&color=%23fe8e86)](https://github.com/sponsors/godver3)
+[![Support me on Patreon](https://img.shields.io/endpoint.svg?url=https%3A%2F%2Fshieldsio-patreon.vercel.app%2Fapi%3Fusername%3Dgodver3%26type%3Dpatrons&style=flat)](https://patreon.com/godver3)
+[![Support me on Ko-fi](https://img.shields.io/badge/Ko--fi-Support-29ABE0?style=flat&logo=ko-fi)](https://ko-fi.com/godver3)
+
+cli_debrid will always be free.
+
+## Community
+
+- [Discord](https://discord.gg/ynqnXGJ4hU): join to ask questions or share ideas.
 
 ## Philosophy
 
