@@ -444,3 +444,13 @@ def test_paused_and_music_sessions_do_not_hold_lanes(monkeypatch):
                 {'type': 'episode'}]
     with mock.patch('utilities.media_sessions.sessions', return_value=sessions):
         assert subtitle_bulk.playing_sessions() == 2
+
+
+def test_pause_lengths_by_error_class():
+    from subliminal.providers.opensubtitlescom import DownloadLimitReached, Unauthorized
+    from utilities import downsub
+    from utilities.subtitle_providers import RateLimited
+    assert downsub._block_seconds(RateLimited('429'))[0] == 900          # brief, not the 6 h quota pause
+    assert downsub._block_seconds(DownloadLimitReached('quota'))[0] == 6 * 3600
+    assert downsub._block_seconds(Unauthorized('bad login'))[0] == 3600  # subclass of AuthenticationError
+    assert downsub._block_seconds(None)[0] == 600

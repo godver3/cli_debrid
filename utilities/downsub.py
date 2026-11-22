@@ -114,14 +114,24 @@ _BLOCKED = {}
 
 
 def _block_seconds(exc):
-    name = type(exc).__name__ if exc else ''
-    if name in ('DownloadLimitExceeded', 'DownloadLimitReached'):
+    """(seconds, reason) to pause a provider after exc. By class, so the
+    providers' own subclasses (OpenSubtitles Unauthorized, DownloadLimitReached)
+    count too."""
+    from subliminal.exceptions import (AuthenticationError, ConfigurationError,
+                                       DownloadLimitExceeded, ServiceUnavailable)
+    try:
+        from utilities.subtitle_providers import RateLimited
+    except Exception:
+        RateLimited = ()
+    if RateLimited and isinstance(exc, RateLimited):
+        return 900, 'rate limited (too many requests)'
+    if isinstance(exc, DownloadLimitExceeded):
         return 6 * 3600, 'daily download limit reached'
-    if name in ('AuthenticationError', 'ConfigurationError'):
+    if isinstance(exc, (AuthenticationError, ConfigurationError)):
         return 3600, 'login failed (check the OpenSubtitles username/password)'
-    if name == 'ServiceUnavailable':
+    if isinstance(exc, ServiceUnavailable):
         return 600, 'service unavailable'
-    return 600, f'error ({name or "unknown"})'
+    return 600, f'error ({type(exc).__name__ if exc else "unknown"})'
 
 
 def blocked_providers():

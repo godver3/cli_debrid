@@ -222,9 +222,9 @@ def _save_builtin_server(config, form):
              'username': form.get('bm_username', '').strip(), 'password': form.get('bm_password', ''),
              'connections': conns, 'backup': bool(old[0].get('backup')) if old else False}
     # Fields step 2 doesn't show stay as the Mount page set them (backbone,
-    # plan end, auto-renew) while it is still the same server.
+    # plan end, auto-renew, On/Off) while it is still the same server.
     if old and str(old[0].get('host') or '').strip().lower() == host.lower():
-        for k in ('backbone', 'expires', 'auto_renew'):
+        for k in ('backbone', 'expires', 'auto_renew', 'enabled'):
             if k in old[0]:
                 first[k] = old[0][k]
     bm['servers'] = json.dumps(_merge_servers([first] + old[1:], old))

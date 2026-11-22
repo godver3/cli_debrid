@@ -12,7 +12,12 @@ import zipfile
 
 import requests
 from babelfish import Language
-from subliminal.exceptions import AuthenticationError, DownloadLimitExceeded, ServiceUnavailable
+from subliminal.exceptions import AuthenticationError, DiscardingError, ServiceUnavailable
+
+
+class RateLimited(DiscardingError):
+    """HTTP 429: too many requests for now. Not the daily download quota,
+    so the provider is paused briefly."""
 from subliminal.matches import guess_matches
 from subliminal.providers import Provider
 from subliminal.subtitle import Subtitle
@@ -169,7 +174,7 @@ class _KeyProvider(Provider):
         if r.status_code in (401, 403):
             raise AuthenticationError(f'{self.__class__.__name__}: API key refused')
         if r.status_code == 429:
-            raise DownloadLimitExceeded(f'{self.__class__.__name__}: rate limited')
+            raise RateLimited(f'{self.__class__.__name__}: rate limited (HTTP 429)')
         if r.status_code >= 500:
             raise ServiceUnavailable(f'{self.__class__.__name__}: HTTP {r.status_code}')
         r.raise_for_status()
