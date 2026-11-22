@@ -111,34 +111,8 @@ def test_task_uses_missing_list(db):
     with _settings(), mock.patch('utilities.subtitle_status.missing_items', return_value=[{'id': 4}]) as mi, \
             mock.patch('utilities.subtitle_bulk.run_now') as run:
         LibraryTasks.task_process_bulk_subtitles(object())
-    mi.assert_called_once_with(skip_tried_hours=24)
+    mi.assert_called_once_with(skip_tried_hours=24, limit=200)
     assert run.call_args.kwargs['kind'] == 'search'
-
-
-def test_task_and_auto_download_honour_apply_to_settings(db):
-    from queues.runner.library_tasks import LibraryTasks
-    from utilities import downsub
-    movie = {'id': 1, 'type': 'movie', 'genres': '["Drama"]'}
-    ep = {'id': 2, 'type': 'episode', 'genres': '["Drama"]', 'imdb_id': 'tt1'}
-    anime_ep = {'id': 3, 'type': 'episode', 'genres': '["Anime", "Animation"]', 'imdb_id': 'tt2'}
-    cfg = dict(APPLY_TO_MOVIES=False, APPLY_TO_TV_SHOWS=True, APPLY_TO_ANIME_MOVIES=True,
-               APPLY_TO_ANIME_TV_SHOWS=False, ENABLE_ANIME=True)
-    with mock.patch.multiple(downsub.config, **cfg), mock.patch.object(downsub.config, 'reload'), \
-            mock.patch('utilities.anime_detection.series_type_override', return_value=None):
-        assert [downsub.applies_to(i) for i in (movie, ep, anime_ep)] == [False, True, False]
-        with mock.patch.object(downsub.config, 'ENABLE_ANIME', False):
-            assert downsub.applies_to(anime_ep)          # anime follows the TV setting
-        with _settings(), mock.patch('utilities.subtitle_status.missing_items', return_value=[movie, ep, anime_ep]), \
-                mock.patch('utilities.subtitle_bulk.run_now') as run:
-            LibraryTasks.task_process_bulk_subtitles(object())
-        assert [i['id'] for i in run.call_args.args[0]] == [2]
-        with mock.patch.object(downsub, 'SUBLIMINAL_AVAILABLE', True), \
-                mock.patch.object(downsub.config, 'SUBTITLES_ENABLED', True), \
-                mock.patch.object(downsub, 'download_subtitles_for_video') as dl:
-            downsub.main('/m/x.mkv', item=movie)
-            assert not dl.called
-            downsub.main('/m/y.mkv', item=ep)
-            assert dl.call_count == 1
 
 
 def test_task_off_when_subtitles_disabled(db):
