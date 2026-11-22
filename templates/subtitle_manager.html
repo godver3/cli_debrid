@@ -59,6 +59,11 @@
 .sm-toast.err{border-color:#7f1d1d}
 .sm-release{max-width:380px;word-break:break-all}
 .sm-mini{padding:3px 9px;font-size:11px}
+.sm-lanes{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:10px}
+.sm-lane{background:var(--sm-surface);border:1px solid var(--sm-border);border-radius:8px;padding:10px 12px}
+.sm-lane-recent{margin-top:8px;max-height:260px;overflow-y:auto}
+.sm-lane-row{display:flex;gap:8px;padding:3px 0;align-items:baseline;border-top:1px solid #262626}
+.sm-lane-row:first-child{border-top:none}
 .sm-actions{display:inline-flex;gap:6px;white-space:nowrap}
 .sm-group td{background:#1f1f1f}
 .sm-season td{background:#1c1c1c}
@@ -111,18 +116,9 @@
       <button class="sm-btn sm-btn-accent" id="sm-bulk-search" title="Search every item missing a language that matches the search box and type filter">Search all missing</button>
       <button class="sm-btn" id="sm-bulk-sync" title="Check and fix the timing of every existing subtitle that matches the search box and type filter">Sync existing subtitles</button>
     </div>
-    <div class="sm-card" id="sm-bulk" style="display:none;padding:12px 14px;margin-bottom:1rem">
-      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        <b id="sm-bulk-title"></b>
-        <span class="sm-muted" id="sm-bulk-count"></span>
-        <span style="flex:1"></span>
-        <button class="sm-btn sm-btn-red" id="sm-bulk-stop">Stop</button>
-        <button class="sm-btn" id="sm-bulk-hide" style="display:none">Hide</button>
-      </div>
-      <div class="sm-bar-score" style="height:6px;margin:8px 0"><i id="sm-bulk-bar" style="width:0;background:var(--sm-accent)"></i></div>
-      <div class="sm-muted" id="sm-bulk-current"></div>
-      <div id="sm-bulk-paused" style="color:var(--sm-yellow);margin-top:4px"></div>
-      <div id="sm-bulk-recent" style="margin-top:8px;max-height:220px;overflow-y:auto"></div>
+    <div id="sm-bulk" style="display:none;margin-bottom:1rem">
+      <div id="sm-bulk-paused" style="color:var(--sm-yellow);margin:0 0 6px"></div>
+      <div class="sm-lanes" id="sm-lanes"></div>
     </div>
     <div class="sm-card">
       <table class="sm-table">

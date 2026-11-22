@@ -302,10 +302,13 @@ def bulk_start():
         what = 'missing a language' if kind == 'search' else 'with subtitles that still need checking'
         return jsonify({'success': False, 'message': f'Nothing to do: no items {what} in {scope}'})
     how, n = subtitle_bulk.start(items, label=f"{kind} {scope}", kind=kind)
+    verb = 'searching' if kind == 'search' else 'syncing'
     if not n:
-        return jsonify({'success': True, 'total': 0, 'message': 'Already queued'})
-    return jsonify({'success': True, 'total': n,
-                    'message': f"{'Started' if how == 'started' else 'Queued'}: {n} item{'s' if n != 1 else ''}"})
+        return jsonify({'success': True, 'total': 0, 'message': f'Already queued for {verb}'})
+    s_ = 's' if n != 1 else ''
+    msg = (f"Started {verb} {n} item{s_}" if how == 'started'
+           else f"Added {n} item{s_} to the {kind} queue (a {kind} run is already going)")
+    return jsonify({'success': True, 'total': n, 'message': msg})
 
 
 @subtitle_manager_bp.route('/api/subtitles/bulk/status')
@@ -319,7 +322,7 @@ def bulk_status():
 @admin_required
 def bulk_stop():
     from utilities import subtitle_bulk
-    subtitle_bulk.stop()
+    subtitle_bulk.stop((request.get_json(silent=True) or {}).get('kind'))
     return jsonify({'success': True})
 
 

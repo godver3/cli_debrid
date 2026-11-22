@@ -863,6 +863,22 @@ def save_subtitles(ctx, subs, source='auto'):
     return saved
 
 
+_LAST_NOTE = {}   # item id -> short result of its last search, for the bulk lane
+
+
+def last_result_note(item):
+    return _LAST_NOTE.get((item or {}).get('id'))
+
+
+def _note(ctx_or_item, text):
+    item = ctx_or_item.get('item') if isinstance(ctx_or_item, dict) and 'item' in ctx_or_item else ctx_or_item
+    iid = (item or {}).get('id')
+    if iid is not None:
+        if len(_LAST_NOTE) > 5000:
+            _LAST_NOTE.clear()
+        _LAST_NOTE[iid] = text
+
+
 def download_subtitles_for_video(video_path, rating_key=None, name_hint=None, item=None):
     """
     Download subtitles for a single video file.
@@ -887,9 +903,11 @@ def download_subtitles_for_video(video_path, rating_key=None, name_hint=None, it
     try:
         ctx = prepare_video(video_path, rating_key=rating_key, name_hint=name_hint, item=item)
         if ctx is None:
+            _note(item, 'could not identify the file')
             return False
         if ctx.get('all_embedded'):
             _record_attempt((ctx.get('item') or {}).get('id'), 'embedded')
+            _note(ctx, 'every language already embedded in the file')
             return True
         video = ctx['video']
         name = _label_of(ctx.get('item'), ctx['original_path'])
@@ -902,6 +920,7 @@ def download_subtitles_for_video(video_path, rating_key=None, name_hint=None, it
         start_time = time.time()
         if not providers:
             logging.warning(f"[subs] {name}: no subtitle provider available")
+            _note(ctx, 'no provider available (paused: ' + ', '.join(paused) + ')')
             return False
         subtitles = download_best_subtitles(
             {video}, set(ctx['languages']), min_score=ctx['min_score'], providers=providers,
@@ -910,12 +929,16 @@ def download_subtitles_for_video(video_path, rating_key=None, name_hint=None, it
         item_id = (ctx.get('item') or {}).get('id')
         if not subtitles[video]:
             logging.info(f"[subs] {name}: nothing passed the match threshold ({took:.1f}s)")
+            _note(ctx, f"nothing passed the match threshold ({', '.join(providers)})")
             _record_attempt(item_id, False)
             return False
         for sub in subtitles[video]:
             logging.info(f"[subs] {name}: picked {getattr(sub.language, 'ietf', None) or sub.language} "
                          f"from {sub.provider_name}, {_score_text(sub, video)} ({took:.1f}s)")
         ok = save_subtitles(ctx, subtitles[video]) > 0
+        picks = '; '.join(f"{getattr(sub.language, 'ietf', None) or sub.language} from {sub.provider_name}, "
+                          f"{_score_text(sub, video)}" for sub in subtitles[video])
+        _note(ctx, picks if ok else f'found ({picks}) but saving failed, see logs')
         _record_attempt(item_id, ok)
         return ok
     except Exception as e:

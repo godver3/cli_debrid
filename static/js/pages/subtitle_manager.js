@@ -372,36 +372,59 @@
     } catch (e) { toast(e.message, true); }
   }
 
+  function laneHtml(kind, d) {
+    const sync = kind === 'sync';
+    const title = sync ? 'Syncing existing subtitles' : 'Searching for missing subtitles';
+    const state = d.running ? '' : d.stopped ? ' — stopped' : ' — done';
+    const pct = d.total ? Math.round(100 * d.done / d.total) : 0;
+    const rows = (d.recent || []).map((r) => {
+      const chip = sync ? (r.ok ? 'fixed' : 'kept') : (r.ok ? 'saved' : 'none');
+      return `<div class="sm-lane-row"><span class="sm-chip ${r.ok ? 'ok' : 'miss'}">${chip}</span>
+        <a href="#" class="sm-open" data-id="${r.id}">${esc(r.label)}</a>
+        <span class="sm-muted" style="word-break:break-word">${esc(r.note || '')}</span></div>`;
+    }).join('');
+    return `<div class="sm-lane">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <b>${title}${state}</b>
+        <span class="sm-muted">${d.done}/${d.total} · ${d.found} ${sync ? 'fixed' : 'saved'}${d.queued ? ` · ${d.queued} waiting` : ''}</span>
+        <span style="flex:1"></span>
+        ${d.running ? `<button class="sm-btn sm-btn-red sm-mini" data-lane-stop="${kind}">Stop</button>`
+                    : `<button class="sm-btn sm-mini" data-lane-hide="${kind}">Hide</button>`}
+      </div>
+      <div class="sm-bar-score" style="height:6px;margin:8px 0"><i style="width:${pct}%;background:var(--sm-accent)"></i></div>
+      <div class="sm-muted">${d.running ? (d.current ? (sync ? 'Syncing ' : 'Searching ') + esc(d.current) + '…' : 'Starting…') : esc(d.stopped || '')}</div>
+      <div class="sm-lane-recent">${rows || '<span class="sm-muted">No results yet.</span>'}</div>
+    </div>`;
+  }
+
+  const hiddenLanes = new Set();
   async function pollBulk() {
     clearTimeout(bulkTimer);
     let d;
     try { d = await api('/api/subtitles/bulk/status'); } catch (e) { bulkTimer = setTimeout(pollBulk, 5000); return; }
-    const box = $('sm-bulk');
-    if (!d.total && !d.running) { box.style.display = 'none'; return; }
-    box.style.display = '';
-    const sync = d.kind === 'sync';
-    $('sm-bulk-title').textContent = 'Subtitle queue' + (d.running ? '' : d.stopped ? ' — stopped' : ' — done');
-    $('sm-bulk-count').textContent = `${d.done}/${d.total} · ${d.found} saved/fixed` + (d.queued ? ` · ${d.queued} queued` : '');
-    $('sm-bulk-bar').style.width = (d.total ? Math.round(100 * d.done / d.total) : 0) + '%';
-    $('sm-bulk-current').textContent = d.running ? (d.current ? 'Now: ' + d.current : '') : (d.stopped || '');
+    const lanes = ['search', 'sync'].filter((k) => d[k] && (d[k].running || (d[k].total && !hiddenLanes.has(k))));
+    for (const k of ['search', 'sync']) if (d[k] && d[k].running) hiddenLanes.delete(k);
+    $('sm-bulk').style.display = lanes.length ? '' : 'none';
+    $('sm-lanes').innerHTML = lanes.map((k) => laneHtml(k, d[k])).join('');
     const paused = Object.entries(d.paused_providers || {});
-    $('sm-bulk-paused').textContent = paused.length ? 'Paused: ' + paused.map(([k, v]) => `${k} (${v})`).join(', ') : '';
-    $('sm-bulk-recent').innerHTML = (d.recent || []).map((r) =>
-      `<div class="sm-row" data-id="${r.id}" style="display:flex;gap:8px;padding:2px 0">
-        <span class="sm-chip ${r.ok ? 'ok' : 'miss'}">${r.kind === 'sync' ? (r.ok ? 'fixed' : 'kept') : (r.ok ? 'saved' : 'none')}</span>
-        <span>${esc(r.label)}</span><span class="sm-muted" style="word-break:break-word">${esc(r.note || '')}</span></div>`).join('');
-    $('sm-bulk-stop').style.display = d.running ? '' : 'none';
-    $('sm-bulk-hide').style.display = d.running ? 'none' : '';
-    if (d.running) bulkTimer = setTimeout(pollBulk, 2000);
+    $('sm-bulk-paused').textContent = paused.length ? 'Paused providers: ' + paused.map(([k, v]) => `${k} (${v})`).join(', ') : '';
+    const anyRunning = ['search', 'sync'].some((k) => d[k] && d[k].running);
+    if (anyRunning) bulkTimer = setTimeout(pollBulk, 2000);
     else if (bulkWasRunning) loadList();
-    bulkWasRunning = !!d.running;
+    bulkWasRunning = anyRunning;
   }
+  document.addEventListener('click', async (e) => {
+    const st = e.target.closest('[data-lane-stop]');
+    if (st) {
+      try { await api('/api/subtitles/bulk/stop', { method: 'POST', body: JSON.stringify({ kind: st.dataset.laneStop }) });
+        toast('Stopping after the current item; its queue is cleared'); } catch (err) { toast(err.message, true); }
+      return;
+    }
+    const hd = e.target.closest('[data-lane-hide]');
+    if (hd) { hiddenLanes.add(hd.dataset.laneHide); pollBulk(); }
+  });
   $('sm-bulk-search').addEventListener('click', () => bulkStart('search'));
   $('sm-bulk-sync').addEventListener('click', () => bulkStart('sync'));
-  $('sm-bulk-stop').addEventListener('click', async () => {
-    try { await api('/api/subtitles/bulk/stop', { method: 'POST' }); toast('Stopping after the current item'); } catch (e) { toast(e.message, true); }
-  });
-  $('sm-bulk-hide').addEventListener('click', () => { $('sm-bulk').style.display = 'none'; });
 
   // ---- Bazarr import
   function bzBody() {

@@ -55,7 +55,7 @@ def test_bulk_search_runs_and_reports(db):
             mock.patch.object(downsub, 'download_subtitles_for_video', side_effect=[True, False]), \
             mock.patch.object(downsub, 'selected_providers', return_value=['podnapisi']):
         assert subtitle_bulk.run_now(items, pause=0)
-    st = subtitle_bulk.status()
+    st = subtitle_bulk.status()['search']
     assert (st['done'], st['found'], st['running']) == (2, 1, False)
     assert [r['ok'] for r in st['recent']] == [False, True]
 
@@ -65,7 +65,7 @@ def test_bulk_stops_when_every_provider_paused(db):
     with mock.patch.object(downsub, 'selected_providers', return_value=[]), \
             mock.patch.object(downsub, 'download_subtitles_for_video') as dl:
         subtitle_bulk.run_now([{'id': 1, 'title': 'A'}], pause=0)
-    assert not dl.called and 'paused' in subtitle_bulk.status()['stopped']
+    assert not dl.called and 'paused' in subtitle_bulk.status()['search']['stopped']
 
 
 def test_quota_error_pauses_provider():
@@ -130,10 +130,10 @@ def test_queue_appends_while_running(db):
         assert how == 'queued' and n >= 1
         gate.set()
         for _ in range(100):
-            if not subtitle_bulk.status()['running']:
+            if not subtitle_bulk.status()['search']['running']:
                 break
             time.sleep(0.05)
-    st = subtitle_bulk.status()
+    st = subtitle_bulk.status()['search']
     assert st['done'] == st['total'] and st['found'] == st['done']
 
 
@@ -235,3 +235,27 @@ def test_undecided_sync_gets_one_hash_search(db, tmp_path):
         assert hm.called and not sync.called              # no second futile sync
         assert 'no hash match' in db.sync_result(digest)
         assert not subtitle_resync.needs_check(item)
+
+
+
+def test_search_lane_runs_while_sync_lane_busy(db):
+    import threading
+    from utilities import subtitle_bulk, downsub, subtitle_resync
+    gate = threading.Event()
+
+    def slow_sync(item, skip_checked=True):
+        gate.wait(5)
+        return 0, 1, ['en: already in sync']
+    with mock.patch.object(subtitle_resync, 'resync_item', side_effect=slow_sync), \
+            mock.patch.object(downsub, 'resolve_item_path', return_value='/x.mkv'), \
+            mock.patch.object(downsub, 'download_subtitles_for_video', return_value=True), \
+            mock.patch.object(downsub, 'selected_providers', return_value=['podnapisi']):
+        assert subtitle_bulk.start([{'id': 1, 'title': 'A'}], pause=0, kind='sync')[0] == 'started'
+        assert subtitle_bulk.start([{'id': 2, 'title': 'B'}], pause=0, kind='search')[0] == 'started'
+        for _ in range(100):
+            if not subtitle_bulk.status()['search']['running']:
+                break
+            time.sleep(0.05)
+        assert subtitle_bulk.status()['search']['found'] == 1        # done while sync still busy
+        assert subtitle_bulk.status()['sync']['running']
+        gate.set()
