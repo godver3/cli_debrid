@@ -106,3 +106,18 @@ def test_handled_subtitles_marked_checked(tmp_path, monkeypatch):
     assert marked[hashlib.sha1(b'a.en.srt').hexdigest()] == 'synced by Bazarr'
     assert marked[hashlib.sha1(b'b.en.srt').hexdigest()].startswith('Bazarr match 96')
     assert hashlib.sha1(b'c.en.srt').hexdigest() not in marked
+
+
+def test_old_sync_does_not_cover_replaced_low_score_subtitle():
+    hist = {'data': [
+        {'id': 10, 'action': 5, 'subtitles_path': '/s/x.srt'},          # sync of first download
+        {'id': 11, 'action': 1, 'score': '80%', 'subtitles_path': '/s/x.srt'},
+        {'id': 20, 'action': 3, 'score': '70%', 'subtitles_path': '/s/x.srt'},  # replaced, sync failed
+        {'id': 30, 'action': 5, 'subtitles_path': '/s/y.srt'},
+        {'id': 31, 'action': 1, 'score': '60%', 'subtitles_path': '/s/y.srt'},  # synced
+        {'id': 40, 'action': 1, 'score': '92%', 'subtitles_path': '/s/z.srt'},
+    ]}
+    with mock.patch.object(bazarr_import.requests, 'get',
+                           side_effect=lambda url, **k: _Resp(hist if 'episodes' in url else {'data': []})):
+        got = bazarr_import.handled_subtitles('http://h', 'k')
+    assert got == {'/s/y.srt': 'synced by Bazarr', '/s/z.srt': 'Bazarr match 92%'}

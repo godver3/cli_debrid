@@ -228,20 +228,31 @@ def _score_pct(score):
 
 
 def handled_subtitles(base, key):
-    """{subtitles_path: reason} for subtitles Bazarr already synced, or
-    downloaded at >= 90% (the score above which Bazarr's subsync skips them,
-    i.e. a release match)."""
-    out = {}
-    for r in sorted(_history(base, key), key=lambda x: x.get('id') or 0):
+    """{subtitles_path: reason} for subtitles whose CURRENT file Bazarr synced
+    or downloaded at >= 90% (the score above which Bazarr's subsync skips
+    them, i.e. a release match). Bazarr logs a sync just before the download
+    it belongs to, so a sync counts for the latest download only when it
+    comes after the previous download of that path; an older sync of a since
+    replaced subtitle doesn't count."""
+    per_path = {}
+    for r in _history(base, key):
         path = r.get('subtitles_path')
-        if not path:
+        if path and r.get('id') is not None:
+            per_path.setdefault(path, []).append(r)
+    out = {}
+    for path, rows in per_path.items():
+        rows.sort(key=lambda x: x['id'])
+        downloads = [r for r in rows if r.get('action') in (1, 2, 3, 4)]
+        if not downloads:
             continue
-        if r.get('action') == 5:
+        latest = downloads[-1]
+        prev_id = downloads[-2]['id'] if len(downloads) > 1 else -1
+        if any(r.get('action') == 5 and r['id'] > prev_id for r in rows):
             out[path] = 'synced by Bazarr'
-        elif r.get('action') in (1, 2, 3, 4):
-            pct = _score_pct(r.get('score'))
-            if pct is not None and pct >= 90 and out.get(path) != 'synced by Bazarr':
-                out[path] = f'Bazarr match {pct:.0f}%'
+            continue
+        pct = _score_pct(latest.get('score'))
+        if pct is not None and pct >= 90:
+            out[path] = f'Bazarr match {pct:.0f}%'
     return out
 
 
