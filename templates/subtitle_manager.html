@@ -4,9 +4,11 @@
 
 {% block content %}
 <style>
-.sm-wrap{--sm-surface:#1a1a1a;--sm-surface2:#222;--sm-border:#333;--sm-border2:#3d3d3d;--sm-accent:#e8601c;
+.sm-wrap,.sm-panel,.sm-toast{--sm-surface:#1a1a1a;--sm-surface2:#222;--sm-border:#333;--sm-border2:#3d3d3d;--sm-accent:#e8601c;
   --sm-text:#e0e0e0;--sm-text2:#aaa;--sm-text3:#777;--sm-green:#22c55e;--sm-red:#ef4444;--sm-blue:#60a5fa;--sm-yellow:#f59e0b;
-  max-width:1400px;margin:0 auto;padding:1.5rem 1.25rem;font-family:'Inter',system-ui,sans-serif;font-size:13px;color:var(--sm-text);box-sizing:border-box}
+  font-family:'Inter',system-ui,sans-serif;font-size:13px;color:var(--sm-text)}
+.sm-panel *,.sm-toast{box-sizing:border-box}
+.sm-wrap{max-width:1400px;margin:0 auto;padding:1.5rem 1.25rem;font-family:'Inter',system-ui,sans-serif;font-size:13px;color:var(--sm-text);box-sizing:border-box}
 .sm-wrap *{box-sizing:border-box}
 .sm-title{font-size:20px;font-weight:700;border-left:3px solid var(--sm-accent);padding-left:10px;margin:0 0 .5rem}
 .sm-intro{color:var(--sm-text2);margin:0 0 1.25rem;max-width:900px;line-height:1.5}
@@ -38,9 +40,9 @@
 .sm-muted{color:var(--sm-text3)}
 .sm-pager{display:flex;gap:8px;align-items:center;justify-content:flex-end;padding:10px 12px}
 .sm-empty{padding:28px;text-align:center;color:var(--sm-text3)}
-.sm-panel{position:fixed;inset:0;background:#000a;display:none;z-index:1000;align-items:flex-start;justify-content:center;overflow-y:auto;padding:40px 16px}
+.sm-panel{position:fixed;inset:0;background:#000c;display:none;z-index:1000;align-items:flex-start;justify-content:center;overflow-y:auto;padding:40px 16px}
 .sm-panel.open{display:flex}
-.sm-dialog{background:var(--sm-surface);border:1px solid var(--sm-border2);border-radius:10px;width:100%;max-width:1100px;padding:18px 20px}
+.sm-dialog{background:var(--sm-surface);color:var(--sm-text);box-shadow:0 20px 60px #000c;border:1px solid var(--sm-border2);border-radius:10px;width:100%;max-width:1100px;padding:18px 20px}
 .sm-dialog h3{margin:0 0 4px;font-size:16px}
 .sm-sec{margin-top:16px}
 .sm-sec h4{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--sm-text3);margin:0 0 8px}
