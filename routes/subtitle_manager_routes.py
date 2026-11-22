@@ -68,8 +68,27 @@ def overview():
                     'episode_title': r.get('episode_title'),
                     'version': r.get('version'), 'collected_at': r.get('collected_at'),
                     'langs': r['langs']})
+    scan = None
+    try:
+        from utilities import plex_subtitle_info as psi
+        if psi.available():
+            have = psi.cached_tracks([psi.cache_key(r) for r in rows])
+            todo = [r for r in rows if psi.cache_key(r) and psi.cache_key(r) not in have]
+            if todo:
+                psi.start_scan(todo)
+            scan = psi.scan_status()
+    except Exception as e:
+        logging.debug(f"[subs] embedded scan start failed: {e}")
     return jsonify({'items': out, 'total': len(out), 'plex_mode': plex,
-                    'languages': [w[0] for w in wanted], 'capped': len(rows) >= status_mod.ROW_CAP})
+                    'languages': [w[0] for w in wanted], 'capped': len(rows) >= status_mod.ROW_CAP,
+                    'embedded_scan': scan})
+
+
+@subtitle_manager_bp.route('/api/subtitles/embedded_scan')
+@admin_required
+def embedded_scan():
+    from utilities import plex_subtitle_info as psi
+    return jsonify(psi.scan_status())
 
 
 @subtitle_manager_bp.route('/api/subtitles/item/<int:item_id>')
@@ -83,7 +102,7 @@ def item_detail(item_id):
     plex = status_mod.is_plex_mode()
     files, plex_streams = [], None
     if plex:
-        plex_streams = subtitle_resync.plex_streams(item.get('ms_item_id'))
+        plex_streams = subtitle_resync.plex_streams(subtitle_resync.item_rk(item))
     for lang, paths in status_mod.sidecar_langs(item.get('location_on_disk'), {}).items():
         for p in paths:
             files.append({'language': lang, 'path': p, 'name': os.path.basename(p)})

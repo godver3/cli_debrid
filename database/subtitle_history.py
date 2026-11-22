@@ -115,6 +115,10 @@ def media_key_of(item):
     """Which file a subtitle belongs to: the Plex ratingKey (a repair
     replacement in Plex mode is a new Plex item) or the file name."""
     item = item or {}
+    # episodes carry their SHOW's ratingKey in ms_item_id, so the file name
+    # identifies the file better; movies' ms_item_id is their own
+    if item.get('type') == 'episode':
+        return str(item.get('filled_by_file') or item.get('ms_item_id') or '') or None
     return str(item.get('ms_item_id') or item.get('filled_by_file') or '') or None
 
 
@@ -135,7 +139,7 @@ def languages_by_item(item_ids, keys=None):
             for r in conn.execute(
                     f"SELECT item_id, language, media_key FROM subtitle_history WHERE item_id IN ({q})", chunk):
                 want = (keys or {}).get(r[0])
-                if want and r[2] and r[2] != want:
+                if want and r[2] and r[2] not in (want if isinstance(want, (tuple, set, list)) else (want,)):
                     continue
                 out.setdefault(r[0], set()).add(r[1])
         return out

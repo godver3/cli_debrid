@@ -83,7 +83,7 @@
 <div class="sm-wrap">
   <h1 class="sm-title">Subtitle Manager</h1>
   <p class="sm-intro">
-    Subtitle status for collected movies and episodes. Click an item to see its subtitles, search every provider by hand, or let the best match download automatically.
+    Subtitle status for collected movies and episodes. A language counts as present when there's a subtitle file, one cli_debrid saved, or an embedded text track your media server found (not forced, not commentary, not an image/styled format that makes players transcode). Click an item to see its subtitles, search every provider by hand, or let the best match download automatically.
     {% if plex_mode %}In Plex mode subtitles are uploaded to Plex, so the list shows what cli_debrid downloaded; open an item to see every subtitle Plex has.{% endif %}
     Languages, providers and the text-only (no transcoding) option are in <a href="{{ url_for('settings.index') }}#subtitles">Settings → Subtitle Settings</a>.
   </p>
@@ -120,6 +120,7 @@
       <div id="sm-bulk-paused" style="color:var(--sm-yellow);margin:0 0 6px"></div>
       <div class="sm-lanes" id="sm-lanes"></div>
     </div>
+    <div id="sm-scan" class="sm-muted" style="display:none;margin:0 0 8px"></div>
     <div class="sm-card">
       <table class="sm-table">
         <thead><tr><th>Title</th><th>Subtitles</th><th style="width:1%"></th></tr></thead>

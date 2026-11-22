@@ -619,6 +619,30 @@ def prepare_video(video_path, rating_key=None, name_hint=None, item=None, check_
         config.PROBE_FOR_EMBEDDED = _probe
 
 
+def _plex_embedded_langs(item):
+    """Good embedded languages (text, not forced, not commentary) from the
+    media server's scan of the file (Plex: asked now if not cached;
+    Jellyfin/Emby: from the cached library scan), or None if unknown."""
+    try:
+        from utilities import plex_subtitle_info as psi
+        if not item or not psi.available():
+            return None
+        key = psi.cache_key(item)
+        if not key:
+            return None
+        tracks = psi.cached_tracks([key]).get(key)
+        if tracks is None and psi.server() == 'plex':
+            rk = psi.rating_key(item)
+            if not rk:
+                return None
+            psi.fetch_tracks([(key, rk)])
+            tracks = psi.cached_tracks([key]).get(key)
+        return psi.good_embedded_langs(tracks) if tracks is not None else None
+    except Exception as e:
+        logging.debug(f"[subs] Plex embedded lookup failed: {e}")
+        return None
+
+
 def _prepare_video(video_path, rating_key, name_hint, item):
     video_path = Path(video_path)
 
@@ -646,7 +670,11 @@ def _prepare_video(video_path, rating_key, name_hint, item):
     if item is None:
         item = _lookup_item(original_path)
     if item and not rating_key and is_plex_mode and item.get('ms_item_id'):
-        rating_key = str(item['ms_item_id'])
+        try:
+            from utilities.plex_subtitle_info import rating_key as _rk
+            rating_key = _rk(item)
+        except Exception:
+            rating_key = None
 
     # Convert language codes to Language objects using expand_languages
     languages = expand_languages(config.SUBTITLE_LANGUAGES)
@@ -664,8 +692,11 @@ def _prepare_video(video_path, rating_key, name_hint, item):
             _plex_cached = cached_subtitle_tracks(str(video_path))
         except Exception:
             _plex_cached = None
-    if config.PROBE_FOR_EMBEDDED and (not is_plex_mode or _plex_cached is not None):
-        embedded = get_embedded_subtitle_languages(video_path)
+    plex_embedded = _plex_embedded_langs(item) if config.PROBE_FOR_EMBEDDED else None
+    if plex_embedded is not None or (config.PROBE_FOR_EMBEDDED and (not is_plex_mode or _plex_cached is not None)):
+        # Plex already scanned the file: use its track list instead of
+        # probing the file on the mount
+        embedded = plex_embedded if plex_embedded is not None else get_embedded_subtitle_languages(video_path)
         if embedded:
             logging.info(f"[subs] {_label_of(item, original_path)}: embedded languages {sorted(embedded)}")
             # Filter out languages already covered by an embedded track.
@@ -850,8 +881,10 @@ def item_duration_hints(item):
     exact = None
     try:
         from utilities.subtitle_resync import plex_item_info
-        if item.get('ms_item_id'):
-            exact = plex_item_info(item['ms_item_id'])[1]
+        from utilities.plex_subtitle_info import rating_key as _rk
+        rk = _rk(item) if item.get('ms_item_id') else None
+        if rk:
+            exact = plex_item_info(rk)[1]
     except Exception:
         exact = None
     approx = None

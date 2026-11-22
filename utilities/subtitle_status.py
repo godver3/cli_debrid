@@ -75,7 +75,7 @@ def collected(q='', kind='all', full=False):
         where.append('(title LIKE ? OR episode_title LIKE ?)')
         args += [f'%{q}%', f'%{q}%']
     cols = '*' if full else ('id, title, year, type, season_number, episode_number, '
-                             'location_on_disk, collected_at, version, filled_by_file, ms_item_id')
+                             'location_on_disk, collected_at, version, filled_by_file, ms_item_id, imdb_id')
     conn = get_db_connection()
     try:
         return [dict(r) for r in conn.execute(
@@ -91,9 +91,18 @@ def with_status(rows, plex=None, wanted=None):
     plex = is_plex_mode() if plex is None else plex
     wanted = wanted_langs() if wanted is None else wanted
     ids = [r['id'] for r in rows]
+    # rows saved before the episode fix were keyed by ms_item_id: accept both
     history = subtitle_history.languages_by_item(
-        ids, {r['id']: subtitle_history.media_key_of(r) for r in rows})
+        ids, {r['id']: tuple(k for k in {subtitle_history.media_key_of(r), str(r.get('ms_item_id') or '')} if k)
+              for r in rows})
     embedded = subtitle_history.embedded_items(ids)
+    plex_tracks = {}
+    try:
+        from utilities import plex_subtitle_info as psi
+        if psi.available():
+            plex_tracks = psi.cached_tracks([psi.cache_key(r) for r in rows])
+    except Exception:
+        plex_tracks = {}
     dir_cache = {}
     out = []
     for r in rows:
@@ -103,8 +112,15 @@ def with_status(rows, plex=None, wanted=None):
         for lang in history.get(r['id'], ()):
             found.setdefault((lang or '').lower(), [])
         emb = r['id'] in embedded
-        langs = [{'lang': ietf, 'has': emb or has_lang(found, ietf, a3), 'embedded': emb and not has_lang(found, ietf, a3)}
-                 for ietf, a3 in wanted]
+        good = set()
+        if plex_tracks:
+            from utilities import plex_subtitle_info as psi
+            good = psi.good_embedded_langs(plex_tracks.get(psi.cache_key(r)))
+        langs = []
+        for ietf, a3 in wanted:
+            in_file = has_lang(found, ietf, a3)
+            in_track = emb or bool(good & {ietf.lower(), a3.lower(), ietf.split('-')[0].lower()})
+            langs.append({'lang': ietf, 'has': in_file or in_track, 'embedded': in_track and not in_file})
         out.append(dict(r, langs=langs, missing=any(not x['has'] for x in langs)))
     return out
 

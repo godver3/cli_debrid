@@ -19,6 +19,16 @@ PLEX_HEADERS = {
 }
 
 
+def item_rk(item):
+    """The item's own Plex ratingKey (episodes store their show's in
+    ms_item_id)."""
+    try:
+        from utilities.plex_subtitle_info import rating_key
+        return rating_key(item)
+    except Exception:
+        return None
+
+
 def plex_conn():
     from utilities.settings import get_setting
     return (get_setting('Plex', 'url', '') or '').rstrip('/'), get_setting('Plex', 'token', '') or ''
@@ -86,7 +96,7 @@ def _fetch_item_info(rating_key):
 
 def plex_stream_of_item(item, stream_id):
     """The external subtitle stream `stream_id` of this item, or None."""
-    for st in plex_streams(item.get('ms_item_id')) or []:
+    for st in plex_streams(item_rk(item)) or []:
         if str(st.get('id')) == str(stream_id) and st.get('external') and st.get('key'):
             return st
     return None
@@ -181,7 +191,7 @@ def resync_plex_stream(item, st, skip_checked=False):
         if note and note.startswith(('already in sync', 'left as is', 'not checked: no embedded')):
             _mark(content, note)
         return {'changed': False, 'message': note or 'not synced'}
-    if not downsub.upload_subtitle_to_plex(item.get('ms_item_id'), new, st.get('language') or 'und', fmt=fmt):
+    if not downsub.upload_subtitle_to_plex(item_rk(item), new, st.get('language') or 'und', fmt=fmt):
         return {'changed': False, 'message': 'synced, but the upload to Plex failed; the old subtitle was kept',
                 'error': True}
     _mark(new, 'synced')
@@ -303,7 +313,7 @@ def _hash_replace_plex(item, st, finder):
     sub, fmt, _, kind = got
     content = sub.content if isinstance(sub.content, bytes) else (sub.content or '').encode('utf-8')
     lang3 = getattr(sub.language, 'alpha3', None) or (st.get('language') or 'und')
-    if not downsub.upload_subtitle_to_plex(item.get('ms_item_id'), content, lang3, fmt=fmt):
+    if not downsub.upload_subtitle_to_plex(item_rk(item), content, lang3, fmt=fmt):
         return None
     _mark(content, kind)
     ok, code = plex_delete(st)
@@ -366,7 +376,7 @@ def resync_item(item, skip_checked=True):
             changed += 1 if res.get('changed') else 0
     if is_plex_mode():
         have = {k.split('-')[0] for k in sidecars}
-        for st in plex_item_info(item.get('ms_item_id'))[0] or []:
+        for st in plex_item_info(item_rk(item))[0] or []:
             if not (st.get('external') and st.get('key')):
                 continue
             if (st.get('language') or 'und').split('-')[0].lower() in have:

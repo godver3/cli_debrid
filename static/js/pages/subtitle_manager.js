@@ -71,9 +71,27 @@
     try {
       listData = await api('/api/subtitles/overview?' + params);
       renderList();
+      watchEmbeddedScan(listData.embedded_scan);
     } catch (e) {
       body.innerHTML = `<tr><td colspan="3" class="sm-empty">Could not load: ${esc(e.message)}</td></tr>`;
     }
+  }
+
+  let scanTimer = null;
+  function watchEmbeddedScan(scan) {
+    const el = $('sm-scan');
+    if (!el) return;
+    clearTimeout(scanTimer);
+    if (!scan || !scan.running) { el.style.display = 'none'; return; }
+    el.style.display = '';
+    el.textContent = `Checking the media server for embedded subtitles… ${scan.done || 0}/${scan.total || '?'} ` +
+      '(good embedded tracks count as having the language; the list updates when this finishes)';
+    scanTimer = setTimeout(async () => {
+      try {
+        const st = await api('/api/subtitles/embedded_scan');
+        if (st.running) watchEmbeddedScan(st); else { el.style.display = 'none'; loadList(); }
+      } catch (e) { el.style.display = 'none'; }
+    }, 3000);
   }
 
   function renderList() {

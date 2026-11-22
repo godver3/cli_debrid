@@ -133,6 +133,7 @@ def test_plex_delete_only_external_streams(env):
     _plex_item(env)
     calls = []
     with mock.patch('requests.get', return_value=_R(200, _META)), \
+            mock.patch('utilities.subtitle_resync.item_rk', return_value='777'), \
             mock.patch('requests.delete', side_effect=lambda url, **k: calls.append(url) or _R(200)), \
             mock.patch('utilities.settings.get_setting',
                        side_effect=lambda s, k, d=None: {('Plex', 'url'): 'http://plex:32400',
@@ -151,6 +152,7 @@ def test_plex_resync_uploads_then_removes_old(env):
         return _R(200, _META) if url.endswith('/metadata/777') else _R(200, content=b'old subtitle')
 
     with mock.patch('requests.get', side_effect=fake_get), \
+            mock.patch('utilities.subtitle_resync.item_rk', return_value='777'), \
             mock.patch('requests.delete', side_effect=lambda url, **k: deleted.append(url) or _R(200)), \
             mock.patch('utilities.downsub.sync_content', return_value=(b'new subtitle', 'synced: shifted -2.00s')), \
             mock.patch('utilities.downsub.upload_subtitle_to_plex',

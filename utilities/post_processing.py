@@ -488,7 +488,14 @@ def handle_state_change(item: Dict[str, Any]) -> None:
                     # sidecar .srt can't be written next to it. Download subtitles
                     # and upload them to the Plex item via API (keyed on the stored
                     # ratingKey). Storage-agnostic — works for zurg/nzbdav/climount.
-                    rk = fresh_item.get('ms_item_id')
+                    rk = None
+                    if fresh_item.get('ms_item_id'):
+                        # episodes store their show's ratingKey; upload to the episode
+                        try:
+                            from .plex_subtitle_info import rating_key as _plex_rk
+                            rk = _plex_rk(dict(fresh_item))
+                        except Exception:
+                            rk = None
                     if rk:
                         # The on-disk file is often obfuscated (e.g. tGcr.mkv) on
                         # debrid/usenet mounts; the release folder name carries the
