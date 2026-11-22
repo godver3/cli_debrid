@@ -527,6 +527,27 @@ def _find_db_items_by_entry_name(entry_name: str):
 _HEADER_MEMO: dict = {}   # (path, size, mtime) -> (monotonic time, header dict or None)
 _HEADER_MEMO_TTL = 30.0
 
+# Subtitle tracks seen by the header read, kept longer than the memo so the
+# subtitle downloader (post-processing, minutes later) reuses the add-time
+# ffprobe instead of reading the file again. realpath -> (monotonic, tracks)
+_SUB_TRACKS: dict = {}
+_SUB_TRACKS_TTL = 6 * 3600.0
+
+
+def cached_subtitle_tracks(file_path: str):
+    """Subtitle tracks [{codec, language, forced}] from an earlier header
+    read of this file, or None when it hasn't been probed recently."""
+    import os as _os_s
+    import time as _time_s
+    try:
+        key = _os_s.path.realpath(file_path)
+    except Exception:
+        key = file_path
+    hit = _SUB_TRACKS.get(key) or _SUB_TRACKS.get(file_path)
+    if hit and _time_s.monotonic() - hit[0] < _SUB_TRACKS_TTL:
+        return hit[1]
+    return None
+
 
 def _media_header(file_path: str, timeout: int = 10):
     """Stream types and duration from ONE ffprobe header read, or None if it failed.
@@ -555,7 +576,8 @@ def _media_header(file_path: str, timeout: int = 10):
     try:
         r = _sp.run(
             ['ffprobe', '-v', 'error',
-             '-show_entries', 'stream=codec_type:format=duration',
+             '-show_entries',
+             'stream=codec_type,codec_name:stream_tags=language:stream_disposition=forced:format=duration',
              '-of', 'json', file_path],
             timeout=timeout, capture_output=True, text=True,
         )
@@ -565,8 +587,20 @@ def _media_header(file_path: str, timeout: int = 10):
                 duration = float((data.get('format') or {}).get('duration'))
             except (TypeError, ValueError):
                 duration = None
-            info = {'types': [st.get('codec_type') for st in (data.get('streams') or [])],
+            streams = data.get('streams') or []
+            info = {'types': [st.get('codec_type') for st in streams],
                     'duration': duration}
+            subs = [{'codec': (st.get('codec_name') or '').lower(),
+                     'language': ((st.get('tags') or {}).get('language') or '').strip().lower(),
+                     'forced': bool((st.get('disposition') or {}).get('forced'))}
+                    for st in streams if st.get('codec_type') == 'subtitle']
+            try:
+                _real = _os_h.path.realpath(file_path)
+            except Exception:
+                _real = file_path
+            if len(_SUB_TRACKS) > 2048:
+                _SUB_TRACKS.clear()
+            _SUB_TRACKS[_real] = (now, subs)
     except Exception:
         info = None
     if len(_HEADER_MEMO) > 256:

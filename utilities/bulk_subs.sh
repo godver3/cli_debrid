@@ -19,7 +19,7 @@ while read -r symlink; do
   fi
 
   base="${symlink%.*}"
-  srt_candidates=("${base}".*.srt)
+  srt_candidates=("${base}".*.srt "${base}".*.ass "${base}".*.ssa)
   flag_file="${base}.subs-processed"
 
   if [[ -f "$flag_file" ]]; then

@@ -148,7 +148,7 @@ SECTIONS = {
         "tab": "Additional Settings",
         "enable_subtitles": {
             "type": "boolean",
-            "description": "Enable automatic subtitle downloading for media files using 'downsub'. Works for both movies and TV shows.",
+            "description": "Download subtitles when an item is collected. Symlinked/Local writes a sidecar file; Plex mode uploads to the Plex item. Movies and TV shows.",
             "default": False
         },
         "apply_to_movies": {
@@ -178,7 +178,7 @@ SECTIONS = {
         },
         "opensubtitles_username": {
             "type": "string",
-            "description": "OpenSubtitles username for subtitle downloads",
+            "description": "OpenSubtitles.com username (free account). Needed to download from OpenSubtitles.com, the largest provider; also used for the legacy OpenSubtitles.org provider.",
             "default": "",
             "sensitive": False
         },
@@ -195,9 +195,14 @@ SECTIONS = {
         },
         "subtitle_providers": {
             "type": "list",
-            "description": "Select subtitle providers to use",
-            "default": ["opensubtitles", "opensubtitlescom", "podnapisi", "tvsubtitles"],
-            "choices": ["opensubtitles", "opensubtitlescom", "podnapisi", "tvsubtitles"]
+            "description": "Subtitle providers to search (none need a captcha). All selected providers are searched and the best match wins. opensubtitlescom needs the OpenSubtitles login above to download; gestdown is an Addic7ed mirror (TV only); subtitulamos is Spanish; opensubtitles is the legacy .org API.",
+            "default": ["opensubtitlescom", "podnapisi", "gestdown", "tvsubtitles"],
+            "choices": ["opensubtitlescom", "podnapisi", "gestdown", "tvsubtitles", "subtitulamos", "bsplayer", "opensubtitles"]
+        },
+        "text_subtitles_only": {
+            "type": "boolean",
+            "description": "Avoid subtitle formats that make Plex/Jellyfin/Emby transcode. Downloaded styled ASS/SSA subtitles are converted to plain SRT, and with the embedded probe on, an embedded image (PGS/VobSub) or styled track no longer counts as having that language, so an SRT is fetched.",
+            "default": False
         },
         "user_agent": {
             "type": "string",
@@ -206,7 +211,7 @@ SECTIONS = {
         },
         "probe_for_embedded_subtitles": {
             "type": "boolean",
-            "description": "Before searching for subtitles, probe the file with ffprobe to detect embedded subtitle tracks. If all configured languages are already embedded, the external search is skipped. Applies to built-in subtitle downloader and Bazarr. Requires ffprobe to be installed. Note: probing dereferences the symlink to the debrid mount — ensure your mount is stable before enabling.",
+            "description": "Skip languages the file already has as an embedded (non-forced) subtitle track; if all are embedded, the search and Bazarr notification are skipped. Reuses the add-time ffprobe playability check's header read when that's on, otherwise reads the file header once. Requires ffprobe. In Plex mode only the add-time check's result is used.",
             "default": False
         }
     },

@@ -15,7 +15,7 @@
             <input type="checkbox" id="additional-enable_subtitles" name="Subtitle Settings.enable_subtitles"
                    data-section="Subtitle Settings" data-key="enable_subtitles"
                    {% if settings.get('Subtitle Settings', {}).get('enable_subtitles') %}checked{% endif %}>
-            <p class="settings-description">Enable automatic subtitle downloading for media files. Requires Symlink File Management. Activate with caution as the Subtitle downloader adds 2-3 seconds of overhead per file processed. Consider instead filtering for MULTI releases with the language of your preference.</p>
+            <p class="settings-description">Download subtitles when an item is collected. Works in both modes: Symlinked/Local writes a sidecar file next to the library file; Plex mode uploads the subtitle to the Plex item (the mount is read-only). Adds a few seconds per file. Manage and search subtitles under Tools → Subtitles.</p>
         </div>
 
         <!-- Hidden settings - no longer used with simplified downsub system -->
@@ -28,7 +28,7 @@
                    class="settings-input"
                    data-section="Subtitle Settings" data-key="opensubtitles_username"
                    {% if environment_mode != 'full' %}readonly disabled{% endif %}>
-            <p class="settings-description">OpenSubtitles username for subtitle downloads</p>
+            <p class="settings-description">OpenSubtitles.com account (free). Needed to download from OpenSubtitles.com, the largest provider.</p>
         </div>
 
         <div class="settings-form-group">
@@ -50,12 +50,36 @@
             <p class="settings-description">Comma-separated list of language codes (e.g., eng,zho,spa). Uses ISO-639-3 codes.</p>
         </div>
 
+        {% set _sel = settings.get('Subtitle Settings', {}).get('subtitle_providers') or ['opensubtitlescom', 'podnapisi', 'gestdown', 'tvsubtitles'] %}
+        <div class="settings-form-group">
+            <label for="additional-subtitle_providers" class="settings-title">Subtitle Providers:</label>
+            <select id="additional-subtitle_providers" multiple size="7" class="settings-input"
+                    data-section="Subtitle Settings" data-key="subtitle_providers">
+                <option value="opensubtitlescom" {% if 'opensubtitlescom' in _sel %}selected{% endif %}>OpenSubtitles.com (login above)</option>
+                <option value="podnapisi" {% if 'podnapisi' in _sel %}selected{% endif %}>Podnapisi</option>
+                <option value="gestdown" {% if 'gestdown' in _sel %}selected{% endif %}>Gestdown (Addic7ed mirror, TV)</option>
+                <option value="tvsubtitles" {% if 'tvsubtitles' in _sel %}selected{% endif %}>TVsubtitles (TV)</option>
+                <option value="subtitulamos" {% if 'subtitulamos' in _sel %}selected{% endif %}>Subtitulamos (Spanish)</option>
+                <option value="bsplayer" {% if 'bsplayer' in _sel %}selected{% endif %}>BSPlayer (hash only)</option>
+                <option value="opensubtitles" {% if 'opensubtitles' in _sel %}selected{% endif %}>OpenSubtitles.org (legacy)</option>
+            </select>
+            <p class="settings-description">None of these need a captcha. Every selected provider is searched and the best match wins: a file-hash match first (exact release, already in sync), then same release group/source. Matches for the wrong episode or movie are never downloaded. Ctrl/Cmd-click to select several.</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-text_subtitles_only" class="settings-title">Avoid Transcoding Formats:</label>
+            <input type="checkbox" id="additional-text_subtitles_only" name="Subtitle Settings.text_subtitles_only"
+                   data-section="Subtitle Settings" data-key="text_subtitles_only"
+                   {% if settings.get('Subtitle Settings', {}).get('text_subtitles_only') %}checked{% endif %}>
+            <p class="settings-description">Styled ASS/SSA and image (PGS/VobSub) subtitles make most Plex/Jellyfin/Emby clients transcode. When on, downloaded ASS/SSA subtitles are converted to plain SRT, and an embedded image or styled track doesn't count as having that language, so an SRT is fetched.</p>
+        </div>
+
         <div class="settings-form-group">
             <label for="additional-probe_for_embedded_subtitles" class="settings-title">Probe for Embedded Subtitles:</label>
             <input type="checkbox" id="additional-probe_for_embedded_subtitles" name="Subtitle Settings.probe_for_embedded_subtitles"
                    data-section="Subtitle Settings" data-key="probe_for_embedded_subtitles"
                    {% if settings.get('Subtitle Settings', {}).get('probe_for_embedded_subtitles') %}checked{% endif %}>
-            <p class="settings-description">Before searching for subtitles, probe the file with ffprobe to detect embedded tracks. If all configured languages are already embedded, the external search (and Bazarr notification) is skipped. Requires ffprobe. Note: probing reads from the debrid mount — ensure your mount is stable before enabling.</p>
+            <p class="settings-description">Skip languages the file already has as an embedded track (forced tracks don't count). If every language is embedded, the search (and Bazarr notification) is skipped. If the add-time ffprobe playability check is on, its result is reused, so there's no second read of the file; otherwise this reads the file header once (needs ffprobe). In Plex mode it only uses the add-time check's result.</p>
         </div>
     
         <div class="settings-subheader"><h5>Bazarr integration</h5></div>
@@ -66,7 +90,7 @@
             <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); padding: 15px; border-radius: 8px;">
                 <p style="margin: 0; font-weight: bold; color: #ef4444;"><i class="fas fa-exclamation-triangle"></i> Not Available</p>
                 <p style="margin: 10px 0 0 0; color: var(--text-primary);">
-                    Bazarr Integration requires <strong>Symlinked/Local</strong> file collection management mode.
+                    Bazarr Integration requires <strong>Symlinked/Local</strong> or <strong>Plex</strong> file collection management mode.
                 </p>
                 <p style="margin: 5px 0 0 0; color: var(--text-secondary); font-size: 0.9em;">
                     Your current mode is <strong>{{ settings.get('File Management', {}).get('file_collection_management', 'Plex') }}</strong>.

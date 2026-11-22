@@ -571,7 +571,7 @@ export function updateSettings() {
     }
     
     if (!settingsData['Subtitle Settings']['subtitle_providers'] || !settingsData['Subtitle Settings']['subtitle_providers'].length) {
-        settingsData['Subtitle Settings']['subtitle_providers'] = ['opensubtitles', 'opensubtitlescom', 'podnapisi', 'tvsubtitles'];
+        settingsData['Subtitle Settings']['subtitle_providers'] = ['opensubtitlescom', 'podnapisi', 'gestdown', 'tvsubtitles'];
     }
     
     if (!settingsData['Subtitle Settings']['user_agent']) {

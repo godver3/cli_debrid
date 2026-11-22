@@ -499,13 +499,14 @@ def handle_state_change(item: Dict[str, Any]) -> None:
                                      or _os_sub.path.basename(_os_sub.path.dirname(file_path)) or None)
                         logging.info("Running subtitle downloader (Plex API upload mode).")
                         from .downsub import main as downsub_main
-                        downsub_main(file_path, rating_key=str(rk), name_hint=name_hint)
+                        downsub_main(file_path, rating_key=str(rk), name_hint=name_hint,
+                                     item=dict(fresh_item))
                     else:
                         logging.info("Plex-mode subtitle upload skipped: item has no Plex ratingKey (ms_item_id) yet")
                 else:
                     logging.info("Running subtitle downloader - this may take some time if it has never been run.")
                     from .downsub import main as downsub_main
-                    downsub_main(file_path)
+                    downsub_main(file_path, item=dict(fresh_item))
             except Exception as e:
                 logging.error(f"Failed to run subtitle downloader: {str(e)}")
                 logging.exception("Subtitle downloader traceback:")
