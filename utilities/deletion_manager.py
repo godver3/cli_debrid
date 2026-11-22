@@ -74,6 +74,44 @@ def remove_sidecar_subtitles(video_path):
     return removed
 
 
+VIDEO_EXTS = ('.mkv', '.mp4', '.avi', '.m4v', '.ts', '.m2ts', '.mov', '.wmv', '.webm', '.mpg', '.mpeg', '.iso')
+
+
+def remove_orphan_subtitles(folder, library_root=None):
+    """Delete subtitle files in a library folder that belong to no video in it
+    (named '<stem>.<lang>.srt' where no '<stem>.<video ext>' is left): those of
+    a file since replaced, upgraded or repaired. Plex can still offer them for
+    the movie, and pick the wrong one. Only inside library_root (the symlink
+    folder), only regular files. Returns the paths removed."""
+    removed = []
+    if not folder or not library_root:
+        return removed
+    root = os.path.realpath(library_root)
+    real = os.path.realpath(folder)
+    if real == root or not real.startswith(root + os.sep):
+        return removed
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return removed
+    stems = [os.path.splitext(f)[0] for f in names if f.lower().endswith(VIDEO_EXTS)]
+    if not stems:
+        return removed      # no video at all: leave the folder to the deletion code
+    for f in names:
+        if not f.lower().endswith(SIDECAR_SUBTITLE_EXTS) or any(f.startswith(s + '.') for s in stems):
+            continue
+        path = os.path.join(folder, f)
+        try:
+            if os.path.isfile(path) and not os.path.islink(path):
+                os.remove(path)
+                removed.append(path)
+        except OSError as e:
+            logging.warning(f"Could not remove orphaned subtitle {path}: {e}")
+    if removed:
+        logging.info(f"Removed {len(removed)} subtitle file(s) left from replaced files in {folder}")
+    return removed
+
+
 class DeletionManager:
     """
     Unified deletion manager for all library deletion operations

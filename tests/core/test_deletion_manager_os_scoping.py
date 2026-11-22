@@ -83,3 +83,26 @@ def test_deleting_a_symlink_takes_its_subtitles(tmp_path):
     removed = sorted(os.path.basename(p) for p in remove_sidecar_subtitles(str(video)))
     assert removed == ['Plan 9 (1959) - 1080p.en.srt', 'Plan 9 (1959) - 1080p.eng.forced.ass']
     assert sorted(os.listdir(folder)) == ['Plan 9 (1959) - 1080p.nfo', 'Plan 9 (1959) - 720p.en.srt', 'poster.jpg']
+
+
+def test_orphaned_subtitles_of_replaced_files_are_removed(tmp_path):
+    """Live 2026-11-22 (Possession): subtitles named after earlier, replaced
+    files stayed in the folder and Plex picked one of them."""
+    import os
+    from utilities.deletion_manager import remove_orphan_subtitles
+    root = tmp_path / 'symlinks'
+    folder = root / 'Movies' / 'Possession (1981)'
+    folder.mkdir(parents=True)
+    os.symlink('/nonexistent/x.mkv', folder / 'Possession - (DiVULGED.mkv')
+    for n in ('Possession - (DiVULGED.en.srt', 'Possession - (38166f.en.srt', 'Possession - (a1pr7h.en.hi.srt', 'poster.jpg'):
+        (folder / n).write_text('x')
+    removed = sorted(os.path.basename(p) for p in remove_orphan_subtitles(str(folder), str(root)))
+    assert removed == ['Possession - (38166f.en.srt', 'Possession - (a1pr7h.en.hi.srt']
+    assert sorted(os.listdir(folder)) == ['Possession - (DiVULGED.en.srt', 'Possession - (DiVULGED.mkv', 'poster.jpg']
+    # never outside the library, never the library root itself, never a folder without videos
+    assert remove_orphan_subtitles(str(folder), str(tmp_path / 'other')) == []
+    assert remove_orphan_subtitles(str(root), str(root)) == []
+    empty = root / 'Movies' / 'Only Subs'
+    empty.mkdir()
+    (empty / 'x.en.srt').write_text('x')
+    assert remove_orphan_subtitles(str(empty), str(root)) == []
