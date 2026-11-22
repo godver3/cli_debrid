@@ -212,8 +212,16 @@ def auto(item_id):
     if not path:
         return jsonify({'error': 'No file path for this item'}), 400
     ok = downsub.download_subtitles_for_video(path, item=item)
-    return jsonify({'success': bool(ok),
-                    'message': 'Subtitles saved' if ok else 'No subtitle passed the match threshold'})
+    # The downloader's own note says what happened: saved (which, from where),
+    # nothing needed (every language embedded), or why nothing was saved.
+    note = downsub.last_result_note(item) or ''
+    if ok and note.startswith('every language'):
+        message = 'Nothing to download: ' + note
+    elif ok:
+        message = 'Saved: ' + note if note else 'Subtitles saved'
+    else:
+        message = note[:1].upper() + note[1:] if note else 'No subtitle passed the match threshold'
+    return jsonify({'success': bool(ok), 'message': message})
 
 
 @subtitle_manager_bp.route('/api/subtitles/item/<int:item_id>/delete', methods=['POST'])

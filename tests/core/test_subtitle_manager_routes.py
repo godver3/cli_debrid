@@ -176,3 +176,22 @@ def test_sidecar_resync_rewrites_file(env):
     with mock.patch('utilities.downsub.sync_content', side_effect=lambda v, c, f, **k: (c, 'already in sync')):
         d = env['client'].post('/api/subtitles/item/1/sync', json={'path': target}).get_json()
     assert not d['changed'] and d['message'] == 'already in sync'
+
+
+def test_auto_says_what_happened(env):
+    """Live 2026-11-22: Auto said 'Subtitles saved' for a file that already
+    had every language embedded (nothing downloaded)."""
+    from utilities import downsub
+    c = env['client']
+
+    def fake(note, ok):
+        def run(path, item=None, **kw):
+            downsub._note(item, note)
+            return ok
+        return run
+    for note, ok, want in [('every language already embedded in the file', True, 'Nothing to download: every language'),
+                           ('en from subdl, score 942/971', True, 'Saved: en from subdl'),
+                           ('nothing passed the match threshold (subdl)', False, 'Nothing passed the match threshold')]:
+        with mock.patch.object(downsub, 'download_subtitles_for_video', side_effect=fake(note, ok)):
+            d = c.post('/api/subtitles/item/2/auto').get_json()
+        assert d['success'] is ok and d['message'].startswith(want), d
