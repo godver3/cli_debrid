@@ -737,7 +737,11 @@ def _prepare_video(video_path, rating_key, name_hint, item, probe=None):
 
     # Check if file exists — skip for Plex mode (file is on FUSE mount, not local)
     if not is_plex_mode and not video_path.exists():
-        logging.error(f"[subs] {video_path}: file does not exist")
+        if video_path.is_symlink():
+            logging.warning(f"[subs] {_label_of(item, video_path)}: library file is missing: the symlink points "
+                            f"to {os.readlink(video_path)}, which isn't on the mount")
+        else:
+            logging.warning(f"[subs] {_label_of(item, video_path)}: library file is missing ({video_path})")
         return None
 
     # Check if it's a valid video file
@@ -1115,6 +1119,12 @@ def _note(ctx_or_item, text):
         _LAST_NOTE[iid] = text
 
 
+def get_mode_symlinked():
+    """Symlinked/Local file management (files are checked locally)."""
+    from utilities.settings import get_setting
+    return get_setting('File Management', 'file_collection_management', 'Plex') != 'Plex'
+
+
 def download_subtitles_for_video(video_path, rating_key=None, name_hint=None, item=None):
     """
     Download subtitles for a single video file.
@@ -1139,7 +1149,10 @@ def download_subtitles_for_video(video_path, rating_key=None, name_hint=None, it
     try:
         ctx = prepare_video(video_path, rating_key=rating_key, name_hint=name_hint, item=item)
         if ctx is None:
-            _note(item, 'could not identify the file')
+            p = Path(str(video_path))
+            missing = not p.exists() and get_mode_symlinked()
+            _note(item, 'library file is missing (broken symlink)' if missing and p.is_symlink()
+                  else 'library file is missing' if missing else 'could not identify the file')
             return False
         if ctx.get('all_embedded'):
             _record_attempt((ctx.get('item') or {}).get('id'), 'embedded')

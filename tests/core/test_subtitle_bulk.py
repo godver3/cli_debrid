@@ -428,3 +428,13 @@ def test_pause_lengths_by_error_class():
     assert downsub._block_seconds(DownloadLimitReached('quota'))[0] == 6 * 3600
     assert downsub._block_seconds(Unauthorized('bad login'))[0] == 3600  # subclass of AuthenticationError
     assert downsub._block_seconds(None)[0] == 600
+
+
+def test_broken_symlink_is_reported_as_missing(db, tmp_path):
+    from utilities import downsub
+    link = tmp_path / 'Show - S01E01.mkv'
+    link.symlink_to(tmp_path / 'gone' / 'x.mkv')
+    item = {'id': 1, 'title': 'Show', 'type': 'episode', 'season_number': 1, 'episode_number': 1}
+    with _settings('Symlinked/Local'):
+        assert downsub.download_subtitles_for_video(str(link), item=item) is False
+    assert downsub.last_result_note(item) == 'library file is missing (broken symlink)'
