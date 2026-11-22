@@ -308,10 +308,26 @@ def _hash_replace_plex(item, st, finder):
     return {'changed': True, 'message': msg if ok else f'{msg}; Plex would not remove the old one (HTTP {code})'}
 
 
+KEPT = 'kept: no subtitle for this release found'
+
+
+def _kept(content, prev):
+    """Record that a subtitle was searched for and nothing better exists, so
+    later runs skip it."""
+    from utilities import downsub as _ds
+    if content is not None and any(x in _ds.HASH_PROVIDERS for x in _ds.selected_providers()):
+        _mark(content, (prev + '; ' if prev else '') + KEPT + '; no hash match')
+    return {'changed': False, 'message': KEPT}
+
+
 def resync_item(item, skip_checked=True):
-    """Every existing subtitle of one item: sidecar files are fixed in place
-    (both modes); in Plex mode, uploaded Plex subtitles for languages without
-    a sidecar are fixed through Plex. Returns (changed, checked, notes)."""
+    """Fix existing subtitles of one item the way players pick subtitles:
+    replace each with one made for this release (hash match, else same
+    release group, else same Blu-ray/WEB master) when a provider has one,
+    else keep it. Nothing but the 64 KB file-hash read touches the file;
+    timing checks only run from the per-subtitle Sync button.
+    Returns (changed, checked, notes)."""
+    from database import subtitle_history
     from utilities.subtitle_status import is_plex_mode, sidecar_langs
     changed = checked = 0
     notes = []
@@ -319,33 +335,23 @@ def resync_item(item, skip_checked=True):
     finder = _HashFinder(item)
     for lang, paths in sidecars.items():
         for p in paths:
-            res = None
             try:
                 with open(p, 'rb') as f:
                     content = f.read()
             except OSError:
                 continue
-            from database import subtitle_history
             prev = subtitle_history.sync_result(_digest(content))
             if skip_checked and prev is not None and not _hash_pending(prev):
                 continue
+            res = None
             try:
                 res = _hash_replace_sidecar(item, p, finder)
             except Exception as e:
-                logging.debug(f"[subs] hash replace failed for {p}: {e}")
-            if res is None and prev is not None and _hash_pending(prev):
-                # sync already couldn't decide; only the hash search was owed
-                from utilities import downsub as _ds
-                if any(x in _ds.HASH_PROVIDERS for x in _ds.selected_providers()):
-                    _mark(content, prev + '; no hash match')
-                res = {'changed': False, 'message': 'kept: no subtitle for this release found (its timing was already checked)'}
+                logging.debug(f"[subs] replace failed for {p}: {e}")
             if res is None:
-                res = resync_sidecar(item, p, skip_checked=skip_checked)
-                if finder.searched() and (res.get('message') or '').startswith(HASH_PENDING):
-                    _mark(content, res['message'] + '; no hash match')
-            if not res.get('skipped'):
-                checked += 1
-                notes.append(f"{lang}: {res['message']}")
+                res = _kept(content, prev)
+            checked += 1
+            notes.append(f"{lang}: {res['message']}")
             changed += 1 if res.get('changed') else 0
     if is_plex_mode():
         have = {k.split('-')[0] for k in sidecars}
@@ -354,9 +360,7 @@ def resync_item(item, skip_checked=True):
                 continue
             if (st.get('language') or 'und').split('-')[0].lower() in have:
                 continue          # that's the sidecar file Plex picked up
-            res = None
-            prev = None
-            content = None
+            prev = content = None
             url, token = plex_conn()
             try:
                 r = requests.get(url + st['key'], params={'X-Plex-Token': token}, headers=PLEX_HEADERS,
@@ -366,24 +370,18 @@ def resync_item(item, skip_checked=True):
             except requests.RequestException:
                 pass
             if content is not None:
-                from database import subtitle_history
                 prev = subtitle_history.sync_result(_digest(content))
                 if skip_checked and prev is not None and not _hash_pending(prev):
                     continue
+            res = None
             try:
                 res = _hash_replace_plex(item, st, finder)
             except Exception as e:
-                logging.debug(f"[subs] hash replace failed for Plex stream {st.get('id')}: {e}")
-            if res is None and prev is not None and _hash_pending(prev):
-                from utilities import downsub as _ds
-                if any(x in _ds.HASH_PROVIDERS for x in _ds.selected_providers()):
-                    _mark(content, prev + '; no hash match')
-                res = {'changed': False, 'message': 'kept: no subtitle for this release found (its timing was already checked)'}
+                logging.debug(f"[subs] replace failed for Plex stream {st.get('id')}: {e}")
             if res is None:
-                res = resync_plex_stream(item, st, skip_checked=skip_checked)
-            if not res.get('skipped'):
-                checked += 1
-                notes.append(f"{st.get('language') or 'und'} (Plex): {res['message']}")
+                res = _kept(content, prev)
+            checked += 1
+            notes.append(f"{st.get('language') or 'und'} (Plex): {res['message']}")
             changed += 1 if res.get('changed') else 0
     return changed, checked, notes
 

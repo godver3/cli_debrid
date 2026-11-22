@@ -199,7 +199,7 @@ def test_sync_existing_prefers_hash_match(db, tmp_path):
     assert db.sync_checked(hashlib.sha1(hashed.content).hexdigest())
 
 
-def test_sync_existing_falls_back_to_sync_without_hash_match(db, tmp_path):
+def test_fix_existing_keeps_subtitle_without_release_match(db, tmp_path):
     from utilities import subtitle_resync, downsub
     video = tmp_path / 'Show - S01E01.mkv'
     video.write_bytes(b'')
@@ -207,11 +207,15 @@ def test_sync_existing_falls_back_to_sync_without_hash_match(db, tmp_path):
     item = {'id': 1, 'location_on_disk': str(video)}
     with _settings('Symlinked/Local'), \
             mock.patch.object(downsub, 'resolve_item_path', return_value=str(video)), \
-            mock.patch.object(downsub, 'prepare_video', return_value={'hash': True}), \
+            mock.patch.object(downsub, 'prepare_video', return_value={'hash': True, 'video': object()}), \
             mock.patch.object(downsub, 'hash_matches', return_value=[]), \
-            mock.patch.object(downsub, 'sync_content', return_value=(b'new', 'synced: shifted -1.00s')) as sync:
-        changed, checked, _ = subtitle_resync.resync_item(item)
-    assert sync.called and changed == 1
+            mock.patch.object(downsub, 'release_matches', return_value=[]), \
+            mock.patch.object(downsub, 'selected_providers', return_value=['opensubtitlescom']), \
+            mock.patch.object(downsub, 'sync_content') as sync:
+        changed, checked, notes = subtitle_resync.resync_item(item)
+        assert not subtitle_resync.needs_check(item)          # done, skipped next time
+    assert changed == 0 and checked == 1 and not sync.called    # no file reads beyond the hash
+    assert notes[0].startswith('en: kept')
 
 
 def test_undecided_sync_gets_one_hash_search(db, tmp_path):
