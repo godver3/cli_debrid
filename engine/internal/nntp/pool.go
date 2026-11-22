@@ -193,6 +193,15 @@ func (pl *pool) drop() { pl.passOn(&slot{}) }
 func (pl *pool) passOn(s *slot) {
 	pl.mu.Lock()
 	defer pl.mu.Unlock()
+	// While "too many connections" throttles the pool, a freed dial slot
+	// isn't handed on: the waiter would dial into the same refusal, and
+	// the next one after it, once per queued request. Waiters get the
+	// connections still open as they are released; the last slot is
+	// always passed so a queue is never left with nothing to wake it.
+	if s.c == nil && pl.open > 1 && pl.capConns > 0 && time.Now().Before(pl.capUntil) {
+		pl.open--
+		return
+	}
 	for prio := Live; prio >= Prefetch; prio-- {
 		if q := pl.queues[prio]; len(q) > 0 {
 			// The slot being passed is still counted busy; a non-live

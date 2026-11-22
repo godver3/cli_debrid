@@ -291,3 +291,45 @@ func TestThrottleNeverLowersCap(t *testing.T) {
 		t.Fatalf("cap = %d after expiry, want 3", got)
 	}
 }
+
+// A dial slot freed while throttled (a refused dial, a dropped connection)
+// isn't handed to a queued waiter, which would only dial into the same
+// refusal; the last open slot still is, so the queue can't be stranded.
+func TestThrottledDropDoesNotChainDials(t *testing.T) {
+	pl := newPool(Provider{Name: "p", MaxConns: 20})
+	pl.open = 3
+	pl.capConns, pl.capUntil = 3, time.Now().Add(time.Minute)
+	ch := make(chan *slot, 1)
+	pl.queues[Live] = []chan *slot{ch}
+	pl.drop()
+	select {
+	case <-ch:
+		t.Fatal("throttled pool handed a dial slot to a waiter")
+	default:
+	}
+	if pl.open != 2 {
+		t.Fatalf("open = %d, want 2", pl.open)
+	}
+	pl.open = 1 // the only slot left: it must reach the waiter
+	pl.drop()
+	select {
+	case s := <-ch:
+		if s.c != nil {
+			t.Fatal("want an empty dial slot")
+		}
+	default:
+		t.Fatal("last slot not passed on: waiter stranded")
+	}
+	// A released connection still goes to the waiter while throttled.
+	pl.open = 3
+	pl.queues[Live] = []chan *slot{ch}
+	pl.release(&conn{})
+	select {
+	case s := <-ch:
+		if s.c == nil {
+			t.Fatal("released connection not handed over")
+		}
+	default:
+		t.Fatal("released connection kept from a waiter while throttled")
+	}
+}
