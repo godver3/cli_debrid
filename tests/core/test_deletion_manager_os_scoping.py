@@ -65,3 +65,21 @@ class TestDeletionManagerOsScoping(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def test_deleting_a_symlink_takes_its_subtitles(tmp_path):
+    """Live 2026-11-22: deleting a movie left 'Movie.en.srt' behind, so its
+    folder never emptied. Only the deleted file's own subtitles go."""
+    import os
+    from utilities.deletion_manager import remove_sidecar_subtitles
+    folder = tmp_path / 'Plan 9 from Outer Space (1959)'
+    folder.mkdir()
+    video = folder / 'Plan 9 (1959) - 1080p.mkv'
+    os.symlink('/nonexistent/target.mkv', video)
+    for name in ('Plan 9 (1959) - 1080p.en.srt', 'Plan 9 (1959) - 1080p.eng.forced.ass',
+                 'Plan 9 (1959) - 720p.en.srt', 'Plan 9 (1959) - 1080p.nfo', 'poster.jpg'):
+        (folder / name).write_text('x')
+    os.unlink(video)
+    removed = sorted(os.path.basename(p) for p in remove_sidecar_subtitles(str(video)))
+    assert removed == ['Plan 9 (1959) - 1080p.en.srt', 'Plan 9 (1959) - 1080p.eng.forced.ass']
+    assert sorted(os.listdir(folder)) == ['Plan 9 (1959) - 1080p.nfo', 'Plan 9 (1959) - 720p.en.srt', 'poster.jpg']
