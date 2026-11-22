@@ -135,3 +135,13 @@ def test_queue_appends_while_running(db):
             time.sleep(0.05)
     st = subtitle_bulk.status()
     assert st['done'] == st['total'] and st['found'] == st['done']
+
+
+def test_history_of_replaced_file_does_not_count(db):
+    from utilities import subtitle_status
+    db.record(1, 'x', 'en', 'gestdown', 900, 971, [], '', 'srt', 'plex', None, 'auto', media_key='101')
+    db.record(2, 'x', 'en', 'gestdown', 900, 971, [], '', 'srt', 'plex', None, 'auto', media_key='old-key')
+    with _settings(), mock.patch('utilities.config.downsub_config.get_setting',
+                                 side_effect=lambda s, k, d=None: 'eng' if k == 'subtitle_languages' else d):
+        missing = {r['id'] for r in subtitle_status.missing_items()}
+    assert 1 not in missing and 2 in missing      # item 2's file is now ratingKey 102

@@ -32,6 +32,7 @@ def _ensure_table(conn):
             path        TEXT,
             source      TEXT,
             sync        TEXT,
+            media_key   TEXT,
             created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         CREATE INDEX IF NOT EXISTS idx_subtitle_history_item ON subtitle_history (item_id);
@@ -49,23 +50,25 @@ def _ensure_table(conn):
             tried_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             found     INTEGER NOT NULL DEFAULT 0
         )""")
-    try:
-        conn.execute("ALTER TABLE subtitle_history ADD COLUMN sync TEXT")
-    except Exception:
-        pass
+    for col in ('sync', 'media_key'):
+        try:
+            conn.execute(f"ALTER TABLE subtitle_history ADD COLUMN {col} TEXT")
+        except Exception:
+            pass
     _ready = True
 
 
 def record(item_id, title, language, provider, score, max_score, matches,
-           release, fmt, saved_via, path, source, sync=None):
+           release, fmt, saved_via, path, source, sync=None, media_key=None):
     conn = get_db_connection()
     try:
         _ensure_table(conn)
         conn.execute(
             "INSERT INTO subtitle_history (item_id, title, language, provider, score, max_score, "
-            "matches, release, format, saved_via, path, source, sync) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "matches, release, format, saved_via, path, source, sync, media_key) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (item_id, title, language, provider, score, max_score, json.dumps(sorted(matches or [])),
-             release, fmt, saved_via, path, source, sync))
+             release, fmt, saved_via, path, source, sync, media_key))
         conn.execute(
             "DELETE FROM subtitle_history WHERE id <= "
             "(SELECT MAX(id) FROM subtitle_history) - ?", (_KEEP_ROWS,))
@@ -108,8 +111,17 @@ def for_item(item_id):
         conn.close()
 
 
-def languages_by_item(item_ids):
-    """{item_id: set(language)} recorded for these items."""
+def media_key_of(item):
+    """Which file a subtitle belongs to: the Plex ratingKey (a repair
+    replacement in Plex mode is a new Plex item) or the file name."""
+    item = item or {}
+    return str(item.get('ms_item_id') or item.get('filled_by_file') or '') or None
+
+
+def languages_by_item(item_ids, keys=None):
+    """{item_id: set(language)} recorded for these items. With keys
+    ({item_id: media_key}), rows saved for an earlier file of the item (before
+    a repair replacement or upgrade) don't count."""
     if not item_ids:
         return {}
     conn = get_db_connection()
@@ -121,7 +133,10 @@ def languages_by_item(item_ids):
             chunk = ids[i:i + 500]
             q = ','.join('?' * len(chunk))
             for r in conn.execute(
-                    f"SELECT item_id, language FROM subtitle_history WHERE item_id IN ({q})", chunk):
+                    f"SELECT item_id, language, media_key FROM subtitle_history WHERE item_id IN ({q})", chunk):
+                want = (keys or {}).get(r[0])
+                if want and r[2] and r[2] != want:
+                    continue
                 out.setdefault(r[0], set()).add(r[1])
         return out
     finally:

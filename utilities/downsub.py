@@ -660,7 +660,8 @@ def _record_history(ctx, sub, lang, fmt, via, path, source):
             title = f"{title} S{int(item['season_number']):02d}E{int(item.get('episode_number') or 0):02d}"
         subtitle_history.record(
             item.get('id'), title, lang, sub.provider_name, score, get_scores(video)['hash'],
-            matches, _release_of(sub), fmt, via, path, source, sync=ctx.get('_sync_note'))
+            matches, _release_of(sub), fmt, via, path, source, sync=ctx.get('_sync_note'),
+            media_key=subtitle_history.media_key_of(item))
     except Exception as e:
         logging.debug(f"[subs] history record failed: {e}")
 

@@ -75,7 +75,7 @@ def collected(q='', kind='all', full=False):
         where.append('(title LIKE ? OR episode_title LIKE ?)')
         args += [f'%{q}%', f'%{q}%']
     cols = '*' if full else ('id, title, year, type, season_number, episode_number, '
-                             'location_on_disk, collected_at, version')
+                             'location_on_disk, collected_at, version, filled_by_file, ms_item_id')
     conn = get_db_connection()
     try:
         return [dict(r) for r in conn.execute(
@@ -91,7 +91,8 @@ def with_status(rows, plex=None, wanted=None):
     plex = is_plex_mode() if plex is None else plex
     wanted = wanted_langs() if wanted is None else wanted
     ids = [r['id'] for r in rows]
-    history = subtitle_history.languages_by_item(ids)
+    history = subtitle_history.languages_by_item(
+        ids, {r['id']: subtitle_history.media_key_of(r) for r in rows})
     embedded = subtitle_history.embedded_items(ids)
     dir_cache = {}
     out = []
