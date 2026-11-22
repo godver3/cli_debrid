@@ -84,10 +84,9 @@ def item_detail(item_id):
     files, plex_streams = [], None
     if plex:
         plex_streams = subtitle_resync.plex_streams(item.get('ms_item_id'))
-    else:
-        for lang, paths in status_mod.sidecar_langs(item.get('location_on_disk'), {}).items():
-            for p in paths:
-                files.append({'language': lang, 'path': p, 'name': os.path.basename(p)})
+    for lang, paths in status_mod.sidecar_langs(item.get('location_on_disk'), {}).items():
+        for p in paths:
+            files.append({'language': lang, 'path': p, 'name': os.path.basename(p)})
     return jsonify({
         'id': item_id, 'label': status_mod.label(item), 'type': item.get('type'),
         'release': item.get('filled_by_title') or item.get('original_scraped_torrent_title') or '',

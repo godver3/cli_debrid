@@ -97,7 +97,9 @@ def with_status(rows, plex=None, wanted=None):
     dir_cache = {}
     out = []
     for r in rows:
-        found = {} if plex else sidecar_langs(r.get('location_on_disk'), dir_cache)
+        # sidecar files count in both modes: in Plex mode a writable library
+        # folder (e.g. a symlink folder Bazarr wrote to) has them too
+        found = sidecar_langs(r.get('location_on_disk'), dir_cache)
         for lang in history.get(r['id'], ()):
             found.setdefault((lang or '').lower(), [])
         emb = r['id'] in embedded

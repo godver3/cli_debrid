@@ -81,3 +81,28 @@ def test_apply_writes_settings():
     assert written[('Subtitle Settings', 'enable_subtitles')] is True
     assert written[('Subtitle Settings', 'sync_subtitles')] == 'unless_hash'
     assert written[('Bazarr Integration', 'enabled')] is False
+
+
+def test_handled_subtitles_marked_checked(tmp_path, monkeypatch):
+    import hashlib
+    a, b, c = tmp_path / 'a.en.srt', tmp_path / 'b.en.srt', tmp_path / 'c.en.srt'
+    for f in (a, b, c):
+        f.write_bytes(f.name.encode())
+    hist = {'data': [
+        {'id': 1, 'action': 1, 'score': '80.0%', 'subtitles_path': str(a)},
+        {'id': 2, 'action': 5, 'score': None, 'subtitles_path': str(a)},
+        {'id': 3, 'action': 1, 'score': '95.5%', 'subtitles_path': str(b)},
+        {'id': 4, 'action': 1, 'score': '70.0%', 'subtitles_path': str(c)},
+        {'id': 5, 'action': 1, 'score': '99%', 'subtitles_path': str(tmp_path / 'gone.srt')},
+    ]}
+
+    def fake_get(url, headers=None, timeout=None):
+        return _Resp(hist if 'episodes/history' in url else {'data': []})
+    marked = {}
+    with mock.patch.object(bazarr_import.requests, 'get', side_effect=fake_get), \
+            mock.patch('database.subtitle_history.mark_sync_checked',
+                       side_effect=lambda d, r: marked.__setitem__(d, r)):
+        assert bazarr_import.mark_handled('http://h', 'k') == (2, 1)
+    assert marked[hashlib.sha1(b'a.en.srt').hexdigest()] == 'synced by Bazarr'
+    assert marked[hashlib.sha1(b'b.en.srt').hexdigest()].startswith('Bazarr match 96')
+    assert hashlib.sha1(b'c.en.srt').hexdigest() not in marked

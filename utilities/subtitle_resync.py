@@ -171,24 +171,30 @@ def resync_plex_stream(item, st, skip_checked=False):
 
 
 def resync_item(item, skip_checked=True):
-    """Every existing subtitle of one item. Returns (changed, checked, notes)."""
+    """Every existing subtitle of one item: sidecar files are fixed in place
+    (both modes); in Plex mode, uploaded Plex subtitles for languages without
+    a sidecar are fixed through Plex. Returns (changed, checked, notes)."""
     from utilities.subtitle_status import is_plex_mode, sidecar_langs
     changed = checked = 0
     notes = []
+    sidecars = sidecar_langs(item.get('location_on_disk'), {})
+    for lang, paths in sidecars.items():
+        for p in paths:
+            res = resync_sidecar(item, p, skip_checked=skip_checked)
+            if not res.get('skipped'):
+                checked += 1
+                notes.append(f"{lang}: {res['message']}")
+            changed += 1 if res.get('changed') else 0
     if is_plex_mode():
-        targets = [st for st in (plex_item_info(item.get('ms_item_id'))[0] or []) if st.get('external') and st.get('key')]
-        for st in targets:
+        have = {k.split('-')[0] for k in sidecars}
+        for st in plex_item_info(item.get('ms_item_id'))[0] or []:
+            if not (st.get('external') and st.get('key')):
+                continue
+            if (st.get('language') or 'und').split('-')[0].lower() in have:
+                continue          # that's the sidecar file Plex picked up
             res = resync_plex_stream(item, st, skip_checked=skip_checked)
             if not res.get('skipped'):
                 checked += 1
-                notes.append(f"{st.get('language') or 'und'}: {res['message']}")
+                notes.append(f"{st.get('language') or 'und'} (Plex): {res['message']}")
             changed += 1 if res.get('changed') else 0
-    else:
-        for lang, paths in sidecar_langs(item.get('location_on_disk'), {}).items():
-            for p in paths:
-                res = resync_sidecar(item, p, skip_checked=skip_checked)
-                if not res.get('skipped'):
-                    checked += 1
-                    notes.append(f"{lang}: {res['message']}")
-                changed += 1 if res.get('changed') else 0
     return changed, checked, notes

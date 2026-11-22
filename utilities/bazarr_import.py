@@ -138,6 +138,7 @@ def fetch_plan(url, api_key):
         not_carried.append(f'{len(profiles) - len(used)} non-default language profile(s)')
 
     plan = {
+        '_key': key,
         'bazarr_url': base,
         'version': (settings.get('general') or {}).get('version') or '',
         'profiles': [p.get('name') for p in used],
@@ -156,7 +157,7 @@ def fetch_plan(url, api_key):
 
 def public_plan(plan):
     """The plan without the password, for the preview."""
-    out = dict(plan)
+    out = {k: v for k, v in plan.items() if not k.startswith('_')}
     out['opensubtitles_password'] = 'set' if plan.get('opensubtitles_password') else ''
     try:
         from utilities.settings import get_setting
@@ -194,8 +195,75 @@ def apply_plan(plan, enable=True, stop_bazarr_feed=False):
     put('sync_max_offset', int(plan.get('sync_max_offset') or 60), f"sync max offset: {plan.get('sync_max_offset')}s")
     if enable:
         put('enable_subtitles', True, 'subtitle downloads: on')
+    try:
+        marked, missing = mark_handled(plan['bazarr_url'], plan['_key'])
+        if marked:
+            applied.append(f'{marked} subtitles Bazarr already synced/matched will be skipped by Sync existing')
+    except Exception as e:
+        logging.warning(f"[subs] Bazarr history import failed: {e}")
     if stop_bazarr_feed:
         set_setting('Bazarr Integration', 'enabled', False)
         applied.append('stopped feeding new items to Bazarr')
     logging.info(f"[subs] imported Bazarr settings from {plan.get('bazarr_url')}: {applied}")
     return applied
+
+
+def _history(base, key):
+    rows = []
+    for path in ('/api/episodes/history?start=0&length=-1', '/api/movies/history?start=0&length=-1'):
+        try:
+            data = _get(base, key, path)
+        except BazarrError as e:
+            logging.info(f"[subs] Bazarr history {path}: {e}")
+            continue
+        rows += (data.get('data') if isinstance(data, dict) else data) or []
+    return rows
+
+
+def _score_pct(score):
+    try:
+        return float(str(score).rstrip('%'))
+    except (TypeError, ValueError):
+        return None
+
+
+def handled_subtitles(base, key):
+    """{subtitles_path: reason} for subtitles Bazarr already synced, or
+    downloaded at >= 90% (the score above which Bazarr's subsync skips them,
+    i.e. a release match)."""
+    out = {}
+    for r in sorted(_history(base, key), key=lambda x: x.get('id') or 0):
+        path = r.get('subtitles_path')
+        if not path:
+            continue
+        if r.get('action') == 5:
+            out[path] = 'synced by Bazarr'
+        elif r.get('action') in (1, 2, 3, 4):
+            pct = _score_pct(r.get('score'))
+            if pct is not None and pct >= 90 and out.get(path) != 'synced by Bazarr':
+                out[path] = f'Bazarr match {pct:.0f}%'
+    return out
+
+
+def mark_handled(base, key):
+    """Mark subtitles Bazarr already synced or matched as checked, so 'Sync
+    existing subtitles' skips them. Returns (marked, not_found)."""
+    import hashlib
+    import os
+    from database import subtitle_history
+    marked = missing = 0
+    for path, why in handled_subtitles(base, key).items():
+        try:
+            if not os.path.isfile(path):
+                missing += 1
+                continue
+            with open(path, 'rb') as f:
+                digest = hashlib.sha1(f.read()).hexdigest()
+        except OSError:
+            missing += 1
+            continue
+        subtitle_history.mark_sync_checked(digest, why)
+        marked += 1
+    logging.info(f"[subs] Bazarr import: {marked} subtitle(s) Bazarr already synced/matched marked as checked"
+                 f"{f', {missing} not found on disk' if missing else ''}")
+    return marked, missing

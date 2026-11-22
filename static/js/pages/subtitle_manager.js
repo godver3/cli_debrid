@@ -205,32 +205,33 @@
 
   function renderCurrent(d) {
     const el = $('sm-d-current');
+    const parts = [];
+    for (const sc of d.sidecars || []) {
+      const ext = sc.name.split('.').pop().toLowerCase();
+      parts.push(`<div style="display:flex;gap:8px;align-items:center;margin:3px 0;flex-wrap:wrap">
+        <span class="sm-chip ok">${esc(sc.language)}</span><span class="sm-chip${ext === 'srt' ? '' : ' warn'}">${esc(ext)}</span>
+        <span class="sm-chip">file</span><span style="word-break:break-all">${esc(sc.name)}</span>
+        <button class="sm-btn sm-mini" data-sync-path="${esc(sc.path)}">Sync</button>
+        <button class="sm-btn sm-btn-red sm-mini" data-del="${esc(sc.path)}">Delete</button></div>`);
+    }
     if (d.plex_mode) {
       if (d.plex_streams == null) {
-        el.innerHTML = '<span class="sm-muted">Could not ask Plex (no rating key yet, or Plex unreachable).</span>';
-        return;
+        parts.push('<span class="sm-muted">Could not ask Plex (no rating key yet, or Plex unreachable).</span>');
+      } else {
+        const haveFile = new Set((d.sidecars || []).map((sc) => sc.language.split('-')[0]));
+        for (const st of d.plex_streams) {
+          if (st.external && haveFile.has((st.language || 'und').split('-')[0])) continue;   // the file above
+          const heavy = ['ass', 'ssa', 'pgs', 'vobsub', 'dvd_subtitle', 'hdmv_pgs_subtitle', 'dvb_subtitle'].includes((st.codec || '').toLowerCase());
+          parts.push(`<div style="display:flex;gap:6px;align-items:center;margin:3px 0;flex-wrap:wrap"><span class="sm-chip ok">${esc(st.language || 'und')}</span>
+            <span class="sm-chip${heavy ? ' warn' : ''}" title="${heavy ? 'Many clients transcode to show this format' : ''}">${esc(st.codec)}</span>
+            ${st.forced ? '<span class="sm-chip">forced</span>' : ''}<span class="sm-chip">${st.external ? 'Plex upload' : 'embedded'}</span>
+            <span class="sm-muted">${esc(st.title)}</span>
+            ${st.external && st.id != null ? `<button class="sm-btn sm-mini" data-sync-stream="${esc(st.id)}">Sync</button>
+            <button class="sm-btn sm-btn-red sm-mini" data-del-stream="${esc(st.id)}">Delete</button>` : ''}</div>`);
+        }
       }
-      if (!d.plex_streams.length) { el.innerHTML = '<span class="sm-muted">Plex has no subtitles for this item.</span>'; return; }
-      el.innerHTML = d.plex_streams.map((s) => {
-        const heavy = ['ass', 'ssa', 'pgs', 'vobsub', 'dvd_subtitle', 'hdmv_pgs_subtitle', 'dvb_subtitle'].includes((s.codec || '').toLowerCase());
-        return `<div style="display:flex;gap:6px;align-items:center;margin:3px 0;flex-wrap:wrap"><span class="sm-chip ok">${esc(s.language || 'und')}</span>
-          <span class="sm-chip${heavy ? ' warn' : ''}" title="${heavy ? 'Many clients transcode to show this format' : ''}">${esc(s.codec)}</span>
-          ${s.forced ? '<span class="sm-chip">forced</span>' : ''}${s.external ? '<span class="sm-chip">external</span>' : '<span class="sm-chip">embedded</span>'}
-          <span class="sm-muted">${esc(s.title)}</span>
-          ${s.external && s.id != null ? `<button class="sm-btn" data-sync-stream="${esc(s.id)}">Sync</button>
-          <button class="sm-btn sm-btn-red" data-del-stream="${esc(s.id)}">Delete</button>` : ''}</div>`;
-      }).join('');
-      return;
     }
-    if (!d.sidecars.length) { el.innerHTML = '<span class="sm-muted">No subtitle files next to this file.</span>'; return; }
-    el.innerHTML = d.sidecars.map((s) => {
-      const ext = s.name.split('.').pop().toLowerCase();
-      return `<div style="display:flex;gap:8px;align-items:center;margin:3px 0;flex-wrap:wrap">
-        <span class="sm-chip ok">${esc(s.language)}</span><span class="sm-chip${ext === 'srt' ? '' : ' warn'}">${esc(ext)}</span>
-        <span style="word-break:break-all">${esc(s.name)}</span>
-        <button class="sm-btn" data-sync-path="${esc(s.path)}">Sync</button>
-        <button class="sm-btn sm-btn-red" data-del="${esc(s.path)}">Delete</button></div>`;
-    }).join('');
+    el.innerHTML = parts.join('') || '<span class="sm-muted">No subtitles for this item.</span>';
   }
 
   async function search() {
