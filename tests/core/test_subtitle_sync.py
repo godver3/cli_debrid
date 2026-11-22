@@ -165,3 +165,17 @@ def test_slow_file_stops_after_first_window(monkeypatch, media):
     new, info = subtitle_sync.sync_subtitle(path, _srt(speech))
     assert new is None and info['status'] == 'slow' and len(calls) == 1
     assert subtitle_sync.describe(info).startswith('not checked: reading the file took')
+
+
+def test_embedded_track_lookup_reuses_add_time_probe(monkeypatch):
+    """Live 2026-11-22: a new movie's file got a second ffprobe from the sync
+    step; the add-time header read already had its subtitle tracks."""
+    from unittest import mock
+    from utilities import subtitle_sync
+    tracks = [{'codec': 'hdmv_pgs_subtitle', 'language': 'eng', 'forced': False},
+              {'codec': 'subrip', 'language': 'eng', 'forced': True, 'title': 'Forced'},
+              {'codec': 'subrip', 'language': 'eng', 'forced': False, 'title': 'English'}]
+    with mock.patch('usenet.repair_engine.cached_subtitle_tracks', return_value=tracks), \
+            mock.patch.object(subtitle_sync.subprocess, 'run') as run:
+        assert subtitle_sync._embedded_text_stream('/m/x.mkv') == (2, 'eng')
+    assert not run.called                         # no ffprobe of its own

@@ -72,24 +72,45 @@ def _read_window(path, start, length, timeout):
 EMBED_TEXT_CODECS = {'subrip', 'srt', 'ass', 'ssa', 'mov_text', 'webvtt', 'text'}
 
 
-def _embedded_text_stream(path, timeout=20):
-    """(position among subtitle streams, language) of the first non-forced
-    embedded text subtitle track, or None. Header read only."""
+def _subtitle_tracks(path, timeout=20):
+    """Subtitle tracks [{codec, language, forced, ...}] in stream order: the
+    add-time header read's when it saw this file (no second ffprobe), else
+    one header read here. None when the probe failed."""
+    try:
+        from usenet.repair_engine import cached_subtitle_tracks
+        cached = cached_subtitle_tracks(str(path))
+        if cached is not None:
+            return cached
+    except Exception:
+        pass
     try:
         r = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 's',
-                            '-show_entries', 'stream=codec_name:stream_tags=language:stream_disposition=forced',
+                            '-show_entries', 'stream=codec_name:stream_tags:stream_disposition=forced',
                             '-of', 'json', str(path)], capture_output=True, text=True, timeout=timeout)
         if r.returncode != 0:
             return None
         import json
-        streams = json.loads(r.stdout or '{}').get('streams') or []
+        from utilities.subtitle_lang import track_frames
+        return [{'codec': (st.get('codec_name') or '').lower(),
+                 'language': ((st.get('tags') or {}).get('language') or '').strip().lower(),
+                 'forced': bool((st.get('disposition') or {}).get('forced')),
+                 'title': (st.get('tags') or {}).get('title') or '',
+                 'frames': track_frames(st.get('tags'))}
+                for st in json.loads(r.stdout or '{}').get('streams') or []]
     except Exception:
         return None
-    for pos, st in enumerate(streams):
-        if (st.get('disposition') or {}).get('forced'):
+
+
+def _embedded_text_stream(path, timeout=20):
+    """(position among subtitle streams, language) of the first embedded text
+    subtitle track that carries the dialogue (not forced, or a forced-flagged
+    full track), or None. Header read only, shared with the add-time check."""
+    from utilities.subtitle_lang import counts_as_full
+    for pos, st in enumerate(_subtitle_tracks(path, timeout) or []):
+        if not counts_as_full(st):
             continue
-        if (st.get('codec_name') or '').lower() in EMBED_TEXT_CODECS:
-            return pos, ((st.get('tags') or {}).get('language') or 'und')
+        if (st.get('codec') or '').lower() in EMBED_TEXT_CODECS:
+            return pos, (st.get('language') or 'und')
     return None
 
 
