@@ -103,5 +103,19 @@ def test_score_alone_is_not_enough_for_an_episode():
     loose = _sub('Dragon Ball Curse of the Blood Rubies', 'subsource', ('series', 'year', 'country'))
     assert not identity_ok(loose, ep)
     assert identity_ok(_sub('x', matches=('hash',)), ep)
+    # a series ID stands in for the series name, never for season/episode
+    assert identity_ok(_sub('x', matches=('series_imdb_id', 'season', 'episode')), ep)
+    assert not identity_ok(_sub('x', matches=('series_imdb_id', 'year', 'country')), ep)
     with mock.patch('subliminal.score.compute_score', return_value=810):
         assert _ranker('Dragon Ball S01E132', {(1, 132)})(loose, ep) == 0
+
+
+def test_movie_found_by_id_under_another_title_counts():
+    """OpenSubtitles files 'Spirited Away' as 'Sen to Chihiro no kamikakushi':
+    no title match, but the IMDb ID proves the movie (as compute_score does)."""
+    from subliminal.video import Movie
+    from utilities.downsub import identity_ok
+    movie = Movie('Spirited.Away.2001.1080p.BluRay.mkv', 'Spirited Away', year=2001)
+    assert identity_ok(_sub('x', matches=('imdb_id', 'year')), movie)
+    assert identity_ok(_sub('x', matches=('tmdb_id',)), movie)
+    assert not identity_ok(_sub('x', matches=('year', 'country', 'release_group')), movie)

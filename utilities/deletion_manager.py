@@ -59,8 +59,15 @@ def remove_sidecar_subtitles(video_path):
         names = os.listdir(folder)
     except OSError:
         return removed
+    # Another video still here whose name starts with this one's
+    # ('Movie.2020.1080p.REMUX.mkv' next to 'Movie.2020.1080p.mkv') owns
+    # the subtitles named after it.
+    longer = [s for s in (os.path.splitext(f)[0] for f in names if f.lower().endswith(VIDEO_EXTS))
+              if s != stem and s.startswith(stem + '.')]
     for f in names:
         if not f.startswith(stem + '.') or not f.lower().endswith(SIDECAR_SUBTITLE_EXTS):
+            continue
+        if any(f.startswith(s + '.') for s in longer):
             continue
         path = os.path.join(folder, f)
         try:

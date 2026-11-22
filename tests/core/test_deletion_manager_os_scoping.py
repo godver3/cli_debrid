@@ -83,3 +83,19 @@ def test_deleting_a_symlink_takes_its_subtitles(tmp_path):
     removed = sorted(os.path.basename(p) for p in remove_sidecar_subtitles(str(video)))
     assert removed == ['Plan 9 (1959) - 1080p.en.srt', 'Plan 9 (1959) - 1080p.eng.forced.ass']
     assert sorted(os.listdir(folder)) == ['Plan 9 (1959) - 1080p.nfo', 'Plan 9 (1959) - 720p.en.srt', 'poster.jpg']
+
+
+def test_subtitles_of_a_longer_named_version_stay(tmp_path):
+    """'Movie.2020.1080p.REMUX.en.srt' starts with 'Movie.2020.1080p.' but
+    belongs to the REMUX version still in the folder."""
+    import os
+    from utilities.deletion_manager import remove_sidecar_subtitles
+    folder = tmp_path / 'Movie (2020)'
+    folder.mkdir()
+    video = folder / 'Movie.2020.1080p.mkv'
+    os.symlink('/nonexistent/a.mkv', folder / 'Movie.2020.1080p.REMUX.mkv')
+    for name in ('Movie.2020.1080p.en.srt', 'Movie.2020.1080p.REMUX.en.srt'):
+        (folder / name).write_text('x')
+    removed = [os.path.basename(p) for p in remove_sidecar_subtitles(str(video))]
+    assert removed == ['Movie.2020.1080p.en.srt']
+    assert os.path.exists(folder / 'Movie.2020.1080p.REMUX.en.srt')

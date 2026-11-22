@@ -563,16 +563,23 @@ def names_other_episode(sub, allowed):
 def identity_ok(sub, video, matches=None):
     """The subtitle is for this movie/episode, not only a good score: an
     episode needs season and episode (series + year + country alone reach
-    the score floor), a movie its title. A file-hash match is enough."""
+    the score floor), a movie its title. A file-hash match is enough. An
+    ID match stands in for the name as in subliminal's compute_score, so a
+    subtitle filed under another title (foreign or alternate name) found by
+    IMDb/TMDB/TVDB ID still counts."""
     try:
-        m = matches if matches is not None else sub.get_matches(video)
+        m = set(matches if matches is not None else sub.get_matches(video))
     except Exception:
         return False
     if 'hash' in m:
         return True
     if isinstance(video, Episode):
-        return {'series', 'season', 'episode'} <= set(m)
-    return 'title' in m
+        if m & {'imdb_id', 'tmdb_id', 'tvdb_id'}:
+            return True
+        if m & {'series_imdb_id', 'series_tmdb_id', 'series_tvdb_id'}:
+            m.add('series')
+        return {'series', 'season', 'episode'} <= m
+    return bool(m & {'title', 'imdb_id', 'tmdb_id'})
 
 
 def _ranker(target_release, allowed=None):
