@@ -1,4 +1,4 @@
-"""What the media server (Plex, or Jellyfin/Emby) knows about an item's
+"""What the media server (Plex, Jellyfin/Emby or Silo) knows about an item's
 subtitles, without reading the file: the server already scanned every file
 (as Bazarr does with ffprobe, but Bazarr re-reads each file itself).
 
@@ -40,7 +40,7 @@ def _jf_conn():
 
 
 def server():
-    """'plex', 'jellyfin' (also Emby) or None: Plex in Plex mode; in
+    """'plex', 'jellyfin' (also Emby), 'silo' or None: Plex in Plex mode; in
     Symlinked/Local mode the selected media server type."""
     from utilities.settings import get_setting
     mode = get_setting('File Management', 'file_collection_management', 'Plex')
@@ -48,7 +48,8 @@ def server():
     if mode != 'Plex':
         want = (get_setting('File Management', 'media_server_type', 'plex') or 'plex').lower()
     if want == 'silo':
-        return None  # no track lookup for Silo yet: the add-time ffprobe tracks are used
+        from utilities.silo_functions import is_silo_mode
+        return 'silo' if is_silo_mode() else None
     if want == 'jellyfin':
         url, token = _jf_conn()
         return 'jellyfin' if url and token else None
@@ -277,6 +278,57 @@ def _jellyfin_scan(items):
             start += PAGE
 
 
+def _silo_tracks(version):
+    out = []
+    for st in version.get('subtitle_tracks') or []:
+        if st.get('external'):
+            continue
+        if 'commentary' in (st.get('title') or st.get('embedded_title') or '').lower():
+            continue
+        lang = (st.get('language') or '').lower()
+        out.append({'lang': lang, 'code': lang, 'codec': (st.get('codec') or '').lower(),
+                    'forced': bool(st.get('forced')), 'title': st.get('title') or st.get('embedded_title') or ''})
+    return out
+
+
+def _silo_scan(items):
+    """Match our items to Silo's by file name (one pass over the admin
+    catalog), then read each matched item's details for its embedded tracks.
+    Details need a profile: an admin's primary profile without a PIN."""
+    import os
+    from utilities import silo_functions as silo
+    url, key = silo.silo_config()
+    profile = silo.primary_profile_id(url, key)
+    if not profile:
+        logging.warning("[subs] Silo: no admin profile without a PIN, so embedded subtitles can't be read")
+        return
+    by_name = {}
+    for it in items:
+        name = os.path.basename(it.get('location_on_disk') or '') or it.get('filled_by_file') or ''
+        if name:
+            by_name.setdefault(name.lower(), []).append(cache_key(it))
+    wanted = {}  # content id -> {file name: [cache keys]}
+    library = silo.get_collected_from_silo() or {}
+    for entry in (library.get('movies') or []) + (library.get('episodes') or []):
+        name = os.path.basename(entry.get('location') or '').lower()
+        if name in by_name:
+            wanted.setdefault(entry['ratingKey'], {})[name] = by_name[name]
+    for content_id, names in wanted.items():
+        try:
+            detail = silo.catalog_detail(url, key, content_id, profile) or {}
+        except Exception as exc:
+            logging.debug(f"[subs] Silo item {content_id}: {exc}")
+            continue
+        found = {}
+        for version in detail.get('versions') or []:
+            for k in names.get(os.path.basename(version.get('file_path') or '').lower()) or []:
+                found[k] = _silo_tracks(version)
+        if found:
+            _store(found)
+        with _LOCK:
+            _SCAN['done'] = min(_SCAN.get('total', 0), _SCAN.get('done', 0) + len(found))
+
+
 def _remember_unknown(items):
     """Items the server couldn't tell us about (no episode key, not matched)
     are cached as 'no embedded tracks' for an hour, so every page load
@@ -308,6 +360,12 @@ def start_scan(items):
             todo_items = [it for it in items if cache_key(it) and cache_key(it) not in have]
             with _LOCK:
                 _SCAN['total'] = len(todo_items)
+            if which == 'silo':
+                if todo_items:
+                    _silo_scan(todo_items)
+                _remember_unknown(todo_items)
+                logging.info(f"[subs] Silo embedded-subtitle scan: {len(todo_items)} item(s) checked")
+                return
             if which == 'jellyfin':
                 if todo_items:
                     _jellyfin_scan(todo_items)

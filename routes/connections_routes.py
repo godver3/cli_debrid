@@ -1294,6 +1294,12 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
                 base_response['details'].update({'url': floppy_config['base_url']})
             else:
                 base_response['error'] = message
+        elif source_type == 'Silo Requests':
+            from content_checkers.silo_requests import test_connection as silo_requests_test
+            ok, message = silo_requests_test()
+            base_response['connected'] = ok
+            if not ok:
+                base_response['error'] = message
         elif source_type == 'Simkl Watchlist':
             from content_checkers.simkl import auth_status
             status = auth_status()

@@ -153,6 +153,8 @@ def _public_settings() -> dict:
     from utilities import media_sessions as ms
     url, token, url_src, token_src = ms.jellyfin_server_source(get_setting)
     out['jellyfin_effective'] = {'url': url, 'url_source': url_src, 'token_set': bool(token), 'token_source': token_src}
+    silo_url, silo_key = ms.silo_server(get_setting)
+    out['silo_effective'] = {'url': silo_url, 'key_set': bool(silo_key)}
     out['servers'] = [
         {**{k: v for k, v in s.items() if k != 'password'}, 'password': '', 'password_set': bool(s.get('password'))}
         for s in _servers(cur.get('servers')) if isinstance(s, dict)]
@@ -432,10 +434,27 @@ def jellyfin_test():
     return jsonify({**ms.jellyfin_test(url, token), 'url_source': url_src, 'token_source': token_src})
 
 
+@mount_bp.route('/api/silo_test', methods=['POST'])
+@admin_required
+def silo_test():
+    """Can the mount read Silo's playback sessions? Silo's URL and key are
+    set in Settings (File Management), not on this page."""
+    from utilities import media_sessions as ms
+    from utilities.silo_functions import test_connection
+    url, key = ms.silo_server(get_setting)
+    if not url:
+        return jsonify({'ok': False, 'error': 'Silo is not the media server, or has no URL/API key (Settings → File Management).'})
+    ok, message = test_connection(url, key)
+    if not ok:
+        return jsonify({'ok': False, 'error': message, 'url': url})
+    sessions, err = ms.silo_sessions_checked(get_setting)
+    return jsonify({'ok': not err, 'error': err, 'url': url, 'server': 'Silo', 'sessions': len(sessions)})
+
+
 @mount_bp.route('/api/now_playing')
 @admin_required
 def now_playing():
-    """Media server sessions (Plex, Jellyfin/Emby) streaming from the
+    """Media server sessions (Plex, Jellyfin/Emby, Silo) streaming from the
     built-in mount (others left out)."""
     if not builtin_selected():
         return jsonify({'selected': False, 'sessions': []})

@@ -47,11 +47,12 @@ def _headers(key: str) -> dict:
     return {'Authorization': f'Bearer {key}', 'Accept': 'application/json'}
 
 
-def _request(method: str, path: str, url: str = None, key: str = None, **kw) -> requests.Response:
+def _request(method: str, path: str, url: str = None, key: str = None, headers_extra: dict = None,
+             **kw) -> requests.Response:
     if url is None or key is None:
         url, key = silo_config()
     kw.setdefault('timeout', _TIMEOUT)
-    return requests.request(method, f'{url}{path}', headers=_headers(key), **kw)
+    return requests.request(method, f'{url}{path}', headers={**_headers(key), **(headers_extra or {})}, **kw)
 
 
 def _problem(r: requests.Response) -> str:
@@ -281,16 +282,28 @@ def remove_file_from_silo(item_title: str, item_path: str, episode_title: str = 
 # Library contents (symlink verification)
 # ---------------------------------------------------------------------------
 
+def _epoch(iso: Optional[str]) -> Optional[int]:
+    if not iso:
+        return None
+    try:
+        from datetime import datetime, timezone
+        dt = datetime.fromisoformat(iso.replace('Z', '+00:00'))
+        return int((dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).timestamp())
+    except ValueError:
+        return None
+
+
 def get_collected_from_silo() -> Optional[Dict[str, List[Dict[str, Any]]]]:
-    """Every movie and episode file in Silo, shaped like get_collected_from_emby:
-    {'movies': [{'title', 'year', 'location'}], 'episodes': [{'title',
-    'season_number', 'episode_number', 'location'}]}. `location` is Silo's
-    path; verification compares file names only. None on failure."""
+    """Every movie and episode file in Silo, in the shape of
+    get_collected_from_emby (title, year, imdb_id, tmdb_id, type, location,
+    addedAt, genres, release_date, and for episodes the season/episode and
+    the show's ids). `location` is the path cli_debrid sees, mapped back
+    from Silo's path. One entry per file. None on failure."""
     url, key = silo_config()
     if not url or not key:
         return None
-    movies: List[dict] = []
-    episodes: List[dict] = []
+    raw: List[dict] = []
+    series: Dict[str, dict] = {}
     cursor = None
     pages = 0
     try:
@@ -304,27 +317,44 @@ def get_collected_from_silo() -> Optional[Dict[str, List[Dict[str, Any]]]]:
                 return None
             body = r.json() or {}
             for it in body.get('items') or []:
-                kind = it.get('type')
-                for v in it.get('versions') or []:
-                    loc = v.get('file_path')
-                    if not loc:
-                        continue
-                    if kind == 'movie':
-                        movies.append({'title': it.get('title'), 'year': it.get('year'), 'location': loc})
-                    elif kind == 'episode':
-                        episodes.append({'title': it.get('series_title') or it.get('title'),
-                                         'episode_title': it.get('title'),
-                                         'season_number': it.get('season_number'),
-                                         'episode_number': it.get('episode_number'),
-                                         'location': loc})
+                if it.get('type') == 'series':
+                    series[it.get('content_id')] = it
+                elif it.get('type') in ('movie', 'episode'):
+                    raw.append(it)
             page = body.get('page') or {}
             cursor = page.get('next_cursor')
             pages += 1
             if not page.get('has_more') or not cursor:
                 break
+        libraries = get_libraries(url=url, key=key)
     except Exception as e:
         logging.error(f'[Silo] Catalog listing error: {e}')
         return None
+    base = get_setting('File Management', 'symlinked_files_path', '') or ''
+    movies: List[dict] = []
+    episodes: List[dict] = []
+    for it in raw:
+        for v in it.get('versions') or []:
+            if not v.get('file_path'):
+                continue
+            common = {'addedAt': _epoch(it.get('added_at')), 'guid': it.get('content_id'),
+                      'ratingKey': it.get('content_id'), 'type': it.get('type'),
+                      'location': from_silo_path(v['file_path'], libraries, base)}
+            if it.get('type') == 'movie':
+                movies.append({**common, 'title': it.get('title'), 'year': it.get('year'),
+                               'imdb_id': it.get('imdb_id'), 'tmdb_id': it.get('tmdb_id'),
+                               'genres': it.get('genres') or [], 'release_date': it.get('release_date')})
+            else:
+                show = series.get(it.get('series_id')) or {}
+                episodes.append({**common, 'title': show.get('title') or it.get('series_title'),
+                                 'episode_title': it.get('title'),
+                                 'season_number': it.get('season_number'), 'episode_number': it.get('episode_number'),
+                                 'year': show.get('year'), 'show_year': show.get('year'),
+                                 'release_date': it.get('air_date'),
+                                 'imdb_id': show.get('imdb_id'), 'tmdb_id': show.get('tmdb_id'),
+                                 'episode_imdb_id': it.get('imdb_id') or show.get('imdb_id'),
+                                 'episode_tmdb_id': it.get('tmdb_id') or show.get('tmdb_id'),
+                                 'genres': show.get('genres') or []})
     logging.info(f'[Silo] Catalog: {len(movies)} movie files, {len(episodes)} episode files ({pages} pages)')
     return {'movies': movies, 'episodes': episodes}
 
@@ -376,3 +406,36 @@ def next_episode_ids(content_id: str) -> List[str]:
         return []
     stem = '-'.join(parts[:-2])
     return [f'{stem}-{season}-{episode + 1}', f'{stem}-{season + 1}-1']
+
+
+# ---------------------------------------------------------------------------
+# Item details (subtitle tracks)
+# ---------------------------------------------------------------------------
+
+def primary_profile_id(url: str, key: str, timeout: float = 15) -> Optional[str]:
+    """An admin account's primary profile without a PIN: catalog item details
+    need a profile, and an admin key may act as its own account's profile."""
+    r = _request('GET', '/api/v2/admin/users', url, key, timeout=timeout)
+    r.raise_for_status()
+    for user in (r.json() or {}).get('items') or []:
+        if user.get('role') != 'admin' or user.get('enabled') is False:
+            continue
+        pr = _request('GET', f"/api/v2/admin/users/{user['id']}/profiles", url, key, timeout=timeout)
+        if pr.status_code != 200:
+            continue
+        profiles = (pr.json() or {}).get('items') or []
+        for p in sorted(profiles, key=lambda p: not p.get('is_primary')):
+            if not (p.get('pin_protected') or p.get('has_pin')):
+                return str(p['id'])
+    return None
+
+
+def catalog_detail(url: str, key: str, content_id: str, profile_id: str, timeout: float = 30) -> Optional[dict]:
+    """GET /api/v2/catalog/items/{id} as `profile_id`; None when it's not there."""
+    from urllib.parse import quote
+    r = _request('GET', f'/api/v2/catalog/items/{quote(content_id, safe="")}', url, key,
+                 timeout=timeout, headers_extra={'X-Profile-Id': profile_id})
+    if r.status_code == 404:
+        return None
+    r.raise_for_status()
+    return r.json() or {}

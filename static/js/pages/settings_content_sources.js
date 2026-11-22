@@ -270,6 +270,7 @@ const SOURCE_CATALOG = [
     { group: 'Requests', items: [
         ['Overseerr', 'Approved requests from Seerr (Overseerr / Jellyseerr).', 'Seerr URL and API key'],
         ['Agregarr', 'Agregarr sends its requests to cli_debrid as if it were Overseerr.', 'Point Agregarr at this cli_debrid'],
+        ['Silo Requests', 'Approved requests from Silo\'s own request feature (pending ones optional).', 'Silo as the media server (Settings → File Management)'],
     ]},
 ];
 const SOURCE_LABELS = { 'Overseerr': 'Seerr', 'MDBList': 'MDBList' };

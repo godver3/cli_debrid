@@ -131,7 +131,7 @@ _TORRENTIO_KEY_OPTS = {'realdebrid', 'alldebrid', 'premiumize', 'debridlink', 't
 # a privacy leak) anywhere else.
 _ACCOUNT_SOURCES = {'Overseerr', 'Other Plex Watchlist', 'My Plex RSS Watchlist',
                     'My Friends Plex RSS Watchlist', 'Plex Friends Watchlist',
-                    'Friends Trakt Watchlist'}
+                    'Friends Trakt Watchlist', 'Silo Requests'}
 # Public list identifiers that are the point of sharing a list source.
 _PUBLIC_LIST_KEYS = {'MDBList': {'urls', 'username', 'listname', 'list_id'}}
 

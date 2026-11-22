@@ -316,11 +316,27 @@ def check_service_connectivity():
                 services_reachable = False
                 failed_services_details.append({"service": f"Symlinked files path ({symlinked_path})", "type": "CONFIG_ERROR", "message": f"Cannot create symlinked files path. Error: {str(e)}"})
                 
+        # Silo picked as the media server: check it, and not a Plex or Jellyfin
+        # connection left over from before
+        from utilities.silo_functions import is_silo_selected, silo_config, test_connection as silo_test
+        silo_selected = is_silo_selected()
+        if silo_selected:
+            silo_url, silo_key = silo_config()
+            if silo_url and silo_key:
+                ok, message = silo_test(silo_url, silo_key)
+                if ok:
+                    logging.debug("Silo connectivity check passed")
+                else:
+                    logging.error(f"Silo check for symlink updates failed: {message}")
+                    services_reachable = False
+                    failed_services_details.append({"service": "Silo (for symlink updates)", "type": "CONNECTION_ERROR",
+                                                    "status_code": None, "message": message})
+
         # Check Plex connectivity for symlink updates if enabled
         plex_url_symlink = get_setting('File Management', 'plex_url_for_symlink')
         plex_token_symlink = get_setting('File Management', 'plex_token_for_symlink')
         
-        if plex_url_symlink and plex_token_symlink:
+        if plex_url_symlink and plex_token_symlink and not silo_selected:
             try:
                 response = api.get(f"{plex_url_symlink}?X-Plex-Token={plex_token_symlink}", timeout=5)
                 response.raise_for_status()
@@ -345,7 +361,7 @@ def check_service_connectivity():
         jellyfin_url = get_setting('Debug', 'emby_jellyfin_url')
         jellyfin_token = get_setting('Debug', 'emby_jellyfin_token')
         
-        if jellyfin_url and jellyfin_token:
+        if jellyfin_url and jellyfin_token and not silo_selected:
             try:
                 # Ensure URL ends with a slash
                 if not jellyfin_url.endswith('/'):

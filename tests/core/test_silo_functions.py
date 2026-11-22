@@ -182,13 +182,17 @@ class CatalogTests(SiloTestBase):
         seen = []
 
         def fake(method, url, headers=None, params=None, **kw):
+            if url.endswith('/api/v2/libraries'):
+                return _Resp(200, {'items': LIBS})
             seen.append(dict(params))
             return _Resp(200, pages.pop(0))
         with mock.patch.object(silo.requests, 'request', side_effect=fake):
             lib = silo.get_collected_from_silo()
-        self.assertEqual([m['location'] for m in lib['movies']], ['/media/Movies/A/a.mkv', '/media/Movies/A/a-4k.mkv'])
+        # Locations are mapped back to the paths cli_debrid sees.
+        self.assertEqual([m['location'] for m in lib['movies']],
+                         ['/mnt/symlinked/Movies/A/a.mkv', '/mnt/symlinked/Movies/A/a-4k.mkv'])
         self.assertEqual(lib['episodes'][0]['title'], 'Show')
-        self.assertEqual(lib['episodes'][0]['location'], '/media/TV Shows/Show/e1.mkv')
+        self.assertEqual(lib['episodes'][0]['location'], '/mnt/symlinked/TV Shows/Show/e1.mkv')
         self.assertEqual(seen[0]['include_file_paths'], 'true')
         self.assertEqual(seen[1]['cursor'], 'c1')
 
@@ -373,3 +377,106 @@ class TaskDefaultTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class SiloRequestsTests(unittest.TestCase):
+    REQS = [
+        {'title': 'The Matrix', 'media_type': 'movie', 'tmdb_id': 603, 'imdb_id': 'tt0133093', 'status': 'approved'},
+        {'title': 'Breaking Bad', 'media_type': 'series', 'tmdb_id': 1396, 'imdb_id': 'tt0903747', 'status': 'pending',
+         'seasons': [2, 3]},
+        {'title': 'Done', 'media_type': 'movie', 'imdb_id': 'tt1', 'status': 'completed'},
+    ]
+
+    def _run(self, cfg):
+        from content_checkers import silo_requests as sr
+        captured = {}
+
+        def merge(entries, name, unblacklist=False):
+            captured['entries'] = list(entries)
+            return captured['entries']
+        with mock.patch.object(sr, '_requests_from_silo', return_value=self.REQS), \
+                mock.patch.object(sr, 'gate_and_merge', side_effect=merge):
+            sr.get_wanted_from_silo_requests(cfg, {'Default': True})
+        return [(e['imdb_id'], e['season']) for e in captured['entries']]
+
+    def test_only_approved_by_default(self):
+        self.assertEqual(self._run({}), [('tt0133093', None)])
+
+    def test_pending_with_requested_seasons(self):
+        self.assertEqual(self._run({'include_pending': True}),
+                         [('tt0133093', None), ('tt0903747', 2), ('tt0903747', 3)])
+
+    def test_whole_show_when_partial_is_off(self):
+        self.assertEqual(self._run({'include_pending': True, 'allow_partial_requests': False}),
+                         [('tt0133093', None), ('tt0903747', None)])
+
+    def test_media_type_filter(self):
+        self.assertEqual(self._run({'include_pending': True, 'media_type': 'Shows'}),
+                         [('tt0903747', 2), ('tt0903747', 3)])
+
+    def test_unreadable_silo_adds_nothing(self):
+        from content_checkers import silo_requests as sr
+        with mock.patch.object(sr, '_requests_from_silo', return_value=None):
+            self.assertEqual(sr.get_wanted_from_silo_requests({}, {'Default': True}), [])
+
+
+class ImportShapeTests(SiloTestBase):
+    def test_episodes_carry_the_show_ids_and_local_paths(self):
+        page = {'items': [
+            {'content_id': 'series-tvdb-1', 'type': 'series', 'title': 'Show', 'year': 2005,
+             'tmdb_id': '2316', 'imdb_id': 'tt0386676', 'genres': ['Comedy']},
+            {'content_id': 'episode-tvdb-1-1-1', 'type': 'episode', 'title': 'Pilot', 'series_id': 'series-tvdb-1',
+             'season_number': 1, 'episode_number': 1, 'tmdb_id': '170135', 'added_at': '2026-11-22T22:21:28Z',
+             'versions': [{'file_id': '2', 'file_path': '/media/TV Shows/Show/e1.mkv'}]}],
+            'page': {'has_more': False}}
+
+        def fake(method, url, headers=None, params=None, **kw):
+            if url.endswith('/api/v2/libraries'):
+                return _Resp(200, {'items': LIBS})
+            return _Resp(200, page)
+        with mock.patch.object(silo.requests, 'request', side_effect=fake):
+            lib = silo.get_collected_from_silo()
+        ep = lib['episodes'][0]
+        self.assertEqual((ep['title'], ep['imdb_id'], ep['tmdb_id'], ep['episode_tmdb_id']),
+                         ('Show', 'tt0386676', '2316', '170135'))
+        self.assertEqual(ep['location'], '/mnt/symlinked/TV Shows/Show/e1.mkv')
+        self.assertEqual(ep['addedAt'], 1795386088)
+
+
+class SubtitleTrackTests(unittest.TestCase):
+    def test_embedded_tracks_only(self):
+        from utilities import plex_subtitle_info as psi
+        got = psi._silo_tracks({'subtitle_tracks': [
+            {'language': 'ENG', 'codec': 'subrip', 'forced': False},
+            {'language': 'fre', 'codec': 'ass', 'external': True},
+            {'language': 'eng', 'codec': 'pgs', 'title': 'Director Commentary'},
+            {'language': 'spa', 'codec': 'subrip', 'forced': True}]})
+        self.assertEqual([(t['lang'], t['codec'], t['forced']) for t in got],
+                         [('eng', 'subrip', False), ('spa', 'subrip', True)])
+
+
+class FolderCheckTests(unittest.TestCase):
+    def test_marker_seen_through_a_mapped_path(self):
+        import tempfile
+        import os
+        from utilities import path_checks as pc
+        with tempfile.TemporaryDirectory() as base:
+            os.makedirs(os.path.join(base, 'Movies'))
+            libs = [{'id': '1', 'name': 'Movies', 'type': 'movies', 'paths': ['/media/Movies']}]
+
+            def listing(url, key, path, timeout=10):
+                assert path == '/media/Movies'
+                return set(os.listdir(os.path.join(base, 'Movies')))  # Silo sees the same folder
+            with mock.patch.object(silo, 'get_libraries', return_value=libs), \
+                    mock.patch.object(pc, 'silo_list', side_effect=listing):
+                rows = pc.silo_sees_symlinks({'url': 'http://silo', 'token': 'sa_x'}, base)
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0][1][0], rows)
+
+    def test_no_library_inside_the_symlink_folder_fails(self):
+        from utilities import path_checks as pc
+        libs = [{'id': '1', 'name': 'Movies', 'type': 'movies', 'paths': ['/elsewhere/films']}]
+        with mock.patch.object(silo, 'get_libraries', return_value=libs):
+            rows = pc.silo_sees_symlinks({'url': 'http://silo', 'token': 'sa_x'}, '/mnt/symlinked')
+        self.assertFalse(rows[0][1][0])
+        self.assertIn('No Silo movie or TV library', rows[0][1][1])

@@ -355,38 +355,44 @@ def get_verification_queue():
 @debug_bp.route('/api/direct_emby_scan', methods=['POST'])
 @admin_required
 def direct_emby_scan():
-    """Triggers a full scan of Emby/Jellyfin and adds items to the database."""
+    """Reads the whole library of the symlink media server (Emby/Jellyfin, or
+    Silo when it is selected) and adds the items to the database."""
     from utilities.emby_functions import get_collected_from_emby
+    from utilities.silo_functions import is_silo_selected, is_silo_mode, get_collected_from_silo
     from database.collected_items import add_collected_items
-    logging.info("Received request for direct Emby/Jellyfin scan and collection.")
+    server = 'Silo' if is_silo_selected() else 'Emby/Jellyfin'
+    logging.info(f"Received request for direct {server} scan and collection.")
     try:
-        # 1. Get collected items from Emby/Jellyfin
-        logging.info("Starting Emby/Jellyfin collection...")
-        collected_data = get_collected_from_emby(bypass=True) # bypass=True to scan all configured libs
+        if server == 'Silo':
+            if not is_silo_mode():
+                return jsonify({'success': False, 'error': 'Silo URL or API key not set.'}), 400
+            collected_data = get_collected_from_silo()
+        else:
+            collected_data = get_collected_from_emby(bypass=True)  # bypass=True to scan all configured libs
 
         if collected_data is None:
-            logging.error("Failed to retrieve data from Emby/Jellyfin.")
-            return jsonify({'success': False, 'error': 'Failed to retrieve data from Emby/Jellyfin.'}), 500
+            logging.error(f"Failed to retrieve data from {server}.")
+            return jsonify({'success': False, 'error': f'Failed to retrieve data from {server}.'}), 500
 
         movies = collected_data.get('movies', [])
         episodes = collected_data.get('episodes', [])
         combined_items = movies + episodes
 
-        logging.info(f"Retrieved {len(movies)} movies and {len(episodes)} episodes from Emby/Jellyfin.")
+        logging.info(f"Retrieved {len(movies)} movies and {len(episodes)} episodes from {server}.")
 
         if not combined_items:
-             logging.warning("No items collected from Emby/Jellyfin scan.")
-             return jsonify({'success': True, 'message': 'No items collected from Emby/Jellyfin scan.'}), 200
+             logging.warning(f"No items collected from {server} scan.")
+             return jsonify({'success': True, 'message': f'No items collected from {server} scan.'}), 200
 
         # 2. Add collected items to the database
-        logging.info("Adding collected Emby/Jellyfin items to the database...")
-        add_collected_items(combined_items, recent=True) # Change to recent=True for additive only
-        logging.info("Successfully added Emby/Jellyfin items to the database.")
+        logging.info(f"Adding collected {server} items to the database...")
+        add_collected_items(combined_items, recent=True)  # additive only
+        logging.info(f"Successfully added {server} items to the database.")
 
-        return jsonify({'success': True, 'message': f'Successfully processed {len(combined_items)} items from Emby/Jellyfin.'}), 200
+        return jsonify({'success': True, 'message': f'Successfully processed {len(combined_items)} items from {server}.'}), 200
 
     except Exception as e:
-        logging.error(f"Error during direct Emby/Jellyfin scan: {str(e)}", exc_info=True)
+        logging.error(f"Error during direct {server} scan: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': f'An error occurred: {str(e)}'}), 500
 
 # --- New route to delete cache files ---

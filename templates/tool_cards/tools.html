@@ -47,8 +47,8 @@
             </form>
         </div>
 <div data-cat="library" class="debug_item">
-            <h3>Direct Emby/Jellyfin Scan</h3>
-            <p class="description">Trigger a full library scan on Emby/Jellyfin and add/update items in the database.</p>
+            <h3>Direct Emby/Jellyfin/Silo Scan</h3>
+            <p class="description">Read the whole library of your Emby/Jellyfin server (or Silo, when it's the media server) and add/update items in the database.</p>
             <form action="{{ url_for('debug.direct_emby_scan') }}" method="POST" id="direct-emby-scan-form">
                 <button type="submit">Run Emby/Jellyfin Scan</button>
             </form>

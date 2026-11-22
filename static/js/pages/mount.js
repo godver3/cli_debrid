@@ -154,14 +154,17 @@
       else if (el.type === 'password') { el.value = ''; el.placeholder = settings[el.name + '_set'] ? 'unchanged' : 'not set'; }
       else el.value = v ?? '';
     });
-    const pe = settings.plex_effective || {}, je = settings.jellyfin_effective || {};
+    const pe = settings.plex_effective || {}, je = settings.jellyfin_effective || {}, se = settings.silo_effective || {};
     if ($('#plexEffective')) $('#plexEffective').textContent = pe.url
       ? 'Plex in use: ' + pe.url + ' (from ' + pe.url_source + '), token ' + (pe.token_set ? 'from ' + pe.token_source : 'not set')
       : 'No Plex URL set.';
     if ($('#jellyfinEffective')) $('#jellyfinEffective').textContent = (je.url
       ? 'Jellyfin/Emby in use: ' + je.url + ' (from ' + je.url_source + '), API key ' + (je.token_set ? 'from ' + je.token_source : 'not set')
-      : 'No Jellyfin/Emby URL set.') + (!pe.url && !je.url
+      : 'No Jellyfin/Emby URL set.') + (!pe.url && !je.url && !se.url
       ? ' Stream protection, show precache and Now playing are off until a media server is entered here or in Settings.' : '');
+    if ($('#siloEffective')) $('#siloEffective').textContent = se.url
+      ? 'Silo in use: ' + se.url + ' (from Settings → File Management), API key ' + (se.key_set ? 'set' : 'not set')
+      : 'Silo is not the media server (Settings → File Management → Media Server Type).';
     $('#servers').innerHTML = '';
     (settings.servers || []).forEach(serverRow);
     $('#vfolders').innerHTML = '';
@@ -172,8 +175,9 @@
   function serverTest(kind) {
     const msg = $('#' + kind + 'TestMsg');
     msg.textContent = 'Testing…'; msg.style.color = '';
+    const urlField = form.querySelector('[name=' + kind + '_url]'), tokenField = form.querySelector('[name=' + kind + '_token]');
     fetch('/mount/api/' + kind + '_test', {method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({url: form.querySelector('[name=' + kind + '_url]').value, token: form.querySelector('[name=' + kind + '_token]').value})})
+      body: JSON.stringify({url: urlField ? urlField.value : '', token: tokenField ? tokenField.value : ''})})
       .then(r => r.json()).then(d => {
         msg.style.color = d.ok ? '#4caf50' : '#e57373';
         msg.textContent = d.ok ? 'OK: ' + (d.server || d.url) + ', ' + d.sessions + ' playing now' : d.error;
@@ -181,6 +185,7 @@
   }
   if ($('#plexTest')) $('#plexTest').onclick = () => serverTest('plex');
   if ($('#jellyfinTest')) $('#jellyfinTest').onclick = () => serverTest('jellyfin');
+  if ($('#siloTest')) $('#siloTest').onclick = () => serverTest('silo');
 
   // Speed tests: results kept across table refreshes, keyed kind:name.
   const speed = {};
