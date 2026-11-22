@@ -251,33 +251,6 @@ def history():
     return jsonify({'rows': rows, 'page': page_no})
 
 
-@subtitle_manager_bp.route('/api/subtitles/item/<int:item_id>/sync', methods=['POST'])
-@admin_required
-def sync_existing(item_id):
-    """Resync one existing subtitle: a sidecar file (Symlinked/Local) or an
-    uploaded Plex subtitle (download it, sync, upload, remove the old one)."""
-    from utilities import downsub, subtitle_resync
-    item = _item(item_id)
-    if not item:
-        return jsonify({'error': 'Item not found or not collected'}), 404
-    downsub.config.reload()
-    data = request.get_json(silent=True) or {}
-    if data.get('path'):
-        if data['path'] not in _sidecar_paths(item):
-            return jsonify({'error': 'Not a subtitle of this item'}), 400
-        res = subtitle_resync.resync_sidecar(item, data['path'])
-    elif data.get('stream_id') is not None:
-        st = subtitle_resync.plex_stream_of_item(item, data['stream_id'])
-        if not st:
-            return jsonify({'error': 'Not an uploaded subtitle of this item (embedded ones cannot be changed)'}), 400
-        res = subtitle_resync.resync_plex_stream(item, st)
-    else:
-        return jsonify({'error': 'path or stream_id required'}), 400
-    if res.get('error') and not res.get('changed'):
-        return jsonify({'error': res['message']}), 502
-    return jsonify({'success': True, 'changed': bool(res.get('changed')), 'message': res['message']})
-
-
 @subtitle_manager_bp.route('/api/subtitles/item/<int:item_id>/plex_delete', methods=['POST'])
 @admin_required
 def plex_delete(item_id):

@@ -175,17 +175,15 @@ def _ctx(tmp_path):
             'rating_key': None, 'video': Episode('x', 'Show', 1, 1), 'item': {'id': 5}}
 
 
-@pytest.mark.parametrize('mode,matches,synced', [
-    ('off', ['series'], False), ('unless_hash', ['series'], True),
-    ('unless_hash', ['hash'], False), ('always', ['hash'], True)])
-def test_save_applies_sync_per_setting(tmp_path, monkeypatch, mode, matches, synced):
+@pytest.mark.parametrize('matches,note', [
+    (['series'], None), (['hash'], 'hash match'), (['release_group', 'series'], 'release match (same release group)')])
+def test_save_never_retimes_and_marks_release_matches(tmp_path, monkeypatch, matches, note):
+    """Downloads are saved as found (no timing check: the automatic sync was
+    removed); a hash or release-group match is marked checked for Fix existing."""
     from unittest import mock
-    monkeypatch.setattr(downsub.config, 'SYNC_SUBTITLES', mode, raising=False)
     monkeypatch.setattr(downsub.config, 'TEXT_SUBTITLES_ONLY', False, raising=False)
     ctx = _ctx(tmp_path)
-    with mock.patch.object(downsub, 'sync_content', return_value=(b'SYNCED', 'synced: shifted -1.00s')) as sc, \
+    with mock.patch.object(downsub, '_mark_checked') as mark, \
             mock.patch.object(downsub, '_record_history'):
         assert downsub.save_subtitles(ctx, [_FakeSub(matches)]) == 1
-    out = (ctx['original_path'].parent / 'Show - S01E01.en.srt').read_bytes()
-    assert (out == b'SYNCED') is synced
-    assert sc.called is synced
+    assert ctx['_sync_note'] == note and mark.called is (note is not None)

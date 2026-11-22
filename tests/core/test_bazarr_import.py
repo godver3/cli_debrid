@@ -48,7 +48,7 @@ def test_plan_maps_supported_settings():
     assert plan['opensubtitles_username'] == 'me' and plan['opensubtitles_password'] == 'pw'
     assert plan['probe_for_embedded_subtitles'] is True
     assert plan['text_subtitles_only'] is True
-    assert plan['sync_subtitles'] == 'unless_hash' and plan['sync_max_offset'] == 45
+    assert 'sync_subtitles' not in plan          # Bazarr's subsync isn't carried over
     joined = ' '.join(plan['not_carried'])
     assert 'yifysubtitles' in joined and 'hearing-impaired' in joined and '1 non-default' in joined
     assert 'embeddedsubtitles' not in joined
@@ -79,7 +79,7 @@ def test_apply_writes_settings():
     assert written[('Subtitle Settings', 'subtitle_languages')] == 'eng,pt-BR'
     assert written[('Subtitle Settings', 'opensubtitles_password')] == 'pw'
     assert written[('Subtitle Settings', 'enable_subtitles')] is True
-    assert written[('Subtitle Settings', 'sync_subtitles')] == 'unless_hash'
+    assert ('Subtitle Settings', 'sync_subtitles') not in written
     assert written[('Bazarr Integration', 'enabled')] is False
 
 

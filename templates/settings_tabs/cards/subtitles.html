@@ -149,26 +149,6 @@
             <p class="settings-description">Styled ASS/SSA and image (PGS/VobSub) subtitles make most Plex/Jellyfin/Emby clients transcode. When on, downloaded ASS/SSA subtitles are converted to plain SRT, and an embedded image or styled track doesn't count as having that language, so an SRT is fetched.</p>
         </div>
 
-        {% set _sync = settings.get('Subtitle Settings', {}).get('sync_subtitles') or 'off' %}
-        <div class="settings-form-group">
-            <label for="additional-sync_subtitles" class="settings-title">Sync Subtitles:</label>
-            <select id="additional-sync_subtitles" class="settings-input"
-                    data-section="Subtitle Settings" data-key="sync_subtitles">
-                <option value="off" {% if _sync == 'off' %}selected{% endif %}>Off</option>
-                <option value="unless_hash" {% if _sync == 'unless_hash' %}selected{% endif %}>Unless matched by hash or release</option>
-                <option value="always" {% if _sync == 'always' %}selected{% endif %}>Always</option>
-            </select>
-            <p class="settings-description">Check subtitle timing after download against the file's own embedded text subtitle track, when it has one (exact, and only a few short parts of the file are read). Subtitles matched by file hash or release group are made for this release and are left as downloaded with "Unless matched by file hash". Without an embedded text track the subtitle is kept as downloaded. To fix existing subtitles use Tools → Subtitle Manager → Fix existing subtitles.</p>
-        </div>
-
-        <div class="settings-form-group">
-            <label for="additional-sync_max_offset" class="settings-title">Sync Max Offset (s):</label>
-            <input type="number" min="5" max="600" id="additional-sync_max_offset" name="Subtitle Settings.sync_max_offset"
-                   value="{{ settings.get('Subtitle Settings', {}).get('sync_max_offset', 60) }}" class="settings-input"
-                   data-section="Subtitle Settings" data-key="sync_max_offset">
-            <p class="settings-description">Largest timing shift sync looks for, each way.</p>
-        </div>
-
         <div class="settings-form-group">
             <div style="background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.3); padding: 12px 15px; border-radius: 8px;">
                 <p style="margin: 0; font-weight: bold; color: #f59e0b;"><i class="fas fa-exclamation-triangle"></i> Plex users: turn off Plex's own subtitle analysis</p>

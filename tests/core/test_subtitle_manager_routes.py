@@ -144,40 +144,6 @@ def test_plex_delete_only_external_streams(env):
     assert calls == ['http://plex:32400/library/streams/11']
 
 
-def test_plex_resync_uploads_then_removes_old(env):
-    _plex_item(env)
-    deleted, uploaded = [], []
-
-    def fake_get(url, **k):
-        return _R(200, _META) if url.endswith('/metadata/777') else _R(200, content=b'old subtitle')
-
-    with mock.patch('requests.get', side_effect=fake_get), \
-            mock.patch('utilities.subtitle_resync.item_rk', return_value='777'), \
-            mock.patch('requests.delete', side_effect=lambda url, **k: deleted.append(url) or _R(200)), \
-            mock.patch('utilities.downsub.sync_content', return_value=(b'new subtitle', 'synced: shifted -2.00s')), \
-            mock.patch('utilities.downsub.upload_subtitle_to_plex',
-                       side_effect=lambda rk, c, lang, fmt='srt': uploaded.append((rk, c, lang)) or True), \
-            mock.patch('utilities.downsub.resolve_item_path', return_value='/mnt/file.mkv'), \
-            mock.patch('utilities.settings.get_setting',
-                       side_effect=lambda s, k, d=None: {('Plex', 'url'): 'http://plex:32400',
-                                                         ('Plex', 'token'): 't'}.get((s, k), d)):
-        d = env['client'].post('/api/subtitles/item/1/sync', json={'stream_id': 11}).get_json()
-    assert d['changed'] and uploaded == [('777', b'new subtitle', 'en')]
-    assert deleted == ['http://plex:32400/library/streams/11']
-
-
-def test_sidecar_resync_rewrites_file(env):
-    target = os.path.join(env['lib'], 'Show - S01E01.en.srt')
-    with open(target, 'wb') as f:
-        f.write(b'old')
-    with mock.patch('utilities.downsub.sync_content', return_value=(b'new', 'synced: shifted +1.00s')):
-        d = env['client'].post('/api/subtitles/item/1/sync', json={'path': target}).get_json()
-    assert d['changed'] and open(target, 'rb').read() == b'new'
-    with mock.patch('utilities.downsub.sync_content', side_effect=lambda v, c, f, **k: (c, 'already in sync')):
-        d = env['client'].post('/api/subtitles/item/1/sync', json={'path': target}).get_json()
-    assert not d['changed'] and d['message'] == 'already in sync'
-
-
 def test_auto_says_what_happened(env):
     """Live 2026-11-22: Auto said 'Subtitles saved' for a file that already
     had every language embedded (nothing downloaded)."""

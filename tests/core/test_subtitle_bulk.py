@@ -123,18 +123,6 @@ def test_task_off_when_subtitles_disabled(db):
     assert not mi.called
 
 
-def test_resync_skips_checked_content(db, tmp_path):
-    from utilities import subtitle_resync, downsub
-    sub = tmp_path / 'S01E01.en.srt'
-    sub.write_bytes(b'old')
-    item = {'id': 1, 'location_on_disk': str(tmp_path / 'S01E01.mkv')}
-    with mock.patch.object(downsub, 'resolve_item_path', return_value=str(tmp_path / 'S01E01.mkv')), \
-            mock.patch.object(downsub, 'sync_content', return_value=(b'new', 'synced: shifted -1.00s')) as sc:
-        assert subtitle_resync.resync_sidecar(item, str(sub), skip_checked=True)['changed']
-        again = subtitle_resync.resync_sidecar(item, str(sub), skip_checked=True)
-    assert again['skipped'] and sc.call_count == 1 and sub.read_bytes() == b'new'
-
-
 def test_queue_appends_while_running(db):
     import threading
     from utilities import subtitle_bulk, downsub
@@ -212,10 +200,9 @@ def test_sync_existing_prefers_hash_match(db, tmp_path):
             mock.patch.object(downsub, 'hash_matches', return_value=[hashed]), \
             mock.patch.object(downsub, 'fetch_subtitle', return_value=True), \
             mock.patch.object(downsub, '_final_format', return_value=('srt', '.srt')), \
-            mock.patch.object(downsub, '_record_history'), \
-            mock.patch.object(downsub, 'sync_content') as sync:
+            mock.patch.object(downsub, '_record_history'):
         changed, checked, notes = subtitle_resync.resync_item(item)
-    assert changed == 1 and not sync.called and 'hash match' in notes[0]
+    assert changed == 1 and 'hash match' in notes[0]
     assert sc.read_bytes() == hashed.content
     assert db.sync_checked(hashlib.sha1(hashed.content).hexdigest())
 
@@ -231,11 +218,10 @@ def test_fix_existing_keeps_subtitle_without_release_match(db, tmp_path):
             mock.patch.object(downsub, 'prepare_video', return_value={'hash': True, 'video': object()}), \
             mock.patch.object(downsub, 'hash_matches', return_value=[]), \
             mock.patch.object(downsub, 'release_matches', return_value=[]), \
-            mock.patch.object(downsub, 'selected_providers', return_value=['opensubtitlescom']), \
-            mock.patch.object(downsub, 'sync_content') as sync:
+            mock.patch.object(downsub, 'selected_providers', return_value=['opensubtitlescom']):
         changed, checked, notes = subtitle_resync.resync_item(item)
         assert not subtitle_resync.needs_check(item)          # done, skipped next time
-    assert changed == 0 and checked == 1 and not sync.called    # no file reads beyond the hash
+    assert changed == 0 and checked == 1
     assert notes[0].startswith('eng: kept')
 
 
@@ -255,10 +241,9 @@ def test_undecided_sync_gets_one_hash_search(db, tmp_path):
                 mock.patch.object(downsub, 'prepare_video', return_value={'hash': True, 'video': object()}), \
                 mock.patch.object(downsub, 'hash_matches', return_value=[]) as hm, \
                 mock.patch.object(downsub, 'release_matches', return_value=[]), \
-                mock.patch.object(downsub, 'selected_providers', return_value=['opensubtitlescom']), \
-                mock.patch.object(downsub, 'sync_content') as sync:
+                mock.patch.object(downsub, 'selected_providers', return_value=['opensubtitlescom']):
             subtitle_resync.resync_item(item)
-        assert hm.called and not sync.called              # no second futile sync
+        assert hm.called
         assert subtitle_resync.KEPT in db.sync_result(digest)
         with mock.patch.object(downsub, 'selected_providers', return_value=['opensubtitlescom']):
             assert not subtitle_resync.needs_check(item)
@@ -306,10 +291,9 @@ def test_fix_existing_uses_release_match_when_no_hash(db, tmp_path):
             mock.patch.object(downsub, 'release_matches', return_value=[(rel, 'release match')]), \
             mock.patch.object(downsub, 'fetch_subtitle', return_value=True), \
             mock.patch.object(downsub, '_final_format', return_value=('srt', '.srt')), \
-            mock.patch.object(downsub, '_record_history'), \
-            mock.patch.object(downsub, 'sync_content') as sync:
+            mock.patch.object(downsub, '_record_history'):
         changed, checked, notes = subtitle_resync.resync_item(item)
-    assert changed == 1 and not sync.called and 'release match' in notes[0]
+    assert changed == 1 and 'release match' in notes[0]
     assert sc.read_bytes() == rel.content
 
 
@@ -331,57 +315,6 @@ def test_kept_is_searched_again_when_a_provider_is_added(db, tmp_path):
         with mock.patch.object(downsub, 'selected_providers',
                                return_value=['opensubtitlescom', 'gestdown', 'subsource']):
             assert subtitle_resync.needs_check(item)                # provider added: search again
-
-
-def test_syncing_search_waits_while_something_plays(db, monkeypatch):
-    from utilities import subtitle_bulk, downsub
-    monkeypatch.setattr(subtitle_bulk, 'PLAYBACK_WAIT_STEP', 0.05)
-    playing = {'n': 1}
-    with mock.patch.object(subtitle_bulk, 'playing_sessions', side_effect=lambda: playing['n']), \
-            mock.patch.object(downsub.config, 'SYNC_SUBTITLES', 'always'), \
-            mock.patch.object(downsub.config, 'reload'), \
-            mock.patch.object(downsub, 'selected_providers', return_value=['podnapisi']), \
-            mock.patch.object(subtitle_bulk, '_search_one', return_value=(True, 'saved', True)) as one:
-        assert subtitle_bulk.start([{'id': 1, 'title': 'A'}], pause=0)[0] == 'started'
-        time.sleep(0.3)
-        assert not one.called and 'playing' in subtitle_bulk.status()['search']['waiting']
-        playing['n'] = 0
-        for _ in range(100):
-            if not subtitle_bulk.status()['search']['running']:
-                break
-            time.sleep(0.05)
-    assert one.call_count == 1 and 'waiting' not in subtitle_bulk.status()['search']
-
-
-def test_fix_existing_lane_ignores_playback(db):
-    """Fix existing reads only the 64 KB hash: nothing to wait for."""
-    from utilities import subtitle_bulk
-    with mock.patch.object(subtitle_bulk, 'playing_sessions', return_value=3), \
-            mock.patch.object(subtitle_bulk, '_sync_one', return_value=(True, 'fixed', True)) as one:
-        subtitle_bulk.run_now([{'id': 1, 'title': 'A'}], pause=0, kind='sync')
-    assert one.call_count == 1
-
-
-def test_task_stops_instead_of_waiting_for_playback(db):
-    from utilities import subtitle_bulk, downsub
-    with mock.patch.object(subtitle_bulk, 'playing_sessions', return_value=2), \
-            mock.patch.object(downsub.config, 'SYNC_SUBTITLES', 'always'), \
-            mock.patch.object(downsub.config, 'reload'), \
-            mock.patch.object(downsub, 'download_subtitles_for_video') as dl:
-        subtitle_bulk.run_now([{'id': 1, 'title': 'A'}], pause=0)
-    assert not dl.called and 'next run' in subtitle_bulk.status()['search']['stopped']
-
-
-def test_search_without_sync_ignores_playback(db):
-    from utilities import subtitle_bulk, downsub
-    with mock.patch.object(subtitle_bulk, 'playing_sessions', return_value=2), \
-            mock.patch.object(downsub.config, 'SYNC_SUBTITLES', 'off'), \
-            mock.patch.object(downsub.config, 'reload'), \
-            mock.patch.object(downsub, 'selected_providers', return_value=['podnapisi']), \
-            mock.patch.object(downsub, 'resolve_item_path', return_value='/x.mkv'), \
-            mock.patch.object(downsub, 'download_subtitles_for_video', return_value=True) as dl:
-        subtitle_bulk.run_now([{'id': 1, 'title': 'A'}], pause=0)
-    assert dl.call_count == 1
 
 
 def test_work_queued_after_stop_still_runs(db):
@@ -407,17 +340,6 @@ def test_work_queued_after_stop_still_runs(db):
                 break
             time.sleep(0.05)
     assert done == [1, 3]
-
-
-def test_paused_and_music_sessions_do_not_hold_lanes(monkeypatch):
-    from utilities import subtitle_bulk
-    monkeypatch.setattr(subtitle_bulk, '_playing_cache', {'at': 0.0, 'n': 0})
-    sessions = [{'type': 'episode', 'Player': {'state': 'paused'}},
-                {'type': 'track', 'Player': {'state': 'playing'}},
-                {'type': 'movie', 'Player': {'state': 'buffering'}},
-                {'type': 'episode'}]
-    with mock.patch('utilities.media_sessions.sessions', return_value=sessions):
-        assert subtitle_bulk.playing_sessions() == 2
 
 
 def test_pause_lengths_by_error_class():

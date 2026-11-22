@@ -1030,68 +1030,21 @@ def fetch_subtitle(sub):
         return bool(pool.download_subtitle(sub) and sub.content)
 
 
-def _maybe_sync(ctx, sub, content, fmt, mode=None):
-    """Sync a downloaded subtitle to the file's audio when the setting asks
-    for it. Returns (content, note); content is unchanged unless synced."""
-    mode = mode or getattr(config, 'SYNC_SUBTITLES', 'off')
-    if mode not in ('unless_hash', 'always'):
-        return content, None
+def _mark_release_match(sub, video, content):
+    """A subtitle made for this release (file hash, or the same release group)
+    is in sync by construction: mark it checked so Fix existing leaves it
+    alone. Returns the note for the history, or None. Reads nothing."""
     try:
-        matches = sub.get_matches(ctx['video'])
+        matches = sub.get_matches(video)
     except Exception:
         matches = set()
     if 'hash' in matches:
         _mark_checked(content, 'hash match')
-    if mode == 'unless_hash' and 'hash' in matches:
-        return content, 'skipped: hash match'
-    if mode == 'unless_hash' and 'release_group' in matches:
+        return 'hash match'
+    if 'release_group' in matches:
         _mark_checked(content, 'release match')
-        return content, 'skipped: release match (same release group)'
-    lang = getattr(sub.language, 'ietf', None) or str(sub.language)
-    return sync_content(ctx['video_path'], content, fmt,
-                        label=f"{_label_of(ctx.get('item'), ctx['original_path'])} {lang}",
-                        item=ctx.get('item'))
-
-
-def item_duration_hints(item):
-    """(exact seconds or None, approximate seconds or None) for sync: Plex's
-    duration for the item, and the metadata runtime as a fallback."""
-    item = item or {}
-    exact = None
-    try:
-        from utilities.subtitle_resync import plex_item_info
-        from utilities.plex_subtitle_info import rating_key as _rk
-        rk = _rk(item) if item.get('ms_item_id') else None
-        if rk:
-            exact = plex_item_info(rk)[1]
-    except Exception:
-        exact = None
-    approx = None
-    try:
-        rt = float(item.get('runtime') or 0)
-        approx = rt * 60 if rt >= 5 else None
-    except (TypeError, ValueError):
-        approx = None
-    return exact, approx
-
-
-def sync_content(video_path, content, fmt, label=None, item=None):
-    """Run the sampled sync; (content, note) with content replaced only when
-    it found a clearly better timing."""
-    try:
-        from utilities import subtitle_sync
-        t0 = time.time()
-        exact, approx = item_duration_hints(item)
-        new, info = subtitle_sync.sync_subtitle(
-            str(video_path), content, fmt or 'srt',
-            max_offset=float(getattr(config, 'SYNC_MAX_OFFSET', 60) or 60),
-            duration=exact, duration_fallback=approx)
-        note = subtitle_sync.describe(info)
-        logging.info(f"[subsync] {label or os.path.basename(str(video_path))}: {note} ({time.time() - t0:.1f}s)")
-        return (new or content), note
-    except Exception as e:
-        logging.warning(f"[subsync] failed for {video_path}: {e}")
-        return content, f'not synced: {e}'
+        return 'release match (same release group)'
+    return None
 
 
 def save_subtitles(ctx, subs, source='auto'):
@@ -1121,8 +1074,7 @@ def save_subtitles(ctx, subs, source='auto'):
         content = sub.content if isinstance(sub.content, bytes) else (sub.content or '').encode('utf-8')
         if not content:
             continue
-        content, sync_note = _maybe_sync(ctx, sub, content, fmt)
-        ctx['_sync_note'] = sync_note
+        ctx['_sync_note'] = _mark_release_match(sub, ctx['video'], content)
         if use_plex_upload:
             lang3 = getattr(sub.language, 'alpha3', None) or lang
             if upload_subtitle_to_plex(rating_key, content, lang3, fmt=fmt):

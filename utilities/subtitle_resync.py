@@ -1,10 +1,10 @@
-"""Resync subtitles that already exist: sidecar files and Plex external/
-uploaded subtitles. Used by the per-subtitle Sync button and the "Sync
-existing subtitles" bulk run.
+"""Fix existing subtitles (sidecar files and Plex uploads): replace each with
+one made for this release (file hash, same release group or same source)
+when a provider has one, else keep it. Nothing is re-timed.
 
 Each checked subtitle's content hash is remembered (subtitle_history.
-sync_checked), so a bulk run skips subtitles it already synced or found in
-sync, including the new copy it just uploaded to Plex.
+sync_checked), so a bulk run skips subtitles it already checked, including
+the new copy it just uploaded to Plex.
 """
 import hashlib
 import logging
@@ -143,68 +143,6 @@ def _hash_pending(result):
 def _mark(content, result):
     from database import subtitle_history
     subtitle_history.mark_sync_checked(_digest(content), result)
-
-
-def resync_sidecar(item, path, skip_checked=False):
-    """Returns {'changed', 'message', 'skipped'}."""
-    from utilities import downsub
-    video = downsub.resolve_item_path(item)
-    if not video:
-        return {'changed': False, 'message': 'no file path for this item', 'error': True}
-    real = os.path.realpath(video) if os.path.islink(video) else video
-    with open(path, 'rb') as f:
-        content = f.read()
-    if skip_checked and _checked(content):
-        return {'changed': False, 'skipped': True, 'message': 'checked before'}
-    from utilities.subtitle_status import label
-    new, note = downsub.sync_content(real, content, os.path.splitext(path)[1][1:].lower(),
-                                     label=f"{label(item)} {os.path.basename(path)}", item=item)
-    if new != content:
-        tmp = path + '.syncing'
-        with open(tmp, 'wb') as f:
-            f.write(new)
-        os.replace(tmp, path)
-        _mark(new, 'synced')
-        return {'changed': True, 'message': note}
-    if note and note.startswith(('already in sync', 'left as is', 'not checked: no embedded')):
-        _mark(content, note)
-    if note and note.startswith('not checked:') and not note.startswith('not checked: no embedded'):
-        note = 'kept: no subtitle for this release found; ' + note[len('not checked: '):]
-    elif note and note.startswith('not checked: no embedded'):
-        note = 'kept: no subtitle for this release found, and no embedded subtitles to check the timing'
-    return {'changed': False, 'message': note or 'not synced'}
-
-
-def resync_plex_stream(item, st, skip_checked=False):
-    """Download an external Plex subtitle, sync it, upload the fixed copy and
-    remove the old one. Returns {'changed', 'message', 'skipped', 'error'}."""
-    from utilities import downsub
-    url, token = plex_conn()
-    video = downsub.resolve_item_path(item)
-    if not video:
-        return {'changed': False, 'message': 'no file path for this item', 'error': True}
-    r = requests.get(url + st['key'], params={'X-Plex-Token': token}, headers=PLEX_HEADERS, timeout=30)
-    if r.status_code != 200 or not r.content:
-        return {'changed': False, 'message': f'could not download it from Plex (HTTP {r.status_code})', 'error': True}
-    content = r.content
-    if skip_checked and _checked(content):
-        return {'changed': False, 'skipped': True, 'message': 'checked before'}
-    fmt = (st.get('codec') or 'srt').lower()
-    from utilities.subtitle_status import label
-    new, note = downsub.sync_content(video, content, fmt,
-                                     label=f"{label(item)} {st.get('language') or 'und'} (Plex)", item=item)
-    if new == content:
-        if note and note.startswith(('already in sync', 'left as is', 'not checked: no embedded')):
-            _mark(content, note)
-        return {'changed': False, 'message': note or 'not synced'}
-    if not downsub.upload_subtitle_to_plex(item_rk(item), new, st.get('language') or 'und', fmt=fmt):
-        return {'changed': False, 'message': 'synced, but the upload to Plex failed; the old subtitle was kept',
-                'error': True}
-    _mark(new, 'synced')
-    ok, code = plex_delete(st)
-    if not ok:
-        return {'changed': True, 'message': f'{note}; uploaded, but Plex would not remove the old one (HTTP {code})'}
-    return {'changed': True, 'message': note}
 
 
 def _lang_of(code):

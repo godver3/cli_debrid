@@ -61,11 +61,6 @@ class Config:
         self.IGNORE_EMBEDDED = bool(get_setting('Subtitle Settings', 'ignore_embedded_subtitles', False))
         self.SUBDL_API_KEY = (get_setting('Subtitle Settings', 'subdl_api_key', '') or '').strip()
         self.SUBSOURCE_API_KEY = (get_setting('Subtitle Settings', 'subsource_api_key', '') or '').strip()
-        self.SYNC_SUBTITLES = get_setting('Subtitle Settings', 'sync_subtitles', 'off') or 'off'
-        try:
-            self.SYNC_MAX_OFFSET = float(get_setting('Subtitle Settings', 'sync_max_offset', 60) or 60)
-        except (TypeError, ValueError):
-            self.SYNC_MAX_OFFSET = 60.0
         self.SUBLIMINAL_USER_AGENT = get_setting('Subtitle Settings', 'user_agent', 'SubDownloader/1.0 (your-email@example.com)')
         self.PROBE_FOR_EMBEDDED = get_setting('Subtitle Settings', 'probe_for_embedded_subtitles', False)
 

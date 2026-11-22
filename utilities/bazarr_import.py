@@ -3,8 +3,9 @@
 Reads Bazarr's own API (/api/system/settings and /api/system/languages/profiles,
 X-API-KEY header) and maps what cli_debrid supports: languages from the
 default profiles, the providers both support, the OpenSubtitles.com login,
-embedded-subtitle handling, ignored PGS/ASS tracks (= text-only mode) and
-subsync. Everything else is listed as not carried over.
+embedded-subtitle handling and ignored PGS/ASS tracks (= text-only mode).
+Everything else is listed as not carried over (Bazarr's subsync too:
+cli_debrid doesn't re-time downloads).
 """
 import logging
 
@@ -120,7 +121,6 @@ def fetch_plan(url, api_key):
             unsupported.append(name)
 
     osc = settings.get('opensubtitlescom') or {}
-    sync = settings.get('subsync') or {}
     text_only = bool(g.get('ignore_pgs_subs')) and bool(g.get('ignore_ass_subs'))
     probe = bool(g.get('use_embedded_subs')) or 'embeddedsubtitles' in enabled
 
@@ -150,8 +150,6 @@ def fetch_plan(url, api_key):
         'opensubtitles_password': osc.get('password') or '',
         'probe_for_embedded_subtitles': probe,
         'text_subtitles_only': text_only,
-        'sync_subtitles': 'unless_hash' if sync.get('use_subsync') else 'off',
-        'sync_max_offset': int(sync.get('max_offset_seconds') or 60),
         'subdl_api_key': ((settings.get('subdl') or {}).get('api_key') or '').strip(),
         'subsource_api_key': ((settings.get('subsource') or {}).get('apikey') or '').strip(),
         'not_carried': not_carried,
@@ -201,8 +199,6 @@ def apply_plan(plan, enable=True, stop_bazarr_feed=False):
         f"skip embedded languages: {'on' if plan.get('probe_for_embedded_subtitles') else 'off'}")
     put('text_subtitles_only', bool(plan.get('text_subtitles_only')),
         f"avoid transcoding formats: {'on' if plan.get('text_subtitles_only') else 'off'}")
-    put('sync_subtitles', plan.get('sync_subtitles') or 'off', f"sync: {plan.get('sync_subtitles') or 'off'}")
-    put('sync_max_offset', int(plan.get('sync_max_offset') or 60), f"sync max offset: {plan.get('sync_max_offset')}s")
     if enable:
         put('enable_subtitles', True, 'subtitle downloads: on')
     try:

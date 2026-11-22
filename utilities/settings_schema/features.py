@@ -221,17 +221,6 @@ SECTIONS = {
             "description": "User agent for subtitle API requests",
             "default": "SubDownloader/1.0 (your-email@example.com)"
         },
-        "sync_subtitles": {
-            "type": "string",
-            "description": "Check subtitle timing after download against the file's own embedded text subtitle track, when it has one (exact and cheap: only a few short parts of the file are read). Subtitles matched by file hash or by release group are made for this release and are not checked with 'Unless matched by file hash'. Without an embedded text track the subtitle is kept as downloaded.",
-            "default": "off",
-            "choices": ["off", "unless_hash", "always"]
-        },
-        "sync_max_offset": {
-            "type": "integer",
-            "description": "Largest timing shift (seconds, each way) subtitle sync will look for.",
-            "default": 60
-        },
         "ignore_embedded_subtitles": {
             "type": "boolean",
             "description": "Never count subtitles embedded in the video file: every configured language is fetched as a separate subtitle (shown as missing until one is downloaded). Off: an embedded text track in a language (not forced, not commentary, not an image/styled format that makes players transcode) counts as having it.",

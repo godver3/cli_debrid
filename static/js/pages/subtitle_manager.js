@@ -235,7 +235,6 @@
       parts.push(`<div style="display:flex;gap:8px;align-items:center;margin:3px 0;flex-wrap:wrap">
         <span class="sm-chip ok">${esc(sc.language)}</span><span class="sm-chip${ext === 'srt' ? '' : ' warn'}">${esc(ext)}</span>
         <span class="sm-chip">file</span><span style="word-break:break-all">${esc(sc.name)}</span>
-        <button class="sm-btn sm-mini" data-sync-path="${esc(sc.path)}">Sync</button>
         <button class="sm-btn sm-btn-red sm-mini" data-del="${esc(sc.path)}">Delete</button></div>`);
     }
     if (d.plex_mode) {
@@ -250,8 +249,7 @@
             <span class="sm-chip${heavy ? ' warn' : ''}" title="${heavy ? 'Many clients transcode to show this format' : ''}">${esc(st.codec)}</span>
             ${st.forced ? '<span class="sm-chip">forced</span>' : ''}<span class="sm-chip">${st.external ? 'Plex upload' : 'embedded'}</span>
             <span class="sm-muted">${esc(st.title)}</span>
-            ${st.external && st.id != null ? `<button class="sm-btn sm-mini" data-sync-stream="${esc(st.id)}">Sync</button>
-            <button class="sm-btn sm-btn-red sm-mini" data-del-stream="${esc(st.id)}">Delete</button>` : ''}</div>`);
+            ${st.external && st.id != null ? `<button class="sm-btn sm-btn-red sm-mini" data-del-stream="${esc(st.id)}">Delete</button>` : ''}</div>`);
         }
       }
     }
@@ -352,22 +350,6 @@
     } catch (e) { toast(e.message, true); }
   }
 
-  async function syncOne(body, btn) {
-    btn.disabled = true;
-    const label = btn.textContent;
-    btn.textContent = 'Syncing…';
-    try {
-      const d = await api(`/api/subtitles/item/${state.item}/sync`, { method: 'POST', body: JSON.stringify(body) });
-      toast(d.message || 'Done', false);
-      if (d.changed) refreshItem();
-    } catch (e) {
-      toast(e.message, true);
-    } finally {
-      btn.disabled = false;
-      btn.textContent = label;
-    }
-  }
-
   async function delStream(id) {
     if (!confirm('Remove this subtitle from Plex?')) return;
     try {
@@ -416,7 +398,7 @@
                     : `<button class="sm-btn sm-mini" data-lane-hide="${kind}">Hide</button>`}
       </div>
       <div class="sm-bar-score" style="height:6px;margin:8px 0"><i style="width:${pct}%;background:var(--sm-accent)"></i></div>
-      <div class="sm-muted">${d.running ? (d.waiting ? esc(d.waiting) + ' (continues when playback stops)' : d.current ? (sync ? 'Looking for a better subtitle for ' : 'Searching ') + esc(d.current) + '…' : 'Starting…') : esc(d.stopped || '')}</div>
+      <div class="sm-muted">${d.running ? (d.current ? (sync ? 'Looking for a better subtitle for ' : 'Searching ') + esc(d.current) + '…' : 'Starting…') : esc(d.stopped || '')}</div>
       <div class="sm-lane-recent">${rows || '<span class="sm-muted">No results yet.</span>'}</div>
     </div>`;
   }
@@ -468,7 +450,6 @@
         row('OpenSubtitles.com', p.opensubtitles_username ? `${esc(p.opensubtitles_username)} · password ${p.opensubtitles_password ? 'set' : 'missing'}` : 'not set in Bazarr'),
         row('Skip embedded languages', p.probe_for_embedded_subtitles ? 'on' : 'off'),
         row('Avoid transcoding formats', p.text_subtitles_only ? 'on (Bazarr ignores PGS/ASS)' : 'off'),
-        row('Sync', p.sync_subtitles === 'off' ? 'off' : `unless matched by file hash · max ${esc(p.sync_max_offset)}s`),
       ].join('');
       $('sm-bz-not').innerHTML = (p.not_carried || []).length
         ? '<b>Not carried over:</b><br>' + p.not_carried.map(esc).join('<br>') : '';
@@ -534,10 +515,6 @@
     if (p) { pick(p.dataset.pick, p); return; }
     const d = e.target.closest('[data-del]');
     if (d) { del(d.dataset.del); return; }
-    const sp = e.target.closest('[data-sync-path]');
-    if (sp) { syncOne({ path: sp.dataset.syncPath }, sp); return; }
-    const ss = e.target.closest('[data-sync-stream]');
-    if (ss) { syncOne({ stream_id: ss.dataset.syncStream }, ss); return; }
     const ds = e.target.closest('[data-del-stream]');
     if (ds) { delStream(ds.dataset.delStream); }
   });
