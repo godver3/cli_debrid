@@ -393,8 +393,22 @@ def check_service_connectivity():
                 services_reachable = False
                 failed_services_details.append({"service": "Jellyfin/Emby (for symlink updates)", "type": "CONNECTION_ERROR", "status_code": None, "message": error_msg})
 
+    # Plex mode run with Silo: check Silo instead of Plex
+    from utilities.silo_functions import is_silo_library_mode
+    plex_mode_silo = is_silo_library_mode()
+    if plex_mode_silo:
+        from utilities.silo_functions import silo_config, test_connection as silo_test
+        ok, message = silo_test(*silo_config())
+        if ok:
+            logging.debug("Silo connectivity check passed (Plex mode)")
+        else:
+            logging.error(f"Silo check failed: {message}")
+            services_reachable = False
+            failed_services_details.append({"service": "Silo", "type": "CONNECTION_ERROR",
+                                            "status_code": None, "message": message})
+
     # Check Plex connectivity and libraries
-    if get_setting('File Management', 'file_collection_management') == 'Plex':
+    if get_setting('File Management', 'file_collection_management') == 'Plex' and not plex_mode_silo:
         try:
             # First check basic connectivity and token validity
             response = api.get(f"{plex_url}?X-Plex-Token={plex_token}", timeout=5)
@@ -891,7 +905,9 @@ def check_program_conditions():
     # Consider content sources present (ignoring per-source enabled flags); UI toggles control runtime
     content_sources_enabled = bool(config.get('Content Sources', {}))
     
-    required_settings = [
+    from utilities.silo_functions import is_silo_selected
+    # Silo as the media server needs no Plex connection
+    required_settings = [] if is_silo_selected() else [
         ('Plex', 'url'),
         ('Plex', 'token'),
     ]

@@ -1048,7 +1048,9 @@ def get_and_add_all_collected_from_plex(bypass=False, backfill=False):
                     data_source = 'filesystem'  # Mark that we used filesystem scan
 
                     # Per-item fallback: Check for items with missing size/resolution and get from Plex
-                    if mode == 'Plex' and backfill:
+                    # (not when Plex mode is run with Silo: there is no Plex to ask)
+                    from utilities.silo_functions import is_silo_library_mode as _silo_lib
+                    if mode == 'Plex' and backfill and not _silo_lib():
                         items_needing_plex = []
                         for item in filesystem_items:
                             # Check if size or resolution is missing
@@ -1167,8 +1169,9 @@ def get_and_add_all_collected_from_plex(bypass=False, backfill=False):
                             except Exception as e:
                                 logging.error(f"[BACKFILL_PLEX_FALLBACK] Error fetching failed items from Plex: {e}", exc_info=True)
 
-                    # Per-item fallback for Symlink mode (same logic as Plex mode)
-                    elif mode in ['Symlink', 'Symlinked/Local'] and backfill:
+                    # Per-item fallback for Symlink mode (same logic as Plex mode), not with Silo
+                    elif mode in ['Symlink', 'Symlinked/Local'] and backfill and not _silo_lib() \
+                            and get_setting('File Management', 'media_server_type', 'plex') != 'silo':
                         items_needing_plex = []
                         for item in filesystem_items:
                             # Check if size or resolution is missing
@@ -1272,7 +1275,12 @@ def get_and_add_all_collected_from_plex(bypass=False, backfill=False):
         else:
             logging.info("Getting all collected content from Plex...")
         try:
-            collected_content = asyncio.run(run_get_collected_from_plex(bypass=bypass, fetch_sizes=backfill))
+            from utilities.silo_functions import is_silo_library_mode, get_collected_from_silo
+            if is_silo_library_mode():
+                logging.info("Plex mode is run with Silo: reading Silo's catalog instead of Plex.")
+                collected_content = get_collected_from_silo()
+            else:
+                collected_content = asyncio.run(run_get_collected_from_plex(bypass=bypass, fetch_sizes=backfill))
         except Exception as e:
              logging.error(f"Error running run_get_collected_from_plex: {e}", exc_info=True)
              return None # Return None on error during fetch
@@ -1481,7 +1489,10 @@ def get_and_add_recent_collected_from_plex():
     logging.info(f"Getting recently added content from {mode}...")
 
     try:
-        if mode == 'Plex':
+        from utilities.silo_functions import is_silo_library_mode, get_recent_from_silo
+        if mode == 'Plex' and is_silo_library_mode():
+            collected_content = get_recent_from_silo()
+        elif mode == 'Plex':
             collected_content = asyncio.run(run_get_recent_from_plex())
         elif mode == 'Zurg':
             collected_content = asyncio.run(run_get_recent_from_zurg())

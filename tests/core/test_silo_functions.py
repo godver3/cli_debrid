@@ -343,14 +343,27 @@ class PlexOnlyPathsSkipSiloTests(unittest.TestCase):
                 ('File Management', 'plex_token_for_symlink'): 't'}
         return lambda s, k=None, default=None, **kw: vals.get((s, k), kw.get('default', default))
 
-    def test_subtitle_info_does_not_ask_a_leftover_plex(self):
+    def test_subtitle_info_uses_silo_not_a_leftover_plex(self):
         from utilities import plex_subtitle_info as psi
-        with mock.patch('utilities.settings.get_setting', side_effect=self._settings()):
-            self.assertIsNone(psi.server())
+        with mock.patch('utilities.settings.get_setting', side_effect=self._settings()), \
+                mock.patch.object(silo, 'get_setting', side_effect=self._settings()):
+            self.assertIsNone(psi.server())  # Silo picked, but no Silo URL/key: nothing to ask
+        with_key = self._settings()
+
+        def get(s, k=None, default=None, **kw):
+            if (s, k) == ('Debug', 'silo_url'):
+                return 'http://silo'
+            if (s, k) == ('Debug', 'silo_api_key'):
+                return 'sa_x'
+            return with_key(s, k, default, **kw)
+        with mock.patch('utilities.settings.get_setting', side_effect=get), \
+                mock.patch.object(silo, 'get_setting', side_effect=get):
+            self.assertEqual(psi.server(), 'silo')
 
     def test_dead_version_cleanup_is_plex_only(self):
         from utilities.plex_functions import scan_cleanup
-        with mock.patch.object(scan_cleanup, 'get_setting', side_effect=self._settings()):
+        with mock.patch.object(scan_cleanup, 'get_setting', side_effect=self._settings()), \
+                mock.patch.object(silo, 'get_setting', side_effect=self._settings()):
             self.assertFalse(scan_cleanup.start_dead_plex_version_cleanup({'location_on_disk': '/x/a.mkv'}))
 
 
@@ -480,3 +493,93 @@ class FolderCheckTests(unittest.TestCase):
             rows = pc.silo_sees_symlinks({'url': 'http://silo', 'token': 'sa_x'}, '/mnt/symlinked')
         self.assertFalse(rows[0][1][0])
         self.assertIn('No Silo movie or TV library', rows[0][1][1])
+
+
+def _getter(vals):
+    return lambda s, k=None, d=None, **kw: vals.get((s, k), kw.get('default', d))
+
+
+class PlexModeSiloTests(unittest.TestCase):
+    """Plex file management mode run with Silo (plex_mode_media_server = silo)."""
+    PLEX_SILO = {('File Management', 'file_collection_management'): 'Plex',
+                 ('File Management', 'plex_mode_media_server'): 'silo',
+                 ('Plex', 'mounted_file_location'): '/mnt/clid/__all__',
+                 ('Debug', 'silo_url'): 'http://silo', ('Debug', 'silo_api_key'): 'sa_x'}
+
+    def test_kind_per_mode(self):
+        self.assertEqual(silo.silo_kind(_getter(self.PLEX_SILO)), 'library')
+        sym = {('File Management', 'file_collection_management'): 'Symlinked/Local',
+               ('File Management', 'media_server_type'): 'silo'}
+        self.assertEqual(silo.silo_kind(_getter(sym)), 'symlink')
+        # media_server_type is never shown in Plex mode: a value left there doesn't switch it
+        stale = {('File Management', 'file_collection_management'): 'Plex',
+                 ('File Management', 'media_server_type'): 'silo'}
+        self.assertIsNone(silo.silo_kind(_getter(stale)))
+        self.assertTrue(silo.is_silo_mode(_getter(self.PLEX_SILO)))
+
+    def test_paths_are_relative_to_the_mount(self):
+        self.assertEqual(silo.local_base(_getter(self.PLEX_SILO)), '/mnt/clid')
+
+    def test_task_defaults(self):
+        with mock.patch('utilities.set_supervisor_env.is_limited_environment', return_value=False):
+            on = reg.default_enabled(_getter({**self.PLEX_SILO, ('Plex', 'update_plex_on_file_discovery'): True,
+                                              ('Debug', 'do_not_add_plex_watch_history_items_to_queue'): True}))
+        self.assertIn('task_plex_full_scan', on)        # reads Silo's catalog
+        self.assertIn('task_check_plex_files', on)      # scans in Silo, collects from it
+        self.assertNotIn('task_plex_movie_boxsets', on)
+        self.assertNotIn('task_get_plex_watch_history', on)
+        self.assertNotIn('task_verify_symlinked_files', on)
+
+    def test_all_folder_release_scans_the_mirrored_library_folder(self):
+        import tempfile
+        import os
+        with tempfile.TemporaryDirectory() as mount:
+            os.makedirs(os.path.join(mount, '__all__', 'Rel.2020'))
+            os.makedirs(os.path.join(mount, 'movies', 'Rel.2020'))
+            libs = [{'id': '1', 'type': 'movies', 'paths': [os.path.join(mount, 'movies')]}]
+            vals = {**self.PLEX_SILO, ('Plex', 'mounted_file_location'): os.path.join(mount, '__all__')}
+            bodies = []
+
+            def fake(method, url, headers=None, **kw):
+                if url.endswith('/api/v2/libraries'):
+                    return _Resp(200, {'items': libs})
+                bodies.append(kw.get('json'))
+                return _Resp(202, {'mode': 'subtree'})
+            with mock.patch.object(silo, 'get_setting', side_effect=_getter(vals)), \
+                    mock.patch.object(silo.requests, 'request', side_effect=fake):
+                silo._lib_cache.update(at=0.0, key=None, items=None)
+                self.assertTrue(silo.scan_path(os.path.join(mount, '__all__', 'Rel.2020'), 'movie'))
+        self.assertEqual(bodies, [{'path': os.path.join(mount, 'movies', 'Rel.2020')}])
+
+    def test_verdict_lookups_go_to_silo(self):
+        from utilities.plex_functions import sections_scan
+        with mock.patch.object(silo, 'get_setting', side_effect=_getter(self.PLEX_SILO)), \
+                mock.patch.object(silo, 'collect_from_silo', return_value=(1, 1)) as col, \
+                mock.patch.object(sections_scan, '_plex_json', side_effect=AssertionError('no Plex')):
+            self.assertIs(sections_scan.plex_is_scanning(), False)
+            self.assertEqual(sections_scan.collect_from_plex([{'id': 1, 'filled_by_file': 'a.mkv'}]), (1, 1))
+        col.assert_called_once()
+
+    def test_collect_from_silo_matches_by_file_name(self):
+        lib = {'movies': [{'location': '/mnt/clid/movies/A/a.mkv', 'type': 'movie', 'title': 'A'},
+                          {'location': '/mnt/clid/movies/B/b.mkv', 'type': 'movie', 'title': 'B'}], 'episodes': []}
+        conn = mock.MagicMock()
+        conn.execute.return_value.fetchone.return_value = [0]
+        with mock.patch.object(silo, 'get_recent_from_silo', return_value=lib), \
+                mock.patch('database.add_collected_items') as add, \
+                mock.patch('database.core.get_db_connection', return_value=conn):
+            self.assertEqual(silo.collect_from_silo([{'id': 7, 'filled_by_file': 'A.MKV'}]), (1, 1))
+        self.assertEqual([e['title'] for e in add.call_args[0][0]], ['A'])
+
+    def test_deletion_manager_never_uses_a_leftover_plex(self):
+        from utilities import deletion_manager as dm
+        vals = {**self.PLEX_SILO, ('Plex', 'url'): 'http://old-plex', ('Plex', 'token'): 't'}
+        with mock.patch.object(silo, 'get_setting', side_effect=_getter(vals)), \
+                mock.patch.object(dm, 'get_setting', side_effect=_getter(vals)), \
+                mock.patch.object(silo, 'remove_file_from_silo', return_value=True) as rm:
+            mgr = dm.DeletionManager()
+            self.assertFalse(mgr.plex_enabled)
+            self.assertTrue(mgr.silo_enabled)
+            res = mgr.remove_from_media_server({'title': 'A', 'type': 'movie', 'location_on_disk': '/mnt/clid/movies/A/a.mkv'})
+        self.assertEqual(res['server_type'], 'silo')
+        rm.assert_called_once()

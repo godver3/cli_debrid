@@ -25,6 +25,29 @@ from utilities.paths import media_file_at
 from database.symlink_verification import update_removal_status
 
 
+class _SkipPlexConnect(Exception):
+    """Plex mode run with Silo: task_check_plex_files skips the Plex connection."""
+
+
+def _mount_file_candidates(item_dict, base_path):
+    """Where an item's file can be under the mount, in task_check_plex_files' order."""
+    filename = item_dict['filled_by_file']
+    names = []
+    for key in ('debrid_folder_name', 'original_scraped_torrent_title', 'real_debrid_original_title', 'filled_by_title'):
+        name = item_dict[key] or ''
+        if name:
+            names.append(name)
+            trimmed = os.path.splitext(name)[0]
+            if key != 'debrid_folder_name' and trimmed != name:
+                names.append(trimmed)
+    paths = [os.path.join(base_path, n, filename) for n in names]
+    paths.append(os.path.join(base_path, filename))
+    paths += [path for _name, path in _category_folder_paths(
+        base_path, [item_dict[k] or '' for k in ('debrid_folder_name', 'original_scraped_torrent_title',
+                                                 'real_debrid_original_title', 'filled_by_title')], filename)]
+    return paths
+
+
 def _category_folder_paths(base_path, folder_names, filename):
     """(folder name, file path) for release folders that sit in a category folder under base_path.
 
@@ -126,9 +149,16 @@ class PlexTasks:
         except Exception as e_work:
             logging.debug(f"Plex file check: work pre-check failed ({e_work}); continuing.")
 
+        # Plex mode run with Silo: no Plex connection (handled after the ffprobe gate below)
+        from utilities.silo_functions import is_silo_library_mode
+        silo_library = is_silo_library_mode()
+
         # Use centralized Plex connection setup if possible or ensure proper error handling
         plex = None
+        sections = []
         try:
+            if silo_library:
+                raise _SkipPlexConnect()
             plex_url = get_setting('Plex', 'url', default='')
             plex_token = get_setting('Plex', 'token', default='')
             
@@ -147,6 +177,8 @@ class PlexTasks:
             sections = plex.library.sections()
             logging.info(f"Connected to Plex server for file check, found {len(sections)} library sections.")
 
+        except _SkipPlexConnect:
+            pass
         except Exception as e:
             logging.error(f"Failed to connect to Plex for file check: {str(e)}")
             plex_health.record_contact_failure()
@@ -283,6 +315,9 @@ class PlexTasks:
             if cache_key in self.plex_scan_tick_counts:
                 del self.plex_scan_tick_counts[cache_key]
             return False
+
+        if silo_library:
+            return self._silo_check_files(items, plex_file_location, _ffprobe_gate_or_reject)
 
         # Check if Plex library checks are disabled (file discovery only)
         if get_setting('Plex', 'disable_plex_library_checks', default=False):
@@ -1384,9 +1419,89 @@ class PlexTasks:
             logging.info(f"Plex check summary (checks enabled): Processed {processed_items_count} items. Identified {updated_items} found items potentially needing scans (within tick limit). {not_found_items} items not found on disk.")
 
 
+
+    # Ticks a found file waits for Silo to list it before it is collected anyway,
+    # like task_check_plex_files' tick fallback for Plex.
+    SILO_COLLECT_AFTER_TICKS = 3
+
+    def _silo_check_files(self, items, base_path, ffprobe_gate):
+        """task_check_plex_files for Plex mode run with Silo. A file found on the
+        mount (and through the same ffprobe gate) gets its folder scanned in Silo;
+        then the found items are collected from Silo's catalog. One Silo hasn't
+        listed after SILO_COLLECT_AFTER_TICKS passes is collected with its mount
+        path. With library checks disabled, found files are collected at once."""
+        from utilities.silo_functions import scan_path, collect_from_silo
+        checks_off = get_setting('Plex', 'disable_plex_library_checks', default=False)
+        found, scanned = [], set()
+        for row in items:
+            item = dict(row)
+            if not item.get('filled_by_title') or not item.get('filled_by_file'):
+                continue
+            path = None
+            if base_path:
+                path = next((p for p in map(media_file_at, _mount_file_candidates(item, base_path)) if p), None)
+            if not path:
+                continue
+            cache_key = f"{item['filled_by_title']}:{item['filled_by_file']}"
+            if not ffprobe_gate(item, path, cache_key):
+                continue
+            found.append((item, path, cache_key))
+            folder = os.path.dirname(path)
+            if folder not in scanned and plex_mode_scan_due(folder) and claim_plex_mode_scan(folder):
+                scanned.add(folder)
+                scan_path(folder, item.get('type') or '')
+        if not found:
+            logging.info(f"Silo file check: {len(items)} Checking item(s), none found on the mount yet")
+            return
+        if not checks_off:
+            result = collect_from_silo([i for i, _, _ in found])
+            if result is not None:
+                logging.info(f"Silo file check: Silo has {result[0]} of {len(found)} found file(s); "
+                             f"{result[1]} item(s) collected")
+        collected = 0
+        for item, path, cache_key in found:
+            tick = self.plex_scan_tick_counts.get(cache_key, 0) + 1
+            self.plex_scan_tick_counts[cache_key] = tick
+            if not checks_off and tick <= self.SILO_COLLECT_AFTER_TICKS:
+                continue
+            if self._mark_collected_on_mount(item, path):
+                collected += 1
+                self.plex_scan_tick_counts.pop(cache_key, None)
+        if collected:
+            logging.info(f"Silo file check: {collected} item(s) collected with their mount path "
+                         f"({'library checks disabled' if checks_off else 'Silo did not list them'})")
+
+    def _mark_collected_on_mount(self, item, path):
+        """Checking -> Collected with the file's mount path (when Silo didn't collect it)."""
+        conn = get_db_connection()
+        try:
+            now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            cur = conn.execute(
+                'UPDATE media_items SET state = "Collected", collected_at = ?, location_on_disk = ? '
+                'WHERE id = ? AND state = "Checking" AND (ghostlisted IS NULL OR ghostlisted = 0)',
+                (now, path, item['id']))
+            conn.commit()
+            if not cur.rowcount:
+                return False
+        finally:
+            conn.close()
+        updated = get_media_item_by_id(item['id'])
+        if updated:
+            handle_state_change(dict(updated))
+            from database.database_writing import add_to_collected_notifications
+            note = dict(updated)
+            note['is_upgrade'] = False
+            note['new_state'] = 'Collected'
+            add_to_collected_notifications(note)
+        return True
     def task_verify_plex_removals(self):
         """Verify that files marked for removal are actually gone from the configured media server (Plex or Jellyfin/Emby) using title-based search."""
         logging.info("[TASK] Running media server removal verification task.")
+
+        from utilities.silo_functions import is_silo_selected
+        if is_silo_selected():
+            logging.debug("[VERIFY] Silo is the media server: removals are rescans, nothing to check in Plex.")
+            return
 
         # Determine Plex connection details based on settings
         plex_url, plex_token = None, None
@@ -1394,9 +1509,6 @@ class PlexTasks:
             plex_url = get_setting('Plex', 'url', '').rstrip('/')
             plex_token = get_setting('Plex', 'token', '')
         elif get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
-            if (get_setting('File Management', 'media_server_type', 'plex') or '').lower() == 'silo':
-                logging.debug("[VERIFY] Silo is the media server: removals are rescans, nothing to check in Plex.")
-                return
             plex_url = get_setting('File Management', 'plex_url_for_symlink', default='').rstrip('/')
             plex_token = get_setting('File Management', 'plex_token_for_symlink', default='')
 

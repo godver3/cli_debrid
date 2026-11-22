@@ -31,16 +31,51 @@ def silo_config() -> Tuple[str, str]:
     return url, key
 
 
-def is_silo_selected() -> bool:
-    """Symlinked/Local mode with Silo picked as the media server."""
-    return (get_setting('File Management', 'file_collection_management', '') == 'Symlinked/Local'
-            and (get_setting('File Management', 'media_server_type', 'plex') or '').lower() == 'silo')
+def silo_kind(get=None) -> Optional[str]:
+    """Which way Silo is used, or None when it isn't the media server:
+    'symlink': Symlinked/Local mode with Media Server Type = Silo; Silo reads
+               the symlink folder.
+    'library': Plex mode with its media server set to Silo
+               (File Management.plex_mode_media_server); Silo reads the mount
+               and cli_debrid tracks the library through Silo, as it does
+               through Plex. A separate setting from media_server_type, which
+               Plex mode never shows, so an old value there can't switch it.
+    `get` is a get_setting-like (section, key, default) callable."""
+    get = get or get_setting
+    mode = get('File Management', 'file_collection_management', 'Plex')
+    if mode == 'Symlinked/Local' and (get('File Management', 'media_server_type', 'plex') or '').lower() == 'silo':
+        return 'symlink'
+    if mode == 'Plex' and (get('File Management', 'plex_mode_media_server', 'plex') or '').lower() == 'silo':
+        return 'library'
+    return None
 
 
-def is_silo_mode() -> bool:
+def is_silo_selected(get=None) -> bool:
+    """Silo is the media server (either mode)."""
+    return silo_kind(get) is not None
+
+
+def is_silo_library_mode(get=None) -> bool:
+    """Plex mode run with Silo instead of Plex."""
+    return silo_kind(get) == 'library'
+
+
+def is_silo_mode(get=None) -> bool:
     """Silo is the media server and has a URL and API key."""
-    url, key = silo_config()
-    return bool(url and key) and is_silo_selected()
+    get = get or get_setting
+    url = (get('Debug', 'silo_url', '') or '').strip()
+    key = (get('Debug', 'silo_api_key', '') or '').strip()
+    return bool(url and key) and is_silo_selected(get)
+
+
+def local_base(get=None) -> str:
+    """The folder cli_debrid's paths for Silo are relative to: the symlink
+    folder in Symlinked/Local mode, the mount's top folder in Plex mode."""
+    get = get or get_setting
+    if silo_kind(get) == 'library':
+        mount = (get('Plex', 'mounted_file_location', '') or '').rstrip('/')
+        return mount[:-len('/__all__')] if mount.endswith('/__all__') else mount
+    return get('File Management', 'symlinked_files_path', '') or ''
 
 
 def _headers(key: str) -> dict:
@@ -132,7 +167,7 @@ def to_silo_path(local_path: str, libraries: Optional[List[dict]] = None) -> Opt
     for root in roots:
         if _under(p, root):
             return p
-    base = _norm(get_setting('File Management', 'symlinked_files_path', '') or '')
+    base = _norm(local_base())
     if base == '/' or not _under(p, base):
         return None
     rel = p[len(base):].lstrip('/')
@@ -154,7 +189,7 @@ def from_silo_path(silo_path: str, libraries: List[dict], symlink_base: str = No
     if os.path.lexists(p):
         return p
     if symlink_base is None:
-        symlink_base = get_setting('File Management', 'symlinked_files_path', '') or ''
+        symlink_base = local_base()
     base = _norm(symlink_base)
     if base == '/':
         return p
@@ -184,6 +219,24 @@ def _owning_library(silo_path: str, libraries: List[dict]) -> Tuple[Optional[dic
             if _under(silo_path, root) and len(root) > len(best_root):
                 best, best_root = lib, root
     return best, best_root
+
+
+def _mirrored_silo_path(local_path: str, libraries: List[dict]) -> Optional[str]:
+    """Silo's path for a file or folder in the mount's all-folder, through the
+    library folder that mirrors it (as Plex mode's own scan does)."""
+    from utilities.plex_functions.sections_scan import _mirrored_library_path
+    base = local_base()
+    roots = {}
+    for lib in libraries:
+        for r in lib.get('paths') or []:
+            roots[from_silo_path(r, libraries, base).rstrip('/')] = _norm(r)
+    directory = local_path if os.path.isdir(local_path) else os.path.dirname(local_path)
+    mirrored = _mirrored_library_path(os.path.abspath(directory), list(roots))
+    if not mirrored:
+        return None
+    if directory != local_path:
+        mirrored = os.path.join(mirrored, os.path.basename(local_path))
+    return to_silo_path(mirrored, libraries)
 
 
 def _library_ids_for_type(libraries: List[dict], item_type: str) -> List[str]:
@@ -217,6 +270,10 @@ def scan_path(local_path: str, item_type: str = '') -> bool:
         logging.error(f'[Silo] Could not list libraries: {e}')
         return False
     silo_path = to_silo_path(local_path, libraries)
+    if not silo_path:
+        # Plex mode: the release is in the mount's all-folder (<mount>/__all__/<release>)
+        # while Silo's library reads a sibling folder that mirrors it (<mount>/shows/<release>).
+        silo_path = _mirrored_silo_path(local_path, libraries)
     if silo_path:
         lib, root = _owning_library(silo_path, libraries)
         # Silo answers 400 "Path does not exist" for a removed file or folder, so
@@ -293,12 +350,14 @@ def _epoch(iso: Optional[str]) -> Optional[int]:
         return None
 
 
-def get_collected_from_silo() -> Optional[Dict[str, List[Dict[str, Any]]]]:
+def get_collected_from_silo(added_after: Optional[str] = None) -> Optional[Dict[str, List[Dict[str, Any]]]]:
     """Every movie and episode file in Silo, in the shape of
     get_collected_from_emby (title, year, imdb_id, tmdb_id, type, location,
     addedAt, genres, release_date, and for episodes the season/episode and
     the show's ids). `location` is the path cli_debrid sees, mapped back
-    from Silo's path. One entry per file. None on failure."""
+    from Silo's path. One entry per file. None on failure.
+    added_after (ISO time): only items Silo first saw since then (Plex mode's
+    recent scan). Their shows are read too, for the episodes' ids."""
     url, key = silo_config()
     if not url or not key:
         return None
@@ -309,6 +368,8 @@ def get_collected_from_silo() -> Optional[Dict[str, List[Dict[str, Any]]]]:
     try:
         while True:
             params = {'limit': 200, 'include_file_paths': 'true'}
+            if added_after:
+                params['added_after'] = added_after
             if cursor:
                 params['cursor'] = cursor
             r = _request('GET', '/api/v2/admin/catalog/items', url, key, params=params, timeout=60)
@@ -326,11 +387,16 @@ def get_collected_from_silo() -> Optional[Dict[str, List[Dict[str, Any]]]]:
             pages += 1
             if not page.get('has_more') or not cursor:
                 break
+        missing = sorted({it.get('series_id') for it in raw if it.get('type') == 'episode'
+                          and it.get('series_id') and it.get('series_id') not in series})
+        for start in range(0, len(missing), 200):
+            for show in catalog_items(url, key, missing[start:start + 200], timeout=60):
+                series[show.get('content_id')] = show
         libraries = get_libraries(url=url, key=key)
     except Exception as e:
         logging.error(f'[Silo] Catalog listing error: {e}')
         return None
-    base = get_setting('File Management', 'symlinked_files_path', '') or ''
+    base = local_base()
     movies: List[dict] = []
     episodes: List[dict] = []
     for it in raw:
@@ -439,3 +505,49 @@ def catalog_detail(url: str, key: str, content_id: str, profile_id: str, timeout
         return None
     r.raise_for_status()
     return r.json() or {}
+
+
+# ---------------------------------------------------------------------------
+# Plex mode run with Silo (silo_kind() == 'library')
+# ---------------------------------------------------------------------------
+
+RECENT_HOURS = 48
+
+
+def get_recent_from_silo(hours: int = RECENT_HOURS) -> Optional[Dict[str, List[Dict[str, Any]]]]:
+    """What Silo added in the last `hours`: Plex mode's recently-added scan."""
+    from datetime import datetime, timedelta, timezone
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    return get_collected_from_silo(added_after=since)
+
+
+def collect_from_silo(items: List[Dict[str, Any]]) -> Optional[Tuple[int, int]]:
+    """collect_from_plex for Silo: collect the Checking items whose file Silo
+    already has. Returns (files Silo has, items no longer in Checking), or
+    None when Silo didn't answer. Reads what Silo added in the last week."""
+    names = {os.path.basename(i.get('filled_by_file') or '').lower() for i in items if i.get('filled_by_file')}
+    names.discard('')
+    if not names:
+        return 0, 0
+    library = get_recent_from_silo(hours=7 * 24)
+    if library is None:
+        return None
+    entries = [e for e in library['movies'] + library['episodes']
+               if os.path.basename(e.get('location') or '').lower() in names]
+    found = len({os.path.basename(e['location']).lower() for e in entries})
+    if not entries:
+        return found, 0
+    from database import add_collected_items
+    from database.core import get_db_connection
+    add_collected_items(entries, recent=True)
+    ids = [i['id'] for i in items if i.get('id') is not None]
+    if not ids:
+        return found, 0
+    conn = get_db_connection()
+    try:
+        still = conn.execute(
+            f"SELECT COUNT(*) FROM media_items WHERE id IN ({','.join('?' * len(ids))}) AND state = 'Checking'",
+            ids).fetchone()[0]
+    finally:
+        conn.close()
+    return found, len(ids) - still

@@ -322,6 +322,11 @@ def media_server(config: Dict) -> Optional[Dict]:
             return {'kind': 'jellyfin', 'name': 'Jellyfin / Emby', 'url': dbg['emby_jellyfin_url'],
                     'token': dbg['emby_jellyfin_token']}
         return None
+    if (fm.get('plex_mode_media_server') or '').lower() == 'silo':
+        dbg = config.get('Debug', {}) or {}
+        if dbg.get('silo_url') and dbg.get('silo_api_key'):
+            return {'kind': 'silo', 'name': 'Silo', 'url': dbg['silo_url'], 'token': dbg['silo_api_key']}
+        return None
     plex = config.get('Plex', {}) or {}
     if plex.get('url') and plex.get('token'):
         return {'kind': 'plex', 'name': 'Plex', 'url': plex['url'], 'token': plex['token']}

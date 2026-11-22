@@ -76,6 +76,12 @@ def _save_required_settings(form):
     })
     if is_symlink:
         file_management['media_server_type'] = media_server if media_server in ('jellyfin', 'silo') else 'plex'
+    else:
+        file_management['plex_mode_media_server'] = 'silo' if form.get('plex_mode_media_server') == 'silo' else 'plex'
+        if file_management['plex_mode_media_server'] == 'silo':
+            debug_cfg = config.setdefault('Debug', {})
+            debug_cfg['silo_url'] = form.get('plex_silo_url', '').strip().rstrip('/')
+            debug_cfg['silo_api_key'] = form.get('plex_silo_api_key', '').strip()
     file_management.setdefault('symlink_organize_by_type', True)
 
     def _libraries(name):
@@ -812,7 +818,7 @@ def _onboarding_summary(config):
         else:
             media_server = 'None'
     else:
-        media_server = 'Plex'
+        media_server = 'Silo' if file_management.get('plex_mode_media_server') == 'silo' else 'Plex'
     if config.get('TVDB', {}).get('api_key'):
         metadata = 'TVDB' + (' + TMDB' if config.get('TMDB', {}).get('api_key') else '')
     elif config.get('Trakt', {}).get('client_id'):
@@ -952,6 +958,10 @@ def onboarding_health():
                 add('Jellyfin / Emby', False, f'Could not connect: {e}')
         else:
             add('Media server', True, 'None set, so new files won\'t trigger a library scan', True)
+    elif file_management.get('plex_mode_media_server') == 'silo':
+        from utilities.silo_functions import test_connection
+        add('Silo', *test_connection(config.get('Debug', {}).get('silo_url', ''),
+                                     config.get('Debug', {}).get('silo_api_key', '')))
     else:
         plex = config.get('Plex', {})
         add('Plex', *validate_plex_settings(plex.get('url', ''), plex.get('token', '')))

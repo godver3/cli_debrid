@@ -151,7 +151,11 @@ class DeletionManager:
         self.mounted_location = get_setting('Plex', 'mounted_file_location', '')
 
         # Media Server Availability
-        self.plex_enabled = self._check_plex_available()
+        from utilities.silo_functions import is_silo_selected, is_silo_mode
+        # Silo picked as the media server (either mode): no Plex calls, even
+        # with a Plex URL left over from before
+        self.silo_enabled = is_silo_mode()
+        self.plex_enabled = not is_silo_selected() and self._check_plex_available()
         self.jellyfin_enabled = self._check_jellyfin_available()
 
         # Limited Environment Mode
@@ -162,7 +166,7 @@ class DeletionManager:
 
         logging.info(f"DeletionManager initialized: file_mode={self.file_collection_mode}, using_symlinks={self.using_symlinks}, "
                     f"symlink_dir={self.symlink_dir}, media_server={self.media_server}, "
-                    f"plex_enabled={self.plex_enabled}, jellyfin_enabled={self.jellyfin_enabled}, "
+                    f"plex_enabled={self.plex_enabled}, jellyfin_enabled={self.jellyfin_enabled}, silo_enabled={self.silo_enabled}, "
                     f"limited_env={self.limited_env}")
 
     def _check_plex_available(self) -> bool:
@@ -320,6 +324,8 @@ class DeletionManager:
         if not plex_deletion_type or not content_title:
             logging.warning("[VERIFY_PLEX] Missing deletion type or title - assuming content exists")
             return True  # Conservative: assume it exists if we can't check
+        if self.silo_enabled:
+            return False  # Silo is the media server: there is no Plex content to check
 
         try:
             from utilities.settings import get_setting
@@ -743,12 +749,24 @@ class DeletionManager:
             'error': Optional[str]
         }
         """
+        if self.silo_enabled:
+            return self._remove_from_silo(item)
         if self.plex_enabled:
             return self._remove_from_plex(item)
         elif self.jellyfin_enabled:
             return self._remove_from_jellyfin(item)
         else:
             return {'success': True, 'server_type': 'none'}
+
+    def _remove_from_silo(self, item: dict) -> dict:
+        """Silo has no delete call: rescan the file's path once it is gone."""
+        from utilities.silo_functions import remove_file_from_silo
+        item_path = item.get('location_on_disk') or item.get('filled_by_file')
+        if not item_path:
+            return {'success': True, 'server_type': 'silo', 'error': None}
+        episode_title = item.get('episode_title') if item.get('type') == 'episode' else None
+        ok = remove_file_from_silo(item.get('title') or '', item_path, episode_title)
+        return {'success': ok, 'server_type': 'silo', 'error': None if ok else 'Silo did not take the rescan'}
 
     def _remove_from_plex(self, item: dict) -> dict:
         """Remove item from Plex using existing function"""
@@ -832,6 +850,11 @@ class DeletionManager:
         Returns:
             dict with 'success', 'paths_scanned', 'sections_cleaned', 'errors'
         """
+        if self.silo_enabled:
+            from utilities.silo_functions import scan_path
+            scanned = [p for p in (deleted_paths or []) if scan_path(p, item_type or '')]
+            return {'success': len(scanned) == len(deleted_paths or []), 'paths_scanned': scanned,
+                    'sections_cleaned': [], 'errors': []}
         if self.plex_enabled:
             try:
                 from utilities.plex_functions import scan_and_empty_plex_trash

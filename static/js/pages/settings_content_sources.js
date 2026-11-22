@@ -175,11 +175,13 @@ function updateSymlinkSubfolderVisibility(sourceId, fileManagementValue) {
 // Visible when: file_collection_management == 'Plex'
 //            OR file_collection_management == 'Symlinked/Local' AND media_server_type == 'plex'
 window.currentMediaServerType = TPL_SETTINGS_CONTENT_SOURCES.settings;
+window.currentPlexModeMediaServer = TPL_SETTINGS_CONTENT_SOURCES.plex_mode_media_server || 'plex';
 
 function updatePlexOnlySections() {
     const fm = window.currentFileManagementModeForSymlinkVisibility || '';
     const ms = window.currentMediaServerType || '';
-    const show = !(fm === 'Symlinked/Local' && (ms === 'jellyfin' || ms === 'silo'));
+    const show = !(fm === 'Symlinked/Local' && (ms === 'jellyfin' || ms === 'silo'))
+                 && !(fm === 'Plex' && window.currentPlexModeMediaServer === 'silo');
     document.querySelectorAll('.plex-only-section').forEach(el => {
         el.style.display = show ? '' : 'none';
         // Also hide/show parent settings-form-group to prevent empty gap
@@ -216,6 +218,10 @@ document.addEventListener('settings-changed', function(event) {
     }
     if (event.detail.section === 'File Management' && event.detail.key === 'media_server_type') {
         window.currentMediaServerType = event.detail.value;
+        updatePlexOnlySections();
+    }
+    if (event.detail.section === 'File Management' && event.detail.key === 'plex_mode_media_server') {
+        window.currentPlexModeMediaServer = event.detail.value;
         updatePlexOnlySections();
     }
 });

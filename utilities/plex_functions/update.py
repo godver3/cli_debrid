@@ -22,8 +22,15 @@ def plex_update_item(item: Dict[str, Any]) -> bool:
     logger.info(f"Attempting to trigger media server scan for item: {item_display}")
     try:
         # Silo picked as the symlink media server: it scans, not Jellyfin or Plex
-        from utilities.silo_functions import is_silo_mode, silo_update_item
+        from utilities.silo_functions import is_silo_mode, is_silo_library_mode, silo_update_item
         if is_silo_mode():
+            if is_silo_library_mode():
+                # Plex mode's one-scan-per-folder cooldown applies to Silo too
+                path = item.get('full_path') or item.get('location_on_disk') or item.get('location') or ''
+                folder = path if os.path.isdir(path) else os.path.dirname(path)
+                if folder and not claim_plex_mode_scan(os.path.abspath(folder)):
+                    logger.debug(f"Skipping Silo scan of {folder}: scanned under {PLEX_MODE_SCAN_COOLDOWN}s ago")
+                    return True
             return silo_update_item(item)
 
         # Check for Jellyfin configuration first - if available, use Jellyfin instead

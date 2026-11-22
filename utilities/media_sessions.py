@@ -50,9 +50,9 @@ def jellyfin_server(get_setting: Callable) -> tuple:
 
 
 def silo_server(get_setting: Callable) -> tuple:
-    """(url, key) of Silo when it is the Symlinked/Local media server, else ('', '')."""
-    if (get_setting('File Management', 'file_collection_management', '') != 'Symlinked/Local'
-            or (get_setting('File Management', 'media_server_type', '') or '').lower() != 'silo'):
+    """(url, key) of Silo when it is the media server (either mode), else ('', '')."""
+    from utilities.silo_functions import is_silo_selected
+    if not is_silo_selected(get_setting):
         return '', ''
     url = (get_setting('Debug', 'silo_url', '') or '').strip().rstrip('/')
     key = (get_setting('Debug', 'silo_api_key', '') or '').strip()
@@ -242,7 +242,8 @@ def silo_sessions_checked(get_setting: Callable, timeout: float = 5) -> tuple:
     except Exception as exc:
         logging.debug(f'[now playing] Silo sessions failed: {exc}')
         return [], str(exc) or type(exc).__name__
-    base = get_setting('File Management', 'symlinked_files_path', '') or ''
+    from utilities.silo_functions import local_base
+    base = local_base(get_setting)
     out = []
     for s in raw:
         item = items.get(str(s.get('media_item_id')))
@@ -281,7 +282,8 @@ def silo_next_episode(get_setting: Callable, s: dict, timeout: float = 5) -> Opt
     except Exception as exc:
         logging.debug(f'[show precache] Silo next episode of {cur}: {exc}')
         return None
-    base = get_setting('File Management', 'symlinked_files_path', '') or ''
+    from utilities.silo_functions import local_base
+    base = local_base(get_setting)
     for c in candidates:
         if c in found:
             return _silo_item(found[c], libraries, base)
@@ -291,7 +293,8 @@ def silo_next_episode(get_setting: Callable, s: dict, timeout: float = 5) -> Opt
 def silo_lookup(get_setting: Callable, timeout: float = 5) -> Callable:
     from utilities import silo_functions as silo
     url, key = silo_server(get_setting)
-    base = get_setting('File Management', 'symlinked_files_path', '') or ''
+    from utilities.silo_functions import local_base
+    base = local_base(get_setting)
     cache = {}
 
     def get(k: str) -> dict:

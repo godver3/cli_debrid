@@ -180,7 +180,8 @@ def start_dead_plex_version_cleanup(item):
             return False
         if (get_setting('Debug', 'emby_jellyfin_url', default='') or '').strip():
             return False
-        if (get_setting('File Management', 'media_server_type', 'plex') or '').lower() == 'silo':
+        from utilities.silo_functions import is_silo_selected
+        if is_silo_selected():
             return False
         new_path = item.get('location_on_disk')
         if not new_path:
@@ -221,6 +222,16 @@ def scan_and_empty_plex_trash(paths: list = None, section_type: str = None, empt
         'sections_cleaned': [],
         'errors': []
     }
+
+    # Silo picked as the media server: a rescan of each path drops what's gone
+    # (Silo has no trash to empty)
+    from utilities.silo_functions import is_silo_mode, scan_path
+    if is_silo_mode():
+        silo_type = 'movie' if section_type == 'movie' else 'episode'
+        for path in paths or []:
+            (result['paths_scanned'] if scan_path(path, silo_type) else result['errors']).append(path)
+        result['success'] = not result['errors']
+        return result
 
     try:
         # Check for Jellyfin configuration first

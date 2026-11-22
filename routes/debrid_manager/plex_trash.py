@@ -679,7 +679,8 @@ def api_plex_force_scan():
 
         media_server = get_setting('File Management', 'media_server_type', 'plex')
 
-        if media_server == 'silo':
+        from utilities.silo_functions import is_silo_selected
+        if is_silo_selected():
             from utilities.silo_functions import is_silo_mode, scan_path
             if not is_silo_mode():
                 return jsonify({'success': False, 'error': 'Silo URL or API key not configured in Settings → Required Settings → File Management'})

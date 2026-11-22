@@ -106,7 +106,7 @@
     </div>
 
         {% for key, value in settings_schema['File Management'].items() %}
-            {% if key != 'tab' and key != 'symlink_organize_by_type' and key != 'symlink_organize_by_resolution' and key != 'symlink_organize_by_version' and key != 'symlink_folder_order' and key != 'media_server_type' %}
+            {% if key != 'tab' and key != 'symlink_organize_by_type' and key != 'symlink_organize_by_resolution' and key != 'symlink_organize_by_version' and key != 'symlink_folder_order' and key != 'media_server_type' and key != 'plex_mode_media_server' %}
             <div class="settings-form-group {% if key in ['plex_url_for_symlink', 'plex_token_for_symlink'] %}symlink-plex-setting{% endif %}">
                 <label for="file management-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
                 {% if value.type == 'boolean' %}
@@ -193,9 +193,18 @@
             <div class="settings-subheader">
                 <h5>Plex Settings</h5>
             </div>
+            <div class="settings-form-group">
+                <label for="plex-mode-media-server" class="settings-title">Media Server:</label>
+                <select id="plex-mode-media-server" name="File Management.plex_mode_media_server" class="settings-input"
+                        data-section="File Management" data-key="plex_mode_media_server">
+                    <option value="plex" {% if settings.get('File Management', {}).get('plex_mode_media_server', 'plex') == 'plex' %}selected{% endif %}>Plex</option>
+                    <option value="silo" {% if settings.get('File Management', {}).get('plex_mode_media_server', 'plex') == 'silo' %}selected{% endif %}>Silo</option>
+                </select>
+                <p class="settings-description">The server that reads the mount and tracks your library. Silo works like Plex here: point its libraries at the mount's folders, and cli_debrid asks Silo what it has. Silo's URL and API key go in the fields that appear below.</p>
+            </div>
             {% for key, value in settings_schema['Plex'].items() %}
                 {% if key != 'tab' %}
-                <div class="settings-form-group">
+                <div class="settings-form-group{% if key in ['url', 'token', 'movie_libraries', 'shows_libraries'] %} plex-server-only{% endif %}">
                     <label for="plex-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
                     {% if value.type == 'boolean' %}
                         <input type="checkbox" id="plex-{{ key }}" name="Plex.{{ key }}"
@@ -260,7 +269,7 @@
                        value="{{ settings.get('Debug', {}).get('silo_api_key', '') }}" class="settings-input"
                        data-section="Debug" data-key="silo_api_key"
                        autocomplete="new-password">
-                <p class="settings-description">An admin API key (starts with sa_), from Silo's Settings → API Keys. Silo's library folders must cover your symlink folder; if Silo sees it at a different path, name each Silo library folder like the folder under the symlink folder (e.g. Movies, TV Shows).</p>
+                <p class="settings-description">An admin API key (starts with sa_), from Silo's Settings → API Keys. Silo's libraries must point at the folders cli_debrid fills: the symlink folder's Movies/TV Shows in Symlinked/Local mode, the mount's folders in Plex mode. If Silo sees them at a different path, name each Silo library folder the same as the folder here.</p>
             </div>
         </div>
     </div>
@@ -771,7 +780,7 @@ function updateMediaServerSettings() {
     const plexSection = document.getElementById('plex-settings-in-file-management');
     const jellyfinSection = document.getElementById('jellyfin-settings-in-file-management');
     const siloSection = document.getElementById('silo-settings-in-file-management');
-    if (siloSection) siloSection.style.display = mediaServerType && mediaServerType.value === 'silo' ? 'block' : 'none';
+    if (siloSection) setTimeout(updateSiloSettings, 0);
     const plexUrlField = document.querySelector('input[name="File Management.plex_url_for_symlink"]')?.closest('.settings-form-group');
     const plexTokenField = document.querySelector('input[name="File Management.plex_token_for_symlink"]')?.closest('.settings-form-group');
     const movieLibsField = document.querySelector('input[name="Plex.movie_libraries"]')?.closest('.settings-form-group.symlink-plex-setting');
@@ -817,6 +826,41 @@ function updateMediaServerSettings() {
         }
     }
 }
+
+// Silo's URL/key fields: shown for Silo in Symlinked/Local (Media Server Type) or in
+// Plex mode (its Media Server). In Plex mode with Silo, Plex's own connection
+// and library fields are hidden.
+function updateSiloSettings() {
+    const fm = document.querySelector('select[name="File Management.file_collection_management"]');
+    const ms = document.getElementById('media-server-type');
+    const pms = document.getElementById('plex-mode-media-server');
+    const fmv = fm ? fm.value : '';
+    const symlinkSilo = fmv === 'Symlinked/Local' && ms && ms.value === 'silo';
+    const plexSilo = fmv === 'Plex' && pms && pms.value === 'silo';
+    const silo = document.getElementById('silo-settings-in-file-management');
+    if (silo) silo.style.display = (symlinkSilo || plexSilo) ? 'block' : 'none';
+    document.querySelectorAll('.plex-server-only').forEach(el => { el.style.display = plexSilo ? 'none' : ''; });
+}
+window.updateSiloSettings = updateSiloSettings;
+
+document.addEventListener('DOMContentLoaded', function() {
+    ['media-server-type', 'plex-mode-media-server'].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener('change', () => {
+            document.dispatchEvent(new CustomEvent('settings-changed', {
+                detail: {section: 'File Management', key: el.dataset.key || (id === 'media-server-type' ? 'media_server_type' : 'plex_mode_media_server'), value: el.value}}));
+            setTimeout(updateSiloSettings, 0);
+        });
+    });
+    const fmSel = document.querySelector('select[name="File Management.file_collection_management"]');
+    if (fmSel) fmSel.addEventListener('change', () => setTimeout(updateSiloSettings, 0));
+    // switching mode asks to confirm first; it fires settings-changed once applied
+    document.addEventListener('settings-changed', e => {
+        if (e.detail && e.detail.key === 'file_collection_management') setTimeout(updateSiloSettings, 0);
+    });
+    setTimeout(updateSiloSettings, 0);
+});
 
 document.addEventListener('DOMContentLoaded', function() {
     // Get the elements

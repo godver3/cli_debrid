@@ -43,9 +43,12 @@ def server():
     """'plex', 'jellyfin' (also Emby), 'silo' or None: Plex in Plex mode; in
     Symlinked/Local mode the selected media server type."""
     from utilities.settings import get_setting
+    from utilities.silo_functions import is_silo_selected
     mode = get_setting('File Management', 'file_collection_management', 'Plex')
     want = 'plex'
-    if mode != 'Plex':
+    if is_silo_selected():
+        want = 'silo'
+    elif mode != 'Plex':
         want = (get_setting('File Management', 'media_server_type', 'plex') or 'plex').lower()
     if want == 'silo':
         from utilities.silo_functions import is_silo_mode

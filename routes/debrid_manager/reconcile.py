@@ -100,7 +100,8 @@ def api_reconcile():
 
         _media_server = get_setting('File Management', 'media_server_type', 'plex')
 
-        if _media_server == 'silo':
+        from utilities.silo_functions import is_silo_selected
+        if is_silo_selected():
             # ── Silo ─────────────────────────────────────────────────────────
             from utilities.silo_functions import is_silo_mode, get_collected_from_silo
             if is_silo_mode():

@@ -29,9 +29,8 @@ def overlays_active() -> bool:
     cli_debrid's overlays stay off there."""
     if not get_setting('Overlay Settings', 'overlays_enabled', False):
         return False
-    fcm = get_setting('File Management', 'file_collection_management', 'Plex')
-    mst = get_setting('File Management', 'media_server_type', 'plex')
-    return not (fcm == 'Symlinked/Local' and mst == 'silo')
+    from utilities.silo_functions import is_silo_selected
+    return not is_silo_selected()
 
 
 def get_jellyfin_url() -> str:
