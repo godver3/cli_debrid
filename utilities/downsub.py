@@ -30,6 +30,13 @@ except Exception as e:
 # stevedore logs every provider plugin at DEBUG each time a provider pool is made
 logging.getLogger('stevedore').setLevel(logging.INFO)
 
+if SUBLIMINAL_AVAILABLE:
+    try:
+        from utilities.subtitle_providers import register as _register_providers
+        _register_providers()
+    except Exception as _e:
+        logging.debug(f"[subs] extra providers unavailable: {_e}")
+
 # Language mapping from config codes to babelfish Language objects
 # Only populated when babelfish is available
 LANGUAGE_MAP = {}
@@ -81,7 +88,7 @@ def expand_languages(codes):
 
 #: Providers that work without a captcha. Order is only a tie-break: every
 #: selected provider is queried and the best-scoring subtitle wins.
-KNOWN_PROVIDERS = ('opensubtitlescom', 'podnapisi', 'gestdown', 'tvsubtitles',
+KNOWN_PROVIDERS = ('opensubtitlescom', 'subdl', 'subsource', 'podnapisi', 'gestdown', 'tvsubtitles',
                    'subtitulamos', 'bsplayer', 'opensubtitles')
 DEFAULT_PROVIDERS = ['opensubtitlescom', 'podnapisi', 'gestdown', 'tvsubtitles']
 
@@ -166,6 +173,10 @@ def build_provider_configs():
     if user and pwd:
         pc['opensubtitles'] = {'username': user, 'password': pwd}
         pc['opensubtitlescom'] = {'username': user, 'password': pwd}
+    if getattr(config, 'SUBDL_API_KEY', ''):
+        pc['subdl'] = {'api_key': config.SUBDL_API_KEY}
+    if getattr(config, 'SUBSOURCE_API_KEY', ''):
+        pc['subsource'] = {'api_key': config.SUBSOURCE_API_KEY}
     return pc
 
 
@@ -380,6 +391,50 @@ def _compute_hash(path, timeout=15):
     return out.get('hash'), out.get('size')
 
 
+_IMPORTANT_TOKENS = {'480p', '576p', '720p', '1080p', '2160p', 'web', 'webdl', 'webrip', 'hdtv', 'bluray',
+                     'bdrip', 'brrip', 'remux', 'dvd', 'dvdrip', 'x264', 'x265', 'h264', 'h265', 'hevc', 'avc',
+                     'aac', 'ac3', 'eac3', 'ddp', 'ddp5', 'dts', 'atmos', 'hdr', 'hdr10', 'dv', 'amzn', 'nf',
+                     'dsnp', 'hmax', 'atvp', 'hulu', 'pcok', 'max', 'repack', 'proper', 'extended', 'uncut',
+                     'directors', 'theatrical', 'imax'}
+
+
+def _tokens(text):
+    return {t for t in re.sub(r'[\W_]+', ' ', (text or '').lower()).split() if len(t) > 1}
+
+
+def release_similarity(target, candidate):
+    """0-100ish: share of the file's release-name words in the subtitle's
+    release name, with a bonus for words that decide timing/encode (source,
+    resolution, codec, service, cut)."""
+    t, c = _tokens(target), _tokens(candidate)
+    if not t or not c:
+        return 0.0
+    return len(t & c) / len(t) * 100 + sum(2 for x in t & c if x in _IMPORTANT_TOKENS)
+
+
+def _download_count(sub):
+    for attr in ('download_count', 'downloads'):
+        v = getattr(sub, attr, None)
+        if isinstance(v, (int, float)) and v > 0:
+            return int(v)
+    return 0
+
+
+def _ranker(target_release):
+    """compute_score for picking: subliminal's score first, then how close
+    the subtitle's release name is to the file's, then popularity. Scaled
+    by 10000 so the subliminal score still decides and still gates min_score."""
+    import math
+    from subliminal.score import compute_score
+
+    def score(sub, video, **kwargs):
+        base = compute_score(sub, video, **kwargs)
+        sim = min(release_similarity(target_release, _release_of(sub)), 120.0)
+        pop = min(int(math.log10(_download_count(sub) + 1) * 100), 999)
+        return base * 10000 + int(sim * 70) + pop
+    return score
+
+
 def _min_score(video):
     if isinstance(video, Episode):
         return MIN_EPISODE_SCORE
@@ -508,6 +563,19 @@ def _label_of(item, path=None):
     return os.path.basename(str(path or '')) or '?'
 
 
+def _strip_override_tags(sub):
+    """Remove ASS/SSA override blocks some SRT files carry (e.g.
+    {\\an8}, {\\pos(273,402)}); several players show them as literal text."""
+    try:
+        raw = sub.content if isinstance(sub.content, bytes) else (sub.content or '').encode('utf-8')
+        if b'{\\' not in raw:
+            return
+        text = raw.decode('utf-8', errors='replace')
+        sub.content = re.sub(r'\{\\[^}]*\}', '', text).encode('utf-8')
+    except Exception as e:
+        logging.debug(f"[subs] tag strip failed: {e}")
+
+
 def _final_format(sub):
     """(format, extension) to save a downloaded subtitle as, or (None, None)
     to drop it. Saved under its real extension: an ASS file named .srt
@@ -525,6 +593,8 @@ def _final_format(sub):
             return None, None
         logging.info(f"[subs] converted {fmt} subtitle to SRT (text-only mode)")
         fmt = 'srt'
+    if fmt == 'srt' and getattr(config, 'TEXT_SUBTITLES_ONLY', False):
+        _strip_override_tags(sub)
     try:
         from subliminal.subtitle import FORMAT_TO_EXTENSION
         ext = FORMAT_TO_EXTENSION.get(fmt, '.srt')
@@ -735,11 +805,12 @@ def release_matches(ctx, languages):
                     continue
                 score = int(compute_score(sub, video))
                 if score >= ctx['min_score']:
-                    out.append((rank, -score, kind, sub))
+                    sim = release_similarity(ctx.get('parse_name') or '', _release_of(sub))
+                    out.append((rank, -score, -sim, -_download_count(sub), kind, sub))
             except Exception:
                 continue
-    out.sort(key=lambda x: (x[0], x[1]))
-    return [(sub, kind) for _, _, kind, sub in out]
+    out.sort(key=lambda x: x[:4])
+    return [(x[5], x[4]) for x in out]
 
 
 def fetch_subtitle(sub):
@@ -967,8 +1038,9 @@ def download_subtitles_for_video(video_path, rating_key=None, name_hint=None, it
             _note(ctx, 'no provider available (paused: ' + ', '.join(paused) + ')')
             return False
         subtitles = download_best_subtitles(
-            {video}, set(ctx['languages']), min_score=ctx['min_score'], providers=providers,
-            provider_configs=build_provider_configs(), pool_class=_pool_class())
+            {video}, set(ctx['languages']), min_score=ctx['min_score'] * 10000, providers=providers,
+            provider_configs=build_provider_configs(), pool_class=_pool_class(),
+            compute_score=_ranker(ctx.get('parse_name') or ''))
         took = time.time() - start_time
         item_id = (ctx.get('item') or {}).get('id')
         if not subtitles[video]:
@@ -1011,8 +1083,8 @@ def _record_attempt(item_id, found):
 
 
 def _release_of(sub):
-    for attr in ('release_name', 'release', 'releases', 'movie_release_name',
-                 'filename', 'file_name', 'name'):
+    for attr in ('release_name', 'release', 'releases', 'movie_release_name', 'release_info',
+                 'release_group', 'version', 'filename', 'file_name', 'name'):
         rel = getattr(sub, attr, None)
         if rel:
             if isinstance(rel, (list, tuple, set)):
@@ -1037,10 +1109,12 @@ def search_candidates(ctx, languages=None):
             except Exception:
                 score, matches = 0, []
             out.append({'sub': sub, 'score': score, 'matches': matches,
+                        'similarity': round(release_similarity(ctx.get('parse_name') or '', _release_of(sub))),
+                        'downloads': _download_count(sub),
                         'provider': sub.provider_name, 'release': _release_of(sub),
                         'language': getattr(sub.language, 'ietf', None) or str(sub.language),
                         'hi': bool(getattr(sub, 'hearing_impaired', False))})
-    out.sort(key=lambda c: c['score'], reverse=True)
+    out.sort(key=lambda c: (c['score'], c['similarity'], c['downloads']), reverse=True)
     return out
 
 

@@ -58,6 +58,8 @@ class Config:
 
         self.SUBTITLE_PROVIDERS = get_setting('Subtitle Settings', 'subtitle_providers', ["opensubtitlescom", "podnapisi", "gestdown", "tvsubtitles"])
         self.TEXT_SUBTITLES_ONLY = get_setting('Subtitle Settings', 'text_subtitles_only', False)
+        self.SUBDL_API_KEY = (get_setting('Subtitle Settings', 'subdl_api_key', '') or '').strip()
+        self.SUBSOURCE_API_KEY = (get_setting('Subtitle Settings', 'subsource_api_key', '') or '').strip()
         self.SYNC_SUBTITLES = get_setting('Subtitle Settings', 'sync_subtitles', 'off') or 'off'
         try:
             self.SYNC_MAX_OFFSET = float(get_setting('Subtitle Settings', 'sync_max_offset', 60) or 60)

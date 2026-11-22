@@ -20,6 +20,8 @@ PROVIDER_MAP = {
     'subtitulamos': 'subtitulamos',
     'bsplayer': 'bsplayer',
     'opensubtitles': 'opensubtitles',
+    'subdl': 'subdl',
+    'subsource': 'subsource',
 }
 # Not search providers here: they describe embedded-track handling
 NON_PROVIDERS = {'embeddedsubtitles'}
@@ -150,6 +152,8 @@ def fetch_plan(url, api_key):
         'text_subtitles_only': text_only,
         'sync_subtitles': 'unless_hash' if sync.get('use_subsync') else 'off',
         'sync_max_offset': int(sync.get('max_offset_seconds') or 60),
+        'subdl_api_key': ((settings.get('subdl') or {}).get('api_key') or '').strip(),
+        'subsource_api_key': ((settings.get('subsource') or {}).get('apikey') or '').strip(),
         'not_carried': not_carried,
     }
     return plan
@@ -159,6 +163,8 @@ def public_plan(plan):
     """The plan without the password, for the preview."""
     out = {k: v for k, v in plan.items() if not k.startswith('_')}
     out['opensubtitles_password'] = 'set' if plan.get('opensubtitles_password') else ''
+    out['subdl_api_key'] = 'set' if plan.get('subdl_api_key') else ''
+    out['subsource_api_key'] = 'set' if plan.get('subsource_api_key') else ''
     try:
         from utilities.settings import get_setting
         out['current'] = {
@@ -187,6 +193,10 @@ def apply_plan(plan, enable=True, stop_bazarr_feed=False):
     if plan.get('opensubtitles_username') and plan.get('opensubtitles_password'):
         put('opensubtitles_username', plan['opensubtitles_username'], 'OpenSubtitles.com login')
         set_setting('Subtitle Settings', 'opensubtitles_password', plan['opensubtitles_password'])
+    for k, label in (('subdl_api_key', 'SubDL API key'), ('subsource_api_key', 'SubSource API key')):
+        if plan.get(k):
+            set_setting('Subtitle Settings', k, plan[k])
+            applied.append(label)
     put('probe_for_embedded_subtitles', bool(plan.get('probe_for_embedded_subtitles')),
         f"skip embedded languages: {'on' if plan.get('probe_for_embedded_subtitles') else 'off'}")
     put('text_subtitles_only', bool(plan.get('text_subtitles_only')),
