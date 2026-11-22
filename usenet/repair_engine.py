@@ -577,7 +577,7 @@ def _media_header(file_path: str, timeout: int = 10):
         r = _sp.run(
             ['ffprobe', '-v', 'error',
              '-show_entries',
-             'stream=codec_type,codec_name:stream_tags=language:stream_disposition=forced:format=duration',
+             'stream=codec_type,codec_name:stream_tags:stream_disposition=forced:format=duration',
              '-of', 'json', file_path],
             timeout=timeout, capture_output=True, text=True,
         )
@@ -590,9 +590,12 @@ def _media_header(file_path: str, timeout: int = 10):
             streams = data.get('streams') or []
             info = {'types': [st.get('codec_type') for st in streams],
                     'duration': duration}
+            from utilities.subtitle_lang import track_frames as _frames
             subs = [{'codec': (st.get('codec_name') or '').lower(),
                      'language': ((st.get('tags') or {}).get('language') or '').strip().lower(),
-                     'forced': bool((st.get('disposition') or {}).get('forced'))}
+                     'forced': bool((st.get('disposition') or {}).get('forced')),
+                     'title': (st.get('tags') or {}).get('title') or '',
+                     'frames': _frames(st.get('tags'))}
                     for st in streams if st.get('codec_type') == 'subtitle']
             try:
                 _real = _os_h.path.realpath(file_path)

@@ -125,7 +125,8 @@ def _tracks_of(meta):
                         and 'commentary' not in (st.get('title') or st.get('displayTitle') or '').lower():
                     out.append({'lang': (st.get('languageTag') or st.get('languageCode') or '').lower(),
                                 'code': (st.get('languageCode') or '').lower(),
-                                'codec': (st.get('codec') or '').lower(), 'forced': bool(st.get('forced'))})
+                                'codec': (st.get('codec') or '').lower(), 'forced': bool(st.get('forced')),
+                                'title': st.get('title') or ''})
     return out
 
 
@@ -232,7 +233,7 @@ def _jf_tracks(item):
             continue
         lang = (st.get('Language') or '').lower()
         out.append({'lang': lang, 'code': lang, 'codec': (st.get('Codec') or '').lower(),
-                    'forced': bool(st.get('IsForced'))})
+                    'forced': bool(st.get('IsForced')), 'title': st.get('Title') or ''})
     return out
 
 
@@ -335,11 +336,12 @@ def start_scan(items):
 
 def good_embedded_langs(tracks):
     """Languages covered by embedded tracks that play without transcoding:
-    text formats only (not image PGS/VobSub or styled ASS/SSA), not forced."""
-    from utilities.subtitle_lang import key
+    text formats only (not image PGS/VobSub or styled ASS/SSA), not forced
+    (a forced-flagged track that is clearly full dialogue still counts)."""
+    from utilities.subtitle_lang import counts_as_full, key
     out = set()
     for t in tracks or []:
-        if t.get('forced') or t.get('codec') not in TEXT_CODECS:
+        if not counts_as_full(t) or t.get('codec') not in TEXT_CODECS:
             continue
         k = key(t.get('lang')) or key(t.get('code'))
         if k:

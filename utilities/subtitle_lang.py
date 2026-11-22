@@ -9,6 +9,8 @@ Country rule: a wanted language without a country ('en', 'pt') is matched by
 any variant ('en-US', 'pt-BR'); a wanted 'pt-BR' needs a Brazilian one (a
 plain 'pt' subtitle doesn't count), as in Bazarr.
 """
+import re
+
 from functools import lru_cache
 
 _ALIASES = {
@@ -107,3 +109,37 @@ def sidecar_lang(name_middle):
         if k:
             return k, flags
     return None, flags
+
+
+# A forced track only carries the foreign-language parts: a few dozen lines
+# per episode. Anime releases often flag their full dialogue track forced
+# by mistake ("Stylized Subtitles", "Full", hundreds of lines). Such a track
+# still covers the language; a genuine forced/signs track never does.
+_FORCED_TITLE = re.compile(r'sign|song|forced|foreign|karaoke|lyrics|commentary|\bfs\b', re.I)
+_FULL_TITLE = re.compile(r'full|dialog|dialogue|subtitles|subs\b|stylized|styled|\bcc\b|sdh|complete', re.I)
+FULL_TRACK_MIN_LINES = 250
+
+
+def track_frames(tags):
+    """Line count mkvmerge records for a subtitle track (NUMBER_OF_FRAMES,
+    possibly with a '-eng' suffix), or None."""
+    for k, v in (tags or {}).items():
+        if str(k).upper().startswith('NUMBER_OF_FRAMES'):
+            try:
+                return int(str(v).strip())
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def counts_as_full(track):
+    """Does an embedded subtitle track cover its language? Not forced: yes.
+    Forced: only when its title doesn't say signs/songs/forced and it is
+    clearly full (titled full/dialogue/subtitles, or 250+ lines)."""
+    if not track.get('forced'):
+        return True
+    title = str(track.get('title') or '')
+    if _FORCED_TITLE.search(title):
+        return False
+    frames = track.get('frames')
+    return bool(_FULL_TITLE.search(title)) or (isinstance(frames, int) and frames >= FULL_TRACK_MIN_LINES)

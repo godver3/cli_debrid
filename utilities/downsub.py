@@ -293,9 +293,10 @@ def get_embedded_subtitle_languages(file_path: Path, text_only=None) -> set:
     if tracks is None:
         return set()
     langs = set()
+    from utilities.subtitle_lang import counts_as_full
     for t in tracks:
-        if t.get('forced'):
-            continue
+        if not counts_as_full(t):
+            continue        # forced/signs-only (a forced-flagged full track still counts)
         if text_only and t.get('codec') not in TEXT_SUBTITLE_CODECS:
             continue
         from utilities.subtitle_lang import key as _lkey
@@ -322,7 +323,7 @@ def _embedded_tracks(file_path):
             [
                 'ffprobe', '-v', 'error',
                 '-select_streams', 's',
-                '-show_entries', 'stream=codec_name:stream_tags=language:stream_disposition=forced',
+                '-show_entries', 'stream=codec_name:stream_tags:stream_disposition=forced',
                 '-of', 'json',
                 str(file_path),
             ],
@@ -331,9 +332,12 @@ def _embedded_tracks(file_path):
         if result.returncode != 0:
             return None
         data = json.loads(result.stdout or '{}')
+        from utilities.subtitle_lang import track_frames
         return [{'codec': (st.get('codec_name') or '').lower(),
                  'language': ((st.get('tags') or {}).get('language') or '').strip().lower(),
-                 'forced': bool((st.get('disposition') or {}).get('forced'))}
+                 'forced': bool((st.get('disposition') or {}).get('forced')),
+                 'title': (st.get('tags') or {}).get('title') or '',
+                 'frames': track_frames(st.get('tags'))}
                 for st in data.get('streams', [])]
     except FileNotFoundError:
         logging.warning('ffprobe not found — skipping embedded subtitle probe')

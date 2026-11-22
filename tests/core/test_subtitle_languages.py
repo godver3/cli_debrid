@@ -131,3 +131,38 @@ def test_download_skips_languages_embedded_under_legacy_tags(monkeypatch):
         ctx = downsub._prepare_video('/m/Film.2020.1080p.BluRay.x264-GRP.mkv', None, None,
                                      {'id': 1, 'type': 'movie', 'title': 'Film', 'year': 2020})
     assert [L.key(x) for x in ctx['languages']] == ['deu']        # French was embedded
+
+
+def test_forced_flag_on_a_full_track():
+    """Anime releases often flag the full dialogue track forced (Dragon Ball:
+    'Stylized Subtitles [iKaos]', forced). It still covers English; a real
+    forced/signs track doesn't, so a really missing language is still fetched."""
+    from utilities.subtitle_lang import counts_as_full, track_frames
+    assert counts_as_full({'forced': False})
+    assert counts_as_full({'forced': True, 'title': 'Stylized Subtitles [iKaos/corre]'})
+    assert counts_as_full({'forced': True, 'title': 'English', 'frames': 412})
+    assert counts_as_full({'forced': True, 'title': 'Full Subs'})
+    assert not counts_as_full({'forced': True, 'title': 'Signs/Songs [iKaos]', 'frames': 400})
+    assert not counts_as_full({'forced': True, 'title': 'English Forced'})
+    assert not counts_as_full({'forced': True, 'title': '', 'frames': 37})
+    assert not counts_as_full({'forced': True})                     # nothing to go on: still forced
+    assert track_frames({'NUMBER_OF_FRAMES-eng': '512'}) == 512
+    assert track_frames({'language': 'eng'}) is None
+
+
+def test_embedded_languages_use_the_rule():
+    from unittest import mock
+    from utilities import downsub
+    signs_only = [{'codec': 'ass', 'language': 'eng', 'forced': True, 'title': 'Signs/Songs', 'frames': 60}]
+    full = signs_only + [{'codec': 'ass', 'language': 'eng', 'forced': True, 'title': 'Stylized Subtitles', 'frames': 380}]
+    with mock.patch.object(downsub, '_embedded_tracks', return_value=signs_only):
+        assert downsub.get_embedded_subtitle_languages('/x.mkv', text_only=False) == set()
+    with mock.patch.object(downsub, '_embedded_tracks', return_value=full):
+        assert downsub.get_embedded_subtitle_languages('/x.mkv', text_only=False) == {'eng'}
+
+
+def test_plex_tracks_use_the_rule():
+    from utilities.plex_subtitle_info import good_embedded_langs
+    tracks = [{'lang': 'en', 'code': 'eng', 'codec': 'srt', 'forced': True, 'title': 'English Full'},
+              {'lang': 'es', 'code': 'spa', 'codec': 'srt', 'forced': True, 'title': 'Forced'}]
+    assert good_embedded_langs(tracks) == {'eng'}
