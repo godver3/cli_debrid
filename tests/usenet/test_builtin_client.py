@@ -181,6 +181,18 @@ class BuiltinClientTests(unittest.TestCase):
         self.engine.routes[('DELETE', '/jobs/rd-LQL6O4QJXWDRK/health')] = _Resp(204)
         self.assertEqual(self.c.delete_repair_health('The Rings Of Power Season 2'), 200)
 
+    def test_health_summary_splits_usenet_and_debrid(self):
+        """Usenet tab showed '4 broken' from debrid jobs and 0 unknown for
+        never-checked jobs (2026-11-22 test image)."""
+        dj = self._with_debrid_job()
+        dj['health'] = {'status': 'broken', 'broken_files': [{'file_name': 'x.mp4', 'reason': 'hoster_unavailable'}]}
+        unchecked = {'id': 'j3', 'name': 'New.Movie', 'status': 'ready', 'path': '/mnt/clid/__all__/New.Movie'}
+        self.engine.routes[('GET', '/jobs')] = _Resp(200, [JOB, dj, unchecked])
+        self.assertEqual(self.c.get_health_summary(), {'broken': 1, 'unknown': 1})
+        self.assertEqual(self.c.health_counts('debrid'), {'broken': 1})
+        self.assertIn(('GET', '/jobs', {'params': {'status': 'ready'}}),
+                      [(m, p, {k: v for k, v in kw.items() if k == 'params'}) for m, p, kw in self.engine.calls])
+
     def test_debug_stats_shape(self):
         st = self.c.get_debug_stats()
         self.assertEqual(st['usenet']['pool'], {'active': 3, 'idle': 2, 'max_connections': 25})
