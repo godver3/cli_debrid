@@ -270,6 +270,57 @@ def plex_delete(item_id):
     return jsonify({'success': True})
 
 
+# ---- orphaned subtitles (opt-in, destructive) ------------------------------
+
+def _library_root():
+    from utilities.settings import get_setting
+    if status_mod.is_plex_mode():
+        return None
+    return (get_setting('File Management', 'symlinked_files_path', '') or '').strip() or None
+
+
+@subtitle_manager_bp.route('/api/subtitles/orphans')
+@admin_required
+def orphans_scan():
+    """Subtitle files in the symlink library named after a video that is no
+    longer in their folder (left by replaced/upgraded/repaired files, Bazarr
+    or cli_debrid). Read-only."""
+    from utilities.deletion_manager import find_orphan_subtitles
+    root = _library_root()
+    if not root:
+        return jsonify({'error': 'Only for Symlinked/Local file management (Plex mode has no subtitle files).'}), 400
+    found = find_orphan_subtitles(root)
+    areas = {}
+    for p in found:
+        top = os.path.relpath(p, root).split(os.sep)[0]
+        areas[top] = areas.get(top, 0) + 1
+    return jsonify({'count': len(found), 'areas': areas,
+                    'examples': [os.path.relpath(p, root) for p in found[:15]]})
+
+
+@subtitle_manager_bp.route('/api/subtitles/orphans/delete', methods=['POST'])
+@admin_required
+def orphans_delete():
+    """Permanently delete every orphaned subtitle found by a fresh scan.
+    Needs {"confirm": "DELETE"}."""
+    from utilities.deletion_manager import find_orphan_subtitles
+    if (request.get_json(silent=True) or {}).get('confirm') != 'DELETE':
+        return jsonify({'error': 'Type DELETE to confirm'}), 400
+    root = _library_root()
+    if not root:
+        return jsonify({'error': 'Only for Symlinked/Local file management.'}), 400
+    deleted, failed = 0, 0
+    for p in find_orphan_subtitles(root):
+        try:
+            os.remove(p)
+            deleted += 1
+        except OSError:
+            failed += 1
+    logging.warning(f"[subs] removed {deleted} orphaned subtitle file(s) from the library on request"
+                    + (f" ({failed} could not be removed)" if failed else ''))
+    return jsonify({'success': True, 'deleted': deleted, 'failed': failed})
+
+
 # ---- bulk runs ------------------------------------------------------------
 
 @subtitle_manager_bp.route('/api/subtitles/bulk/start', methods=['POST'])

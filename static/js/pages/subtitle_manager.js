@@ -471,6 +471,39 @@
       loadList();
     } catch (e) { toast(e.message, true); } finally { btn.disabled = false; }
   }
+  // Remove orphaned subtitles: scan first, then a typed confirmation.
+  if ($('sm-or-open')) {
+    let orphanCount = 0;
+    const orReset = () => { $('sm-or-result').style.display = 'none'; $('sm-or-confirm').value = ''; $('sm-or-delete').disabled = true; $('sm-or-status').textContent = ''; };
+    $('sm-or-open').addEventListener('click', () => { orReset(); $('sm-or').classList.add('open'); });
+    $('sm-or-close').addEventListener('click', () => $('sm-or').classList.remove('open'));
+    $('sm-or-scan').addEventListener('click', async () => {
+      orReset();
+      $('sm-or-status').textContent = 'Scanning…';
+      try {
+        const d = await api('/api/subtitles/orphans');
+        orphanCount = d.count;
+        $('sm-or-status').textContent = '';
+        $('sm-or-summary').innerHTML = d.count
+          ? `<b>${d.count}</b> orphaned subtitle file(s): ` + Object.entries(d.areas).map(([k, v]) => `${esc(k)} ${v}`).join(', ')
+          : 'No orphaned subtitles found.';
+        $('sm-or-examples').textContent = (d.examples || []).join('\n') + (d.count > (d.examples || []).length ? `\n… and ${d.count - d.examples.length} more` : '');
+        $('sm-or-result').style.display = '';
+      } catch (e) { $('sm-or-status').textContent = ''; toast(e.message, true); }
+    });
+    $('sm-or-confirm').addEventListener('input', (e) => { $('sm-or-delete').disabled = !(orphanCount > 0 && e.target.value.trim() === 'DELETE'); });
+    $('sm-or-delete').addEventListener('click', async () => {
+      $('sm-or-delete').disabled = true;
+      try {
+        const d = await api('/api/subtitles/orphans/delete', { method: 'POST', body: JSON.stringify({ confirm: 'DELETE' }) });
+        toast(`Deleted ${d.deleted} orphaned subtitle file(s)` + (d.failed ? `, ${d.failed} failed` : ''), !!d.failed);
+        orReset();
+        $('sm-or-summary').textContent = '';
+        loadList();
+      } catch (e) { toast(e.message, true); }
+    });
+  }
+
   $('sm-bz-open').addEventListener('click', () => {
     if (!$('sm-bz-url').value) $('sm-bz-url').value = 'http://' + location.hostname + ':6767';
     $('sm-bz').classList.add('open');

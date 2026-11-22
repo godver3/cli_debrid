@@ -486,18 +486,6 @@ def handle_state_change(item: Dict[str, Any]) -> None:
             except Exception:
                 pass
 
-            # A replaced/upgraded/repaired file leaves the old file's subtitles
-            # in the folder (its symlink went, they stayed); Plex can pick them
-            # for the new file. Symlinked/Local only: there the folder is ours.
-            try:
-                _loc = fresh_item.get('location_on_disk')
-                if _loc and get_setting('File Management', 'file_collection_management') != 'Plex':
-                    from .deletion_manager import remove_orphan_subtitles
-                    remove_orphan_subtitles(os.path.dirname(_loc),
-                                            get_setting('File Management', 'symlinked_files_path', ''))
-            except Exception as _e:
-                logging.debug(f"Orphaned subtitle cleanup failed: {_e}")
-
             # Run subtitle downloader
             try:
                 file_path = fresh_item.get('location_on_disk')

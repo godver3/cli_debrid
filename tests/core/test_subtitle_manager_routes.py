@@ -161,3 +161,29 @@ def test_auto_says_what_happened(env):
         with mock.patch.object(downsub, 'download_subtitles_for_video', side_effect=fake(note, ok)):
             d = c.post('/api/subtitles/item/2/auto').get_json()
         assert d['success'] is ok and d['message'].startswith(want), d
+
+
+def test_orphan_tool_scans_then_deletes_only_with_confirmation(env):
+    """Opt-in 'Remove orphaned subtitles': subtitles named after a video no
+    longer in the folder go; the current video's subtitles (any source),
+    symlinked ones and folders without a video stay."""
+    lib = env['lib']                     # .../lib/Show (2020)/Season 01 with S01E01/E02 videos
+    root = os.path.dirname(os.path.dirname(lib))
+    orphan = os.path.join(lib, 'Show - S01E01.old-release.en.srt.bak.srt')
+    stale = os.path.join(lib, 'Old.Release.S01E01.en.srt')
+    linked = os.path.join(lib, 'Release.Included.en.srt')
+    os.symlink('/nonexistent/x.srt', linked)
+    open(stale, 'w').close()
+    open(orphan, 'w').close()
+    c = env['client']
+    with mock.patch('utilities.settings.get_setting',
+                    side_effect=lambda s, k, d=None: {('File Management', 'file_collection_management'): 'Symlinked/Local',
+                                                      ('File Management', 'symlinked_files_path'): root}.get((s, k), d)):
+        d = c.get('/api/subtitles/orphans').get_json()
+        assert d['count'] == 1 and d['examples'] == [os.path.relpath(stale, root)]
+        assert c.post('/api/subtitles/orphans/delete', json={}).status_code == 400   # no confirmation
+        assert os.path.exists(stale)
+        d = c.post('/api/subtitles/orphans/delete', json={'confirm': 'DELETE'}).get_json()
+    assert d['deleted'] == 1 and not os.path.exists(stale)
+    for kept in (orphan, linked, os.path.join(lib, 'Show - S01E01.en.srt'), os.path.join(lib, 'Show - S01E01.es.ass')):
+        assert os.path.lexists(kept), kept
