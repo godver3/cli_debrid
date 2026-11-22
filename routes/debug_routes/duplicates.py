@@ -4,58 +4,32 @@ from flask import jsonify, request
 from utilities.settings import get_setting
 import logging
 from routes import admin_required
-import os
 from datetime import datetime
 from debrid import get_debrid_provider
 from utilities.deletion_manager import DeletionManager
 from routes.program_operation_routes import get_program_runner
 from database.database_writing import RESET_COLLECTION_STATE_SQL
-import subprocess
 from ._common import debug_bp
 
 def async_run_bulk_subs():
-    """Asynchronously run the bulk subtitle downloader script."""
+    """Queue a subtitle search for every collected item missing a language,
+    on the same search lane as Tools → Subtitle Manager → Search all missing
+    (history, skip rules and provider pauses shared; progress shown there).
+    Replaces the old bulk_subs.sh run, which kept its own .subs-processed
+    flag files and saw only Symlinked/Local sidecars."""
     try:
-        symlink_path = get_setting('File Management', 'symlinked_files_path')
-        if not symlink_path or not os.path.isdir(symlink_path):
-            message = f"Symlink path not found or not a directory: {symlink_path}"
-            logging.error(message)
-            return {'success': False, 'error': message}
-
-        script_path = os.path.abspath('utilities/bulk_subs.sh')
-        if not os.path.exists(script_path):
-            message = f"Bulk subtitle script not found at: {script_path}"
-            logging.error(message)
-            return {'success': False, 'error': message}
-        
-        logging.info(f"Starting bulk subtitle scan on: {symlink_path}")
-        
-        # We need to execute with shell=True if we want to use shell features like pipes
-        # but it's safer to call bash directly. The script has a shebang, so it can be run directly.
-        process = subprocess.run(
-            [script_path, symlink_path],
-            capture_output=True,
-            text=True,
-            check=False # Do not throw exception on non-zero exit codes
-        )
-
-        log_output = process.stdout.strip()
-        log_error = process.stderr.strip()
-
-        if log_output:
-            logging.info(f"Bulk subtitle scan stdout:\n{log_output}")
-        if log_error:
-            logging.error(f"Bulk subtitle scan stderr:\n{log_error}")
-
-        if process.returncode == 0:
-            message = "Bulk subtitle scan completed successfully."
-            logging.info(message)
-            return {'success': True, 'message': message}
-        else:
-            message = f"Bulk subtitle scan failed with exit code {process.returncode}."
-            logging.error(message)
-            return {'success': False, 'error': f"{message} See logs for details."}
-
+        from utilities import subtitle_bulk, subtitle_status
+        from utilities.settings import get_setting
+        if not get_setting('Subtitle Settings', 'enable_subtitles', False):
+            return {'success': False, 'error': 'Subtitle downloads are off (Settings → Subtitles).'}
+        items = subtitle_status.missing_items()
+        if not items:
+            return {'success': True, 'message': 'No collected items are missing subtitles.'}
+        how, n = subtitle_bulk.start(items, label='Bulk subtitle scan (Debug)', kind='search')
+        message = (f"{'Started' if how == 'started' else 'Queued'} a subtitle search for {n} item(s); "
+                   "progress is on Tools → Subtitle Manager.")
+        logging.info(f"[subs] {message}")
+        return {'success': True, 'message': message}
     except Exception as e:
         logging.error(f"Exception during bulk subtitle scan: {e}", exc_info=True)
         return {'success': False, 'error': f"An unexpected error occurred: {str(e)}"}

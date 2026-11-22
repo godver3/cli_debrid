@@ -135,10 +135,35 @@ def _pool_class():
     """ProviderPool that remembers why a provider was discarded."""
     from subliminal.core import ProviderPool
 
+    class _Recorder:
+        """Delegates to a provider, remembering the error its last search
+        raised: subliminal discards a provider after a failed search
+        outside the except block, so the error is gone by then."""
+        def __init__(self, prov, name, errors):
+            self._prov, self._name, self._errors = prov, name, errors
+
+        def list_subtitles(self, *a, **kw):
+            try:
+                return self._prov.list_subtitles(*a, **kw)
+            except Exception as e:
+                self._errors[self._name] = e
+                raise
+
+        def __getattr__(self, attr):
+            return getattr(self._prov, attr)
+
     class _TrackingPool(ProviderPool):
+        def __getitem__(self, name):
+            errors = self.__dict__.setdefault('_last_errors', {})
+            try:
+                return _Recorder(super().__getitem__(name), name, errors)
+            except Exception as e:   # login/initialize failed
+                errors[name] = e
+                raise
+
         def _discard_provider(self, name):
             super()._discard_provider(name)
-            exc = sys.exc_info()[1]
+            exc = sys.exc_info()[1] or self.__dict__.get('_last_errors', {}).get(name)
             secs, reason = _block_seconds(exc)
             if name not in _BLOCKED:
                 logging.warning(f"[subs] pausing provider {name} for {secs // 60} min: {reason}")
@@ -444,6 +469,33 @@ def _min_score(video):
     return MIN_MOVIE_SCORE if getattr(video, 'year', None) else MIN_MOVIE_SCORE_NO_YEAR
 
 
+def applies_to(item):
+    """Whether automatic subtitle downloads (on collect, the Bulk subtitles
+    task) cover this item, per the 'Apply to movies / TV shows / anime'
+    settings. Anime only counts separately when separate anime folders are
+    on (as for the folders). Unknown type: covered. Manual searches on the
+    Subtitle Manager page ignore this."""
+    item = item or {}
+    kind = item.get('type')
+    if kind not in ('movie', 'episode'):
+        return True
+    anime = False
+    if getattr(config, 'ENABLE_ANIME', False):
+        try:
+            from database.show_overrides import _parse_genres
+            anime = any(str(g).lower() == 'anime' for g in _parse_genres(item.get('genres')))
+            if kind == 'episode':
+                from utilities.anime_detection import series_type_override
+                override = series_type_override(item.get('imdb_id'))
+                if override:
+                    anime = override == 'anime'
+        except Exception as e:
+            logging.debug(f"[subs] anime check failed: {e}")
+    if kind == 'movie':
+        return bool(config.APPLY_TO_ANIME_MOVIES if anime else config.APPLY_TO_MOVIES)
+    return bool(config.APPLY_TO_ANIME_TV_SHOWS if anime else config.APPLY_TO_TV_SHOWS)
+
+
 def _lookup_item(path):
     """Find the collected item for a path, for callers that only have one
     (manual buttons, bulk script)."""
@@ -613,13 +665,10 @@ def prepare_video(video_path, rating_key=None, name_hint=None, item=None, check_
     when every configured language is already an embedded track, else a
     context dict for search/save.
     """
-    _probe = config.PROBE_FOR_EMBEDDED
-    if not check_embedded:
-        config.PROBE_FOR_EMBEDDED = False
-    try:
-        return _prepare_video(video_path, rating_key, name_hint, item)
-    finally:
-        config.PROBE_FOR_EMBEDDED = _probe
+    # Passed down, not set on the shared config: the page, the bulk lanes
+    # and post-processing prepare videos from different threads.
+    return _prepare_video(video_path, rating_key, name_hint, item,
+                          probe=None if check_embedded else False)
 
 
 def _plex_embedded_langs(item):
@@ -646,7 +695,10 @@ def _plex_embedded_langs(item):
         return None
 
 
-def _prepare_video(video_path, rating_key, name_hint, item):
+def _prepare_video(video_path, rating_key, name_hint, item, probe=None):
+    """probe: check embedded tracks (None = the probe_for_embedded setting)."""
+    if probe is None:
+        probe = config.PROBE_FOR_EMBEDDED
     video_path = Path(video_path)
 
     from utilities.settings import get_setting
@@ -689,7 +741,7 @@ def _prepare_video(video_path, rating_key, name_hint, item):
     # Probe for embedded subtitles if enabled. Plex mode only uses the
     # add-time playability probe's result (no fresh read of the mount).
     _plex_cached = None
-    if config.PROBE_FOR_EMBEDDED and is_plex_mode:
+    if probe and is_plex_mode:
         try:
             from usenet.repair_engine import cached_subtitle_tracks
             _plex_cached = cached_subtitle_tracks(str(video_path))
@@ -698,9 +750,9 @@ def _prepare_video(video_path, rating_key, name_hint, item):
     if getattr(config, 'IGNORE_EMBEDDED', False):
         plex_embedded = None
     else:
-        plex_embedded = _plex_embedded_langs(item) if config.PROBE_FOR_EMBEDDED else None
+        plex_embedded = _plex_embedded_langs(item) if probe else None
     if not getattr(config, 'IGNORE_EMBEDDED', False) and (
-            plex_embedded is not None or (config.PROBE_FOR_EMBEDDED and (not is_plex_mode or _plex_cached is not None))):
+            plex_embedded is not None or (probe and (not is_plex_mode or _plex_cached is not None))):
         # Plex already scanned the file: use its track list instead of
         # probing the file on the mount
         embedded = plex_embedded if plex_embedded is not None else get_embedded_subtitle_languages(video_path)
@@ -1192,6 +1244,13 @@ def main(specific_file=None, rating_key=None, name_hint=None, item=None):
     # Require a specific file
     if not specific_file:
         logging.error("No specific file provided")
+        return
+
+    if item is None:
+        item = _lookup_item(specific_file)
+    if item and not applies_to(item):
+        logging.info(f"[subs] {_label_of(item, specific_file)}: skipped, subtitle downloads are off for "
+                     f"this kind of item (Settings → Subtitles → Apply to ...)")
         return
 
     # Download subtitles

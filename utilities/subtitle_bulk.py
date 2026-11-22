@@ -77,7 +77,65 @@ def _enqueue(items, kind, label):
         return True, len(new)
 
 
-def _worker(kind, pause):
+PLAYBACK_CHECK_EVERY = 15.0   # seconds a "something is playing" answer is reused
+PLAYBACK_WAIT_STEP = 30.0     # how long a lane sleeps between checks while one plays
+_playing_cache = {'at': 0.0, 'n': 0}
+
+
+def playing_sessions():
+    """Sessions playing on Plex/Jellyfin/Emby now (0 when no server is set
+    or it doesn't answer: never blocks work on a broken server)."""
+    now = time.monotonic()
+    if now - _playing_cache['at'] < PLAYBACK_CHECK_EVERY:
+        return _playing_cache['n']
+    try:
+        from utilities.settings import get_setting
+        from utilities.media_sessions import sessions
+        n = len(sessions(get_setting))
+    except Exception as e:
+        logging.debug(f"[subs] playback check failed: {e}")
+        n = 0
+    _playing_cache.update(at=now, n=n)
+    return n
+
+
+def _reads_files(kind):
+    """The lane reads samples of the video over the mount: always for sync,
+    for search only when sync-after-download is on (otherwise just the
+    two 64 KB hash reads)."""
+    if kind == 'sync':
+        return True
+    from utilities import downsub
+    return getattr(downsub.config, 'SYNC_SUBTITLES', 'off') in ('unless_hash', 'always')
+
+
+def _hold_for_playback(kind, job, wait):
+    """While something plays, a lane that reads files waits (page runs) or
+    stops, leaving the rest for the next run (the scheduled task, which
+    must not hold its thread for a whole movie). False = stop the lane."""
+    if not _reads_files(kind):
+        return True
+    logged = False
+    while (n := playing_sessions()) > 0:
+        if not wait:
+            with _LOCK:
+                _QUEUE[kind].clear()
+                job['stopped'] = f'{n} stream(s) playing: the rest waits for the next run'
+                job['running'] = False
+            return False
+        if not logged:
+            logging.info(f"[subs {kind}] {n} stream(s) playing: waiting so subtitle work doesn't take the line")
+            logged = True
+        with _LOCK:
+            job['waiting'] = f'waiting: {n} stream(s) playing'
+        if _CANCEL[kind].wait(PLAYBACK_WAIT_STEP):
+            break
+    with _LOCK:
+        job.pop('waiting', None)
+    return True
+
+
+def _worker(kind, pause, wait_for_playback=True):
     from utilities import downsub
     from utilities.subtitle_status import label as _label
     downsub.config.reload()
@@ -88,10 +146,24 @@ def _worker(kind, pause):
         while True:
             if _CANCEL[kind].is_set():
                 with _LOCK:
-                    job['stopped'] = 'stopped by user'
+                    if _QUEUE[kind]:
+                        # stop() empties the queue, so this was queued after
+                        # the stop (it saw the lane still running): do it.
+                        _CANCEL[kind].clear()
+                    else:
+                        job['stopped'] = 'stopped by user'
+                        job['running'] = False
+                        break
+            if not _hold_for_playback(kind, job, wait_for_playback):
                 break
+            if _CANCEL[kind].is_set():
+                continue
             with _LOCK:
                 if not _QUEUE[kind]:
+                    # Ends under the same lock _enqueue checks 'running'
+                    # with, so work added now starts a new worker instead
+                    # of waiting in the queue for one that is leaving.
+                    job['running'] = False
                     break
                 item = _QUEUE[kind].popleft()
             if kind == 'search' and not downsub.selected_providers():
@@ -99,6 +171,7 @@ def _worker(kind, pause):
                     _QUEUE[kind].clear()
                     job['stopped'] = 'every provider is paused: ' + '; '.join(
                         f'{k}: {v}' for k, v in downsub.blocked_providers().items())
+                    job['running'] = False
                 break
             name = _label(item)
             with _LOCK:
@@ -146,10 +219,10 @@ def start(items, label='manual', pause=1.0, kind='search'):
 
 def run_now(items, label='task', pause=1.0, kind='search'):
     """Scheduled task: run in the calling thread, or queue behind the lane's
-    current run."""
+    current run. Stops (rest next run) instead of waiting while a stream plays."""
     first, n = _enqueue(items, kind, label)
     if first:
-        _worker(kind, pause)
+        _worker(kind, pause, wait_for_playback=False)
         return True
     logging.info(f"[subs {kind}] {label}: queued {n} item(s) behind the run already going")
     return False

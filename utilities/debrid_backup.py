@@ -584,7 +584,9 @@ def restore_from_file(filename: str, dry_run: bool = False) -> dict:
                 magnet = f'magnet:?xt=urn:btih:{item_hash}'
                 r = requests.post(
                     'https://api.torbox.app/v1/api/torrents/createtorrent',
-                    data={'magnet': magnet},
+                    # allow_zip false: TorBox otherwise stores 100+ file
+                    # torrents as one .zip (see debrid/torbox/api.py)
+                    data={'magnet': magnet, 'allow_zip': 'false'},
                     headers={'Authorization': f'Bearer {provider.api_key}'},
                     timeout=30,
                 )
@@ -892,7 +894,7 @@ def restore_from_file_to_provider(filename: str, provider_id: str, api_key: str,
             if dry_run: added.append(h); continue
             try:
                 r = _req.post('https://api.torbox.app/v1/api/torrents/createtorrent',
-                              data={'magnet': f'magnet:?xt=urn:btih:{h}'},
+                              data={'magnet': f'magnet:?xt=urn:btih:{h}', 'allow_zip': 'false'},
                               headers={'Authorization': f'Bearer {api_key}'}, timeout=30)
                 logging.debug(f'[XPRestore] Torbox HTTP {r.status_code} body={r.text[:200]}')
                 if r.status_code == 429 or (r.text and 'rate' in r.text.lower()):

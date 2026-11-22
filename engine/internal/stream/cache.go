@@ -176,7 +176,9 @@ func (c *Cache) complete(key string, cl *call, fetched bool) {
 			c.disk.Put(key, cl.data)
 		}
 	}
-	close(cl.done)
+	// Unlist (and cache) before waking waiters: one that retries on
+	// wake-up (a live read whose prefetch failed) must not find this
+	// finished call still in flight and spin on it.
 	c.mu.Lock()
 	if c.inflight[key] == cl {
 		delete(c.inflight, key)
@@ -185,6 +187,7 @@ func (c *Cache) complete(key string, cl *call, fetched bool) {
 		c.put(key, cl.data)
 	}
 	c.mu.Unlock()
+	close(cl.done)
 }
 
 // joinOrHedge waits on a lower-priority fetch already on the wire for up
@@ -232,8 +235,10 @@ func (c *Cache) joinOrHedge(ctx context.Context, key string, prio nntp.Priority,
 		err  error
 	}
 	res := make(chan result, 1)
+	hctx, hcancel := context.WithCancel(ctx)
+	defer hcancel() // the slow fetch won: stop downloading the article twice
 	go func() {
-		d, err := fetch(nntp.WithAcquireHook(ctx, own.markStarted))
+		d, err := fetch(nntp.WithAcquireHook(hctx, own.markStarted))
 		res <- result{d, err}
 	}()
 	fetched := false

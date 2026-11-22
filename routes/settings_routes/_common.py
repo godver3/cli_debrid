@@ -4,7 +4,6 @@ from flask import Blueprint
 from utilities.settings import load_config, save_config
 from utilities.settings_schema import SETTINGS_SCHEMA
 import logging
-from ..utils import is_user_system_enabled
 
 settings_bp = Blueprint('settings', __name__)
 

@@ -59,3 +59,34 @@ func TestLiveJoinsNormalPrefetchWithoutHedge(t *testing.T) {
 		t.Fatalf("got %q after %d fetches, %d hedges", d, fetches.Load(), c.Hedges.Load())
 	}
 }
+
+// When the slow background fetch finishes first after all, the hedge's own
+// download is cancelled instead of fetching the article a second time.
+func TestHedgeCancelledWhenSlowFetchWins(t *testing.T) {
+	old := hedgeMin
+	hedgeMin = 50 * time.Millisecond
+	defer func() { hedgeMin = old }()
+	c := NewCache(1 << 20)
+	slowDone := make(chan struct{})
+	go c.Do("k", nntp.Prefetch, func(ctx context.Context) ([]byte, error) {
+		nntp.FireAcquireHook(ctx)
+		<-slowDone
+		return []byte("slow"), nil
+	})
+	time.Sleep(20 * time.Millisecond)
+	hedgeCancelled := make(chan struct{})
+	d, err := c.Do("k", nntp.Live, func(ctx context.Context) ([]byte, error) {
+		close(slowDone) // the slow fetch answers while the hedge is on the wire
+		<-ctx.Done()
+		close(hedgeCancelled)
+		return nil, ctx.Err()
+	})
+	if err != nil || string(d) != "slow" {
+		t.Fatalf("got %q %v, want the slow fetch's data", d, err)
+	}
+	select {
+	case <-hedgeCancelled:
+	case <-time.After(time.Second):
+		t.Fatal("hedge download kept running after the slow fetch won")
+	}
+}

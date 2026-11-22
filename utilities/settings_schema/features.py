@@ -153,22 +153,22 @@ SECTIONS = {
         },
         "apply_to_movies": {
             "type": "boolean",
-            "description": "Apply subtitle downloads to movie folders",
+            "description": "Download subtitles for movies automatically (when collected, and in the Bulk subtitles task). Searches started on the Subtitle Manager page always run.",
             "default": True
         },
         "apply_to_tv_shows": {
             "type": "boolean",
-            "description": "Apply subtitle downloads to TV show folders",
+            "description": "Download subtitles for TV episodes automatically (when collected, and in the Bulk subtitles task). Searches started on the Subtitle Manager page always run.",
             "default": True
         },
         "apply_to_anime_movies": {
             "type": "boolean",
-            "description": "Apply subtitle downloads to anime movie folders (if separate anime folders are enabled)",
+            "description": "Download subtitles for anime movies automatically (only used when separate anime folders are on; otherwise anime follows the movie setting).",
             "default": True
         },
         "apply_to_anime_tv_shows": {
             "type": "boolean",
-            "description": "Apply subtitle downloads to anime TV show folders (if separate anime folders are enabled)",
+            "description": "Download subtitles for anime episodes automatically (only used when separate anime folders are on; otherwise anime follows the TV setting).",
             "default": True
         },
         "only_current_file": {

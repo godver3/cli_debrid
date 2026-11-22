@@ -416,7 +416,7 @@
                     : `<button class="sm-btn sm-mini" data-lane-hide="${kind}">Hide</button>`}
       </div>
       <div class="sm-bar-score" style="height:6px;margin:8px 0"><i style="width:${pct}%;background:var(--sm-accent)"></i></div>
-      <div class="sm-muted">${d.running ? (d.current ? (sync ? 'Looking for a better subtitle for ' : 'Searching ') + esc(d.current) + '…' : 'Starting…') : esc(d.stopped || '')}</div>
+      <div class="sm-muted">${d.running ? (d.waiting ? esc(d.waiting) + ' (continues when playback stops)' : d.current ? (sync ? 'Looking for a better subtitle for ' : 'Searching ') + esc(d.current) + '…' : 'Starting…') : esc(d.stopped || '')}</div>
       <div class="sm-lane-recent">${rows || '<span class="sm-muted">No results yet.</span>'}</div>
     </div>`;
   }

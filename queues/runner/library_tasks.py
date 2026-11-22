@@ -108,8 +108,11 @@ class LibraryTasks:
             logging.info("[BulkSubs] Subtitle downloads are off (Settings → Subtitles); nothing to do.")
             return
         try:
-            from utilities import subtitle_bulk, subtitle_status
-            items = subtitle_status.missing_items(skip_tried_hours=24, limit=200)
+            from utilities import downsub, subtitle_bulk, subtitle_status
+            downsub.config.reload()
+            # 'Apply to movies / TV shows / anime' settings limit the task
+            items = [it for it in subtitle_status.missing_items(skip_tried_hours=24)
+                     if downsub.applies_to(it)][:200]
             if not items:
                 logging.info("[BulkSubs] No collected items are missing subtitles.")
                 return

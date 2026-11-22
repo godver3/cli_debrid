@@ -85,13 +85,60 @@ def test_quota_error_pauses_provider():
     assert 'opensubtitlescom' not in downsub.blocked_providers()
 
 
+def test_search_time_quota_error_pauses_with_its_reason():
+    """subliminal discards a provider whose search failed outside the except
+    block; the pool still knows why (quota: 6 h, not a 10-min 'unknown')."""
+    from subliminal.core import ProviderPool
+    from subliminal.exceptions import DownloadLimitExceeded
+    from subliminal.video import Episode
+    from babelfish import Language
+    from utilities import downsub
+    downsub._BLOCKED.clear()
+
+    class Fake:
+        def list_subtitles(self, video, languages):
+            raise DownloadLimitExceeded()
+    pool = downsub._pool_class()(providers=['podnapisi'])
+    with mock.patch.object(ProviderPool, '__getitem__', return_value=Fake()):
+        assert pool.list_subtitles(Episode('Show.S01E01.mkv', 'Show', 1, 1), {Language('eng')}) == []
+    assert 'daily download limit' in downsub.blocked_providers()['podnapisi']
+    assert downsub._BLOCKED['podnapisi'][0] - time.monotonic() > 3600
+    downsub._BLOCKED.clear()
+
+
 def test_task_uses_missing_list(db):
     from queues.runner.library_tasks import LibraryTasks
     with _settings(), mock.patch('utilities.subtitle_status.missing_items', return_value=[{'id': 4}]) as mi, \
             mock.patch('utilities.subtitle_bulk.run_now') as run:
         LibraryTasks.task_process_bulk_subtitles(object())
-    mi.assert_called_once_with(skip_tried_hours=24, limit=200)
+    mi.assert_called_once_with(skip_tried_hours=24)
     assert run.call_args.kwargs['kind'] == 'search'
+
+
+def test_task_and_auto_download_honour_apply_to_settings(db):
+    from queues.runner.library_tasks import LibraryTasks
+    from utilities import downsub
+    movie = {'id': 1, 'type': 'movie', 'genres': '["Drama"]'}
+    ep = {'id': 2, 'type': 'episode', 'genres': '["Drama"]', 'imdb_id': 'tt1'}
+    anime_ep = {'id': 3, 'type': 'episode', 'genres': '["Anime", "Animation"]', 'imdb_id': 'tt2'}
+    cfg = dict(APPLY_TO_MOVIES=False, APPLY_TO_TV_SHOWS=True, APPLY_TO_ANIME_MOVIES=True,
+               APPLY_TO_ANIME_TV_SHOWS=False, ENABLE_ANIME=True)
+    with mock.patch.multiple(downsub.config, **cfg), mock.patch.object(downsub.config, 'reload'), \
+            mock.patch('utilities.anime_detection.series_type_override', return_value=None):
+        assert [downsub.applies_to(i) for i in (movie, ep, anime_ep)] == [False, True, False]
+        with mock.patch.object(downsub.config, 'ENABLE_ANIME', False):
+            assert downsub.applies_to(anime_ep)          # anime follows the TV setting
+        with _settings(), mock.patch('utilities.subtitle_status.missing_items', return_value=[movie, ep, anime_ep]), \
+                mock.patch('utilities.subtitle_bulk.run_now') as run:
+            LibraryTasks.task_process_bulk_subtitles(object())
+        assert [i['id'] for i in run.call_args.args[0]] == [2]
+        with mock.patch.object(downsub, 'SUBLIMINAL_AVAILABLE', True), \
+                mock.patch.object(downsub.config, 'SUBTITLES_ENABLED', True), \
+                mock.patch.object(downsub, 'download_subtitles_for_video') as dl:
+            downsub.main('/m/x.mkv', item=movie)
+            assert not dl.called
+            downsub.main('/m/y.mkv', item=ep)
+            assert dl.call_count == 1
 
 
 def test_task_off_when_subtitles_disabled(db):
@@ -310,3 +357,67 @@ def test_kept_is_searched_again_when_a_provider_is_added(db, tmp_path):
         with mock.patch.object(downsub, 'selected_providers',
                                return_value=['opensubtitlescom', 'gestdown', 'subsource']):
             assert subtitle_resync.needs_check(item)                # provider added: search again
+
+
+def test_sync_lane_waits_while_something_plays(db, monkeypatch):
+    from utilities import subtitle_bulk
+    monkeypatch.setattr(subtitle_bulk, 'PLAYBACK_WAIT_STEP', 0.05)
+    playing = {'n': 1}
+    with mock.patch.object(subtitle_bulk, 'playing_sessions', side_effect=lambda: playing['n']), \
+            mock.patch.object(subtitle_bulk, '_sync_one', return_value=(True, 'fixed', True)) as one:
+        assert subtitle_bulk.start([{'id': 1, 'title': 'A'}], pause=0, kind='sync')[0] == 'started'
+        time.sleep(0.3)
+        assert not one.called and 'playing' in subtitle_bulk.status()['sync']['waiting']
+        playing['n'] = 0
+        for _ in range(100):
+            if not subtitle_bulk.status()['sync']['running']:
+                break
+            time.sleep(0.05)
+    assert one.call_count == 1 and 'waiting' not in subtitle_bulk.status()['sync']
+
+
+def test_task_stops_instead_of_waiting_for_playback(db):
+    from utilities import subtitle_bulk, downsub
+    with mock.patch.object(subtitle_bulk, 'playing_sessions', return_value=2), \
+            mock.patch.object(downsub.config, 'SYNC_SUBTITLES', 'always'), \
+            mock.patch.object(downsub.config, 'reload'), \
+            mock.patch.object(downsub, 'download_subtitles_for_video') as dl:
+        subtitle_bulk.run_now([{'id': 1, 'title': 'A'}], pause=0)
+    assert not dl.called and 'next run' in subtitle_bulk.status()['search']['stopped']
+
+
+def test_search_without_sync_ignores_playback(db):
+    from utilities import subtitle_bulk, downsub
+    with mock.patch.object(subtitle_bulk, 'playing_sessions', return_value=2), \
+            mock.patch.object(downsub.config, 'SYNC_SUBTITLES', 'off'), \
+            mock.patch.object(downsub.config, 'reload'), \
+            mock.patch.object(downsub, 'selected_providers', return_value=['podnapisi']), \
+            mock.patch.object(downsub, 'resolve_item_path', return_value='/x.mkv'), \
+            mock.patch.object(downsub, 'download_subtitles_for_video', return_value=True) as dl:
+        subtitle_bulk.run_now([{'id': 1, 'title': 'A'}], pause=0)
+    assert dl.call_count == 1
+
+
+def test_work_queued_after_stop_still_runs(db):
+    import threading
+    from utilities import subtitle_bulk, downsub
+    gate = threading.Event()
+    done = []
+
+    def slow(path, item=None):
+        gate.wait(5)
+        done.append(item['id'])
+        return True
+    with mock.patch.object(downsub, 'resolve_item_path', return_value='/x.mkv'), \
+            mock.patch.object(downsub, 'download_subtitles_for_video', side_effect=slow), \
+            mock.patch.object(downsub, 'selected_providers', return_value=['podnapisi']):
+        subtitle_bulk.start([{'id': 1, 'title': 'A'}, {'id': 2, 'title': 'B'}], pause=0)
+        time.sleep(0.1)
+        subtitle_bulk.stop('search')                       # drops B, stops after A
+        assert subtitle_bulk.start([{'id': 3, 'title': 'C'}], pause=0)[0] == 'queued'
+        gate.set()
+        for _ in range(100):
+            if not subtitle_bulk.status()['search']['running']:
+                break
+            time.sleep(0.05)
+    assert done == [1, 3]
