@@ -19,6 +19,7 @@ import requests
 TEXT_CODECS = {'srt', 'subrip', 'mov_text', 'webvtt', 'vtt', 'text', 'smi', 'sami'}
 PAGE = 500
 CACHE_DAYS = 7
+UNKNOWN_RETRY_MIN = 10
 BATCH = 120
 
 _LEAVES = {}            # show ratingKey -> (monotonic, {(season, episode): ratingKey})
@@ -133,6 +134,24 @@ def _cache_table(conn):
         rating_key TEXT PRIMARY KEY, tracks TEXT, checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
 
 
+def forget(item):
+    """Drop an item's cached tracks: its file was just collected or replaced,
+    so the next check reads the new file's tracks from the server."""
+    from database.core import get_db_connection
+    key = cache_key(item)
+    if not key:
+        return
+    conn = get_db_connection()
+    try:
+        _cache_table(conn)
+        conn.execute("DELETE FROM subtitle_embedded WHERE rating_key = ?", (key,))
+        conn.commit()
+    except Exception as e:
+        logging.debug(f"[subs] embedded cache forget failed: {e}")
+    finally:
+        conn.close()
+
+
 def cached_tracks(keys):
     """{cache_key: tracks} from the cache (fresh entries only)."""
     from database.core import get_db_connection
@@ -158,16 +177,16 @@ def cached_tracks(keys):
         conn.close()
 
 
-def _store(found, retry_hours=None):
-    """Cache tracks. retry_hours: for items the server couldn't tell us
-    about (not in its library yet), expire after that many hours instead of
-    CACHE_DAYS, so a just-added item is checked again soon."""
+def _store(found, retry_minutes=None):
+    """Cache tracks. retry_minutes: for items the server couldn't tell us
+    about (not in its library yet), expire after that many minutes instead
+    of CACHE_DAYS, so a just-added item is checked again soon."""
     from database.core import get_db_connection
     conn = get_db_connection()
     try:
         _cache_table(conn)
-        when = ("CURRENT_TIMESTAMP" if retry_hours is None
-                else f"datetime('now', '-{CACHE_DAYS} days', '+{int(retry_hours)} hours')")
+        when = ("CURRENT_TIMESTAMP" if retry_minutes is None
+                else f"datetime('now', '-{CACHE_DAYS} days', '+{int(retry_minutes)} minutes')")
         conn.executemany("INSERT OR REPLACE INTO subtitle_embedded (rating_key, tracks, checked_at) "
                          f"VALUES (?, ?, {when})", [(k, json.dumps(v)) for k, v in found.items()])
         conn.commit()
@@ -194,7 +213,7 @@ def fetch_tracks(pairs):
         _store(found)
         missing = {c: [] for c, _ in chunk if c not in found}
         if missing:
-            _store(missing, retry_hours=1)
+            _store(missing, retry_minutes=UNKNOWN_RETRY_MIN)
         with _LOCK:
             _SCAN['done'] = _SCAN.get('done', 0) + len(chunk)
 
@@ -263,9 +282,9 @@ def _remember_unknown(items):
     have = cached_tracks(keys)
     unknown = {k: [] for k in keys if k not in have}
     if unknown:
-        _store(unknown, retry_hours=1)
+        _store(unknown, retry_minutes=UNKNOWN_RETRY_MIN)
         logging.info(f"[subs] embedded-subtitle scan: {len(unknown)} item(s) not found on the media server yet; "
-                     f"checking again in an hour")
+                     f"checking again in {UNKNOWN_RETRY_MIN} minutes")
 
 
 def start_scan(items):

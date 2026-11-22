@@ -169,4 +169,12 @@ def test_unresolvable_items_are_not_rescanned(env):
         if not env.scan_status()['running']:
             break
         time.sleep(0.05)
-    assert env.cached_tracks([env.cache_key(items[0])]) == {'500:7:7': []}
+    assert env.cached_tracks([env.cache_key(items[0])]) == {"500:7:7": []}
+
+
+def test_forget_drops_cache_for_replaced_file(env):
+    item = {'type': 'movie', 'ms_item_id': '600'}
+    env.fetch_tracks([(env.cache_key(item), '600')])
+    assert '600' in env.cached_tracks(['600'])
+    env.forget(item)
+    assert env.cached_tracks(['600']) == {}

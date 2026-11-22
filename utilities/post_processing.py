@@ -478,6 +478,14 @@ def handle_state_change(item: Dict[str, Any]) -> None:
             # Run CineSync for items
             run_cinesync(dict(fresh_item))
             
+            # The file is new or replaced: its embedded subtitle tracks must be
+            # read again from the media server, not from the cache
+            try:
+                from .plex_subtitle_info import forget as _forget_embedded
+                _forget_embedded(dict(fresh_item))
+            except Exception:
+                pass
+
             # Run subtitle downloader
             try:
                 file_path = fresh_item.get('location_on_disk')
