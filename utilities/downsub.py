@@ -701,6 +701,47 @@ def hash_matches(ctx, languages):
     return [sub for _, sub in out]
 
 
+def _same_master(video, sub, m):
+    """Same disc/stream master, so the same timing: Blu-ray rips of the same
+    title share the disc's timing, and WEB-DLs from the same streaming
+    service share the service's. Broadcast (HDTV) captures don't: ad breaks
+    are cut differently."""
+    src = getattr(video, 'source', None)
+    if 'source' not in m or src not in ('Blu-ray', 'Web', 'Ultra HD Blu-ray'):
+        return False
+    if src == 'Web':
+        return bool(getattr(video, 'streaming_service', None)) and 'streaming_service' in m
+    return True
+
+
+def release_matches(ctx, languages):
+    """Subtitles for this release, best first, from all selected providers:
+    the same release group (and source when known), else the same master
+    (Blu-ray, or WEB from the same streaming service). These are what
+    players pick and are in sync by convention. Returns [(sub, kind)]."""
+    video = ctx['video']
+    from subliminal.score import compute_score
+    out = []
+    with _pool_class()(providers=selected_providers(), provider_configs=build_provider_configs()) as pool:
+        for sub in pool.list_subtitles(video, set(languages)):
+            try:
+                m = sub.get_matches(video)
+                if getattr(video, 'release_group', None) and 'release_group' in m and \
+                        (not getattr(video, 'source', None) or 'source' in m):
+                    kind, rank = 'release match', 0
+                elif _same_master(video, sub, m):
+                    kind, rank = 'same-source match', 1
+                else:
+                    continue
+                score = int(compute_score(sub, video))
+                if score >= ctx['min_score']:
+                    out.append((rank, -score, kind, sub))
+            except Exception:
+                continue
+    out.sort(key=lambda x: (x[0], x[1]))
+    return [(sub, kind) for _, _, kind, sub in out]
+
+
 def fetch_subtitle(sub):
     """Download one subtitle's content; False on failure/quota (the provider
     is then paused)."""
@@ -722,6 +763,9 @@ def _maybe_sync(ctx, sub, content, fmt, mode=None):
         _mark_checked(content, 'hash match')
     if mode == 'unless_hash' and 'hash' in matches:
         return content, 'skipped: hash match'
+    if mode == 'unless_hash' and 'release_group' in matches:
+        _mark_checked(content, 'release match')
+        return content, 'skipped: release match (same release group)'
     lang = getattr(sub.language, 'ietf', None) or str(sub.language)
     return sync_content(ctx['video_path'], content, fmt,
                         label=f"{_label_of(ctx.get('item'), ctx['original_path'])} {lang}",

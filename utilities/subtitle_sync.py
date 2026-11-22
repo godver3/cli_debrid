@@ -139,10 +139,13 @@ def _speech_intervals(samples, start):
         e = sum(x * x for x in seg) / FRAME
         db.append(10 * math.log10(e + 1.0))
     srt = sorted(db)
-    floor, mid, top = srt[n // 5], srt[n // 2], srt[int(n * 0.95)]
+    floor, top = srt[n // 10], srt[int(n * 0.95)]
     if top - floor < 6:          # flat audio: silence or constant noise
         return []
-    thr = max(floor + 0.35 * (top - floor), mid)
+    # Threshold from the noise floor up. (Clamping it to the median forced
+    # about half of every window to count as speech whatever was said, so
+    # the detector couldn't follow dialogue density at all.)
+    thr = floor + 0.4 * (top - floor)
     voiced = [d > thr for d in db]
     # fill gaps < 200 ms, then drop runs < 100 ms
     gap = 0
@@ -233,7 +236,7 @@ def _score_curve(lines, windows, ratio, max_offset):
 # and the line speed is the limit, so fewer and shorter windows are what make
 # a sync fast. Embedded subtitle lines are exact, so short windows suffice;
 # speech detection needs more audio to be sure.
-EMBED_WINDOWS, EMBED_LEN = 5, 15.0
+EMBED_WINDOWS, EMBED_LEN = 5, 30.0
 AUDIO_WINDOWS, AUDIO_LEN = 5, 20.0
 
 
@@ -242,7 +245,7 @@ def _starts(duration, n, length):
 
 
 def sync_subtitle(video_path, content, fmt='srt', max_offset=60.0, timeout=90, duration=None,
-                  duration_fallback=None):
+                  duration_fallback=None, audio=False):
     """Returns (new_content_bytes_or_None, info). info['status'] is one of
     'synced', 'in_sync', 'unsure', 'failed'. `duration` (exact seconds, e.g.
     from Plex) skips probing the file; `duration_fallback` (approximate, e.g.
@@ -282,11 +285,27 @@ def sync_subtitle(video_path, content, fmt='srt', max_offset=60.0, timeout=90, d
             if lines_w is not None:
                 win.append((start, start + EMBED_LEN, lines_w))
             if sum(1 for w in win if w[2]) >= 3:
-                result = _evaluate(lines, win, max_offset)
+                result = _match_lines(lines, win, max_offset)
                 if result['decided']:
                     break
         if sum(1 for w in win if w[2]) < 2 or sum(len(w[2]) for w in win) < 10:
             win, result = [], None
+        elif result is None or not result['decided']:
+            result = _match_lines(lines, win, max_offset)
+            if result['status'] == 'unsure':
+                # the embedded track doesn't agree with this subtitle (e.g. a
+                # partial or foreign track): fall back to the audio
+                info['embedded_note'] = result['info'].get('agree')
+                win, result = [], None
+    if not win and not audio:
+        # Speech detection on short audio samples isn't reliable on real TV
+        # audio (measured: it rarely decides, and decoding the whole track
+        # means reading the whole file from the mount), so without an
+        # embedded text track the subtitle is left as it is.
+        info['status'] = 'no_reference'
+        info['reason'] = 'no embedded text subtitle in the file to check the timing against'
+        info['read_s'] = round(time.time() - t_read, 1)
+        return None, info
     if not win:
         info['reference'] = 'audio'
         for start in _starts(duration, AUDIO_WINDOWS, AUDIO_LEN):
@@ -318,6 +337,79 @@ def sync_subtitle(video_path, content, fmt='srt', max_offset=60.0, timeout=90, d
         ev.end = max(ev.start + 1, int(round((ev.end / 1000.0 * ratio + offset) * 1000)))
     out_fmt = fmt if fmt in ('srt', 'ass', 'ssa', 'vtt') else 'srt'
     return subs.to_string(out_fmt).encode('utf-8'), info
+
+
+MATCH_TOL = 0.5      # a line counts as matching when its start is within this of a reference line
+MATCH_SHARE = 0.6    # ... and at least this share of lines must match
+
+
+def _match_lines(lines, win, max_offset):
+    """Fit against an exact reference (embedded subtitle lines): every pair
+    of (subtitle line, reference line) votes for an offset; the most-voted
+    offset (per frame-rate ratio) is refined to the median of its votes, and
+    the answer counts only when at least half of the subtitle lines then
+    start within MATCH_TOL of a reference line."""
+    refs = sorted(a for (_, _, w) in win for (a, _) in w)
+    spans = [(w0, w1) for (w0, w1, _) in win]
+    if not refs:
+        return {'status': 'unsure', 'decided': False, 'ratio': 1.0, 'offset': 0.0, 'info': {'agree': 0.0}}
+    import bisect
+    best = None
+    for r in RATIOS:
+        starts = [a * r for (a, _) in lines]
+        votes = {}
+        for x in starts:
+            lo = bisect.bisect_left(refs, x - max_offset)
+            hi = bisect.bisect_right(refs, x + max_offset)
+            for y in refs[lo:hi]:
+                b = round((y - x) / 0.1)
+                votes[b] = votes.get(b, 0) + 1
+        if not votes:
+            continue
+        peak = max(votes, key=lambda b: votes[b] + 0.5 * (votes.get(b - 1, 0) + votes.get(b + 1, 0)))
+        est = peak * 0.1
+        # refine, then measure agreement on lines that land inside the windows
+        deltas, considered, agree = [], 0, 0
+        per_win = {}
+        for x in starts:
+            xs = x + est
+            w = next((k for k, (w0, w1) in enumerate(spans) if w0 <= xs <= w1), None)
+            if w is None:
+                continue
+            considered += 1
+            i = bisect.bisect_left(refs, xs)
+            near = min((refs[j] for j in (i - 1, i) if 0 <= j < len(refs)), key=lambda y: abs(y - xs))
+            if abs(near - xs) <= 1.0:
+                deltas.append((near - x, w))
+        if deltas:
+            est = sorted(d for d, _ in deltas)[len(deltas) // 2]
+            for d, w in deltas:
+                tot = per_win.setdefault(w, [0, 0])
+                tot[1] += 1
+                if abs(d - est) <= MATCH_TOL:
+                    agree += 1
+                    tot[0] += 1
+        share = agree / considered if considered else 0.0
+        # the same offset must hold in separate parts of the file, not just
+        # overall (dense lines can line up by chance in one stretch)
+        windows_ok = sum(1 for a, t in per_win.values() if t >= 4 and a / t >= MATCH_SHARE)
+        if windows_ok < 2:
+            share = min(share, MATCH_SHARE - 0.01)
+        if best is None or (share, -abs(r - 1)) > (best[0], -abs(best[1] - 1)):
+            best = (share, r, est, considered)
+    if best is None:
+        return {'status': 'unsure', 'decided': False, 'ratio': 1.0, 'offset': 0.0, 'info': {'agree': 0.0}}
+    share, ratio, offset, considered = best
+    info = {'offset': round(offset, 2), 'ratio': round(ratio, 5), 'confidence': round(share * 10, 1),
+            'agree': round(share, 2), 'lines_checked': considered}
+    if considered < 8 or share < MATCH_SHARE:
+        status = 'unsure'
+    elif ratio == 1.0 and abs(offset) <= 0.15:
+        status = 'in_sync'
+    else:
+        status = 'synced'
+    return {'status': status, 'ratio': ratio, 'offset': offset, 'info': info,
+            'decided': status != 'unsure' and considered >= 20}
 
 
 def _evaluate(lines, win, max_offset):
@@ -371,6 +463,8 @@ def describe(info):
         return 'already in sync' + ref
     if s == 'unsure':
         return 'left as is: no clearly better timing found' + ref
+    if s == 'no_reference':
+        return 'not checked: no embedded text subtitle in the file to compare with'
     return f"not synced: {info.get('reason', 'failed')}"
 
 

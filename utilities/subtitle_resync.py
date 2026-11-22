@@ -143,7 +143,7 @@ def resync_sidecar(item, path, skip_checked=False):
         os.replace(tmp, path)
         _mark(new, 'synced')
         return {'changed': True, 'message': note}
-    if note and note.startswith(('already in sync', 'left as is')):
+    if note and note.startswith(('already in sync', 'left as is', 'not checked: no embedded')):
         _mark(content, note)
     return {'changed': False, 'message': note or 'not synced'}
 
@@ -167,7 +167,7 @@ def resync_plex_stream(item, st, skip_checked=False):
     new, note = downsub.sync_content(video, content, fmt,
                                      label=f"{label(item)} {st.get('language') or 'und'} (Plex)", item=item)
     if new == content:
-        if note and note.startswith(('already in sync', 'left as is')):
+        if note and note.startswith(('already in sync', 'left as is', 'not checked: no embedded')):
             _mark(content, note)
         return {'changed': False, 'message': note or 'not synced'}
     if not downsub.upload_subtitle_to_plex(item.get('ms_item_id'), new, st.get('language') or 'und', fmt=fmt):
@@ -217,25 +217,34 @@ class _HashFinder:
         return bool(self._found)
 
     def best(self, lang_code, hi=False):
-        """A downloaded hash-matched subtitle for this language, or None."""
+        """A downloaded subtitle for this language made for this file: a hash
+        match first, else one for the same release (group + source). Returns
+        (sub, fmt, ext, kind) or None."""
         from utilities import downsub
         lang = _lang_of(lang_code)
         ctx = self.ctx()
-        if lang is None or not ctx or ctx.get('all_embedded') or not ctx.get('hash'):
+        if lang is None or not ctx or ctx.get('all_embedded') or not ctx.get('video'):
             return None
         key = str(lang)
         if key not in self._found:
+            found = []
             try:
-                self._found[key] = downsub.hash_matches(ctx, [lang])
+                found += [(s, 'hash match') for s in downsub.hash_matches(ctx, [lang])]
             except Exception as e:
                 logging.debug(f"[subs] hash search failed: {e}")
-                self._found[key] = []
-        cands = sorted(self._found[key], key=lambda s: bool(getattr(s, 'hearing_impaired', False)) != hi)
-        for sub in cands:
+            try:
+                seen = {id(s) for s, _ in found}
+                found += [(s, k) for s, k in downsub.release_matches(ctx, [lang]) if id(s) not in seen]
+            except Exception as e:
+                logging.debug(f"[subs] release search failed: {e}")
+            self._found[key] = found
+        cands = sorted(self._found[key],
+                       key=lambda x: (x[1] != 'hash match', bool(getattr(x[0], 'hearing_impaired', False)) != hi))
+        for sub, kind in cands:
             if downsub.fetch_subtitle(sub):
                 fmt, ext = downsub._final_format(sub)
                 if fmt:
-                    return sub, fmt, ext
+                    return sub, fmt, ext, kind
         return None
 
 
@@ -252,12 +261,12 @@ def _hash_replace_sidecar(item, path, finder):
     got = finder.best(lang, hi=hi)
     if not got:
         return None
-    sub, fmt, ext = got
+    sub, fmt, ext, kind = got
     content = sub.content if isinstance(sub.content, bytes) else (sub.content or '').encode('utf-8')
     with open(path, 'rb') as f:
         if f.read() == content:
-            _mark(content, 'hash match')
-            return {'changed': False, 'message': 'already the subtitle made for this file (hash match)'}
+            _mark(content, kind)
+            return {'changed': False, 'message': f'already the subtitle made for this file ({kind})'}
     target = os.path.splitext(path)[0] + ext
     tmp = target + '.syncing'
     with open(tmp, 'wb') as f:
@@ -268,11 +277,11 @@ def _hash_replace_sidecar(item, path, finder):
             os.remove(path)
         except OSError:
             pass
-    _mark(content, 'hash match')
+    _mark(content, kind)
     ctx = finder.ctx()
-    downsub._record_history(dict(ctx, _sync_note='hash match, no sync needed'), sub, lang, fmt, 'sidecar',
-                            target, 'hash-replace')
-    return {'changed': True, 'message': f'replaced with a subtitle made for this file (hash match, {sub.provider_name})'}
+    downsub._record_history(dict(ctx, _sync_note=f'{kind}, no sync needed'), sub, lang, fmt, 'sidecar',
+                            target, kind.replace(' ', '-'))
+    return {'changed': True, 'message': f'replaced with a subtitle for this release ({kind}, {sub.provider_name})'}
 
 
 def _hash_replace_plex(item, st, finder):
@@ -280,18 +289,18 @@ def _hash_replace_plex(item, st, finder):
     got = finder.best(st.get('language') or '', hi=False)
     if not got:
         return None
-    sub, fmt, _ = got
+    sub, fmt, _, kind = got
     content = sub.content if isinstance(sub.content, bytes) else (sub.content or '').encode('utf-8')
     lang3 = getattr(sub.language, 'alpha3', None) or (st.get('language') or 'und')
     if not downsub.upload_subtitle_to_plex(item.get('ms_item_id'), content, lang3, fmt=fmt):
         return None
-    _mark(content, 'hash match')
+    _mark(content, kind)
     ok, code = plex_delete(st)
     ctx = finder.ctx()
-    downsub._record_history(dict(ctx, _sync_note='hash match, no sync needed'), sub,
+    downsub._record_history(dict(ctx, _sync_note=f'{kind}, no sync needed'), sub,
                             getattr(sub.language, 'ietf', None) or str(sub.language), fmt, 'plex', None,
-                            'hash-replace')
-    msg = f'replaced with a subtitle made for this file (hash match, {sub.provider_name})'
+                            kind.replace(' ', '-'))
+    msg = f'replaced with a subtitle for this release ({kind}, {sub.provider_name})'
     return {'changed': True, 'message': msg if ok else f'{msg}; Plex would not remove the old one (HTTP {code})'}
 
 

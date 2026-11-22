@@ -80,10 +80,10 @@
             <select id="additional-sync_subtitles" class="settings-input"
                     data-section="Subtitle Settings" data-key="sync_subtitles">
                 <option value="off" {% if _sync == 'off' %}selected{% endif %}>Off</option>
-                <option value="unless_hash" {% if _sync == 'unless_hash' %}selected{% endif %}>Unless matched by file hash</option>
+                <option value="unless_hash" {% if _sync == 'unless_hash' %}selected{% endif %}>Unless matched by hash or release</option>
                 <option value="always" {% if _sync == 'always' %}selected{% endif %}>Always</option>
             </select>
-            <p class="settings-description">Fix subtitle timing after download, without reading the whole file: six 30-second windows spread through the video are read, and the subtitle lines are matched against the file's own embedded text subtitle track when it has one (exact and fastest), otherwise against speech in the audio, to find an offset and frame-rate fix (23.976/24/25 fps). The subtitle is only changed when the new timing clearly fits better. A file-hash match is made for this exact release, so "Unless matched by file hash" skips those. Needs ffmpeg. Existing subtitles can be resynced from Tools → Subtitles.</p>
+            <p class="settings-description">Check subtitle timing after download against the file's own embedded text subtitle track, when it has one (exact, and only a few short parts of the file are read). Subtitles matched by file hash or release group are made for this release and are left as downloaded with "Unless matched by file hash". Without an embedded text track the subtitle is kept as downloaded. To fix existing subtitles use Tools → Subtitles → Fix existing subtitles.</p>
         </div>
 
         <div class="settings-form-group">

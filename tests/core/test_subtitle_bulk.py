@@ -227,8 +227,9 @@ def test_undecided_sync_gets_one_hash_search(db, tmp_path):
     with _settings('Symlinked/Local'):
         assert subtitle_resync.needs_check(item)          # owed a hash search
         with mock.patch.object(downsub, 'resolve_item_path', return_value=str(video)), \
-                mock.patch.object(downsub, 'prepare_video', return_value={'hash': True}), \
+                mock.patch.object(downsub, 'prepare_video', return_value={'hash': True, 'video': object()}), \
                 mock.patch.object(downsub, 'hash_matches', return_value=[]) as hm, \
+                mock.patch.object(downsub, 'release_matches', return_value=[]), \
                 mock.patch.object(downsub, 'selected_providers', return_value=['opensubtitlescom']), \
                 mock.patch.object(downsub, 'sync_content') as sync:
             subtitle_resync.resync_item(item)
@@ -259,3 +260,28 @@ def test_search_lane_runs_while_sync_lane_busy(db):
         assert subtitle_bulk.status()['search']['found'] == 1        # done while sync still busy
         assert subtitle_bulk.status()['sync']['running']
         gate.set()
+
+
+def test_fix_existing_uses_release_match_when_no_hash(db, tmp_path):
+    from utilities import subtitle_resync, downsub
+    video = tmp_path / 'Show - S01E01.mkv'
+    video.write_bytes(b'')
+    sc = tmp_path / 'Show - S01E01.en.srt'
+    sc.write_bytes(b'old name-only subtitle')
+    item = {'id': 1, 'location_on_disk': str(video), 'title': 'Show', 'type': 'episode',
+            'season_number': 1, 'episode_number': 1}
+    rel = _Sub(b'1\n00:00:01,000 --> 00:00:02,000\nsame release\n')
+    rel.provider_name = 'gestdown'
+    ctx = {'hash': False, 'video': object(), 'item': item, 'original_path': video}
+    with _settings('Symlinked/Local'), \
+            mock.patch.object(downsub, 'resolve_item_path', return_value=str(video)), \
+            mock.patch.object(downsub, 'prepare_video', return_value=ctx), \
+            mock.patch.object(downsub, 'hash_matches', return_value=[]), \
+            mock.patch.object(downsub, 'release_matches', return_value=[(rel, 'release match')]), \
+            mock.patch.object(downsub, 'fetch_subtitle', return_value=True), \
+            mock.patch.object(downsub, '_final_format', return_value=('srt', '.srt')), \
+            mock.patch.object(downsub, '_record_history'), \
+            mock.patch.object(downsub, 'sync_content') as sync:
+        changed, checked, notes = subtitle_resync.resync_item(item)
+    assert changed == 1 and not sync.called and 'release match' in notes[0]
+    assert sc.read_bytes() == rel.content

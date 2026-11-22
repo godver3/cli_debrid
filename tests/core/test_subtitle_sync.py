@@ -52,13 +52,13 @@ def _dur(monkeypatch):
 
 def test_in_sync_left_alone(media):
     path, speech = media
-    new, info = subtitle_sync.sync_subtitle(path, _srt(speech))
+    new, info = subtitle_sync.sync_subtitle(path, _srt(speech), audio=True)
     assert new is None and info['status'] == 'in_sync'
 
 
 def test_late_subtitle_shifted_back(media):
     path, speech = media
-    new, info = subtitle_sync.sync_subtitle(path, _srt([(a + 3.4, b + 3.4) for a, b in speech]))
+    new, info = subtitle_sync.sync_subtitle(path, _srt([(a + 3.4, b + 3.4) for a, b in speech]), audio=True)
     assert info['status'] == 'synced' and abs(info['offset'] + 3.4) < 0.1 and info['ratio'] == 1.0
     import pysubs2
     first = pysubs2.SSAFile.from_string(new.decode()).events[0]
@@ -68,7 +68,7 @@ def test_late_subtitle_shifted_back(media):
 def test_pal_speedup_fixed(media):
     path, speech = media
     k = 25 / 23.976
-    new, info = subtitle_sync.sync_subtitle(path, _srt([(a / k - 1.5, b / k - 1.5) for a, b in speech if a / k > 2]))
+    new, info = subtitle_sync.sync_subtitle(path, _srt([(a / k - 1.5, b / k - 1.5) for a, b in speech if a / k > 2]), audio=True)
     assert info['status'] == 'synced'
     assert abs(info['ratio'] - k) < 1e-4 and abs(info['offset'] - 1.5 * k) < 0.12
 
@@ -81,13 +81,13 @@ def test_unrelated_subtitle_refused(media):
         length = rnd.uniform(0.8, 4.0)
         lines.append((t, t + length))
         t += length + rnd.uniform(0.4, 3.5)
-    new, info = subtitle_sync.sync_subtitle(path, _srt(lines))
+    new, info = subtitle_sync.sync_subtitle(path, _srt(lines), audio=True)
     assert new is None and info['status'] == 'unsure'
 
 
 def test_unreadable_video_fails_cleanly(media, tmp_path):
     _, speech = media
-    new, info = subtitle_sync.sync_subtitle(str(tmp_path / 'missing.mkv'), _srt(speech))
+    new, info = subtitle_sync.sync_subtitle(str(tmp_path / 'missing.mkv'), _srt(speech), audio=True)
     assert new is None and info['status'] == 'failed'
 
 
@@ -122,5 +122,29 @@ def test_embedded_track_reference(silent_mkv_with_subs):
 
 def test_falls_back_to_audio_without_text_track(media):
     path, speech = media
-    _, info = subtitle_sync.sync_subtitle(path, _srt([(a + 1.0, b + 1.0) for a, b in speech]))
+    _, info = subtitle_sync.sync_subtitle(path, _srt([(a + 1.0, b + 1.0) for a, b in speech]), audio=True)
     assert info['reference'] == 'audio' and info['status'] == 'synced'
+
+
+def test_line_matching_needs_agreement():
+    import random
+    rnd = random.Random(3)
+    ref, t = [], 10.0
+    while t < 600:
+        d = rnd.uniform(1, 4)
+        ref.append((t, t + d))
+        t += d + rnd.uniform(0.3, 3)
+    win = [(w, w + 30.0, [(a, b) for a, b in ref if w <= a < w + 30]) for w in (60, 200, 340, 480)]
+    late = [(a + 2.4, b + 2.4) for a, b in ref]
+    r = subtitle_sync._match_lines(late, win, 60.0)
+    assert r['status'] == 'synced' and abs(r['offset'] + 2.4) < 0.05 and r['info']['agree'] > 0.9
+    assert subtitle_sync._match_lines(ref, win, 60.0)['status'] == 'in_sync'
+    other = [(a * 1.3 + 7, b * 1.3 + 7) for a, b in ref]          # unrelated timing
+    assert subtitle_sync._match_lines(other, win, 60.0)['status'] == 'unsure'
+
+
+def test_no_embedded_track_means_not_checked_by_default(media):
+    path, speech = media
+    new, info = subtitle_sync.sync_subtitle(path, _srt([(a + 1.0, b + 1.0) for a, b in speech]))
+    assert new is None and info['status'] == 'no_reference'
+    assert subtitle_sync.describe(info).startswith('not checked: no embedded')

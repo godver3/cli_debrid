@@ -361,7 +361,7 @@
     const scope = (filt.q ? `matching "${filt.q}"` : 'in the library') +
       (filt.type !== 'all' ? ` (${filt.type}s only)` : '');
     const msg = kind === 'sync'
-      ? `Check and fix the timing of every existing subtitle ${scope}?\n\nEach one reads a few short audio samples from the file. Subtitles checked before are skipped.`
+      ? `Fix every existing subtitle ${scope}?\n\nEach one is replaced with a subtitle made for this release (file hash or same release group) when a provider has one; otherwise its timing is checked against the file's own embedded text subtitles. Subtitles checked before are skipped.`
       : `Search subtitles for every item missing a language ${scope}?\n\nProviders that hit their daily download limit are paused and the others carry on.`;
     if (!confirm(msg)) return;
     try {
@@ -374,7 +374,7 @@
 
   function laneHtml(kind, d) {
     const sync = kind === 'sync';
-    const title = sync ? 'Syncing existing subtitles' : 'Searching for missing subtitles';
+    const title = sync ? 'Fixing existing subtitles' : 'Searching for missing subtitles';
     const state = d.running ? '' : d.stopped ? ' — stopped' : ' — done';
     const pct = d.total ? Math.round(100 * d.done / d.total) : 0;
     const rows = (d.recent || []).map((r) => {
@@ -392,7 +392,7 @@
                     : `<button class="sm-btn sm-mini" data-lane-hide="${kind}">Hide</button>`}
       </div>
       <div class="sm-bar-score" style="height:6px;margin:8px 0"><i style="width:${pct}%;background:var(--sm-accent)"></i></div>
-      <div class="sm-muted">${d.running ? (d.current ? (sync ? 'Syncing ' : 'Searching ') + esc(d.current) + '…' : 'Starting…') : esc(d.stopped || '')}</div>
+      <div class="sm-muted">${d.running ? (d.current ? (sync ? 'Checking ' : 'Searching ') + esc(d.current) + '…' : 'Starting…') : esc(d.stopped || '')}</div>
       <div class="sm-lane-recent">${rows || '<span class="sm-muted">No results yet.</span>'}</div>
     </div>`;
   }

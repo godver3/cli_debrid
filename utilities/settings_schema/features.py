@@ -211,7 +211,7 @@ SECTIONS = {
         },
         "sync_subtitles": {
             "type": "string",
-            "description": "Fix subtitle timing after download. The file isn't read in full: six 30-second windows spread through it are read, and the subtitle lines are matched against the file's own embedded text subtitle track when it has one (exact and fastest), otherwise against speech in the audio, to find an offset and frame-rate fix (23.976/24/25 fps). A subtitle is only changed when the new timing clearly fits better. 'Unless hash match' skips subtitles matched by file hash, which are made for this exact release.",
+            "description": "Check subtitle timing after download against the file's own embedded text subtitle track, when it has one (exact and cheap: only a few short parts of the file are read). Subtitles matched by file hash or by release group are made for this release and are not checked with 'Unless matched by file hash'. Without an embedded text track the subtitle is kept as downloaded.",
             "default": "off",
             "choices": ["off", "unless_hash", "always"]
         },
