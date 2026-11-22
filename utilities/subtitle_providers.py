@@ -57,14 +57,28 @@ def _langs(codes):
 _EP_RES = (re.compile(r'\bS(\d{1,2})[ ._-]?E(\d{1,3})\b', re.I), re.compile(r'\b(\d{1,2})x(\d{1,3})\b', re.I))
 
 
+_EP_ONLY = re.compile(r'(?<![a-z0-9])(?:episode|ep|e)[ ._-]?(\d{1,4})(?![0-9])', re.I)
+
+
 def episode_in(text, season, episode):
-    """True / False when the text names a season+episode, None when it names
-    none (e.g. a whole-season pack)."""
+    """True / False when the text names a season+episode (or, failing that,
+    an episode number: "Ep6", "Episode 6", "E06"), None when it names none
+    (e.g. a whole-season pack)."""
     for rx in _EP_RES:
         found = [(int(a), int(b)) for a, b in rx.findall(text or '')]
         if found:
             return (season, episode) in found
+    if episode is not None:
+        eps = [int(x) for x in _EP_ONLY.findall(text or '')]
+        if eps:
+            return int(episode) in eps
     return None
+
+
+def season_pack_of(text, season):
+    """The text names this season without an episode ("Show S03 1080p")."""
+    return season is not None and re.search(r'(?<![a-z0-9])(?:s|season[ ._-]?)0*%d(?![0-9e])' % int(season),
+                                            text or '', re.I) is not None
 
 
 def pick_from_zip(content, season=None, episode=None):
@@ -74,17 +88,17 @@ def pick_from_zip(content, season=None, episode=None):
     except zipfile.BadZipFile:
         return content
     exts = {'.srt': 40, '.ass': 20, '.ssa': 10, '.vtt': 30}
+    names = [n for n in zf.namelist() if any(n.lower().endswith(e) for e in exts)]
     best = None
-    for name in zf.namelist():
+    for name in names:
         low = name.lower()
-        ext = next((e for e in exts if low.endswith(e)), None)
-        if not ext:
-            continue
-        score = exts[ext]
+        score = exts[next(e for e in exts if low.endswith(e))]
         if season is not None and episode is not None:
             hit = episode_in(name, season, episode)
             if hit is False:
                 continue
+            if not hit and len(names) > 1:
+                continue     # a pack: only the file that names this episode
             score += 100 if hit else 0
         if best is None or score > best[0]:
             best = (score, name)
@@ -292,15 +306,23 @@ class SubsourceProvider(_KeyProvider):
                         continue
                     rel = sub.get('releaseInfo') or []
                     rel = ', '.join(str(x) for x in rel if str(x).strip()) if isinstance(rel, list) else str(rel)
-                    if season is not None and episode_in(rel, season, episode) is False:
-                        continue
+                    s_ep = (season, episode)
+                    if season is not None:
+                        hit = episode_in(rel, season, episode)
+                        if hit is False:
+                            continue
+                        if hit is None and not season_pack_of(rel, season):
+                            # SubSource lists every subtitle of the show: a
+                            # release naming no episode (and not this season's
+                            # pack) isn't known to be this episode.
+                            s_ep = (None, None)
                     code = back.get(str(sub.get('language') or name).lower(), getattr(lang, 'alpha2', 'en'))
                     out.append(SubsourceSubtitle(
                         Language.fromalpha2(code), sid, release_name=rel,
                         hearing_impaired=bool(sub.get('hearingImpaired')), page_link=sub.get('link'),
                         download_count=int(sub.get('downloads') or 0),
                         video_kind='episode' if season is not None else 'movie', title=None,
-                        year=getattr(video, 'year', None), season=season, episode=episode,
+                        year=getattr(video, 'year', None), season=s_ep[0], episode=s_ep[1],
                         download={'id': sid}))
         return out
 

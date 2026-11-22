@@ -4,6 +4,7 @@ import sys
 import json
 import logging
 import subprocess
+import difflib
 import re
 import time
 from pathlib import Path
@@ -517,14 +518,70 @@ def _download_count(sub):
     return 0
 
 
-def _ranker(target_release):
+_SE_IN_NAME = re.compile(r'(?<![a-z0-9])s(\d{1,2})[ ._-]?e(\d{1,4})(?:[ ._-]?(?:-|e|-e)(\d{1,4}))?(?![0-9])', re.I)
+
+
+def release_episodes(release):
+    """Every (season, episode) a release name states, ranges expanded
+    (S03E01-E02 -> both); empty when it states none."""
+    out = set()
+    for m in _SE_IN_NAME.finditer(release or ''):
+        s, a = int(m.group(1)), int(m.group(2))
+        b = int(m.group(3)) if m.group(3) else a
+        if b < a or b - a > 5:
+            b = a
+        out.update((s, e) for e in range(a, b + 1))
+    return out
+
+
+def allowed_episodes(ctx):
+    """Numberings that name this episode: the show's (database), the file's
+    own and whichever the search is using now."""
+    video = ctx.get('video')
+    out = set(ctx.get('allowed_se') or ())
+    if isinstance(video, Episode) and video.episodes:
+        out.update((video.season, e) for e in video.episodes)
+    return out
+
+
+def names_other_episode(sub, allowed):
+    """True when the subtitle's release name states a season/episode and
+    none of them is this episode. Providers match on their own numbering
+    (OpenSubtitles files Dragon Ball under a different season split), so a
+    'season + episode' match can be another episode; the uploader's release
+    name gives that away. A name without S/E proves nothing either way."""
+    if not allowed:
+        return False
+    stated = release_episodes(_release_of(sub))
+    return bool(stated) and not (stated & allowed)
+
+
+def identity_ok(sub, video, matches=None):
+    """The subtitle is for this movie/episode, not only a good score: an
+    episode needs season and episode (series + year + country alone reach
+    the score floor), a movie its title. A file-hash match is enough."""
+    try:
+        m = matches if matches is not None else sub.get_matches(video)
+    except Exception:
+        return False
+    if 'hash' in m:
+        return True
+    if isinstance(video, Episode):
+        return {'series', 'season', 'episode'} <= set(m)
+    return 'title' in m
+
+
+def _ranker(target_release, allowed=None):
     """compute_score for picking: subliminal's score first, then how close
     the subtitle's release name is to the file's, then popularity. Scaled
-    by 10000 so the subliminal score still decides and still gates min_score."""
+    by 10000 so the subliminal score still decides and still gates min_score.
+    A subtitle whose release names another episode scores 0 (never picked)."""
     import math
     from subliminal.score import compute_score
 
     def score(sub, video, **kwargs):
+        if names_other_episode(sub, allowed() if callable(allowed) else allowed) or not identity_ok(sub, video):
+            return 0
         base = compute_score(sub, video, **kwargs)
         sim = min(release_similarity(target_release, _release_of(sub)), 120.0)
         pop = min(int(math.log10(_download_count(sub) + 1) * 100), 999)
@@ -737,6 +794,16 @@ def _plex_embedded_langs(item):
         return None
 
 
+def _initial_allowed(video, item, parse_name, original_path):
+    if not isinstance(video, Episode) or not video.episodes:
+        return set()
+    out = {(video.season, e) for e in video.episodes}
+    fse = _file_numbering({'item': item, 'parse_name': parse_name, 'original_path': original_path})
+    if fse:
+        out.add(fse)
+    return out
+
+
 def _prepare_video(video_path, rating_key, name_hint, item, probe=None):
     """probe: check embedded tracks (None = the probe_for_embedded setting)."""
     if probe is None:
@@ -845,7 +912,8 @@ def _prepare_video(video_path, rating_key, name_hint, item, probe=None):
             'languages': languages, 'original_path': original_path,
             'video_path': video_path, 'real_path': real_path, 'item': item,
             'rating_key': rating_key, 'is_plex_mode': is_plex_mode,
-            'min_score': _min_score(video), 'hash': bool(file_hash)}
+            'min_score': _min_score(video), 'hash': bool(file_hash),
+            'allowed_se': _initial_allowed(video, item, parse_name, original_path)}
 
 
 def _record_history(ctx, sub, lang, fmt, via, path, source):
@@ -929,7 +997,11 @@ def release_matches(ctx, languages):
     with _pool_class()(providers=selected_providers(), provider_configs=build_provider_configs()) as pool:
         for sub in pool.list_subtitles(video, set(languages)):
             try:
+                if names_other_episode(sub, allowed_episodes(ctx)):
+                    continue
                 m = sub.get_matches(video)
+                if not identity_ok(sub, video, m):
+                    continue
                 if getattr(video, 'release_group', None) and 'release_group' in m and \
                         (not getattr(video, 'source', None) or 'source' in m):
                     kind, rank = 'release match', 0
@@ -1130,6 +1202,123 @@ def _note(ctx_or_item, text):
         _LAST_NOTE[iid] = text
 
 
+# ---- other numberings of the same episode ----------------------------------
+# The database numbers episodes in the show's order (TVDB aired, DVD,
+# absolute, a TMDB group, ...). Subtitle sites mostly follow IMDb/TMDB
+# numbering, and release names often use absolute numbers, so a show in
+# another order can find nothing. When a search finds nothing, these
+# numberings are tried, but only ones proven to be the same episode: the
+# file's own name, and TMDB's episode on the same air date (with the same
+# title when dates are a day apart). Never a guess.
+
+_TMDB_EPISODES = {}            # tmdb show id -> (monotonic, [(season, episode, air_date, title)])
+_TMDB_EPISODES_TTL = 24 * 3600.0
+
+
+def _norm_title(t):
+    return re.sub(r'[^a-z0-9]+', '', str(t or '').lower())
+
+
+def _file_numbering(ctx):
+    """(season, episode) the file's own name gives, or None."""
+    item = ctx.get('item') or {}
+    try:
+        from guessit import guessit
+    except Exception:
+        return None
+    for name in (item.get('filled_by_file'), ctx.get('parse_name'), os.path.basename(str(ctx.get('original_path') or ''))):
+        if not name:
+            continue
+        try:
+            g = guessit(str(name), {'type': 'episode'})
+        except Exception:
+            continue
+        s, e = g.get('season'), g.get('episode')
+        if isinstance(s, int) and isinstance(e, int):
+            return s, e
+    return None
+
+
+def _tmdb_show_episodes(tmdb_id, before_date):
+    """TMDB's episodes of a show from the seasons that started by
+    before_date (the latest three): [(season, episode, air_date, title)]."""
+    import requests
+    from utilities.settings import get_setting
+    key = (get_setting('TMDB', 'api_key', '') or '').strip()
+    if not key or not str(tmdb_id).isdigit():
+        return []
+    hit = _TMDB_EPISODES.get(str(tmdb_id))
+    if hit and time.monotonic() - hit[0] < _TMDB_EPISODES_TTL:
+        return hit[1]
+    base = f'https://api.themoviedb.org/3/tv/{tmdb_id}'
+    try:
+        show = requests.get(base, params={'api_key': key}, timeout=15).json()
+    except Exception as e:
+        logging.debug(f"[subs] TMDB show {tmdb_id}: {e}")
+        return []
+    seasons = [x for x in show.get('seasons') or [] if x.get('season_number') and x.get('air_date')]
+    seasons = sorted((x for x in seasons if x['air_date'] <= before_date), key=lambda x: x['air_date'])[-3:]
+    out = []
+    for x in seasons:
+        try:
+            data = requests.get(f"{base}/season/{x['season_number']}", params={'api_key': key}, timeout=15).json()
+        except Exception as e:
+            logging.debug(f"[subs] TMDB season {tmdb_id}/{x['season_number']}: {e}")
+            continue
+        for ep in data.get('episodes') or []:
+            out.append((x['season_number'], ep.get('episode_number'), ep.get('air_date') or '', ep.get('name') or ''))
+    if len(_TMDB_EPISODES) > 500:
+        _TMDB_EPISODES.clear()
+    _TMDB_EPISODES[str(tmdb_id)] = (time.monotonic(), out)
+    return out
+
+
+def _tmdb_numbering(item):
+    """TMDB's (season, episode) for this episode, matched on air date: the
+    only episode that day, or the one with the same title within a day."""
+    from datetime import date, timedelta
+    aired = str(item.get('release_date') or '')[:10]
+    if not re.match(r'^\d{4}-\d{2}-\d{2}$', aired) or not item.get('tmdb_id'):
+        return None
+    day = date.fromisoformat(aired)
+    eps = _tmdb_show_episodes(item['tmdb_id'], (day + timedelta(days=1)).isoformat())
+    same_day = [e for e in eps if e[2] == aired]
+    title = _norm_title(item.get('episode_title'))
+    if len(same_day) == 1:
+        other = _norm_title(same_day[0][3])
+        if not title or not other or other == title or difflib.SequenceMatcher(None, other, title).ratio() >= 0.6:
+            return same_day[0][0], same_day[0][1]
+    near = {(day + timedelta(days=d)).isoformat() for d in (-1, 0, 1)}
+    titled = [e for e in eps if e[2] in near and title and _norm_title(e[3]) == title]
+    if len(titled) == 1:
+        return titled[0][0], titled[0][1]
+    return None
+
+
+def alternative_numberings(ctx):
+    """[(season, episode, why)] other than the one searched, same episode."""
+    video = ctx.get('video')
+    if not isinstance(video, Episode) or not video.episodes:
+        return []
+    have = {(video.season, video.episodes[0])}
+    out = []
+    for finder, why in ((lambda: _file_numbering(ctx), 'the file name'),
+                        (lambda: _tmdb_numbering(ctx.get('item') or {}), 'TMDB, same air date')):
+        try:
+            se = finder()
+        except Exception as e:
+            logging.debug(f"[subs] numbering via {why} failed: {e}")
+            se = None
+        if se and se not in have:
+            have.add(se)
+            out.append((se[0], se[1], why))
+    return out
+
+
+def _use_numbering(video, season, episode):
+    video.season, video.episodes = season, [episode]
+
+
 def get_mode_symlinked():
     """Symlinked/Local file management (files are checked locally)."""
     from utilities.settings import get_setting
@@ -1185,7 +1374,23 @@ def download_subtitles_for_video(video_path, rating_key=None, name_hint=None, it
         subtitles = download_best_subtitles(
             {video}, set(ctx['languages']), min_score=ctx['min_score'] * 10000, providers=providers,
             provider_configs=build_provider_configs(), pool_class=_pool_class(),
-            compute_score=_ranker(ctx.get('parse_name') or ''))
+            compute_score=_ranker(ctx.get('parse_name') or '', lambda: allowed_episodes(ctx)))
+        if not subtitles[video]:
+            first = (getattr(video, 'season', None), (getattr(video, 'episodes', None) or [None])[0])
+            for season, episode, why in alternative_numberings(ctx):
+                logging.info(f"[subs] {name}: nothing as S{first[0]:02d}E{first[1]:02d}; "
+                             f"trying S{season:02d}E{episode:02d} ({why})")
+                _use_numbering(video, season, episode)
+                ctx.setdefault('allowed_se', set()).add((season, episode))
+                subtitles = download_best_subtitles(
+                    {video}, set(ctx['languages']), min_score=ctx['min_score'] * 10000, providers=providers,
+                    provider_configs=build_provider_configs(), pool_class=_pool_class(),
+                    compute_score=_ranker(ctx.get('parse_name') or '', lambda: allowed_episodes(ctx)))
+                if subtitles[video]:
+                    break
+            else:
+                if first[0] is not None:
+                    _use_numbering(video, *first)
         took = time.time() - start_time
         item_id = (ctx.get('item') or {}).get('id')
         if not subtitles[video]:
@@ -1253,12 +1458,32 @@ def search_candidates(ctx, languages=None):
                 matches = sorted(sub.get_matches(video))
             except Exception:
                 score, matches = 0, []
-            out.append({'sub': sub, 'score': score, 'matches': matches,
+            other = names_other_episode(sub, allowed_episodes(ctx))
+            if other or not identity_ok(sub, video, matches):
+                score = 0
+            out.append({'sub': sub, 'score': score, 'matches': matches, 'other_episode': other,
                         'similarity': round(release_similarity(ctx.get('parse_name') or '', _release_of(sub))),
                         'downloads': _download_count(sub),
                         'provider': sub.provider_name, 'release': _release_of(sub),
                         'language': getattr(sub.language, 'ietf', None) or str(sub.language),
                         'hi': bool(getattr(sub, 'hearing_impaired', False))})
+    if not any(c['score'] >= ctx['min_score'] for c in out) and isinstance(video, Episode) and not ctx.get('_alt'):
+        # Nothing usable under the show's numbering: list what the same
+        # episode's other numberings find (the ctx keeps the one that did,
+        # so a pick is saved and scored under it).
+        first = (video.season, video.episodes[0])
+        for season, episode, why in alternative_numberings(ctx):
+            _use_numbering(video, season, episode)
+            ctx.setdefault('allowed_se', set()).add((season, episode))
+            ctx['_alt'] = True
+            more = search_candidates(ctx, languages)
+            ctx['_alt'] = False
+            if any(c['score'] >= ctx['min_score'] for c in more):
+                for c in more:
+                    c['numbering'] = f"S{season:02d}E{episode:02d} ({why})"
+                ctx['numbering'] = f"S{season:02d}E{episode:02d} ({why})"
+                return more
+        _use_numbering(video, *first)
     out.sort(key=lambda c: (c['score'], c['similarity'], c['downloads']), reverse=True)
     return out
 

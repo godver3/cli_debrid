@@ -111,6 +111,9 @@ def test_ranker_breaks_ties_by_release_then_downloads():
 
         def __init__(self, rel, dl):
             self.release_name, self.download_count = rel, dl
+
+        def get_matches(self, video):
+            return {'series', 'season', 'episode'}
     with mock.patch('subliminal.score.compute_score', return_value=900):
         rank = downsub._ranker('Show.S01E02.1080p.AMZN.WEB-DL.DDP5.1.H.264-NTb')
         a = rank(S('Show.S01E02.1080p.AMZN.WEB-DL.DDP5.1.H.264-NTb', 1), v)
@@ -136,3 +139,45 @@ def test_providers_registered_and_configured(monkeypatch):
     monkeypatch.setattr(downsub.config, 'SUBSOURCE_API_KEY', '', raising=False)
     pc = downsub.build_provider_configs()
     assert pc['subdl'] == {'api_key': 'abc'} and 'subsource' not in pc
+
+
+def test_episode_in_understands_ep_numbers():
+    assert sp.episode_in('Dragon ball 1986 Ep6 Keep an eye on the Dragon balls', 1, 132) is False
+    assert sp.episode_in('Dragon Ball Episode 132', 1, 132) is True
+    assert sp.episode_in('Dragon.Ball.S01E132', 1, 132) is True
+    assert sp.episode_in('Dragon Ball 1986 960p BluRay DD5.1 x264', 1, 132) is None   # x264 is not an episode
+
+
+def test_subsource_release_without_episode_is_not_this_episode():
+    """Live 2026-11-22: SubSource listed every Dragon Ball subtitle (episodes
+    4, 5, 6, a movie) and each one matched S01E132 on season + episode."""
+    def get(url, params=None, headers=None, timeout=None):
+        if url.endswith('/movies/search'):
+            return _R({'data': [{'movieId': 7}]})
+        return _R({'data': [{'subtitleId': 1, 'releaseInfo': ['Dragon ball 1986 Ep6 Keep an eye'], 'language': 'english'},
+                            {'subtitleId': 2, 'releaseInfo': ['Dragon Ball Curse of the Blood Rubies'], 'language': 'english'},
+                            {'subtitleId': 3, 'releaseInfo': ['Dragon Ball S01 Complete 1080p'], 'language': 'english'},
+                            {'subtitleId': 4, 'releaseInfo': ['Dragon Ball Episode 132'], 'language': 'english'}]})
+    v = Episode('Dragon Ball S01E132.mkv', 'Dragon Ball', 1, 132)
+    v.external_ids['series_imdb_id'] = 'tt0088509'
+    p = sp.SubsourceProvider(api_key='k')
+    p.initialize()
+    with mock.patch.object(p.session, 'get', side_effect=get):
+        subs = {s.id: s for s in p.list_subtitles(v, {Language('eng')})}
+    assert '1' not in subs                                     # names episode 6
+    assert (subs['2'].season, subs['2'].episode) == (None, None)   # names no episode: identity unknown
+    assert {'season', 'episode'} - subs['2'].get_matches(v) == {'season', 'episode'}
+    assert (subs['3'].season, subs['3'].episode) == (1, 132)       # this season's pack
+    assert {'season', 'episode'} <= subs['4'].get_matches(v)
+
+
+def test_pack_zip_needs_a_file_naming_the_episode():
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w') as z:
+        z.writestr('Dragon Ball 001.srt', 'one')
+        z.writestr('Dragon Ball 002.srt', 'two')
+    assert sp.pick_from_zip(buf.getvalue(), 1, 132) == b''       # no file is episode 132: nothing
+    single = io.BytesIO()
+    with zipfile.ZipFile(single, 'w') as z:
+        z.writestr('subtitle.srt', 'only')
+    assert sp.pick_from_zip(single.getvalue(), 1, 132) == b'only'   # a lone file is the subtitle
