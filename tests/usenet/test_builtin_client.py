@@ -312,6 +312,20 @@ class EngineManagerTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.be.servers(s['Built-in Mount'])
 
+    def test_turned_off_server_is_kept_but_not_given_to_the_engine(self):
+        s = self.settings()
+        s['Built-in Mount']['servers'] = json.dumps([
+            {'host': 'news.a', 'connections': 30},
+            {'host': 'news.slow', 'connections': 40, 'enabled': False},
+            {'host': 'news.b', 'enabled': 'true'}])
+        self.assertEqual([p['host'] for p in self.be.build_config(s)['providers']], ['news.a', 'news.b'])
+        self.assertEqual(len(self.be.server_rows(s['Built-in Mount'])), 3)
+        s['Built-in Mount']['servers'] = json.dumps([{'host': 'news.a', 'enabled': False}])
+        self.assertEqual(self.be.servers(s['Built-in Mount']), [])
+        s['Built-in Mount']['servers'] = json.dumps([{'host': 'news.a', 'port': 'abc', 'enabled': False}])
+        with self.assertRaises(ValueError):  # off rows are still validated
+            self.be.servers(s['Built-in Mount'])
+
     def test_user_stop_survives_sync_until_start(self):
         self.state = 'RUNNING'
         self.assertEqual(self.be.user_stop(), 'stopped')

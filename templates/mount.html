@@ -34,9 +34,25 @@
 .mnt .f label{display:block;font-weight:600;margin-bottom:4px}
 .mnt .f input[type=text],.mnt .f input[type=number],.mnt .f input[type=password]{width:100%;max-width:520px;background:#111;border:1px solid #3d3d3d;color:#eee;border-radius:5px;padding:7px 9px}
 .mnt .f .d{color:#8f8f8f;font-size:12px;margin-top:4px;max-width:760px}
-.mnt .srv{overflow-x:auto}
-.mnt .srv input{background:#111;border:1px solid #3d3d3d;color:#eee;border-radius:4px;padding:5px 6px;width:100%;min-width:60px}
-.mnt .srv td{border-bottom:none;padding:4px}
+.mnt .srv input{background:#111;border:1px solid #3d3d3d;color:#eee;border-radius:4px;padding:5px 6px;width:100%;min-width:0;box-sizing:border-box}
+.mnt .srvcard{border:1px solid #333;border-radius:6px;padding:8px 10px;margin-top:8px}
+.mnt .srvcard.off{opacity:.55}
+.mnt .srvcard .sh{display:flex;align-items:center;gap:6px;margin-bottom:8px;min-width:0}
+.mnt .srvcard .sn{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.mnt .srvcard .sb{font-size:11px;color:#bbb;border:1px solid #555;border-radius:3px;padding:0 5px}
+.mnt .srvcard .sp{flex:1}
+.mnt .srvcard .sh .btn{padding:3px 9px}
+.mnt .srvcard .tg{border:none;border-radius:12px;padding:3px 12px;font-weight:600;cursor:pointer;background:#2e7d32;color:#fff;min-width:48px}
+.mnt .srvcard.off .tg{background:#555;color:#ddd}
+.mnt .srvcard.off .sg{display:none}
+.mnt .srvcard .sg{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px}
+.mnt .srvcard .sf{display:flex;flex-direction:column;gap:2px;min-width:0}
+.mnt .srvcard .sf>span{font-size:11px;color:#999}
+.mnt .srvcard .w2{grid-column:span 2}
+.mnt .srvcard .checks{flex-direction:row;flex-wrap:wrap;gap:10px;align-items:flex-end;grid-column:span 2}
+.mnt .srvcard .sc{font-size:13px;white-space:nowrap;display:flex;align-items:center;gap:4px}
+.mnt .srvcard .sc input{width:auto}
+@media (max-width:420px){.mnt .srvcard .w2,.mnt .srvcard .checks{grid-column:1/-1}}
 .mnt .btn{background:#e8601c;border:none;color:#fff;border-radius:6px;padding:8px 16px;cursor:pointer;font-weight:600}
 .mnt .btn.sec{background:#2a2a2a;border:1px solid #444;color:#ddd}
 .mnt .btn:disabled{opacity:.5;cursor:default}
@@ -190,9 +206,9 @@
   </div>
   <form id="mntForm" autocomplete="off">
   <div class="card fold"><h3>Usenet servers</h3><div class="body">
-    <p style="color:#8f8f8f;font-size:12px;margin-top:0">Main servers share the load: a request uses the first one from the top with a free connection, and when a server lacks an article the next one is asked. Servers marked <strong>Backup</strong> (block accounts) are asked only after every main server. Use the arrows to reorder. Leave a password empty to keep the saved one. <strong>Plan ends</strong> and <strong>Auto-renews</strong> are only reminders: they show on the Overview tab and never change how a server is used.</p>
-    <div class="srv"><table id="servers"><thead><tr><th></th><th>Host</th><th>Port</th><th>SSL</th><th>Username</th><th>Password</th><th>Connections</th><th>Backup</th><th title="Servers with the same backbone share one article store: when one says an article is missing, the others are not asked.">Backbone</th><th>Plan ends</th><th>Auto-renews</th><th></th></tr></thead><tbody></tbody></table></div>
-    <button type="button" class="btn sec" id="addServer" style="margin-top:8px">Add server</button>
+    <p style="color:#8f8f8f;font-size:12px;margin-top:0">Main servers share the load (Streaming → Primary server load: Fill first uses the top one until it is full, Balanced spreads requests over all of them), and when a server lacks an article the next one is asked. <strong>On/Off</strong> turns a server off right away without losing its settings (the mount restarts to apply it). Servers marked <strong>Backup</strong> (block accounts) are asked only after every main server. Use the arrows to reorder. Leave a password empty to keep the saved one. <strong>Plan ends</strong> and <strong>Auto-renews</strong> are only reminders: they show on the Overview tab and never change how a server is used.</p>
+    <div class="srv" id="servers"></div>
+    <button type="button" class="btn sec" id="addServer" style="margin-top:8px">Add server</button> <span class="msg" id="srvMsg"></span>
   </div></div>
   {% for title, fields in groups %}
   <div class="card fold"><h3>{{ title }}</h3><div class="body">

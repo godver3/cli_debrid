@@ -185,7 +185,7 @@ def _coerce(key, spec, value):
 def _merge_servers(new_list, old_list) -> list:
     """Validate the edited server rows; an empty password keeps the old one
     (matched by host + username, else by position)."""
-    from utilities.builtin_engine import servers
+    from utilities.builtin_engine import servers, server_enabled
     old = [s for s in _servers(old_list) if isinstance(s, dict)]
     out = []
     for i, s in enumerate(new_list or []):
@@ -197,6 +197,8 @@ def _merge_servers(new_list, old_list) -> list:
         row = {'host': host, 'port': s.get('port') or 563, 'ssl': bool(s.get('ssl', True)),
                'username': str(s.get('username') or '').strip(), 'connections': s.get('connections') or 10,
                'backup': bool(s.get('backup', False)), 'password': str(s.get('password') or ''),
+               # Off: kept with its settings but not given to the engine.
+               'enabled': server_enabled(s),
                # Servers sharing an article store (same backbone name) answer
                # "missing" for each other: the engine asks only one of them.
                'backbone': str(s.get('backbone') or '').strip()}

@@ -8,30 +8,72 @@
   let loaded = false, dirty = false;
   form.addEventListener('input', () => { dirty = true; });
 
+  const field = (label, html, cls) => '<label class="sf' + (cls ? ' ' + cls : '') + '"><span>' + label + '</span>' + html + '</label>';
+  const check = (label, k, on, title) => '<label class="sc"' + (title ? ' title="' + esc(title) + '"' : '') + '><input data-k="' + k + '" type="checkbox"' + (on ? ' checked' : '') + '> ' + label + '</label>';
+  function serverState(card) {
+    const on = card.querySelector('[data-k=enabled]').checked;
+    card.classList.toggle('off', !on);
+    const b = card.querySelector('.tg');
+    b.textContent = on ? 'On' : 'Off';
+    b.title = on ? 'In use. Click to turn this server off (saved right away; its settings are kept).' : 'Turned off: the mount does not use it. Click to turn it back on (saved right away).';
+  }
   function serverRow(s) {
     s = s || {port: 563, ssl: true, connections: 10};
-    const tr = document.createElement('tr');
-    tr.innerHTML =
-      '<td style="white-space:nowrap"><button type="button" class="btn sec mv" data-d="-1" title="Move up" style="padding:3px 8px">▲</button> <button type="button" class="btn sec mv" data-d="1" title="Move down" style="padding:3px 8px">▼</button></td>' +
-      '<td><input data-k="host" value="' + esc(s.host) + '" placeholder="news.example.com" title="' + esc(s.host) + '" style="min-width:210px"></td>' +
-      '<td><input data-k="port" type="number" value="' + esc(s.port ?? 563) + '" style="width:70px"></td>' +
-      '<td><input data-k="ssl" type="checkbox"' + (s.ssl === false ? '' : ' checked') + ' style="width:auto"></td>' +
-      '<td><input data-k="username" value="' + esc(s.username) + '" style="min-width:120px"></td>' +
-      '<td><input data-k="password" type="password" autocomplete="new-password" placeholder="' + (s.password_set ? 'unchanged' : '') + '"></td>' +
-      '<td><input data-k="connections" type="number" value="' + esc(s.connections ?? 10) + '" style="width:70px"></td>' +
-      '<td><input data-k="backup" type="checkbox"' + (s.backup ? ' checked' : '') + ' style="width:auto"></td>' +
-      '<td><input data-k="backbone" value="' + esc(s.backbone || '') + '" placeholder="e.g. omicron" title="Servers with the same backbone share one article store: when one says an article is missing, the others are not asked." style="width:110px"></td>' +
-      '<td><input data-k="expires" type="date" value="' + esc(s.expires || '') + '" style="width:auto"></td>' +
-      '<td><input data-k="auto_renew" type="checkbox"' + (s.auto_renew ? ' checked' : '') + ' style="width:auto"></td>' +
-      '<td><button type="button" class="btn sec rm" style="padding:4px 10px">Remove</button></td>';
-    tr.querySelector('.rm').onclick = () => { tr.remove(); dirty = true; };
-    tr.querySelectorAll('.mv').forEach(b => b.onclick = () => {
-      const sib = b.dataset.d === '-1' ? tr.previousElementSibling : tr.nextElementSibling;
+    const card = document.createElement('div');
+    card.className = 'srvcard';
+    card.innerHTML =
+      '<div class="sh">' +
+        '<button type="button" class="tg"></button><input data-k="enabled" type="checkbox" hidden' + (s.enabled === false ? '' : ' checked') + '>' +
+        '<span class="sn">' + esc(s.host || 'New server') + '</span>' + (s.backup ? '<span class="sb">backup</span>' : '') +
+        '<span class="sp"></span>' +
+        '<button type="button" class="btn sec mv" data-d="-1" title="Move up">▲</button>' +
+        '<button type="button" class="btn sec mv" data-d="1" title="Move down">▼</button>' +
+        '<button type="button" class="btn sec rm" title="Remove this server">✕</button>' +
+      '</div><div class="sg">' +
+        field('Host', '<input data-k="host" value="' + esc(s.host) + '" placeholder="news.example.com">', 'w2') +
+        field('Port', '<input data-k="port" type="number" value="' + esc(s.port ?? 563) + '">') +
+        field('Connections', '<input data-k="connections" type="number" value="' + esc(s.connections ?? 10) + '">') +
+        field('Username', '<input data-k="username" value="' + esc(s.username) + '">') +
+        field('Password', '<input data-k="password" type="password" autocomplete="new-password" placeholder="' + (s.password_set ? 'unchanged' : '') + '">') +
+        field('Backbone', '<input data-k="backbone" value="' + esc(s.backbone || '') + '" placeholder="e.g. omicron" title="Servers with the same backbone share one article store: when one says an article is missing, the others are not asked.">') +
+        field('Plan ends', '<input data-k="expires" type="date" value="' + esc(s.expires || '') + '">') +
+        '<div class="sf checks">' + check('SSL', 'ssl', s.ssl !== false) + check('Backup', 'backup', !!s.backup, 'Block account: asked only after every main server') +
+          check('Auto-renews', 'auto_renew', !!s.auto_renew) + '</div>' +
+      '</div>';
+    serverState(card);
+    card.querySelector('[data-k=host]').addEventListener('input', e => { card.querySelector('.sn').textContent = e.target.value || 'New server'; });
+    card.querySelector('.tg').onclick = async () => {
+      const box = card.querySelector('[data-k=enabled]');
+      box.checked = !box.checked;
+      serverState(card);
+      if (!card.querySelector('[data-k=host]').value.trim()) { dirty = true; return; }  // new row: saved with the form
+      const msg = $('#srvMsg');
+      msg.textContent = 'Saving…';
+      try {
+        const r = await fetch(TPL_MOUNT.url_for_4, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({servers: collectServers()})});
+        const j = await r.json();
+        if (!j.success) throw new Error(j.error);
+        msg.innerHTML = '<span class="ok">' + esc(card.querySelector('[data-k=host]').value) + ' turned ' + (box.checked ? 'on' : 'off') + '.</span> ' + (j.applying ? 'The mount restarts to apply it.' : '');
+      } catch (e) {
+        box.checked = !box.checked; serverState(card);
+        msg.innerHTML = '<span class="no">Not saved: ' + esc(e.message || e) + '</span>';
+      }
+    };
+    card.querySelector('.rm').onclick = () => { card.remove(); dirty = true; };
+    card.querySelectorAll('.mv').forEach(b => b.onclick = () => {
+      const sib = b.dataset.d === '-1' ? card.previousElementSibling : card.nextElementSibling;
       if (!sib) return;
-      if (b.dataset.d === '-1') tr.parentNode.insertBefore(tr, sib); else tr.parentNode.insertBefore(sib, tr);
+      if (b.dataset.d === '-1') card.parentNode.insertBefore(card, sib); else card.parentNode.insertBefore(sib, card);
       dirty = true;
     });
-    $('#servers tbody').appendChild(tr);
+    $('#servers').appendChild(card);
+  }
+  function collectServers() {
+    return [...document.querySelectorAll('#servers .srvcard')].map(card => {
+      const s = {};
+      card.querySelectorAll('[data-k]').forEach(i => { s[i.dataset.k] = i.type === 'checkbox' ? i.checked : (i.type === 'number' ? parseInt(i.value || '0', 10) : i.value); });
+      return s;
+    });
   }
   $('#addServer').onclick = () => { serverRow(); dirty = true; };
 
@@ -110,7 +152,7 @@
       ? 'Jellyfin/Emby in use: ' + je.url + ' (from ' + je.url_source + '), API key ' + (je.token_set ? 'from ' + je.token_source : 'not set')
       : 'No Jellyfin/Emby URL set.') + (!pe.url && !je.url
       ? ' Stream protection, show precache and Now playing are off until a media server is entered here or in Settings.' : '');
-    $('#servers tbody').innerHTML = '';
+    $('#servers').innerHTML = '';
     (settings.servers || []).forEach(serverRow);
     $('#vfolders').innerHTML = '';
     (settings.virtual_folders || []).forEach(v => vfRow(v));
@@ -258,7 +300,7 @@
       rows.push({key, label, type, plan, renew, u: usage[key] || {}});
     };
     const servers = (st.settings && st.settings.servers) || [];
-    servers.forEach(x => add('usenet/' + (x.name || x.host), x.host, x.backup ? 'usenet (backup)' : 'usenet', x.expires,
+    servers.forEach(x => add('usenet/' + (x.name || x.host), x.host + (x.enabled === false ? ' (off)' : ''), x.backup ? 'usenet (backup)' : 'usenet', x.expires,
       x.expires ? (x.auto_renew ? 'auto-renews' : 'manual renewal') : ''));
     pools.forEach(p => add('usenet/' + p.name, p.name, 'usenet', '', ''));
     const plans = st.debrid_plans || {};
@@ -294,11 +336,7 @@
       name: c.querySelector('.vn').value.trim(),
       filters: [...c.querySelectorAll('.vff')].map(r => ({type: r.querySelector('.vt').value, value: r.querySelector('.vv').value}))
     })).filter(v => v.name || v.filters.some(f => f.value));
-    out.servers = [...document.querySelectorAll('#servers tbody tr')].map(tr => {
-      const s = {};
-      tr.querySelectorAll('[data-k]').forEach(i => { s[i.dataset.k] = i.type === 'checkbox' ? i.checked : (i.type === 'number' ? parseInt(i.value || '0', 10) : i.value); });
-      return s;
-    });
+    out.servers = collectServers();
     return out;
   }
 
