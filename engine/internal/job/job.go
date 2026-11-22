@@ -193,6 +193,17 @@ func Build(ctx context.Context, f stream.Fetcher, cache *stream.Cache, n *nzb.NZ
 		}
 	}
 	parallel(ctx, todo, opt.Parallel, probe)
+	// A file the NZB gives no name (empty subject) takes its yEnc header
+	// name; an empty name below means "PAR2 index, consumed", so a file
+	// left nameless would be dropped without a word.
+	for _, p := range todo {
+		if strings.TrimSpace(p.name) == "" {
+			p.name = strings.TrimSpace(p.layout.YencName)
+			if p.name == "" {
+				p.name = fmt.Sprintf("unnamed-%03d", p.idx+1)
+			}
+		}
+	}
 
 	res := &Result{}
 	note := func(format string, a ...any) { res.Notes = append(res.Notes, fmt.Sprintf(format, a...)) }
@@ -230,6 +241,37 @@ func Build(ctx context.Context, f stream.Fetcher, cache *stream.Cache, n *nzb.NZ
 	}
 	if len(descs) > 0 || renamed > 0 {
 		note("PAR2 index lists %d files, %d posted files renamed from it", len(descs), renamed)
+	}
+	// Files the PAR2 recovery set lists that the NZB never posted (an
+	// episode missing from a pack). Missing archive volumes already fail
+	// their set; this only says why a plain file is absent.
+	if len(descs) > 0 {
+		posted := map[string]bool{}
+		listed := map[string]bool{}
+		for _, d := range descs {
+			listed[strings.ToLower(path.Base(d.Name))] = true
+		}
+		unmatched := 0 // posted files PAR2 couldn't name (a failed probe): could be any absent one
+		for _, p := range todo {
+			k := strings.ToLower(path.Base(p.name))
+			posted[k] = true
+			if p.name != "" && !listed[k] {
+				unmatched++
+			}
+		}
+		var absent []string
+		for _, d := range descs {
+			if !posted[strings.ToLower(path.Base(d.Name))] {
+				absent = append(absent, d.Name)
+			}
+		}
+		if len(absent) > unmatched {
+			sort.Strings(absent)
+			if len(absent) > 10 {
+				absent = append(absent[:10], fmt.Sprintf("and %d more", len(absent)-10))
+			}
+			note("PAR2 lists files the NZB does not post: %s", strings.Join(absent, ", "))
+		}
 	}
 	// Without PAR2, a yEnc header name beats an obfuscated subject.
 	for _, p := range candFiles {
