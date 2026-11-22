@@ -53,6 +53,29 @@ func TestBalancedSpreadsOverPrimaries(t *testing.T) {
 	}
 }
 
+// Balanced never reorders backups: once the primary has no copy, the
+// first backup in list order is asked every time (the second is not given
+// a share by load).
+func TestBalancedKeepsBackupOrder(t *testing.T) {
+	arts := nntptest.Post("bko", "bko.bin", awkward(500), 500)
+	a := nntptest.Start(t) // the primary lacks it
+	b1 := nntptest.Start(t, arts...)
+	b2 := nntptest.Start(t, arts...)
+	p1, p2 := provider(b1, "b1", 4), provider(b2, "b2", 4)
+	p1.Backup, p2.Backup = true, true
+	c, _ := NewClient([]Provider{provider(a, "a", 4), p1, p2})
+	c.SetLoadMode(Balanced)
+	defer c.Close()
+	for range 20 {
+		if _, _, err := c.Body(context.Background(), Live, arts[0].ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n1, n2 := b1.Bodies.Load(), b2.Bodies.Load(); n1 != 20 || n2 != 0 {
+		t.Fatalf("backups b1=%d b2=%d, want 20/0", n1, n2)
+	}
+}
+
 // Under concurrent load each primary carries work in proportion to its
 // connections: the bigger account is never left idle while a small one is
 // the only one in use.

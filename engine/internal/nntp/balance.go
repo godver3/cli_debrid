@@ -49,13 +49,15 @@ func (c *Client) LoadMode() LoadMode { return LoadMode(c.mode.Load()) }
 // FillFirst keeps list order. Balanced sorts by load, starting the scan of
 // equal loads at a rotating position, and puts providers the hint says
 // keep missing this file's articles last (still asked, never skipped).
-// In both modes a provider throttled after "too many connections" goes
+// Backups are never balanced. In both modes a provider throttled after "too many connections" goes
 // last, so it isn't redialed on every request while others can serve.
 func (c *Client) order(ctx context.Context, left []*pool, idx []int, prio Priority) []int {
 	if len(idx) < 2 {
 		return idx
 	}
-	if c.LoadMode() != Balanced {
+	// Backups keep list order in both modes: the first backup (often the
+	// cheaper block account) is asked first, never a share by load.
+	if c.LoadMode() != Balanced || left[idx[0]].p.Backup {
 		var ok, throttled []int
 		for _, i := range idx {
 			if left[i].throttled() {

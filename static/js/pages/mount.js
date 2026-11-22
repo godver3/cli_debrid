@@ -6,6 +6,9 @@
   const fmtBytes = b => { if (!b) return '0 B'; const u = ['B','KB','MB','GB','TB']; let i = 0; while (b >= 1024 && i < 4) { b /= 1024; i++; } return b.toFixed(i ? 1 : 0) + ' ' + u[i]; };
   const form = $('#mntForm');
   let loaded = false, dirty = false;
+  // Server rows as last saved (from /mount/api/status); the On/Off toggle
+  // saves from these so unsaved edits on other cards aren't committed with it.
+  let savedServers = [];
   form.addEventListener('input', () => { dirty = true; });
 
   const field = (label, html, cls) => '<label class="sf' + (cls ? ' ' + cls : '') + '"><span>' + label + '</span>' + html + '</label>';
@@ -15,7 +18,7 @@
     card.classList.toggle('off', !on);
     const b = card.querySelector('.tg');
     b.textContent = on ? 'On' : 'Off';
-    b.title = on ? 'In use. Click to turn this server off (saved right away; its settings are kept).' : 'Turned off: the mount does not use it. Click to turn it back on (saved right away).';
+    b.title = on ? 'In use. Click to turn this server off (saved right away, the mount restarts; its settings are kept).' : 'Turned off: the mount does not use it. Click to turn it back on (saved right away, the mount restarts).';
   }
   function serverRow(s) {
     s = s || {port: 563, ssl: true, connections: 10};
@@ -40,19 +43,26 @@
         '<div class="sf checks">' + check('SSL', 'ssl', s.ssl !== false) + check('Backup', 'backup', !!s.backup, 'Block account: asked only after every main server') +
           check('Auto-renews', 'auto_renew', !!s.auto_renew) + '</div>' +
       '</div>';
+    // Which saved row this card is (host + username as loaded); none for a new card.
+    const savedKey = s.host ? s.host + '\n' + (s.username || '') : '';
     serverState(card);
     card.querySelector('[data-k=host]').addEventListener('input', e => { card.querySelector('.sn').textContent = e.target.value || 'New server'; });
     card.querySelector('.tg').onclick = async () => {
       const box = card.querySelector('[data-k=enabled]');
       box.checked = !box.checked;
       serverState(card);
-      if (!card.querySelector('[data-k=host]').value.trim()) { dirty = true; return; }  // new row: saved with the form
+      // Only this server's flag is saved, on the rows as last saved: other
+      // cards' unsaved edits stay for the Save button.
+      const i = savedServers.findIndex(x => savedKey && x.host + '\n' + (x.username || '') === savedKey);
+      if (i < 0) { dirty = true; return; }  // not saved yet: goes with the form
+      const rows = savedServers.map((x, k) => k === i ? {...x, enabled: box.checked} : x);
       const msg = $('#srvMsg');
       msg.textContent = 'Saving…';
       try {
-        const r = await fetch(TPL_MOUNT.url_for_4, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({servers: collectServers()})});
+        const r = await fetch(TPL_MOUNT.url_for_4, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({servers: rows})});
         const j = await r.json();
         if (!j.success) throw new Error(j.error);
+        savedServers = rows;
         msg.innerHTML = '<span class="ok">' + esc(card.querySelector('[data-k=host]').value) + ' turned ' + (box.checked ? 'on' : 'off') + '.</span> ' + (j.applying ? 'The mount restarts to apply it.' : '');
       } catch (e) {
         box.checked = !box.checked; serverState(card);
@@ -274,6 +284,7 @@
              '<td' + (p.errors ? ' class="no" title="' + esc(p.last_error || '') + '"' : '') + '>' + (p.errors || 0) + '</td>' +
              '<td>' + (p.latency_ms ? Math.round(p.latency_ms) + ' ms' : '—') + '</td>' + speedCell('usenet', p.name) + '</tr>';
     }).join('') : '<tr><td colspan="12" style="color:#888">The engine isn\'t running.</td></tr>';
+    if (st.settings && Array.isArray(st.settings.servers)) savedServers = st.settings.servers;
     if (!loaded || !dirty) { fill(st.settings); loaded = true; dirty = false; }
   }
 
