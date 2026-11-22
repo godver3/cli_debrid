@@ -71,7 +71,8 @@ def _delete_replaced_files(item_dict, old_rows, log_tag, entry_label, snapshots=
     # Symlinked/Local + Plex: the old version is removed from Plex only after Plex has
     # scanned in the replacement (see remove_replaced_plex_media_after_scan). Deleting
     # it straight away removed the whole Plex item, so the replacement came back as a
-    # brand-new "recently added" entry. Jellyfin/Emby keep the immediate removal.
+    # brand-new "recently added" entry. Jellyfin/Emby and Silo keep the immediate removal
+    # (for Silo that is a rescan; it restores the item's added date when a file returns).
     new_path = item_dict.get('location_on_disk')
     # Plex mode defers too for snapshots: a force-collected replacement may not be in Plex yet.
     defer_modes = ('Symlinked/Local', 'Plex') if snapshots else ('Symlinked/Local',)
@@ -79,6 +80,7 @@ def _delete_replaced_files(item_dict, old_rows, log_tag, entry_label, snapshots=
         bool(new_path)
         and get_setting('File Management', 'file_collection_management') in defer_modes
         and not (get_setting('Debug', 'emby_jellyfin_url', default='') or '').strip()
+        and (get_setting('File Management', 'media_server_type', 'plex') or '').lower() != 'silo'
     )
     new_original = item_dict.get('original_path_for_symlink')
     new_torrent_id = item_dict.get('filled_by_torrent_id')

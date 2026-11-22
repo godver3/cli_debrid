@@ -1394,6 +1394,9 @@ class PlexTasks:
             plex_url = get_setting('Plex', 'url', '').rstrip('/')
             plex_token = get_setting('Plex', 'token', '')
         elif get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
+            if (get_setting('File Management', 'media_server_type', 'plex') or '').lower() == 'silo':
+                logging.debug("[VERIFY] Silo is the media server: removals are rescans, nothing to check in Plex.")
+                return
             plex_url = get_setting('File Management', 'plex_url_for_symlink', default='').rstrip('/')
             plex_token = get_setting('File Management', 'plex_token_for_symlink', default='')
 

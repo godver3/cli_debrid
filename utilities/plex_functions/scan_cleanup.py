@@ -180,6 +180,8 @@ def start_dead_plex_version_cleanup(item):
             return False
         if (get_setting('Debug', 'emby_jellyfin_url', default='') or '').strip():
             return False
+        if (get_setting('File Management', 'media_server_type', 'plex') or '').lower() == 'silo':
+            return False
         new_path = item.get('location_on_disk')
         if not new_path:
             return False

@@ -47,6 +47,8 @@ def server():
     want = 'plex'
     if mode != 'Plex':
         want = (get_setting('File Management', 'media_server_type', 'plex') or 'plex').lower()
+    if want == 'silo':
+        return None  # no track lookup for Silo yet: the add-time ffprobe tracks are used
     if want == 'jellyfin':
         url, token = _jf_conn()
         return 'jellyfin' if url and token else None

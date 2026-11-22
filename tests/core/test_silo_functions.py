@@ -330,6 +330,26 @@ class ViewerHistoryTests(SiloTestBase):
         self.assertEqual(plays[0][:4], ('tv', '2316', 'tt0386676', 'The Office (US)'))
 
 
+class PlexOnlyPathsSkipSiloTests(unittest.TestCase):
+    """Places that only checked for a Jellyfin URL treated Silo as Plex."""
+    def _settings(self):
+        vals = {('File Management', 'file_collection_management'): 'Symlinked/Local',
+                ('File Management', 'media_server_type'): 'silo',
+                ('File Management', 'plex_url_for_symlink'): 'http://stale-plex:32400',
+                ('File Management', 'plex_token_for_symlink'): 't'}
+        return lambda s, k=None, default=None, **kw: vals.get((s, k), kw.get('default', default))
+
+    def test_subtitle_info_does_not_ask_a_leftover_plex(self):
+        from utilities import plex_subtitle_info as psi
+        with mock.patch('utilities.settings.get_setting', side_effect=self._settings()):
+            self.assertIsNone(psi.server())
+
+    def test_dead_version_cleanup_is_plex_only(self):
+        from utilities.plex_functions import scan_cleanup
+        with mock.patch.object(scan_cleanup, 'get_setting', side_effect=self._settings()):
+            self.assertFalse(scan_cleanup.start_dead_plex_version_cleanup({'location_on_disk': '/x/a.mkv'}))
+
+
 class TaskDefaultTests(unittest.TestCase):
     def setUp(self):
         p = mock.patch('utilities.set_supervisor_env.is_limited_environment', return_value=False)
