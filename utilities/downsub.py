@@ -27,15 +27,8 @@ except Exception as e:
     logging.warning(f"Subliminal packages not available: {e}")
     logging.warning("Subtitle downloading will be disabled. Install with: pip install subliminal babelfish")
 
-# Logging configuration
-logging.basicConfig(
-    level=getattr(logging, config.LOG_LEVEL),
-    format=config.LOG_FORMAT,
-    handlers=[
-        logging.FileHandler(config.LOG_FILE),
-        logging.StreamHandler()
-    ]
-)
+# stevedore logs every provider plugin at DEBUG each time a provider pool is made
+logging.getLogger('stevedore').setLevel(logging.INFO)
 
 # Language mapping from config codes to babelfish Language objects
 # Only populated when babelfish is available
@@ -502,6 +495,19 @@ def upload_subtitle_to_plex(rating_key, content, lang_code, fmt='srt'):
         return False
 
 
+def _label_of(item, path=None):
+    """'Show S01E02' / 'Movie (2020)' for log lines, else the file name."""
+    item = item or {}
+    if item.get('title'):
+        t = item['title']
+        if item.get('type') == 'episode' and item.get('season_number') is not None:
+            t += f" S{int(item['season_number']):02d}E{int(item.get('episode_number') or 0):02d}"
+        elif item.get('year'):
+            t += f" ({item['year']})"
+        return t
+    return os.path.basename(str(path or '')) or '?'
+
+
 def _final_format(sub):
     """(format, extension) to save a downloaded subtitle as, or (None, None)
     to drop it. Saved under its real extension: an ASS file named .srt
@@ -551,12 +557,12 @@ def _prepare_video(video_path, rating_key, name_hint, item):
 
     # Check if file exists — skip for Plex mode (file is on FUSE mount, not local)
     if not is_plex_mode and not video_path.exists():
-        logging.error(f"❌ File does not exist: {video_path}")
+        logging.error(f"[subs] {video_path}: file does not exist")
         return None
 
     # Check if it's a valid video file
     if not str(video_path).lower().endswith(config.VIDEO_EXTENSIONS):
-        logging.error(f"❌ Not a valid video file: {video_path}")
+        logging.error(f"[subs] {video_path}: not a video file")
         return None
 
     # Handle symlinks - keep track of both paths (skip in Plex mode)
@@ -564,7 +570,7 @@ def _prepare_video(video_path, rating_key, name_hint, item):
     real_path = None
     if not is_plex_mode and video_path.is_symlink():
         real_path = video_path.resolve()
-        logging.info(f"🔗 Processing symlink: {video_path} -> {real_path}")
+        logging.debug(f"[subs] symlink {video_path} -> {real_path}")
         video_path = real_path
 
     if item is None:
@@ -576,7 +582,7 @@ def _prepare_video(video_path, rating_key, name_hint, item):
     languages = expand_languages(config.SUBTITLE_LANGUAGES)
 
     if not languages:
-        logging.error("❌ No valid languages configured")
+        logging.error("[subs] no valid subtitle languages configured")
         return None
 
     # Probe for embedded subtitles if enabled. Plex mode only uses the
@@ -591,7 +597,7 @@ def _prepare_video(video_path, rating_key, name_hint, item):
     if config.PROBE_FOR_EMBEDDED and (not is_plex_mode or _plex_cached is not None):
         embedded = get_embedded_subtitle_languages(video_path)
         if embedded:
-            logging.info(f"🔍 Embedded subtitle languages detected: {embedded}")
+            logging.info(f"[subs] {_label_of(item, original_path)}: embedded languages {sorted(embedded)}")
             # Filter out languages already covered by an embedded track.
             # babelfish Language alpha3 (e.g. 'eng', 'fra') is compared against
             # ffprobe tags which are typically ISO-639-2 (also 3-letter).
@@ -600,7 +606,7 @@ def _prepare_video(video_path, rating_key, name_hint, item):
                 if lang.alpha3 not in embedded and str(lang) not in embedded
             ]
             if not filtered:
-                logging.info("✅ All configured languages already embedded — skipping external search")
+                logging.info(f"[subs] {_label_of(item, original_path)}: every language already embedded, nothing to search")
                 return {'all_embedded': True, 'item': item}
             removed = len(languages) - len(filtered)
             if removed:
@@ -616,7 +622,7 @@ def _prepare_video(video_path, rating_key, name_hint, item):
 
     video, parse_name = _build_video(original_path, real_path, name_hint, item)
     if video is None:
-        logging.warning(f"❌ Could not identify {original_path.name} (parsed as {parse_name!r})")
+        logging.warning(f"[subs] {_label_of(item, original_path)}: could not identify the file (parsed as {parse_name!r})")
         return None
     video.path = original_path  # subtitles are saved alongside the library file
 
@@ -628,9 +634,9 @@ def _prepare_video(video_path, rating_key, name_hint, item):
                     'opensubtitlescomvip', 'bsplayer'):
             video.hashes[key] = file_hash
 
-    logging.info(f"🎬 Processing: {original_path.name} (parsing as: {parse_name}; "
-                 f"group={video.release_group}, source={video.source}, "
-                 f"ids={dict(video.external_ids)}, hash={'yes' if file_hash else 'no'})")
+    logging.info(f"[subs] {_label_of(item, original_path)}: matching as {parse_name} "
+                 f"(group={video.release_group}, source={video.source}, "
+                 f"ids={dict(video.external_ids)}, file hash={'yes' if file_hash else 'no'})")
     return {'all_embedded': False, 'video': video, 'parse_name': parse_name,
             'languages': languages, 'original_path': original_path,
             'video_path': video_path, 'real_path': real_path, 'item': item,
@@ -671,20 +677,45 @@ def _maybe_sync(ctx, sub, content, fmt, mode=None):
         matches = set()
     if mode == 'unless_hash' and 'hash' in matches:
         return content, 'skipped: hash match'
-    return sync_content(ctx['video_path'], content, fmt)
+    lang = getattr(sub.language, 'ietf', None) or str(sub.language)
+    return sync_content(ctx['video_path'], content, fmt,
+                        label=f"{_label_of(ctx.get('item'), ctx['original_path'])} {lang}",
+                        item=ctx.get('item'))
 
 
-def sync_content(video_path, content, fmt):
-    """Run the sampled-audio sync; (content, note) with content replaced
-    only when the sync found a clearly better timing."""
+def item_duration_hints(item):
+    """(exact seconds or None, approximate seconds or None) for sync: Plex's
+    duration for the item, and the metadata runtime as a fallback."""
+    item = item or {}
+    exact = None
+    try:
+        from utilities.subtitle_resync import plex_item_info
+        if item.get('ms_item_id'):
+            exact = plex_item_info(item['ms_item_id'])[1]
+    except Exception:
+        exact = None
+    approx = None
+    try:
+        rt = float(item.get('runtime') or 0)
+        approx = rt * 60 if rt >= 5 else None
+    except (TypeError, ValueError):
+        approx = None
+    return exact, approx
+
+
+def sync_content(video_path, content, fmt, label=None, item=None):
+    """Run the sampled sync; (content, note) with content replaced only when
+    it found a clearly better timing."""
     try:
         from utilities import subtitle_sync
         t0 = time.time()
+        exact, approx = item_duration_hints(item)
         new, info = subtitle_sync.sync_subtitle(
             str(video_path), content, fmt or 'srt',
-            max_offset=float(getattr(config, 'SYNC_MAX_OFFSET', 60) or 60))
+            max_offset=float(getattr(config, 'SYNC_MAX_OFFSET', 60) or 60),
+            duration=exact, duration_fallback=approx)
         note = subtitle_sync.describe(info)
-        logging.info(f"[subsync] {os.path.basename(str(video_path))}: {note} ({time.time() - t0:.1f}s)")
+        logging.info(f"[subsync] {label or os.path.basename(str(video_path))}: {note} ({time.time() - t0:.1f}s)")
         return (new or content), note
     except Exception as e:
         logging.warning(f"[subsync] failed for {video_path}: {e}")
@@ -730,7 +761,7 @@ def save_subtitles(ctx, subs, source='auto'):
             try:
                 with open(symlink_srt, 'wb') as f:
                     f.write(content)
-                logging.info(f"Saved subtitle: {symlink_srt}")
+                logging.info(f"[subs] {_label_of(ctx.get('item'), original_path)}: saved {lang} as {symlink_srt}")
                 saved += 1
                 _record_history(ctx, sub, lang, fmt, 'sidecar', str(symlink_srt), source)
             except Exception as e:
@@ -782,8 +813,8 @@ def save_subtitles(ctx, subs, source='auto'):
                     logging.warning(f"[subs] {base_name}: cli_mount sidecar injection failed for {lang}")
             except Exception as _dce:
                 logging.warning(f"[subs] {base_name}: media dir not writable, no Plex ratingKey, cli_mount injection failed: {_dce}")
-    logging.info(f"💾 Saved/uploaded {saved}/{len(subtitles[video])} subtitle(s) for {base_name} "
-                 f"({'Plex API' if use_plex_upload else 'sidecar' if can_write_sidecar else 'cli_mount sidecar'})")
+    logging.info(f"[subs] {_label_of(ctx.get('item'), original_path)}: saved {saved}/{len(subtitles[video])} "
+                 f"({'uploaded to Plex' if use_plex_upload else 'sidecar file' if can_write_sidecar else 'cli_mount sidecar'})")
     return saved
 
 
@@ -816,30 +847,47 @@ def download_subtitles_for_video(video_path, rating_key=None, name_hint=None, it
             _record_attempt((ctx.get('item') or {}).get('id'), 'embedded')
             return True
         video = ctx['video']
+        name = _label_of(ctx.get('item'), ctx['original_path'])
         providers = selected_providers()
-        logging.info(f"🔍 Searching {providers} for "
-                     f"{[getattr(lang, 'ietf', None) or str(lang) for lang in ctx['languages']]} "
-                     f"(min score {ctx['min_score']})")
+        paused = blocked_providers()
+        logging.info(f"[subs] {name}: searching {', '.join(providers) or 'nothing'} for "
+                     f"{', '.join(getattr(lang, 'ietf', None) or str(lang) for lang in ctx['languages'])} "
+                     f"(min score {ctx['min_score']})"
+                     + (f"; paused: {', '.join(f'{k} ({v})' for k, v in paused.items())}" if paused else ''))
         start_time = time.time()
         if not providers:
-            logging.warning(f"❌ No subtitle provider available (paused: {blocked_providers()})")
+            logging.warning(f"[subs] {name}: no subtitle provider available")
             return False
         subtitles = download_best_subtitles(
             {video}, set(ctx['languages']), min_score=ctx['min_score'], providers=providers,
             provider_configs=build_provider_configs(), pool_class=_pool_class())
-        logging.info(f"⏱️ Subtitle search took {time.time() - start_time:.2f} seconds")
+        took = time.time() - start_time
         item_id = (ctx.get('item') or {}).get('id')
         if not subtitles[video]:
-            logging.warning("❌ No subtitles found")
+            logging.info(f"[subs] {name}: nothing passed the match threshold ({took:.1f}s)")
             _record_attempt(item_id, False)
             return False
-        logging.info(f"✅ Found {len(subtitles[video])} subtitle(s): {subtitles[video]}")
+        for sub in subtitles[video]:
+            logging.info(f"[subs] {name}: picked {getattr(sub.language, 'ietf', None) or sub.language} "
+                         f"from {sub.provider_name}, {_score_text(sub, video)} ({took:.1f}s)")
         ok = save_subtitles(ctx, subtitles[video]) > 0
         _record_attempt(item_id, ok)
         return ok
     except Exception as e:
-        logging.error(f"❌ Error downloading subtitles: {e}")
+        logging.error(f"[subs] {video_path}: error downloading subtitles: {e}")
         return False
+
+
+def _score_text(sub, video):
+    """'score 918/971, matched on hash' / '... on group, source' for logs."""
+    try:
+        from subliminal.score import compute_score, get_scores
+        m = sub.get_matches(video)
+        keys = [k for k in ('hash', 'release_group', 'streaming_service', 'source', 'resolution') if k in m]
+        what = ', '.join({'release_group': 'group', 'streaming_service': 'service'}.get(k, k) for k in keys)
+        return f"score {int(compute_score(sub, video))}/{get_scores(video)['hash']}, matched on {what or 'title/episode only'}"
+    except Exception:
+        return 'score ?'
 
 
 def _record_attempt(item_id, found):
@@ -924,9 +972,9 @@ def main(specific_file=None, rating_key=None, name_hint=None, item=None):
 
     # Download subtitles
     if download_subtitles_for_video(specific_file, rating_key=rating_key, name_hint=name_hint, item=item):
-        logging.info(f"✅ Successfully processed: {specific_file}")
+        logging.debug(f"[subs] done: {specific_file}")
     else:
-        logging.error(f"🚨 Failed to download subtitles for: {specific_file}")
+        logging.info(f"[subs] no subtitles saved for {specific_file}")
 
 if __name__ == "__main__":
     # Check if a specific file path is provided as a command-line argument

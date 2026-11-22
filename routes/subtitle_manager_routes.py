@@ -48,15 +48,14 @@ def page():
 @subtitle_manager_bp.route('/api/subtitles/overview')
 @admin_required
 def overview():
-    """Collected items with per-language status. status=missing|has|all."""
+    """Collected items with per-language status, for the grouped list.
+    status=missing|has|all. Paging is done by the page, per show/movie."""
     q = (request.args.get('q') or '').strip()
     status = request.args.get('status', 'missing')
     kind = request.args.get('type', 'all')
-    page_no = max(1, int(request.args.get('page', 1) or 1))
-    per_page = 50
     plex = status_mod.is_plex_mode()
     wanted = status_mod.wanted_langs()
-    rows = status_mod.collected(q, kind)
+    rows = status_mod.collected(q, kind, full=True)
     out = []
     for r in status_mod.with_status(rows, plex=plex, wanted=wanted):
         if status == 'missing' and not r['missing']:
@@ -64,12 +63,12 @@ def overview():
         if status == 'has' and r['missing']:
             continue
         out.append({'id': r['id'], 'label': status_mod.label(r), 'type': r['type'],
+                    'title': r.get('title'), 'year': r.get('year'), 'imdb_id': r.get('imdb_id'),
+                    'season': r.get('season_number'), 'episode': r.get('episode_number'),
+                    'episode_title': r.get('episode_title'),
                     'version': r.get('version'), 'collected_at': r.get('collected_at'),
                     'langs': r['langs']})
-    total = len(out)
-    start = (page_no - 1) * per_page
-    return jsonify({'items': out[start:start + per_page], 'total': total, 'page': page_no,
-                    'per_page': per_page, 'plex_mode': plex,
+    return jsonify({'items': out, 'total': len(out), 'plex_mode': plex,
                     'languages': [w[0] for w in wanted], 'capped': len(rows) >= status_mod.ROW_CAP})
 
 
@@ -277,28 +276,38 @@ def plex_delete(item_id):
 @subtitle_manager_bp.route('/api/subtitles/bulk/start', methods=['POST'])
 @admin_required
 def bulk_start():
-    """kind=search: every item missing a language (current filter).
-    kind=sync: every item's existing subtitles (current filter)."""
+    """Queue a search (missing languages) or sync (existing subtitles) for:
+    ids=[...] (rows), imdb_id (+ season) (a show/season), or the filter
+    q/type (everything shown). Search only takes items missing a language."""
     from utilities import subtitle_bulk
     data = request.get_json(silent=True) or {}
     kind = 'sync' if data.get('kind') == 'sync' else 'search'
-    q = (data.get('q') or '').strip()
-    typ = data.get('type') or 'all'
+    rows = status_mod.collected((data.get('q') or '').strip() if not (data.get('ids') or data.get('imdb_id')) else '',
+                                data.get('type') or 'all', full=True)
+    scope = 'the current filter'
+    if data.get('ids'):
+        ids = {int(i) for i in data['ids']}
+        rows = [r for r in rows if r['id'] in ids]
+        scope = 'this item' if len(ids) == 1 else f'{len(ids)} items'
+    elif data.get('imdb_id'):
+        rows = [r for r in rows if r.get('imdb_id') == data['imdb_id']
+                and (data.get('season') is None or r.get('season_number') == int(data['season']))]
+        scope = 'this season' if data.get('season') is not None else 'this show'
     if kind == 'search':
-        items = status_mod.missing_items(q, typ)
-        what = 'missing subtitles'
-    else:
-        rows = status_mod.collected(q, typ, full=True)
-        if not status_mod.is_plex_mode():
-            cache = {}
-            rows = [r for r in rows if status_mod.sidecar_langs(r.get('location_on_disk'), cache)]
+        items = [r for r in status_mod.with_status(rows) if r['missing']]
+    elif status_mod.is_plex_mode():
         items = rows
-        what = 'existing subtitles'
+    else:
+        cache = {}
+        items = [r for r in rows if status_mod.sidecar_langs(r.get('location_on_disk'), cache)]
     if not items:
-        return jsonify({'success': False, 'message': f'Nothing to do: no items with {what} match this filter'})
-    if not subtitle_bulk.start(items, label=f'{kind} {what}' + (f" '{q}'" if q else ''), kind=kind):
-        return jsonify({'success': False, 'message': 'A subtitle run is already going'}), 409
-    return jsonify({'success': True, 'total': len(items)})
+        what = 'missing a language' if kind == 'search' else 'with subtitles to sync'
+        return jsonify({'success': False, 'message': f'Nothing to do: no items {what} in {scope}'})
+    how, n = subtitle_bulk.start(items, label=f"{kind} {scope}", kind=kind)
+    if not n:
+        return jsonify({'success': True, 'total': 0, 'message': 'Already queued'})
+    return jsonify({'success': True, 'total': n,
+                    'message': f"{'Started' if how == 'started' else 'Queued'}: {n} item{'s' if n != 1 else ''}"})
 
 
 @subtitle_manager_bp.route('/api/subtitles/bulk/status')

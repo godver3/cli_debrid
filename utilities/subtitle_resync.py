@@ -24,19 +24,46 @@ def plex_conn():
     return (get_setting('Plex', 'url', '') or '').rstrip('/'), get_setting('Plex', 'token', '') or ''
 
 
+_INFO_CACHE = {}   # rating_key -> (monotonic, streams, duration_s)
+
+
+def plex_item_info(rating_key, max_age=20):
+    """(subtitle streams or None, duration seconds or None) from one Plex
+    metadata request, briefly cached so a resync's stream lookup and its
+    duration hint share it."""
+    import time as _t
+    hit = _INFO_CACHE.get(str(rating_key))
+    if hit and _t.monotonic() - hit[0] < max_age:
+        return hit[1], hit[2]
+    streams, duration = _fetch_item_info(rating_key)
+    if len(_INFO_CACHE) > 500:
+        _INFO_CACHE.clear()
+    _INFO_CACHE[str(rating_key)] = (_t.monotonic(), streams, duration)
+    return streams, duration
+
+
 def plex_streams(rating_key):
     """Subtitle streams Plex has for an item (embedded and external), or None."""
+    return plex_item_info(rating_key, max_age=0)[0]
+
+
+def _fetch_item_info(rating_key):
     url, token = plex_conn()
     if not (url and token and rating_key):
-        return None
+        return None, None
     try:
         r = requests.get(f"{url}/library/metadata/{rating_key}", params={'X-Plex-Token': token},
                          headers={'Accept': 'application/json'}, timeout=10)
         if r.status_code != 200:
-            return None
+            return None, None
         meta = (r.json().get('MediaContainer') or {}).get('Metadata') or []
         out = []
+        duration = None
         for m in meta[:1]:
+            try:
+                duration = float(m.get('duration') or 0) / 1000.0 or None
+            except (TypeError, ValueError):
+                duration = None
             for media in m.get('Media') or []:
                 for part in media.get('Part') or []:
                     for st in part.get('Stream') or []:
@@ -51,10 +78,10 @@ def plex_streams(rating_key):
                             'forced': bool(st.get('forced')),
                             'external': bool(st.get('key')),
                         })
-        return out
+        return out, duration
     except Exception as e:
         logging.debug(f"[subs] Plex stream lookup failed for {rating_key}: {e}")
-        return None
+        return None, None
 
 
 def plex_stream_of_item(item, stream_id):
@@ -96,7 +123,9 @@ def resync_sidecar(item, path, skip_checked=False):
         content = f.read()
     if skip_checked and _checked(content):
         return {'changed': False, 'skipped': True, 'message': 'checked before'}
-    new, note = downsub.sync_content(real, content, os.path.splitext(path)[1][1:].lower())
+    from utilities.subtitle_status import label
+    new, note = downsub.sync_content(real, content, os.path.splitext(path)[1][1:].lower(),
+                                     label=f"{label(item)} {os.path.basename(path)}", item=item)
     if new != content:
         tmp = path + '.syncing'
         with open(tmp, 'wb') as f:
@@ -124,7 +153,9 @@ def resync_plex_stream(item, st, skip_checked=False):
     if skip_checked and _checked(content):
         return {'changed': False, 'skipped': True, 'message': 'checked before'}
     fmt = (st.get('codec') or 'srt').lower()
-    new, note = downsub.sync_content(video, content, fmt)
+    from utilities.subtitle_status import label
+    new, note = downsub.sync_content(video, content, fmt,
+                                     label=f"{label(item)} {st.get('language') or 'und'} (Plex)", item=item)
     if new == content:
         if note and note.startswith(('already in sync', 'left as is')):
             _mark(content, note)
@@ -145,7 +176,7 @@ def resync_item(item, skip_checked=True):
     changed = checked = 0
     notes = []
     if is_plex_mode():
-        targets = [st for st in (plex_streams(item.get('ms_item_id')) or []) if st.get('external') and st.get('key')]
+        targets = [st for st in (plex_item_info(item.get('ms_item_id'))[0] or []) if st.get('external') and st.get('key')]
         for st in targets:
             res = resync_plex_stream(item, st, skip_checked=skip_checked)
             if not res.get('skipped'):

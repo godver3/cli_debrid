@@ -46,33 +46,105 @@
     return keys.map((k) => `<span class="sm-chip${k === 'hash' ? ' hash' : ''}">${esc(MATCH_LABELS[k] || k)}</span>`).join('');
   }
 
-  // ---- library list
+  // ---- library list: movies, and shows grouped by show → season → episode
+  const GROUPS_PER_PAGE = 40;
+  const open = new Set();          // 'show:<imdb>' / 'season:<imdb>:<n>'
+  let listData = null;
+
+  function chips(langs) {
+    return langs.map((l) => `<span class="sm-chip ${l.has ? 'ok' : 'miss'}"${l.embedded ? ' title="Embedded in the file"' : ''}>${esc(l.lang)}${l.embedded ? ' · emb' : ''}</span>`).join('');
+  }
+  function summary(eps) {
+    const miss = eps.filter((e) => e.langs.some((l) => !l.has)).length;
+    return `<span class="sm-muted">${eps.length} episode${eps.length === 1 ? '' : 's'}</span>` +
+      (miss ? ` <span class="sm-chip miss">${miss} missing</span>` : ' <span class="sm-chip ok">all have subtitles</span>');
+  }
+  function actions(attrs, anyMissing) {
+    return `<span class="sm-actions">
+      ${anyMissing ? `<button class="sm-btn sm-btn-accent sm-mini" data-act="search" ${attrs}>Search</button>` : ''}
+      <button class="sm-btn sm-mini" data-act="sync" ${attrs}>Sync</button></span>`;
+  }
+
   async function loadList() {
-    const params = new URLSearchParams({
-      q: $('sm-q').value.trim(), status: $('sm-status').value, type: $('sm-type').value, page: state.page
-    });
+    const params = new URLSearchParams({ q: $('sm-q').value.trim(), status: $('sm-status').value, type: $('sm-type').value });
     const body = $('sm-rows');
     try {
-      const d = await api('/api/subtitles/overview?' + params);
-      const pages = Math.max(1, Math.ceil(d.total / d.per_page));
-      $('sm-count').textContent = `${d.total}${d.capped ? '+' : ''} item${d.total === 1 ? '' : 's'} · languages: ${d.languages.join(', ') || 'none set'}`;
-      $('sm-page').textContent = `Page ${d.page} of ${pages}`;
-      $('sm-prev').disabled = d.page <= 1;
-      $('sm-next').disabled = d.page >= pages;
-      if (!d.items.length) {
-        body.innerHTML = '<tr><td colspan="4" class="sm-empty">Nothing here.</td></tr>';
-        return;
-      }
-      body.innerHTML = d.items.map((it) => `
-        <tr class="sm-row" data-id="${it.id}">
-          <td>${esc(it.label)}</td>
-          <td class="sm-muted">${esc(it.version || '')}</td>
-          <td>${it.langs.map((l) => `<span class="sm-chip ${l.has ? 'ok' : 'miss'}"${l.embedded ? ' title="Embedded in the file"' : ''}>${esc(l.lang)}${l.embedded ? ' · emb' : ''}</span>`).join('')}</td>
-          <td class="sm-muted">${fmtDate(it.collected_at)}</td>
-        </tr>`).join('');
+      listData = await api('/api/subtitles/overview?' + params);
+      renderList();
     } catch (e) {
-      body.innerHTML = `<tr><td colspan="4" class="sm-empty">Could not load: ${esc(e.message)}</td></tr>`;
+      body.innerHTML = `<tr><td colspan="3" class="sm-empty">Could not load: ${esc(e.message)}</td></tr>`;
     }
+  }
+
+  function renderList() {
+    const d = listData;
+    const body = $('sm-rows');
+    // build groups: each movie is its own group; episodes group by show
+    const groups = [];
+    const shows = new Map();
+    for (const it of d.items) {
+      if (it.type === 'episode') {
+        const key = it.imdb_id || it.title;
+        if (!shows.has(key)) { const g = { kind: 'show', key, title: it.title, eps: [] }; shows.set(key, g); groups.push(g); }
+        shows.get(key).eps.push(it);
+      } else {
+        groups.push({ kind: 'movie', item: it });
+      }
+    }
+    const pages = Math.max(1, Math.ceil(groups.length / GROUPS_PER_PAGE));
+    state.page = Math.min(state.page, pages);
+    const nShows = shows.size, nMovies = groups.length - nShows;
+    $('sm-count').textContent = `${nMovies} movie${nMovies === 1 ? '' : 's'}, ${nShows} show${nShows === 1 ? '' : 's'}` +
+      `${d.capped ? ' (first 5000 items)' : ''} · languages: ${d.languages.join(', ') || 'none set'}`;
+    $('sm-page').textContent = `Page ${state.page} of ${pages}`;
+    $('sm-prev').disabled = state.page <= 1;
+    $('sm-next').disabled = state.page >= pages;
+    if (!groups.length) { body.innerHTML = '<tr><td colspan="3" class="sm-empty">Nothing here.</td></tr>'; return; }
+    const html = [];
+    for (const g of groups.slice((state.page - 1) * GROUPS_PER_PAGE, state.page * GROUPS_PER_PAGE)) {
+      if (g.kind === 'movie') {
+        const it = g.item;
+        html.push(`<tr class="sm-item"><td><a href="#" class="sm-open" data-id="${it.id}">${esc(it.label)}</a>
+          <span class="sm-muted">${esc(it.version || '')}</span></td><td>${chips(it.langs)}</td>
+          <td>${actions(`data-ids="${it.id}"`, it.langs.some((l) => !l.has))}</td></tr>`);
+        continue;
+      }
+      const sk = 'show:' + g.key;
+      const showOpen = open.has(sk);
+      const imdbAttr = g.eps[0].imdb_id ? `data-imdb="${esc(g.eps[0].imdb_id)}"` : `data-ids="${g.eps.map((e) => e.id).join(',')}"`;
+      html.push(`<tr class="sm-group"><td><a href="#" class="sm-toggle" data-key="${esc(sk)}">${showOpen ? '▾' : '▸'} <b>${esc(g.title)}</b></a></td>
+        <td>${summary(g.eps)}</td><td>${actions(imdbAttr, g.eps.some((e) => e.langs.some((l) => !l.has)))}</td></tr>`);
+      if (!showOpen) continue;
+      const seasons = new Map();
+      for (const e of g.eps) { const sn = e.season ?? 0; if (!seasons.has(sn)) seasons.set(sn, []); seasons.get(sn).push(e); }
+      for (const [sn, eps] of [...seasons.entries()].sort((x, y) => x[0] - y[0])) {
+        const k = `season:${g.key}:${sn}`;
+        const so = open.has(k);
+        const sAttr = g.eps[0].imdb_id ? `data-imdb="${esc(g.eps[0].imdb_id)}" data-season="${sn}"` : `data-ids="${eps.map((e) => e.id).join(',')}"`;
+        html.push(`<tr class="sm-season"><td style="padding-left:28px"><a href="#" class="sm-toggle" data-key="${esc(k)}">${so ? '▾' : '▸'} Season ${sn}</a></td>
+          <td>${summary(eps)}</td><td>${actions(sAttr, eps.some((e) => e.langs.some((l) => !l.has)))}</td></tr>`);
+        if (!so) continue;
+        for (const e of eps.sort((x, y) => (x.episode || 0) - (y.episode || 0))) {
+          html.push(`<tr class="sm-item"><td style="padding-left:52px"><a href="#" class="sm-open" data-id="${e.id}">E${String(e.episode || 0).padStart(2, '0')}</a>
+            <span class="sm-muted">${esc(e.episode_title || '')}</span></td><td>${chips(e.langs)}</td>
+            <td>${actions(`data-ids="${e.id}"`, e.langs.some((l) => !l.has))}</td></tr>`);
+        }
+      }
+    }
+    body.innerHTML = html.join('');
+  }
+
+  async function rowAction(btn) {
+    const body = { kind: btn.dataset.act };
+    if (btn.dataset.ids) body.ids = btn.dataset.ids.split(',').map(Number);
+    if (btn.dataset.imdb) body.imdb_id = btn.dataset.imdb;
+    if (btn.dataset.season !== undefined) body.season = Number(btn.dataset.season);
+    btn.disabled = true;
+    try {
+      const d = await api('/api/subtitles/bulk/start', { method: 'POST', body: JSON.stringify(body) });
+      toast(d.message, !d.success);
+      pollBulk();
+    } catch (e) { toast(e.message, true); } finally { btn.disabled = false; }
   }
 
   // ---- history
@@ -294,7 +366,7 @@
     try {
       const d = await api('/api/subtitles/bulk/start', { method: 'POST', body: JSON.stringify(Object.assign({ kind }, filt)) });
       if (!d.success) { toast(d.message, true); return; }
-      toast(`Started: ${d.total} item${d.total === 1 ? '' : 's'}`);
+      toast(d.message);
       pollBulk();
     } catch (e) { toast(e.message, true); }
   }
@@ -307,20 +379,18 @@
     if (!d.total && !d.running) { box.style.display = 'none'; return; }
     box.style.display = '';
     const sync = d.kind === 'sync';
-    $('sm-bulk-title').textContent = (sync ? 'Syncing existing subtitles' : 'Searching missing subtitles') +
-      (d.running ? '' : d.stopped ? ' — stopped' : ' — done');
-    $('sm-bulk-count').textContent = `${d.done}/${d.total} · ${d.found} ${sync ? 'fixed' : 'saved'}`;
+    $('sm-bulk-title').textContent = 'Subtitle queue' + (d.running ? '' : d.stopped ? ' — stopped' : ' — done');
+    $('sm-bulk-count').textContent = `${d.done}/${d.total} · ${d.found} saved/fixed` + (d.queued ? ` · ${d.queued} queued` : '');
     $('sm-bulk-bar').style.width = (d.total ? Math.round(100 * d.done / d.total) : 0) + '%';
     $('sm-bulk-current').textContent = d.running ? (d.current ? 'Now: ' + d.current : '') : (d.stopped || '');
     const paused = Object.entries(d.paused_providers || {});
     $('sm-bulk-paused').textContent = paused.length ? 'Paused: ' + paused.map(([k, v]) => `${k} (${v})`).join(', ') : '';
     $('sm-bulk-recent').innerHTML = (d.recent || []).map((r) =>
       `<div class="sm-row" data-id="${r.id}" style="display:flex;gap:8px;padding:2px 0">
-        <span class="sm-chip ${r.ok ? 'ok' : 'miss'}">${r.ok ? (sync ? 'fixed' : 'saved') : (sync ? 'kept' : 'none')}</span>
+        <span class="sm-chip ${r.ok ? 'ok' : 'miss'}">${r.kind === 'sync' ? (r.ok ? 'fixed' : 'kept') : (r.ok ? 'saved' : 'none')}</span>
         <span>${esc(r.label)}</span><span class="sm-muted" style="word-break:break-word">${esc(r.note || '')}</span></div>`).join('');
     $('sm-bulk-stop').style.display = d.running ? '' : 'none';
     $('sm-bulk-hide').style.display = d.running ? 'none' : '';
-    $('sm-bulk-search').disabled = $('sm-bulk-sync').disabled = !!d.running;
     if (d.running) bulkTimer = setTimeout(pollBulk, 2000);
     else if (bulkWasRunning) loadList();
     bulkWasRunning = !!d.running;
@@ -399,11 +469,17 @@
   $('sm-q').addEventListener('input', () => { clearTimeout(qTimer); qTimer = setTimeout(() => { state.page = 1; loadList(); }, 300); });
   $('sm-status').addEventListener('change', () => { state.page = 1; loadList(); });
   $('sm-type').addEventListener('change', () => { state.page = 1; loadList(); });
-  $('sm-prev').addEventListener('click', () => { state.page = Math.max(1, state.page - 1); loadList(); });
-  $('sm-next').addEventListener('click', () => { state.page += 1; loadList(); });
+  $('sm-prev').addEventListener('click', () => { state.page = Math.max(1, state.page - 1); renderList(); });
+  $('sm-next').addEventListener('click', () => { state.page += 1; renderList(); });
   $('sm-hprev').addEventListener('click', () => { state.hpage = Math.max(1, state.hpage - 1); loadHistory(); });
   $('sm-hnext').addEventListener('click', () => { state.hpage += 1; loadHistory(); });
   document.addEventListener('click', (e) => {
+    const tg = e.target.closest('.sm-toggle');
+    if (tg) { e.preventDefault(); open.has(tg.dataset.key) ? open.delete(tg.dataset.key) : open.add(tg.dataset.key); renderList(); return; }
+    const op = e.target.closest('.sm-open');
+    if (op) { e.preventDefault(); openItem(op.dataset.id); return; }
+    const act = e.target.closest('[data-act]');
+    if (act) { rowAction(act); return; }
     const row = e.target.closest('.sm-row');
     if (row && !e.target.closest('button')) { openItem(row.dataset.id); return; }
     const p = e.target.closest('[data-pick]');

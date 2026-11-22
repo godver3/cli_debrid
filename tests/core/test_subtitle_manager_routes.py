@@ -171,6 +171,6 @@ def test_sidecar_resync_rewrites_file(env):
     with mock.patch('utilities.downsub.sync_content', return_value=(b'new', 'synced: shifted +1.00s')):
         d = env['client'].post('/api/subtitles/item/1/sync', json={'path': target}).get_json()
     assert d['changed'] and open(target, 'rb').read() == b'new'
-    with mock.patch('utilities.downsub.sync_content', side_effect=lambda v, c, f: (c, 'already in sync')):
+    with mock.patch('utilities.downsub.sync_content', side_effect=lambda v, c, f, **k: (c, 'already in sync')):
         d = env['client'].post('/api/subtitles/item/1/sync', json={'path': target}).get_json()
     assert not d['changed'] and d['message'] == 'already in sync'

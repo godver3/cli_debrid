@@ -112,3 +112,26 @@ def test_resync_skips_checked_content(db, tmp_path):
         assert subtitle_resync.resync_sidecar(item, str(sub), skip_checked=True)['changed']
         again = subtitle_resync.resync_sidecar(item, str(sub), skip_checked=True)
     assert again['skipped'] and sc.call_count == 1 and sub.read_bytes() == b'new'
+
+
+def test_queue_appends_while_running(db):
+    import threading
+    from utilities import subtitle_bulk, downsub
+    gate = threading.Event()
+
+    def slow(path, item=None):
+        gate.wait(5)
+        return True
+    with mock.patch.object(downsub, 'resolve_item_path', return_value='/x.mkv'), \
+            mock.patch.object(downsub, 'download_subtitles_for_video', side_effect=slow), \
+            mock.patch.object(downsub, 'selected_providers', return_value=['podnapisi']):
+        assert subtitle_bulk.start([{'id': 1, 'title': 'A'}], pause=0)[0] == 'started'
+        how, n = subtitle_bulk.start([{'id': 1, 'title': 'A'}, {'id': 2, 'title': 'B'}], pause=0)
+        assert how == 'queued' and n >= 1
+        gate.set()
+        for _ in range(100):
+            if not subtitle_bulk.status()['running']:
+                break
+            time.sleep(0.05)
+    st = subtitle_bulk.status()
+    assert st['done'] == st['total'] and st['found'] == st['done']

@@ -58,6 +58,12 @@
 .sm-toast{position:fixed;right:16px;bottom:16px;background:#222;border:1px solid var(--sm-border2);color:var(--sm-text);padding:10px 14px;border-radius:8px;z-index:1100;display:none;max-width:calc(100vw - 32px)}
 .sm-toast.err{border-color:#7f1d1d}
 .sm-release{max-width:380px;word-break:break-all}
+.sm-mini{padding:3px 9px;font-size:11px}
+.sm-actions{display:inline-flex;gap:6px;white-space:nowrap}
+.sm-group td{background:#1f1f1f}
+.sm-season td{background:#1c1c1c}
+.sm-toggle,.sm-open{color:var(--sm-text);text-decoration:none}
+.sm-toggle:hover,.sm-open:hover{color:#fb923c}
 .sm-note{border-left:3px solid var(--sm-yellow);padding-left:10px}
 @media (max-width:760px){
   .sm-table thead{display:none}
@@ -91,9 +97,9 @@
     <div class="sm-bar">
       <input class="sm-input" id="sm-q" type="search" placeholder="Search title…">
       <select class="sm-select" id="sm-status">
+        <option value="all">All</option>
         <option value="missing">Missing a language</option>
         <option value="has">Has all languages</option>
-        <option value="all">All</option>
       </select>
       <select class="sm-select" id="sm-type">
         <option value="all">Movies &amp; episodes</option>
@@ -120,8 +126,8 @@
     </div>
     <div class="sm-card">
       <table class="sm-table">
-        <thead><tr><th>Title</th><th>Version</th><th>Languages</th><th>Collected</th></tr></thead>
-        <tbody id="sm-rows"><tr><td colspan="4" class="sm-empty">Loading…</td></tr></tbody>
+        <thead><tr><th>Title</th><th>Subtitles</th><th style="width:1%"></th></tr></thead>
+        <tbody id="sm-rows"><tr><td colspan="3" class="sm-empty">Loading…</td></tr></tbody>
       </table>
       <div class="sm-pager">
         <button class="sm-btn" id="sm-prev">Prev</button>

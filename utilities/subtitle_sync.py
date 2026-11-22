@@ -22,6 +22,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 
 RATE = 8000                 # Hz, mono s16le from ffmpeg
 FRAME = 160                 # 20 ms VAD frames
@@ -40,7 +41,7 @@ def _duration(path):
     try:
         r = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'format=duration',
                             '-of', 'default=nw=1:nk=1', str(path)],
-                           capture_output=True, text=True, timeout=20)
+                           capture_output=True, text=True, timeout=60)
         return float(r.stdout.strip())
     except Exception:
         return None
@@ -227,10 +228,25 @@ def _score_curve(lines, windows, ratio, max_offset):
     return out
 
 
-def sync_subtitle(video_path, content, fmt='srt', max_offset=60.0, windows=6,
-                  window_len=30.0, timeout=45):
+# Windows per reference. Every window is a jump in the file: on a debrid/
+# usenet mount that is a run of article fetches plus the mount's read-ahead,
+# and the line speed is the limit, so fewer and shorter windows are what make
+# a sync fast. Embedded subtitle lines are exact, so short windows suffice;
+# speech detection needs more audio to be sure.
+EMBED_WINDOWS, EMBED_LEN = 5, 15.0
+AUDIO_WINDOWS, AUDIO_LEN = 5, 20.0
+
+
+def _starts(duration, n, length):
+    return [max(0.0, (0.1 + 0.8 * i / max(1, n - 1)) * duration - length / 2) for i in range(n)]
+
+
+def sync_subtitle(video_path, content, fmt='srt', max_offset=60.0, timeout=90, duration=None,
+                  duration_fallback=None):
     """Returns (new_content_bytes_or_None, info). info['status'] is one of
-    'synced', 'in_sync', 'unsure', 'failed'."""
+    'synced', 'in_sync', 'unsure', 'failed'. `duration` (exact seconds, e.g.
+    from Plex) skips probing the file; `duration_fallback` (approximate, e.g.
+    the metadata runtime) is used only when probing fails."""
     info = {'status': 'failed', 'offset': 0.0, 'ratio': 1.0}
     if not shutil.which('ffmpeg'):
         info['reason'] = 'ffmpeg not installed'
@@ -244,48 +260,76 @@ def sync_subtitle(video_path, content, fmt='srt', max_offset=60.0, windows=6,
     if len(lines) < 20:
         info['reason'] = 'too few subtitle lines'
         return None, info
-    duration = _duration(video_path)
     if not duration or duration < 300:
-        info['reason'] = 'unknown or short duration'
+        duration = _duration(video_path)
+    if (not duration or duration < 300) and duration_fallback and duration_fallback >= 300:
+        duration = float(duration_fallback) * 0.97   # keep the last window inside the file
+    if not duration or duration < 300:
+        info['reason'] = 'video length unknown (the file could not be probed in time)'
         return None, info
 
-    starts = [max(0.0, (0.1 + 0.8 * i / max(1, windows - 1)) * duration - window_len / 2)
-              for i in range(windows)]
-    win = []
-    ref = _embedded_text_stream(video_path)
+    # Windows are read one at a time (parallel reads share the same line and
+    # mount and only time out more), and reading stops as soon as the fit is
+    # clear, usually after 3 windows.
+    t_read = time.time()
+    win, result = [], None
+    ref = _embedded_text_stream(video_path, timeout=timeout)
     if ref is not None:
         pos, lang = ref
-        for start in starts:
-            lines_w = _read_sub_window(video_path, pos, start, window_len, timeout)
+        info['reference'] = f'embedded subtitles ({lang})'
+        for start in _starts(duration, EMBED_WINDOWS, EMBED_LEN):
+            lines_w = _read_sub_window(video_path, pos, start, EMBED_LEN, timeout)
             if lines_w is not None:
-                win.append((start, start + window_len, lines_w))
-        n_lines = sum(len(w[2]) for w in win)
-        if len(win) >= max(3, windows // 2) and n_lines >= 12 and sum(1 for w in win if w[2]) >= 3:
-            info['reference'] = f'embedded subtitles ({lang})'
-        else:
-            win = []
+                win.append((start, start + EMBED_LEN, lines_w))
+            if sum(1 for w in win if w[2]) >= 3:
+                result = _evaluate(lines, win, max_offset)
+                if result['decided']:
+                    break
+        if sum(1 for w in win if w[2]) < 2 or sum(len(w[2]) for w in win) < 10:
+            win, result = [], None
     if not win:
-        for start in starts:
-            samples = _read_window(video_path, start, window_len, timeout)
-            if samples is None:
-                continue
-            speech = _speech_intervals(samples, start)
-            if speech:
-                win.append((start, start + len(samples) / RATE, speech))
         info['reference'] = 'audio'
+        for start in _starts(duration, AUDIO_WINDOWS, AUDIO_LEN):
+            samples = _read_window(video_path, start, AUDIO_LEN, timeout)
+            if samples is not None:
+                speech = _speech_intervals(samples, start)
+                if speech:
+                    win.append((start, start + len(samples) / RATE, speech))
+            if len(win) >= 3:
+                result = _evaluate(lines, win, max_offset)
+                if result['decided']:
+                    break
+    info['read_s'] = round(time.time() - t_read, 1)
     info['windows'] = len(win)
-    if len(win) < max(3, windows // 2):
-        info['reason'] = f'only {len(win)} usable windows'
+    if len(win) < 3 and info['reference'] == 'audio':
+        info['reason'] = f'only {len(win)} of {AUDIO_WINDOWS} audio samples could be read from the file in time'
         return None, info
+    if result is None:
+        result = _evaluate(lines, win, max_offset)
+    info.update(result['info'])
+    info['status'] = result['status']
+    if result['status'] != 'synced':
+        if result['status'] == 'unsure':
+            info['reason'] = 'no clearly better timing found'
+        return None, info
+    ratio, offset = result['ratio'], result['offset']
+    for ev in subs.events:
+        ev.start = max(0, int(round((ev.start / 1000.0 * ratio + offset) * 1000)))
+        ev.end = max(ev.start + 1, int(round((ev.end / 1000.0 * ratio + offset) * 1000)))
+    out_fmt = fmt if fmt in ('srt', 'ass', 'ssa', 'vtt') else 'srt'
+    return subs.to_string(out_fmt).encode('utf-8'), info
 
+
+def _evaluate(lines, win, max_offset):
+    """Best (ratio, offset) for the windows read so far. 'decided' when the
+    answer is already clear (in sync, or a confident fix), so reading more
+    windows wouldn't change it."""
     sub_in_windows = 0.0
     for (w0, w1, _) in win:
         for (s0, s1) in lines:
             sub_in_windows += max(0.0, min(s1, w1) - max(s0, w0))
     norm = max(sub_in_windows, 1.0)
-
-    best = None          # (score, ratio, offset_index, curve)
-    base = None
+    best, base = None, None
     for r in RATIOS:
         curve = _score_curve(lines, win, r, max_offset)
         k = max(range(len(curve)), key=curve.__getitem__)
@@ -295,31 +339,24 @@ def sync_subtitle(video_path, content, fmt='srt', max_offset=60.0, windows=6,
             best = (curve[k], r, k, curve)
     score, ratio, k, curve = best
     offset = -max_offset + k * STEP
-
     mean = sum(curve) / len(curve)
     std = math.sqrt(sum((x - mean) ** 2 for x in curve) / len(curve)) or 1e-9
     away = [x for i, x in enumerate(curve) if abs(i - k) * STEP > 1.5]
     second = max(away) if away else mean
     z = (score - mean) / std
-    info.update({'offset': round(offset, 2), 'ratio': round(ratio, 5), 'confidence': round(z, 1),
-                 'before': round((base or 0) / norm, 3), 'after': round(score / norm, 3),
-                 'peak_margin': round((score - second) / norm, 3)})
-
-    if ratio == 1.0 and abs(offset) <= 0.12:
-        info['status'] = 'in_sync'
-        return None, info
+    margin = (score - second) / norm
     improvement = (score - (base or 0)) / norm
-    if z < 5 or (score - second) / norm < 0.03 or improvement < 0.04:
-        info['status'] = 'unsure'
-        info['reason'] = 'no clearly better timing found'
-        return None, info
-
-    for ev in subs.events:
-        ev.start = max(0, int(round((ev.start / 1000.0 * ratio + offset) * 1000)))
-        ev.end = max(ev.start + 1, int(round((ev.end / 1000.0 * ratio + offset) * 1000)))
-    out_fmt = fmt if fmt in ('srt', 'ass', 'ssa', 'vtt') else 'srt'
-    info['status'] = 'synced'
-    return subs.to_string(out_fmt).encode('utf-8'), info
+    info = {'offset': round(offset, 2), 'ratio': round(ratio, 5), 'confidence': round(z, 1),
+            'before': round((base or 0) / norm, 3), 'after': round(score / norm, 3),
+            'peak_margin': round(margin, 3)}
+    if ratio == 1.0 and abs(offset) <= 0.12:
+        status = 'in_sync'
+    elif z < 5 or margin < 0.03 or improvement < 0.04:
+        status = 'unsure'
+    else:
+        status = 'synced'
+    decided = z >= 6 and margin >= 0.05 and status != 'unsure'
+    return {'status': status, 'ratio': ratio, 'offset': offset, 'info': info, 'decided': decided}
 
 
 def describe(info):
@@ -329,10 +366,11 @@ def describe(info):
         fps = '' if r == 1.0 else f", frame rate x{r:.4f}"
         ref = f" against {info['reference']}" if info.get('reference') else ''
         return f"synced{ref}: shifted {info['offset']:+.2f}s{fps} (fit {info['before']:.2f} → {info['after']:.2f})"
+    ref = f" (checked against {info['reference']})" if info.get('reference') else ''
     if s == 'in_sync':
-        return 'already in sync'
+        return 'already in sync' + ref
     if s == 'unsure':
-        return 'left as is: no clearly better timing found'
+        return 'left as is: no clearly better timing found' + ref
     return f"not synced: {info.get('reason', 'failed')}"
 
 
