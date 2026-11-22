@@ -67,7 +67,7 @@
         <tr class="sm-row" data-id="${it.id}">
           <td>${esc(it.label)}</td>
           <td class="sm-muted">${esc(it.version || '')}</td>
-          <td>${it.langs.map((l) => `<span class="sm-chip ${l.has ? 'ok' : 'miss'}">${esc(l.lang)}</span>`).join('')}</td>
+          <td>${it.langs.map((l) => `<span class="sm-chip ${l.has ? 'ok' : 'miss'}"${l.embedded ? ' title="Embedded in the file"' : ''}>${esc(l.lang)}${l.embedded ? ' · emb' : ''}</span>`).join('')}</td>
           <td class="sm-muted">${fmtDate(it.collected_at)}</td>
         </tr>`).join('');
     } catch (e) {
@@ -280,6 +280,58 @@
     } catch (e) { toast(e.message, true); }
   }
 
+  // ---- bulk runs
+  let bulkTimer = null;
+  let bulkWasRunning = false;
+  async function bulkStart(kind) {
+    const filt = { q: $('sm-q').value.trim(), type: $('sm-type').value };
+    const scope = (filt.q ? `matching "${filt.q}"` : 'in the library') +
+      (filt.type !== 'all' ? ` (${filt.type}s only)` : '');
+    const msg = kind === 'sync'
+      ? `Check and fix the timing of every existing subtitle ${scope}?\n\nEach one reads a few short audio samples from the file. Subtitles checked before are skipped.`
+      : `Search subtitles for every item missing a language ${scope}?\n\nProviders that hit their daily download limit are paused and the others carry on.`;
+    if (!confirm(msg)) return;
+    try {
+      const d = await api('/api/subtitles/bulk/start', { method: 'POST', body: JSON.stringify(Object.assign({ kind }, filt)) });
+      if (!d.success) { toast(d.message, true); return; }
+      toast(`Started: ${d.total} item${d.total === 1 ? '' : 's'}`);
+      pollBulk();
+    } catch (e) { toast(e.message, true); }
+  }
+
+  async function pollBulk() {
+    clearTimeout(bulkTimer);
+    let d;
+    try { d = await api('/api/subtitles/bulk/status'); } catch (e) { bulkTimer = setTimeout(pollBulk, 5000); return; }
+    const box = $('sm-bulk');
+    if (!d.total && !d.running) { box.style.display = 'none'; return; }
+    box.style.display = '';
+    const sync = d.kind === 'sync';
+    $('sm-bulk-title').textContent = (sync ? 'Syncing existing subtitles' : 'Searching missing subtitles') +
+      (d.running ? '' : d.stopped ? ' — stopped' : ' — done');
+    $('sm-bulk-count').textContent = `${d.done}/${d.total} · ${d.found} ${sync ? 'fixed' : 'saved'}`;
+    $('sm-bulk-bar').style.width = (d.total ? Math.round(100 * d.done / d.total) : 0) + '%';
+    $('sm-bulk-current').textContent = d.running ? (d.current ? 'Now: ' + d.current : '') : (d.stopped || '');
+    const paused = Object.entries(d.paused_providers || {});
+    $('sm-bulk-paused').textContent = paused.length ? 'Paused: ' + paused.map(([k, v]) => `${k} (${v})`).join(', ') : '';
+    $('sm-bulk-recent').innerHTML = (d.recent || []).map((r) =>
+      `<div class="sm-row" data-id="${r.id}" style="display:flex;gap:8px;padding:2px 0">
+        <span class="sm-chip ${r.ok ? 'ok' : 'miss'}">${r.ok ? (sync ? 'fixed' : 'saved') : (sync ? 'kept' : 'none')}</span>
+        <span>${esc(r.label)}</span><span class="sm-muted" style="word-break:break-word">${esc(r.note || '')}</span></div>`).join('');
+    $('sm-bulk-stop').style.display = d.running ? '' : 'none';
+    $('sm-bulk-hide').style.display = d.running ? 'none' : '';
+    $('sm-bulk-search').disabled = $('sm-bulk-sync').disabled = !!d.running;
+    if (d.running) bulkTimer = setTimeout(pollBulk, 2000);
+    else if (bulkWasRunning) loadList();
+    bulkWasRunning = !!d.running;
+  }
+  $('sm-bulk-search').addEventListener('click', () => bulkStart('search'));
+  $('sm-bulk-sync').addEventListener('click', () => bulkStart('sync'));
+  $('sm-bulk-stop').addEventListener('click', async () => {
+    try { await api('/api/subtitles/bulk/stop', { method: 'POST' }); toast('Stopping after the current item'); } catch (e) { toast(e.message, true); }
+  });
+  $('sm-bulk-hide').addEventListener('click', () => { $('sm-bulk').style.display = 'none'; });
+
   // ---- Bazarr import
   function bzBody() {
     return { url: $('sm-bz-url').value.trim(), api_key: $('sm-bz-key').value.trim() };
@@ -372,4 +424,5 @@
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && state.item) closePanel(); });
 
   loadList();
+  pollBulk();
 })();

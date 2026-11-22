@@ -37,6 +37,18 @@ def _ensure_table(conn):
         CREATE INDEX IF NOT EXISTS idx_subtitle_history_item ON subtitle_history (item_id);
         CREATE INDEX IF NOT EXISTS idx_subtitle_history_created ON subtitle_history (created_at);
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS subtitle_sync_checked (
+            digest     TEXT PRIMARY KEY,
+            result     TEXT,
+            checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS subtitle_attempts (
+            item_id   INTEGER PRIMARY KEY,
+            tried_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            found     INTEGER NOT NULL DEFAULT 0
+        )""")
     try:
         conn.execute("ALTER TABLE subtitle_history ADD COLUMN sync TEXT")
     except Exception:
@@ -112,5 +124,75 @@ def languages_by_item(item_ids):
                     f"SELECT item_id, language FROM subtitle_history WHERE item_id IN ({q})", chunk):
                 out.setdefault(r[0], set()).add(r[1])
         return out
+    finally:
+        conn.close()
+
+
+def record_attempt(item_id, found):
+    """Last search of an item (manual, bulk or task) and whether it saved anything."""
+    if item_id is None:
+        return
+    conn = get_db_connection()
+    try:
+        _ensure_table(conn)
+        # found: 0 nothing saved, 1 saved, 2 every language already embedded
+        value = 2 if found == 'embedded' else (1 if found else 0)
+        conn.execute("INSERT INTO subtitle_attempts (item_id, tried_at, found) VALUES (?, CURRENT_TIMESTAMP, ?) "
+                     "ON CONFLICT(item_id) DO UPDATE SET tried_at = CURRENT_TIMESTAMP, found = excluded.found",
+                     (item_id, value))
+        conn.commit()
+    except Exception as e:
+        logging.debug(f"[subs] attempt write failed: {e}")
+    finally:
+        conn.close()
+
+
+def recently_tried_without_result(hours):
+    conn = get_db_connection()
+    try:
+        _ensure_table(conn)
+        return {r[0] for r in conn.execute(
+            "SELECT item_id FROM subtitle_attempts WHERE found = 0 AND tried_at >= datetime('now', ?)",
+            (f'-{int(hours)} hours',))}
+    finally:
+        conn.close()
+
+
+def embedded_items(item_ids):
+    """Items whose last search found every language already embedded."""
+    if not item_ids:
+        return set()
+    conn = get_db_connection()
+    try:
+        _ensure_table(conn)
+        out, ids = set(), list(item_ids)
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            q = ','.join('?' * len(chunk))
+            out |= {r[0] for r in conn.execute(
+                f"SELECT item_id FROM subtitle_attempts WHERE found = 2 AND item_id IN ({q})", chunk)}
+        return out
+    finally:
+        conn.close()
+
+
+def sync_checked(digest):
+    conn = get_db_connection()
+    try:
+        _ensure_table(conn)
+        return conn.execute("SELECT 1 FROM subtitle_sync_checked WHERE digest = ?", (digest,)).fetchone() is not None
+    finally:
+        conn.close()
+
+
+def mark_sync_checked(digest, result):
+    conn = get_db_connection()
+    try:
+        _ensure_table(conn)
+        conn.execute("INSERT OR REPLACE INTO subtitle_sync_checked (digest, result, checked_at) "
+                     "VALUES (?, ?, CURRENT_TIMESTAMP)", (digest, (result or '')[:200]))
+        conn.commit()
+    except Exception as e:
+        logging.debug(f"[subs] sync-checked write failed: {e}")
     finally:
         conn.close()

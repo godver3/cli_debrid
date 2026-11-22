@@ -94,131 +94,29 @@ class LibraryTasks:
 
     # Add bulk subtitle processing task
     def task_process_bulk_subtitles(self):
-        """Scheduled task to process bulk subtitles using the bulk_subs.sh script."""
-        import subprocess
-        import os
-        
-        logging.info("Initiating scheduled bulk subtitle processing task.")
-        
+        """Scheduled task: search subtitles for collected items that are missing
+        a configured language (both file management modes).
+
+        Items already having every language (sidecar files, or what cli_debrid
+        uploaded to Plex) are skipped, as are items searched in the last 24 h
+        without a result, so each run doesn't search the same items again.
+        Capped at 200 items per run; providers that hit their download limit
+        are paused for the rest of the run.
+        """
+        from utilities.settings import get_setting
+        if not get_setting('Subtitle Settings', 'enable_subtitles', False):
+            logging.info("[BulkSubs] Subtitle downloads are off (Settings → Subtitles); nothing to do.")
+            return
         try:
-            # Get the collection type setting to determine the scan directory
-            from utilities.settings import get_setting
-            collection_type = get_setting('File Management', 'file_collection_management', 'Plex')
-            
-            if collection_type == 'Symlinked/Local':
-                scan_dir = get_setting('File Management', 'symlinked_files_path', '')
-                if not os.path.exists(scan_dir):
-                    logging.warning(f"Symlinks directory not found: {scan_dir}")
-                    return
-            elif collection_type == 'Plex':
-                self._task_process_bulk_subtitles_plex()
+            from utilities import subtitle_bulk, subtitle_status
+            items = subtitle_status.missing_items(skip_tried_hours=24, limit=200)
+            if not items:
+                logging.info("[BulkSubs] No collected items are missing subtitles.")
                 return
-            else:
-                logging.warning(f"Unsupported collection type '{collection_type}' for bulk subtitle processing.")
-                return
-
-            # Get the script path
-            script_path = os.path.abspath('utilities/bulk_subs.sh')
-            if not os.path.exists(script_path):
-                logging.error(f"Bulk subtitle script not found: {script_path}")
-                return
-
-            # Make sure the script is executable
-            # Check if already executable to avoid permission errors on mounted filesystems
-            try:
-                current_mode = os.stat(script_path).st_mode
-                if not (current_mode & 0o111):  # Check if any execute bit is set
-                    os.chmod(script_path, 0o755)
-                    logging.debug(f"Set execute permissions on {script_path}")
-                else:
-                    logging.debug(f"Script {script_path} is already executable")
-            except (OSError, PermissionError) as e:
-                # If chmod fails but file exists, check if it's already executable
-                if os.access(script_path, os.X_OK):
-                    logging.debug(f"Script {script_path} is executable (chmod failed but file has execute permission)")
-                else:
-                    logging.warning(f"Could not set execute permission on {script_path}: {e}. Will attempt to run anyway.")
-
-            # Run the bulk subtitle processing script with a limit of 200 files
-            max_files = 200
-            logging.info(f"Running bulk subtitle processing on {scan_dir} (max {max_files} files)")
-            
-            cmd = [script_path, scan_dir, str(max_files)]
-            # Don't capture output to allow full visibility of the subtitle processing
-            result = subprocess.run(
-                cmd, 
-                timeout=3600  # 1 hour timeout
-            )
-            
-            if result.returncode == 0:
-                logging.info("Bulk subtitle processing completed successfully.")
-            else:
-                logging.warning(f"Bulk subtitle processing finished with return code: {result.returncode}")
-            
-        except subprocess.TimeoutExpired:
-            logging.error("Bulk subtitle processing timed out after 1 hour")
+            logging.info(f"[BulkSubs] Searching subtitles for {len(items)} item(s) missing a language.")
+            subtitle_bulk.run_now(items, label='Bulk subtitles task', kind='search')
         except Exception as e:
             logging.error(f"Error during bulk subtitle processing: {e}", exc_info=True)
-
-    def _get_plex_mount_base(self):
-        """Get the actual mount base path from Plex mounted_file_location, stripping /__all__."""
-        mount = get_setting('Plex', 'mounted_file_location', '').strip()
-        if mount.endswith('/__all__'):
-            mount = mount[:-len('/__all__')]
-        return mount.rstrip('/')
-
-    def _remap_debrid_path(self, path, mount_base):
-        """Replace the Plex-reported /debrid prefix with the actual mount path."""
-        if not path or not mount_base:
-            return path
-        # location_on_disk from Plex looks like /debrid/shows/FolderName or /debrid/movies/FolderName
-        # Split off the /debrid prefix and replace with mount_base
-        parts = path.split('/', 3)  # ['', 'debrid', 'shows'|'movies', 'rest...']
-        if len(parts) >= 3:
-            return mount_base + '/' + '/'.join(parts[2:])
-        return path
-
-    def _task_process_bulk_subtitles_plex(self):
-        """Process bulk subtitles for Plex mode via cli_mount sidecar injection."""
-        from database.core import get_db_connection
-        from utilities.downsub import download_subtitles_for_video
-        logging.info("[BulkSubs/Plex] Starting bulk subtitle processing for Plex mode.")
-
-        mount_base = self._get_plex_mount_base()
-        if not mount_base:
-            logging.warning("[BulkSubs/Plex] No Plex mounted_file_location configured — cannot process subtitles.")
-            return
-
-        try:
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT location_on_disk, filled_by_file FROM media_items
-                WHERE state = 'Collected'
-                AND (file_path IS NOT NULL OR location_on_disk IS NOT NULL)
-                LIMIT 200
-            """)
-            rows = cursor.fetchall()
-            conn.close()
-        except Exception as e:
-            logging.error(f"[BulkSubs/Plex] DB error: {e}")
-            return
-
-        processed = 0
-        for row in rows:
-            location = row[0] or ''
-            filled_by_file = row[1] or ''
-            if not location or not filled_by_file:
-                continue
-            # Remap /debrid/... → /media/mount/...
-            location = self._remap_debrid_path(location, mount_base)
-            full_path = os.path.join(location, filled_by_file) if not location.endswith(filled_by_file) else location
-            try:
-                download_subtitles_for_video(full_path)
-                processed += 1
-            except Exception as e:
-                logging.debug(f"[BulkSubs/Plex] Skipped {full_path}: {e}")
-        logging.info(f"[BulkSubs/Plex] Processed {processed} items.")
 
     def task_overlay_sync(self):
         """Scheduled task to sync overlay data and regenerate changed posters."""

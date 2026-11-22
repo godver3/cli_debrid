@@ -105,8 +105,48 @@ MIN_MOVIE_SCORE = 162 + 54
 MIN_MOVIE_SCORE_NO_YEAR = 162
 
 
-def selected_providers():
-    """The providers from settings that this subliminal knows, in order."""
+# provider -> (monotonic until, reason). A provider that hit its download
+# quota or failed its login is skipped until then, so a bulk run doesn't ask
+# it again for every item.
+_BLOCKED = {}
+
+
+def _block_seconds(exc):
+    name = type(exc).__name__ if exc else ''
+    if name in ('DownloadLimitExceeded', 'DownloadLimitReached'):
+        return 6 * 3600, 'daily download limit reached'
+    if name in ('AuthenticationError', 'ConfigurationError'):
+        return 3600, 'login failed (check the OpenSubtitles username/password)'
+    if name == 'ServiceUnavailable':
+        return 600, 'service unavailable'
+    return 600, f'error ({name or "unknown"})'
+
+
+def blocked_providers():
+    now = time.monotonic()
+    for k in [k for k, v in _BLOCKED.items() if v[0] <= now]:
+        _BLOCKED.pop(k, None)
+    return {k: v[1] for k, v in _BLOCKED.items()}
+
+
+def _pool_class():
+    """ProviderPool that remembers why a provider was discarded."""
+    from subliminal.core import ProviderPool
+
+    class _TrackingPool(ProviderPool):
+        def _discard_provider(self, name):
+            super()._discard_provider(name)
+            exc = sys.exc_info()[1]
+            secs, reason = _block_seconds(exc)
+            if name not in _BLOCKED:
+                logging.warning(f"[subs] pausing provider {name} for {secs // 60} min: {reason}")
+            _BLOCKED[name] = (time.monotonic() + secs, reason)
+    return _TrackingPool
+
+
+def selected_providers(include_blocked=False):
+    """The providers from settings that this subliminal knows, in order,
+    minus any paused after a quota/login error."""
     try:
         from subliminal.extensions import provider_manager
         available = set(provider_manager.names())
@@ -118,7 +158,10 @@ def selected_providers():
     out = [p for p in chosen if p in available]
     if not out:
         out = [p for p in DEFAULT_PROVIDERS if p in available]
-    return out
+    if include_blocked:
+        return out
+    blocked = blocked_providers()
+    return [p for p in out if p not in blocked]
 
 
 def build_provider_configs():
@@ -558,7 +601,7 @@ def _prepare_video(video_path, rating_key, name_hint, item):
             ]
             if not filtered:
                 logging.info("✅ All configured languages already embedded — skipping external search")
-                return {'all_embedded': True}
+                return {'all_embedded': True, 'item': item}
             removed = len(languages) - len(filtered)
             if removed:
                 logging.info(f"ℹ️  Skipping {removed} language(s) already embedded; searching for remaining {len(filtered)}")
@@ -770,6 +813,7 @@ def download_subtitles_for_video(video_path, rating_key=None, name_hint=None, it
         if ctx is None:
             return False
         if ctx.get('all_embedded'):
+            _record_attempt((ctx.get('item') or {}).get('id'), 'embedded')
             return True
         video = ctx['video']
         providers = selected_providers()
@@ -777,18 +821,33 @@ def download_subtitles_for_video(video_path, rating_key=None, name_hint=None, it
                      f"{[getattr(lang, 'ietf', None) or str(lang) for lang in ctx['languages']]} "
                      f"(min score {ctx['min_score']})")
         start_time = time.time()
+        if not providers:
+            logging.warning(f"❌ No subtitle provider available (paused: {blocked_providers()})")
+            return False
         subtitles = download_best_subtitles(
             {video}, set(ctx['languages']), min_score=ctx['min_score'], providers=providers,
-            provider_configs=build_provider_configs())
+            provider_configs=build_provider_configs(), pool_class=_pool_class())
         logging.info(f"⏱️ Subtitle search took {time.time() - start_time:.2f} seconds")
+        item_id = (ctx.get('item') or {}).get('id')
         if not subtitles[video]:
             logging.warning("❌ No subtitles found")
+            _record_attempt(item_id, False)
             return False
         logging.info(f"✅ Found {len(subtitles[video])} subtitle(s): {subtitles[video]}")
-        return save_subtitles(ctx, subtitles[video]) > 0
+        ok = save_subtitles(ctx, subtitles[video]) > 0
+        _record_attempt(item_id, ok)
+        return ok
     except Exception as e:
         logging.error(f"❌ Error downloading subtitles: {e}")
         return False
+
+
+def _record_attempt(item_id, found):
+    try:
+        from database import subtitle_history
+        subtitle_history.record_attempt(item_id, found)
+    except Exception:
+        pass
 
 
 def _release_of(sub):
@@ -805,13 +864,12 @@ def _release_of(sub):
 def search_candidates(ctx, languages=None):
     """Every candidate from every selected provider, scored, best first:
     [{'sub', 'score', 'matches', 'provider', 'release', 'language', 'hi'}]."""
-    from subliminal.core import ProviderPool
     from subliminal.score import compute_score
     video = ctx['video']
     langs = set(languages or ctx['languages'])
     out = []
-    with ProviderPool(providers=selected_providers(),
-                      provider_configs=build_provider_configs()) as pool:
+    with _pool_class()(providers=selected_providers(),
+                       provider_configs=build_provider_configs()) as pool:
         for sub in pool.list_subtitles(video, langs):
             try:
                 score = int(compute_score(sub, video))
@@ -828,9 +886,8 @@ def search_candidates(ctx, languages=None):
 
 def download_candidate(ctx, sub):
     """Download one chosen candidate and save it. Returns subtitles saved."""
-    from subliminal.core import ProviderPool
-    with ProviderPool(providers=[sub.provider_name],
-                      provider_configs=build_provider_configs()) as pool:
+    with _pool_class()(providers=[sub.provider_name],
+                       provider_configs=build_provider_configs()) as pool:
         if not pool.download_subtitle(sub) or not sub.content:
             return 0
     return save_subtitles(ctx, [sub], source='manual')

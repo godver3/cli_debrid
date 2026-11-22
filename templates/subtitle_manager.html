@@ -17,7 +17,10 @@
 .sm-tab{background:transparent;border:1px solid var(--sm-border2);color:var(--sm-text2);border-radius:6px;padding:6px 14px;cursor:pointer;font-size:12px}
 .sm-tab.active{border-color:var(--sm-accent);color:var(--sm-text);background:#e8601c18}
 .sm-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:1rem}
-.sm-input,.sm-select{background:var(--sm-surface2)!important;border:1px solid var(--sm-border2)!important;color:var(--sm-text)!important;border-radius:5px!important;padding:6px 10px!important;font-size:13px!important;height:auto!important;box-shadow:none!important}
+.sm-input,.sm-select{background-color:var(--sm-surface2)!important;border:1px solid var(--sm-border2)!important;color:var(--sm-text)!important;border-radius:5px!important;padding:6px 10px!important;font-size:13px!important;height:auto!important;box-shadow:none!important}
+.sm-input{background-image:none!important}
+.sm-select{padding-right:30px!important;background-repeat:no-repeat!important;background-position:right 8px center!important;background-size:14px 14px!important;min-width:0;cursor:pointer}
+.sm-select option{background:var(--sm-surface2);color:var(--sm-text)}
 .sm-input{flex:1;min-width:180px;max-width:380px}
 .sm-btn{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:500;cursor:pointer;background:transparent;border:1px solid var(--sm-border2);color:var(--sm-text);white-space:nowrap}
 .sm-btn:hover{border-color:var(--sm-text2)}
@@ -98,6 +101,22 @@
         <option value="episode">Episodes</option>
       </select>
       <span class="sm-muted" id="sm-count"></span>
+      <span style="flex:1"></span>
+      <button class="sm-btn sm-btn-accent" id="sm-bulk-search" title="Search every item missing a language that matches the search box and type filter">Search all missing</button>
+      <button class="sm-btn" id="sm-bulk-sync" title="Check and fix the timing of every existing subtitle that matches the search box and type filter">Sync existing subtitles</button>
+    </div>
+    <div class="sm-card" id="sm-bulk" style="display:none;padding:12px 14px;margin-bottom:1rem">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <b id="sm-bulk-title"></b>
+        <span class="sm-muted" id="sm-bulk-count"></span>
+        <span style="flex:1"></span>
+        <button class="sm-btn sm-btn-red" id="sm-bulk-stop">Stop</button>
+        <button class="sm-btn" id="sm-bulk-hide" style="display:none">Hide</button>
+      </div>
+      <div class="sm-bar-score" style="height:6px;margin:8px 0"><i id="sm-bulk-bar" style="width:0;background:var(--sm-accent)"></i></div>
+      <div class="sm-muted" id="sm-bulk-current"></div>
+      <div id="sm-bulk-paused" style="color:var(--sm-yellow);margin-top:4px"></div>
+      <div id="sm-bulk-recent" style="margin-top:8px;max-height:220px;overflow-y:auto"></div>
     </div>
     <div class="sm-card">
       <table class="sm-table">

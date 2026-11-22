@@ -1,4 +1,5 @@
-"""Subtitles tool page: per-item status, manual search/pick, history.
+"""Subtitles tool page: per-item status, manual search/pick, history, bulk
+search of missing subtitles, bulk resync of existing ones, Bazarr import.
 
 Status sources: sidecar files next to the library file (Symlinked/Local), the
 Plex item's subtitle streams (Plex mode, per item only), and the downloader's
@@ -13,18 +14,13 @@ import uuid
 from flask import Blueprint, jsonify, render_template, request
 
 from routes.models import admin_required
+from utilities import subtitle_status as status_mod
 
 subtitle_manager_bp = Blueprint('subtitle_manager', __name__)
 
-SUB_EXTS = ('.srt', '.ass', '.ssa', '.sub', '.vtt', '.smi')
 _CANDIDATES = {}          # token -> (monotonic, item_id, ctx, [subs])
 _CAND_TTL = 15 * 60
 _CAND_LOCK = threading.Lock()
-
-
-def _is_plex_mode():
-    from utilities.settings import get_setting
-    return get_setting('File Management', 'file_collection_management', 'Plex') == 'Plex'
 
 
 def _item(item_id):
@@ -39,206 +35,67 @@ def _item(item_id):
         conn.close()
 
 
-def _label(item):
-    t = item.get('title') or ''
-    if item.get('type') == 'episode' and item.get('season_number') is not None:
-        t += f" S{int(item['season_number']):02d}E{int(item.get('episode_number') or 0):02d}"
-    elif item.get('year'):
-        t += f" ({item['year']})"
-    return t
-
-
-def _wanted_langs():
-    """Configured languages as (ietf, alpha3) pairs."""
-    from utilities.config.downsub_config import config
-    from utilities.downsub import expand_languages
-    config.reload()
-    out = []
-    for lang in expand_languages(config.SUBTITLE_LANGUAGES):
-        ietf = getattr(lang, 'ietf', None) or str(lang)
-        out.append((ietf, lang.alpha3))
-    return out
-
-
-def _sidecar_langs(path, dir_cache):
-    """Languages of sidecar subtitles next to a library file, e.g.
-    'Show - S01E01.en.srt' -> 'en'. A sidecar with no language tag counts
-    as 'und'."""
-    if not path:
-        return {}
-    d, base = os.path.split(path)
-    stem = os.path.splitext(base)[0]
-    if d not in dir_cache:
-        try:
-            dir_cache[d] = os.listdir(d)
-        except OSError:
-            dir_cache[d] = []
-    out = {}
-    for f in dir_cache[d]:
-        low = f.lower()
-        if not low.endswith(SUB_EXTS) or not f.startswith(stem + '.'):
-            continue
-        middle = f[len(stem) + 1:].rsplit('.', 1)[0]
-        lang = middle.split('.')[0] if middle else 'und'
-        out.setdefault(lang.lower(), []).append(os.path.join(d, f))
-    return out
-
-
-def _has_lang(found, ietf, alpha3):
-    keys = {k.lower() for k in found}
-    base = ietf.split('-')[0].lower()
-    return bool(keys & {ietf.lower(), alpha3.lower(), base})
-
-
-def _plex_conn():
-    from utilities.settings import get_setting
-    url = (get_setting('Plex', 'url', '') or '').rstrip('/')
-    token = get_setting('Plex', 'token', '') or ''
-    return url, token
-
-
-_PLEX_HEADERS = {
-    'X-Plex-Client-Identifier': 'cli-debrid-subtitles',
-    'X-Plex-Product': 'cli_debrid',
-    'X-Plex-Version': '1.0',
-}
-
-
-def _plex_stream_of_item(item, stream_id):
-    """The external subtitle stream `stream_id` of this item, or None."""
-    for st in _plex_streams(item.get('ms_item_id')) or []:
-        if str(st.get('id')) == str(stream_id) and st.get('external') and st.get('key'):
-            return st
-    return None
-
-
-def _plex_streams(rating_key):
-    """Subtitle streams Plex has for an item (embedded and external)."""
-    import requests
-    from utilities.settings import get_setting
-    url = (get_setting('Plex', 'url', '') or '').rstrip('/')
-    token = get_setting('Plex', 'token', '') or ''
-    if not (url and token and rating_key):
-        return None
-    try:
-        r = requests.get(f"{url}/library/metadata/{rating_key}",
-                         params={'X-Plex-Token': token},
-                         headers={'Accept': 'application/json'}, timeout=10)
-        if r.status_code != 200:
-            return None
-        meta = (r.json().get('MediaContainer') or {}).get('Metadata') or []
-        out = []
-        for m in meta[:1]:
-            for media in m.get('Media') or []:
-                for part in media.get('Part') or []:
-                    for st in part.get('Stream') or []:
-                        if st.get('streamType') != 3:
-                            continue
-                        out.append({
-                            'id': st.get('id'),
-                            'key': st.get('key') or '',
-                            'language': st.get('languageTag') or st.get('languageCode') or '',
-                            'codec': st.get('codec') or '',
-                            'title': st.get('displayTitle') or st.get('extendedDisplayTitle') or '',
-                            'forced': bool(st.get('forced')),
-                            'external': bool(st.get('key')),
-                        })
-        return out
-    except Exception as e:
-        logging.debug(f"[subs] Plex stream lookup failed for {rating_key}: {e}")
-        return None
+def _sidecar_paths(item):
+    return {p for paths in status_mod.sidecar_langs(item.get('location_on_disk'), {}).values() for p in paths}
 
 
 @subtitle_manager_bp.route('/tools/subtitles')
 @admin_required
 def page():
-    return render_template('subtitle_manager.html', plex_mode=_is_plex_mode())
+    return render_template('subtitle_manager.html', plex_mode=status_mod.is_plex_mode())
 
 
 @subtitle_manager_bp.route('/api/subtitles/overview')
 @admin_required
 def overview():
     """Collected items with per-language status. status=missing|has|all."""
-    from database.core import get_db_connection
-    from database import subtitle_history
     q = (request.args.get('q') or '').strip()
     status = request.args.get('status', 'missing')
     kind = request.args.get('type', 'all')
     page_no = max(1, int(request.args.get('page', 1) or 1))
     per_page = 50
-    plex = _is_plex_mode()
-
-    where = ["state IN ('Collected','Upgrading')", "type IN ('movie','episode')"]
-    args = []
-    if kind in ('movie', 'episode'):
-        where.append('type = ?')
-        args.append(kind)
-    if q:
-        where.append('(title LIKE ? OR episode_title LIKE ?)')
-        args += [f'%{q}%', f'%{q}%']
-    conn = get_db_connection()
-    try:
-        rows = [dict(r) for r in conn.execute(
-            "SELECT id, title, year, type, season_number, episode_number, location_on_disk, "
-            "collected_at, version, ms_item_id FROM media_items WHERE " + ' AND '.join(where)
-            + " ORDER BY collected_at DESC LIMIT 5000", args).fetchall()]
-    except Exception:
-        # ms_item_id is added by a migration; very old DBs may lack it
-        rows = [dict(r) for r in conn.execute(
-            "SELECT id, title, year, type, season_number, episode_number, location_on_disk, "
-            "collected_at, version FROM media_items WHERE " + ' AND '.join(where)
-            + " ORDER BY collected_at DESC LIMIT 5000", args).fetchall()]
-    finally:
-        conn.close()
-
-    wanted = _wanted_langs()
-    history = subtitle_history.languages_by_item([r['id'] for r in rows])
-    dir_cache = {}
+    plex = status_mod.is_plex_mode()
+    wanted = status_mod.wanted_langs()
+    rows = status_mod.collected(q, kind)
     out = []
-    for r in rows:
-        found = {}
-        if not plex:
-            found = _sidecar_langs(r.get('location_on_disk'), dir_cache)
-        for lang in history.get(r['id'], ()):
-            found.setdefault((lang or '').lower(), [])
-        langs = [{'lang': ietf, 'has': _has_lang(found, ietf, a3)} for ietf, a3 in wanted]
-        missing = any(not lang['has'] for lang in langs)
-        if status == 'missing' and not missing:
+    for r in status_mod.with_status(rows, plex=plex, wanted=wanted):
+        if status == 'missing' and not r['missing']:
             continue
-        if status == 'has' and missing:
+        if status == 'has' and r['missing']:
             continue
-        out.append({'id': r['id'], 'label': _label(r), 'type': r['type'],
+        out.append({'id': r['id'], 'label': status_mod.label(r), 'type': r['type'],
                     'version': r.get('version'), 'collected_at': r.get('collected_at'),
-                    'langs': langs})
+                    'langs': r['langs']})
     total = len(out)
     start = (page_no - 1) * per_page
     return jsonify({'items': out[start:start + per_page], 'total': total, 'page': page_no,
                     'per_page': per_page, 'plex_mode': plex,
-                    'languages': [w[0] for w in wanted], 'capped': len(rows) >= 5000})
+                    'languages': [w[0] for w in wanted], 'capped': len(rows) >= status_mod.ROW_CAP})
 
 
 @subtitle_manager_bp.route('/api/subtitles/item/<int:item_id>')
 @admin_required
 def item_detail(item_id):
     from database import subtitle_history
+    from utilities import subtitle_resync
     item = _item(item_id)
     if not item:
         return jsonify({'error': 'Item not found or not collected'}), 404
-    plex = _is_plex_mode()
+    plex = status_mod.is_plex_mode()
     files, plex_streams = [], None
     if plex:
-        plex_streams = _plex_streams(item.get('ms_item_id'))
+        plex_streams = subtitle_resync.plex_streams(item.get('ms_item_id'))
     else:
-        for lang, paths in _sidecar_langs(item.get('location_on_disk'), {}).items():
+        for lang, paths in status_mod.sidecar_langs(item.get('location_on_disk'), {}).items():
             for p in paths:
                 files.append({'language': lang, 'path': p, 'name': os.path.basename(p)})
     return jsonify({
-        'id': item_id, 'label': _label(item), 'type': item.get('type'),
+        'id': item_id, 'label': status_mod.label(item), 'type': item.get('type'),
         'release': item.get('filled_by_title') or item.get('original_scraped_torrent_title') or '',
         'file': item.get('filled_by_file') or '', 'location': item.get('location_on_disk') or '',
         'plex_mode': plex, 'sidecars': files, 'plex_streams': plex_streams,
         'history': subtitle_history.for_item(item_id),
-        'languages': [w[0] for w in _wanted_langs()],
+        'languages': [w[0] for w in status_mod.wanted_langs()],
     })
 
 
@@ -297,6 +154,7 @@ def search(item_id):
                    'source': video.source, 'service': video.streaming_service,
                    'resolution': video.resolution, 'ids': dict(video.external_ids)},
         'providers': downsub.selected_providers(),
+        'paused': downsub.blocked_providers(),
         'candidates': [{k: v for k, v in c.items() if k != 'sub'} for c in cands],
     })
 
@@ -349,8 +207,7 @@ def delete_sidecar(item_id):
     if not item:
         return jsonify({'error': 'Item not found or not collected'}), 404
     path = (request.get_json(silent=True) or {}).get('path') or ''
-    allowed = {p for paths in _sidecar_langs(item.get('location_on_disk'), {}).values() for p in paths}
-    if path not in allowed:
+    if path not in _sidecar_paths(item):
         return jsonify({'error': 'Not a subtitle of this item'}), 400
     try:
         os.remove(path)
@@ -369,65 +226,31 @@ def history():
     return jsonify({'rows': rows, 'page': page_no})
 
 
-def _sync_mode_note(note):
-    return note or 'not synced'
-
-
 @subtitle_manager_bp.route('/api/subtitles/item/<int:item_id>/sync', methods=['POST'])
 @admin_required
 def sync_existing(item_id):
     """Resync one existing subtitle: a sidecar file (Symlinked/Local) or an
     uploaded Plex subtitle (download it, sync, upload, remove the old one)."""
-    import requests
-    from utilities import downsub
+    from utilities import downsub, subtitle_resync
     item = _item(item_id)
     if not item:
         return jsonify({'error': 'Item not found or not collected'}), 404
     downsub.config.reload()
-    video = downsub.resolve_item_path(item)
-    if not video:
-        return jsonify({'error': 'No file path for this item'}), 400
     data = request.get_json(silent=True) or {}
-
     if data.get('path'):
-        allowed = {p for paths in _sidecar_langs(item.get('location_on_disk'), {}).values() for p in paths}
-        path = data['path']
-        if path not in allowed:
+        if data['path'] not in _sidecar_paths(item):
             return jsonify({'error': 'Not a subtitle of this item'}), 400
-        real = os.path.realpath(video) if os.path.islink(video) else video
-        with open(path, 'rb') as f:
-            content = f.read()
-        new, note = downsub.sync_content(real, content, os.path.splitext(path)[1][1:].lower())
-        if new is not content and new != content:
-            tmp = path + '.syncing'
-            with open(tmp, 'wb') as f:
-                f.write(new)
-            os.replace(tmp, path)
-            return jsonify({'success': True, 'changed': True, 'message': note})
-        return jsonify({'success': True, 'changed': False, 'message': _sync_mode_note(note)})
-
-    if data.get('stream_id') is not None:
-        st = _plex_stream_of_item(item, data['stream_id'])
+        res = subtitle_resync.resync_sidecar(item, data['path'])
+    elif data.get('stream_id') is not None:
+        st = subtitle_resync.plex_stream_of_item(item, data['stream_id'])
         if not st:
             return jsonify({'error': 'Not an uploaded subtitle of this item (embedded ones cannot be changed)'}), 400
-        url, token = _plex_conn()
-        r = requests.get(url + st['key'], params={'X-Plex-Token': token}, headers=_PLEX_HEADERS, timeout=30)
-        if r.status_code != 200 or not r.content:
-            return jsonify({'error': f'Could not download the subtitle from Plex (HTTP {r.status_code})'}), 502
-        fmt = (st.get('codec') or 'srt').lower()
-        new, note = downsub.sync_content(video, r.content, fmt)
-        if new is r.content or new == r.content:
-            return jsonify({'success': True, 'changed': False, 'message': _sync_mode_note(note)})
-        lang = st.get('language') or 'und'
-        if not downsub.upload_subtitle_to_plex(item.get('ms_item_id'), new, lang, fmt=fmt):
-            return jsonify({'error': 'Synced, but the upload to Plex failed; the old subtitle was kept'}), 502
-        d = requests.delete(url + st['key'], params={'X-Plex-Token': token}, headers=_PLEX_HEADERS, timeout=30)
-        if d.status_code not in (200, 204):
-            return jsonify({'success': True, 'changed': True,
-                            'message': f'{note}; uploaded, but removing the old one failed (HTTP {d.status_code})'})
-        return jsonify({'success': True, 'changed': True, 'message': note})
-
-    return jsonify({'error': 'path or stream_id required'}), 400
+        res = subtitle_resync.resync_plex_stream(item, st)
+    else:
+        return jsonify({'error': 'path or stream_id required'}), 400
+    if res.get('error') and not res.get('changed'):
+        return jsonify({'error': res['message']}), 502
+    return jsonify({'success': True, 'changed': bool(res.get('changed')), 'message': res['message']})
 
 
 @subtitle_manager_bp.route('/api/subtitles/item/<int:item_id>/plex_delete', methods=['POST'])
@@ -435,20 +258,65 @@ def sync_existing(item_id):
 def plex_delete(item_id):
     """Remove an uploaded/external subtitle from the Plex item. Embedded
     tracks can't be removed."""
-    import requests
+    from utilities import subtitle_resync
     item = _item(item_id)
     if not item:
         return jsonify({'error': 'Item not found or not collected'}), 404
-    st = _plex_stream_of_item(item, (request.get_json(silent=True) or {}).get('stream_id'))
+    st = subtitle_resync.plex_stream_of_item(item, (request.get_json(silent=True) or {}).get('stream_id'))
     if not st:
         return jsonify({'error': 'Not an uploaded subtitle of this item (embedded ones cannot be removed)'}), 400
-    url, token = _plex_conn()
-    r = requests.delete(url + st['key'], params={'X-Plex-Token': token}, headers=_PLEX_HEADERS, timeout=30)
-    if r.status_code not in (200, 204):
-        return jsonify({'error': f'Plex refused the delete (HTTP {r.status_code})'}), 502
+    ok, code = subtitle_resync.plex_delete(st)
+    if not ok:
+        return jsonify({'error': f'Plex refused the delete (HTTP {code})'}), 502
     logging.info(f"[subs] removed Plex subtitle stream {st['id']} ({st.get('language')}) from item {item_id}")
     return jsonify({'success': True})
 
+
+# ---- bulk runs ------------------------------------------------------------
+
+@subtitle_manager_bp.route('/api/subtitles/bulk/start', methods=['POST'])
+@admin_required
+def bulk_start():
+    """kind=search: every item missing a language (current filter).
+    kind=sync: every item's existing subtitles (current filter)."""
+    from utilities import subtitle_bulk
+    data = request.get_json(silent=True) or {}
+    kind = 'sync' if data.get('kind') == 'sync' else 'search'
+    q = (data.get('q') or '').strip()
+    typ = data.get('type') or 'all'
+    if kind == 'search':
+        items = status_mod.missing_items(q, typ)
+        what = 'missing subtitles'
+    else:
+        rows = status_mod.collected(q, typ, full=True)
+        if not status_mod.is_plex_mode():
+            cache = {}
+            rows = [r for r in rows if status_mod.sidecar_langs(r.get('location_on_disk'), cache)]
+        items = rows
+        what = 'existing subtitles'
+    if not items:
+        return jsonify({'success': False, 'message': f'Nothing to do: no items with {what} match this filter'})
+    if not subtitle_bulk.start(items, label=f'{kind} {what}' + (f" '{q}'" if q else ''), kind=kind):
+        return jsonify({'success': False, 'message': 'A subtitle run is already going'}), 409
+    return jsonify({'success': True, 'total': len(items)})
+
+
+@subtitle_manager_bp.route('/api/subtitles/bulk/status')
+@admin_required
+def bulk_status():
+    from utilities import subtitle_bulk
+    return jsonify(subtitle_bulk.status())
+
+
+@subtitle_manager_bp.route('/api/subtitles/bulk/stop', methods=['POST'])
+@admin_required
+def bulk_stop():
+    from utilities import subtitle_bulk
+    subtitle_bulk.stop()
+    return jsonify({'success': True})
+
+
+# ---- Bazarr import --------------------------------------------------------
 
 @subtitle_manager_bp.route('/api/subtitles/bazarr/preview', methods=['POST'])
 @admin_required
