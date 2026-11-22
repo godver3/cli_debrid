@@ -1,4 +1,4 @@
-// Tools → Subtitles: library status, manual search/pick, history.
+// Tools → Subtitle Manager: library status, manual search/pick, history.
 (function () {
   'use strict';
   const $ = (id) => document.getElementById(id);

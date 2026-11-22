@@ -15,7 +15,7 @@
             <input type="checkbox" id="additional-enable_subtitles" name="Subtitle Settings.enable_subtitles"
                    data-section="Subtitle Settings" data-key="enable_subtitles"
                    {% if settings.get('Subtitle Settings', {}).get('enable_subtitles') %}checked{% endif %}>
-            <p class="settings-description">Download subtitles when an item is collected. Works in both modes: Symlinked/Local writes a sidecar file next to the library file; Plex mode uploads the subtitle to the Plex item (the mount is read-only). Adds a few seconds per file. Manage and search subtitles under Tools → Subtitles.</p>
+            <p class="settings-description">Download subtitles when an item is collected. Works in both modes: Symlinked/Local writes a sidecar file next to the library file; Plex mode uploads the subtitle to the Plex item (the mount is read-only). Adds a few seconds per file. Manage and search subtitles under Tools → Subtitle Manager.</p>
         </div>
 
         <!-- Hidden settings - no longer used with simplified downsub system -->
@@ -103,7 +103,7 @@
                 <option value="unless_hash" {% if _sync == 'unless_hash' %}selected{% endif %}>Unless matched by hash or release</option>
                 <option value="always" {% if _sync == 'always' %}selected{% endif %}>Always</option>
             </select>
-            <p class="settings-description">Check subtitle timing after download against the file's own embedded text subtitle track, when it has one (exact, and only a few short parts of the file are read). Subtitles matched by file hash or release group are made for this release and are left as downloaded with "Unless matched by file hash". Without an embedded text track the subtitle is kept as downloaded. To fix existing subtitles use Tools → Subtitles → Fix existing subtitles.</p>
+            <p class="settings-description">Check subtitle timing after download against the file's own embedded text subtitle track, when it has one (exact, and only a few short parts of the file are read). Subtitles matched by file hash or release group are made for this release and are left as downloaded with "Unless matched by file hash". Without an embedded text track the subtitle is kept as downloaded. To fix existing subtitles use Tools → Subtitle Manager → Fix existing subtitles.</p>
         </div>
 
         <div class="settings-form-group">
@@ -118,7 +118,7 @@
             <div style="background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.3); padding: 12px 15px; border-radius: 8px;">
                 <p style="margin: 0; font-weight: bold; color: #f59e0b;"><i class="fas fa-exclamation-triangle"></i> Plex users: turn off Plex's own subtitle analysis</p>
                 <p style="margin: 6px 0 0 0; color: var(--text-secondary);">In Plex go to Settings → Library and set <strong>Generate voice activity data</strong> to <strong>never</strong>. Plex uses it to auto-sync subtitles, but it reads every file in full, which on a debrid/usenet mount means downloading your whole library in the background. Sync here only reads a few short samples.</p>
-                <p style="margin: 6px 0 0 0; color: var(--text-secondary);">Moving from Bazarr? Tools → Subtitles → <strong>Import from Bazarr</strong> copies its languages, providers, login and sync settings.</p>
+                <p style="margin: 6px 0 0 0; color: var(--text-secondary);">Moving from Bazarr? Tools → Subtitle Manager → <strong>Import from Bazarr</strong> copies its languages, providers, login and sync settings.</p>
             </div>
         </div>
 

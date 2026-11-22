@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Subtitles{% endblock %}
+{% block title %}Subtitle Manager{% endblock %}
 
 {% block content %}
 <style>
@@ -81,7 +81,7 @@
 </style>
 
 <div class="sm-wrap">
-  <h1 class="sm-title">Subtitles</h1>
+  <h1 class="sm-title">Subtitle Manager</h1>
   <p class="sm-intro">
     Subtitle status for collected movies and episodes. Click an item to see its subtitles, search every provider by hand, or let the best match download automatically.
     {% if plex_mode %}In Plex mode subtitles are uploaded to Plex, so the list shows what cli_debrid downloaded; open an item to see every subtitle Plex has.{% endif %}

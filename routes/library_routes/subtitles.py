@@ -52,7 +52,7 @@ def _start_bulk(rows, label):
         found = _run_items(rows)
         logging.info(f"[DownSub] {label} done: {found}/{len(rows)} subtitles downloaded")
     threading.Thread(target=_run, daemon=True, name='subs-bulk').start()
-    return jsonify({'success': True, 'message': f'Searching subtitles for {len(rows)} episodes (see Tools → Subtitles for results)'})
+    return jsonify({'success': True, 'message': f'Searching subtitles for {len(rows)} episodes (see Tools → Subtitle Manager for results)'})
 
 
 @library_bp.route('/download_subtitles/season', methods=['POST'])
