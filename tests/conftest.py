@@ -13,11 +13,19 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 _TMP = tempfile.mkdtemp(prefix="cli_debrid_tests_")
+# Parallel runs (pytest -n, pytest-xdist): each worker gets its own subfolder of a
+# folder it was given. Workers sharing one folder race to create the first config,
+# and then collect different tests.
+_WORKER = os.environ.get("PYTEST_XDIST_WORKER", "")
 for _var, _sub in (("USER_CONFIG", "config"), ("USER_DB_CONTENT", "db_content"), ("USER_LOGS", "logs")):
     if not os.environ.get(_var):
         _path = os.path.join(_TMP, _sub)
-        os.makedirs(_path, exist_ok=True)
-        os.environ[_var] = _path
+    elif _WORKER:
+        _path = os.path.join(os.environ[_var], _WORKER)
+    else:
+        continue
+    os.makedirs(_path, exist_ok=True)
+    os.environ[_var] = _path
 
 # No battery refresh worker: a test reaching DirectAPI would start it, and 30 s
 # later it calls Trakt/TVDB in the middle of whatever test runs then
