@@ -137,6 +137,12 @@
                     </svg>
                     AI Assistant
                 </div>
+                <div class="settings-nav-item" data-tab="settings-transfer">
+                    <svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+                    </svg>
+                    Export / Import
+                </div>
                 {% if environment_mode == 'full' %}
                 <!-- <div class="settings-nav-item" data-tab="reverse-parser">
                     <svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -203,6 +209,11 @@
                     {% include 'settings_tabs/scrapers.html' %}
                 </div>
                 {% include 'settings_tabs/_settings_scripts.html' %}
+            </div>
+
+            <!-- Outside #settingsForm: its inputs must never reach Save Settings. -->
+            <div id="settings-transfer" class="settings-tab-content" style="display: none;">
+                {% include 'settings_tabs/page_settings_transfer.html' %}
             </div>
 
             <button type="button" id="saveSettingsButton" class="btn btn-primary settings-submit-button">Save Settings</button>
@@ -498,6 +509,13 @@
             if (activeTab) {
                 activeTab.style.display = 'block';
                 localStorage.setItem('currentTab', tabName);
+            }
+            // Export / Import has its own buttons; Save Settings does nothing there.
+            const saveBtn = document.getElementById('saveSettingsButton');
+            // (.btn sets display with !important, so a plain style.display loses)
+            if (saveBtn) {
+                if (tabName === 'settings-transfer') saveBtn.style.setProperty('display', 'none', 'important');
+                else saveBtn.style.removeProperty('display');
             }
         }
 
