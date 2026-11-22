@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+
+{% block title %}Subtitles{% endblock %}
+
+{% block content %}
+<style>
+.sm-wrap{--sm-surface:#1a1a1a;--sm-surface2:#222;--sm-border:#333;--sm-border2:#3d3d3d;--sm-accent:#e8601c;
+  --sm-text:#e0e0e0;--sm-text2:#aaa;--sm-text3:#777;--sm-green:#22c55e;--sm-red:#ef4444;--sm-blue:#60a5fa;--sm-yellow:#f59e0b;
+  max-width:1400px;margin:0 auto;padding:1.5rem 1.25rem;font-family:'Inter',system-ui,sans-serif;font-size:13px;color:var(--sm-text);box-sizing:border-box}
+.sm-wrap *{box-sizing:border-box}
+.sm-title{font-size:20px;font-weight:700;border-left:3px solid var(--sm-accent);padding-left:10px;margin:0 0 .5rem}
+.sm-intro{color:var(--sm-text2);margin:0 0 1.25rem;max-width:900px;line-height:1.5}
+.sm-intro a{color:var(--sm-blue)}
+.sm-tabs{display:flex;gap:6px;margin-bottom:1rem;flex-wrap:wrap}
+.sm-tab{background:transparent;border:1px solid var(--sm-border2);color:var(--sm-text2);border-radius:6px;padding:6px 14px;cursor:pointer;font-size:12px}
+.sm-tab.active{border-color:var(--sm-accent);color:var(--sm-text);background:#e8601c18}
+.sm-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:1rem}
+.sm-input,.sm-select{background:var(--sm-surface2)!important;border:1px solid var(--sm-border2)!important;color:var(--sm-text)!important;border-radius:5px!important;padding:6px 10px!important;font-size:13px!important;height:auto!important;box-shadow:none!important}
+.sm-input{flex:1;min-width:180px;max-width:380px}
+.sm-btn{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:500;cursor:pointer;background:transparent;border:1px solid var(--sm-border2);color:var(--sm-text);white-space:nowrap}
+.sm-btn:hover{border-color:var(--sm-text2)}
+.sm-btn:disabled{opacity:.5;cursor:default}
+.sm-btn-accent{border-color:#9a3f12;color:#fb923c}
+.sm-btn-accent:hover{border-color:var(--sm-accent);background:#e8601c18}
+.sm-btn-red{border-color:#7f1d1d;color:#f87171}
+.sm-card{background:var(--sm-surface);border:1px solid var(--sm-border);border-radius:8px;overflow:hidden}
+.sm-table{width:100%;border-collapse:collapse}
+.sm-table th{text-align:left;font-weight:600;color:var(--sm-text3);font-size:11px;text-transform:uppercase;letter-spacing:.04em;padding:8px 12px;border-bottom:1px solid var(--sm-border)}
+.sm-table td{padding:8px 12px;border-bottom:1px solid #262626;vertical-align:middle}
+.sm-table tr:last-child td{border-bottom:none}
+.sm-row{cursor:pointer}
+.sm-row:hover td{background:#202020}
+.sm-chip{display:inline-block;font-size:11px;font-family:monospace;border-radius:4px;padding:1px 7px;margin:1px 3px 1px 0;border:1px solid var(--sm-border2);color:var(--sm-text2)}
+.sm-chip.ok{border-color:#166534;color:var(--sm-green)}
+.sm-chip.miss{border-color:#7f1d1d;color:#f87171}
+.sm-chip.hash{border-color:#1e40af;color:var(--sm-blue)}
+.sm-chip.warn{border-color:#92400e;color:var(--sm-yellow)}
+.sm-muted{color:var(--sm-text3)}
+.sm-pager{display:flex;gap:8px;align-items:center;justify-content:flex-end;padding:10px 12px}
+.sm-empty{padding:28px;text-align:center;color:var(--sm-text3)}
+.sm-panel{position:fixed;inset:0;background:#000a;display:none;z-index:1000;align-items:flex-start;justify-content:center;overflow-y:auto;padding:40px 16px}
+.sm-panel.open{display:flex}
+.sm-dialog{background:var(--sm-surface);border:1px solid var(--sm-border2);border-radius:10px;width:100%;max-width:1100px;padding:18px 20px}
+.sm-dialog h3{margin:0 0 4px;font-size:16px}
+.sm-sec{margin-top:16px}
+.sm-sec h4{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--sm-text3);margin:0 0 8px}
+.sm-kv{display:grid;grid-template-columns:max-content 1fr;gap:3px 12px;font-size:12px}
+.sm-kv span:nth-child(odd){color:var(--sm-text3)}
+.sm-kv span{word-break:break-all}
+.sm-score{font-family:monospace;font-weight:600}
+.sm-bar-score{height:4px;background:#2a2a2a;border-radius:2px;margin-top:3px;min-width:60px}
+.sm-bar-score i{display:block;height:100%;border-radius:2px}
+.sm-toast{position:fixed;right:16px;bottom:16px;background:#222;border:1px solid var(--sm-border2);color:var(--sm-text);padding:10px 14px;border-radius:8px;z-index:1100;display:none;max-width:calc(100vw - 32px)}
+.sm-toast.err{border-color:#7f1d1d}
+.sm-release{max-width:380px;word-break:break-all}
+@media (max-width:760px){
+  .sm-table thead{display:none}
+  .sm-table tr{display:block;border-bottom:1px solid #262626;padding:6px 0}
+  .sm-table td{display:block;border:none;padding:3px 12px}
+  .sm-input{max-width:none}
+  .sm-dialog{padding:14px}
+  .sm-release{max-width:none}
+}
+</style>
+
+<div class="sm-wrap">
+  <h1 class="sm-title">Subtitles</h1>
+  <p class="sm-intro">
+    Subtitle status for collected movies and episodes. Click an item to see its subtitles, search every provider by hand, or let the best match download automatically.
+    {% if plex_mode %}In Plex mode subtitles are uploaded to Plex, so the list shows what cli_debrid downloaded; open an item to see every subtitle Plex has.{% endif %}
+    Languages, providers and the text-only (no transcoding) option are in <a href="{{ url_for('settings.index') }}#subtitles">Settings → Subtitle Settings</a>.
+  </p>
+
+  <div class="sm-tabs">
+    <button class="sm-tab active" data-tab="library">Library</button>
+    <button class="sm-tab" data-tab="history">History</button>
+  </div>
+
+  <div id="sm-library">
+    <div class="sm-bar">
+      <input class="sm-input" id="sm-q" type="search" placeholder="Search title…">
+      <select class="sm-select" id="sm-status">
+        <option value="missing">Missing a language</option>
+        <option value="has">Has all languages</option>
+        <option value="all">All</option>
+      </select>
+      <select class="sm-select" id="sm-type">
+        <option value="all">Movies &amp; episodes</option>
+        <option value="movie">Movies</option>
+        <option value="episode">Episodes</option>
+      </select>
+      <span class="sm-muted" id="sm-count"></span>
+    </div>
+    <div class="sm-card">
+      <table class="sm-table">
+        <thead><tr><th>Title</th><th>Version</th><th>Languages</th><th>Collected</th></tr></thead>
+        <tbody id="sm-rows"><tr><td colspan="4" class="sm-empty">Loading…</td></tr></tbody>
+      </table>
+      <div class="sm-pager">
+        <button class="sm-btn" id="sm-prev">Prev</button>
+        <span class="sm-muted" id="sm-page"></span>
+        <button class="sm-btn" id="sm-next">Next</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="sm-history" style="display:none">
+    <div class="sm-card">
+      <table class="sm-table">
+        <thead><tr><th>When</th><th>Item</th><th>Lang</th><th>Provider</th><th>Score</th><th>Matched on</th><th>Saved</th></tr></thead>
+        <tbody id="sm-hrows"></tbody>
+      </table>
+      <div class="sm-pager">
+        <button class="sm-btn" id="sm-hprev">Prev</button>
+        <span class="sm-muted" id="sm-hpage"></span>
+        <button class="sm-btn" id="sm-hnext">Next</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="sm-panel" id="sm-panel">
+  <div class="sm-dialog">
+    <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">
+      <div><h3 id="sm-d-title"></h3><div class="sm-muted" id="sm-d-sub"></div></div>
+      <button class="sm-btn" id="sm-close">Close</button>
+    </div>
+    <div class="sm-sec"><h4>File</h4><div class="sm-kv" id="sm-d-file"></div></div>
+    <div class="sm-sec"><h4>Current subtitles</h4><div id="sm-d-current"></div></div>
+    <div class="sm-sec">
+      <h4>Search</h4>
+      <div class="sm-bar">
+        <select class="sm-select" id="sm-d-lang"></select>
+        <button class="sm-btn sm-btn-accent" id="sm-d-search">Search providers</button>
+        <button class="sm-btn" id="sm-d-auto" title="Download the best match for each configured language, as happens when an item is added">Auto-pick best</button>
+        <span class="sm-muted" id="sm-d-status"></span>
+      </div>
+      <div id="sm-d-parsed" class="sm-muted" style="margin-bottom:8px"></div>
+      <div id="sm-d-results"></div>
+    </div>
+    <div class="sm-sec"><h4>History</h4><div id="sm-d-history"></div></div>
+  </div>
+</div>
+<div class="sm-toast" id="sm-toast"></div>
+
+<script src="{{ url_for('static', filename='js/pages/subtitle_manager.js') }}"></script>
+{% endblock %}
