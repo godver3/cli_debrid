@@ -238,7 +238,7 @@ def test_undecided_sync_gets_one_hash_search(db, tmp_path):
                 mock.patch.object(downsub, 'sync_content') as sync:
             subtitle_resync.resync_item(item)
         assert hm.called and not sync.called              # no second futile sync
-        assert 'no hash match' in db.sync_result(digest)
+        assert subtitle_resync.KEPT in db.sync_result(digest)
         assert not subtitle_resync.needs_check(item)
 
 
@@ -289,3 +289,23 @@ def test_fix_existing_uses_release_match_when_no_hash(db, tmp_path):
         changed, checked, notes = subtitle_resync.resync_item(item)
     assert changed == 1 and not sync.called and 'release match' in notes[0]
     assert sc.read_bytes() == rel.content
+
+
+def test_kept_is_searched_again_when_a_provider_is_added(db, tmp_path):
+    from utilities import subtitle_resync, downsub
+    video = tmp_path / 'Show - S01E01.mkv'
+    video.write_bytes(b'')
+    (tmp_path / 'Show - S01E01.en.srt').write_bytes(b'old')
+    item = {'id': 1, 'location_on_disk': str(video)}
+    patches = dict(resolve_item_path=str(video), prepare_video={'hash': True, 'video': object()},
+                   hash_matches=[], release_matches=[])
+    with _settings('Symlinked/Local'):
+        with mock.patch.multiple(downsub, **{k: mock.DEFAULT for k in patches}) as m, \
+                mock.patch.object(downsub, 'selected_providers', return_value=['opensubtitlescom', 'gestdown']):
+            for k, v in patches.items():
+                m[k].return_value = v
+            subtitle_resync.resync_item(item)
+            assert not subtitle_resync.needs_check(item)            # same providers: done
+        with mock.patch.object(downsub, 'selected_providers',
+                               return_value=['opensubtitlescom', 'gestdown', 'subsource']):
+            assert subtitle_resync.needs_check(item)                # provider added: search again

@@ -114,6 +114,13 @@ def _checked(content):
 
 
 def _hash_pending(result):
+    """A checked subtitle that's still owed a search for a better one: an
+    undecided sync never searched, or a 'kept' searched before some of the
+    now-selected providers were added."""
+    if KEPT in result:
+        searched = set(result.split('| via ', 1)[1].split(',')) if '| via ' in result else set()
+        from utilities import downsub
+        return bool(set(downsub.selected_providers(include_blocked=True)) - searched)
     return result.startswith(HASH_PENDING) and 'no hash match' not in result
 
 
@@ -312,11 +319,15 @@ KEPT = 'kept: no subtitle for this release found'
 
 
 def _kept(content, prev):
-    """Record that a subtitle was searched for and nothing better exists, so
-    later runs skip it."""
+    """Record that a subtitle was searched for and nothing better exists, with
+    the providers searched, so later runs skip it until a provider is added."""
     from utilities import downsub as _ds
-    if content is not None and any(x in _ds.HASH_PROVIDERS for x in _ds.selected_providers()):
-        _mark(content, (prev + '; ' if prev else '') + KEPT + '; no hash match')
+    searched = _ds.selected_providers()
+    if content is not None and searched:
+        base = prev.split(' | via ')[0] if prev and KEPT in prev else prev
+        if base and KEPT in base:
+            base = None
+        _mark(content, (base + '; ' if base else '') + KEPT + ' | via ' + ','.join(sorted(searched)))
     return {'changed': False, 'message': KEPT}
 
 
