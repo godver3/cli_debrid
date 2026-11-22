@@ -20,12 +20,7 @@ async function loadDebridTab() {
         const d = await r.json();
         if (!d.success) throw new Error(d.error || 'Failed to load debrid stats');
         _debridRenderStats(d.health || {}, d.activity || {});
-        // Populate version selector from usenet settings (same version list)
-        try {
-            const sr = await fetch('/debrid_manager/api/usenet/repair/stats');
-            const sd = await sr.json();
-            if (sd.success) _debridRenderVersions(sd.versions || [], sd.repair_version || '');
-        } catch(_) {}
+        _debridRenderVersions(d.versions || [], d.repair_version || '');
         if (loadEl)  loadEl.style.display  = 'none';
         if (content) content.style.display = 'block';
         await debridLoadActivity(null);

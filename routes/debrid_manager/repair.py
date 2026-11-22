@@ -329,12 +329,15 @@ def usenet_repair_settings_save():
 
 @debrid_manager_bp.route('/api/debrid/repair/stats')
 def debrid_repair_stats():
-    """Stats for the Debrid repair tab: cli_mount torrent health summary + 30-day activity counts."""
+    """Stats for the Debrid repair tab: cli_mount torrent health summary + 30-day activity
+    counts + the version list for the repair version picker (shared with the Usenet tab)."""
     try:
         from usenet.debrid_repair_engine import get_health_summary, get_repair_stats
+        from usenet.repair_engine import get_available_versions, get_repair_version
         health = get_health_summary()
         activity = get_repair_stats(days=30)
-        return jsonify(success=True, health=health, activity=activity)
+        return jsonify(success=True, health=health, activity=activity,
+                       versions=get_available_versions(), repair_version=get_repair_version())
     except Exception as e:
         logging.error(f'[DebridRepair] stats error: {e}')
         return jsonify(success=False, error=str(e))

@@ -709,10 +709,3 @@ _battEl('batt-reid-commit-btn')?.addEventListener('click', async function() {
 });
 
 // Battery audit loads on-demand when Battery sub-tab is clicked (not auto-loaded)
-
-// ── INIT ───────────────────────────────────────────────────────────────────
-// Runs here, after every Debrid Manager part has loaded, because it calls
-// functions from reconcile.js, battery_audit.js and symlink_audit.js.
-if (_dmActiveTab === 'reconcile') { loadReconcile(false); loadBatteryAudit(false); if (typeof _slInitAudit === 'function') _slInitAudit(); }
-// Only start active polling if active tab is shown on load
-if (_dmActiveTab === 'active') fetchActive();

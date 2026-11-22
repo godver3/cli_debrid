@@ -331,9 +331,16 @@ def render_debrid_manager(dm_mode):
         all_providers = [{'index': i, 'name': p.PROVIDER_NAME} for i, p in enumerate(get_debrid_providers())]
     except Exception:
         all_providers = [{'index': 0, 'name': provider_name}]
+    # Tab shown on a fresh visit: Health & Repair when the mount serves the
+    # debrid torrents, else Active. The cli_mount page opens on its first tab.
+    if dm_mode == 'climount':
+        default_tab = ''
+    else:
+        default_tab = 'debrid-repair' if show_climount_tab else 'active'
     return render_template(
         'debrid_manager.html',
         dm_mode=dm_mode,
+        dm_default_tab=default_tab,
         show_plex_trash=show_plex_trash,
         symlink_mode=symlink_mode,
         climount_mode=climount_mode,

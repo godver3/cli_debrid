@@ -41,8 +41,15 @@
         </script>
         {% endif %}
         <div class="dm-tabs">
+            {% if show_climount_tab and dm_mode != 'climount' %}
+            <button class="dm-tab{% if dm_default_tab == 'debrid-repair' %} active{% endif %}" data-tab="debrid-repair" title="Health checks and repair for debrid torrents served through cli_mount">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/></svg>
+                Health &amp; Repair
+                <span class="dm-tab-badge" id="debrid-tab-badge" style="display:none"></span>
+            </button>
+            {% endif %}
             {% if dm_mode != 'climount' %}
-            <button class="dm-tab active" data-tab="active">
+            <button class="dm-tab{% if dm_default_tab == 'active' %} active{% endif %}" data-tab="active">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
                 Active
                 <span class="dm-tab-badge" id="active-tab-count"></span>
@@ -74,13 +81,6 @@
                 Usage
             </button>
             {% endif %}
-            {% if show_climount_tab and dm_mode != 'climount' %}
-            <button class="dm-tab" data-tab="debrid-repair" title="Health checks and repair for debrid torrents served through cli_mount">
-                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/></svg>
-                Health &amp; Repair
-                <span class="dm-tab-badge" id="debrid-tab-badge" style="display:none"></span>
-            </button>
-            {% endif %}
             {% if show_climount_tab and dm_mode == 'climount' %}
             <button class="dm-tab" data-tab="usenet">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
@@ -104,7 +104,7 @@
     </div>
 
     <!-- ── ACTIVE TAB ── -->
-    <div id="active-tab" class="dm-panel{% if dm_mode != 'climount' %} active{% endif %}">
+    <div id="active-tab" class="dm-panel{% if dm_default_tab == 'active' %} active{% endif %}">
         <div class="dm-toolbar">
             <div class="dm-toolbar-left">
                 <input type="text" id="active-filter" class="dm-filter-input" placeholder="Filter by name, hash… (regex ok)">
@@ -844,7 +844,7 @@
     </div><!-- /usenet-tab -->
     {% if dm_mode != 'climount' %}
     <!-- ── HEALTH & REPAIR TAB (debrid torrents tracked by cli_mount) ── -->
-    <div id="debrid-repair-tab" class="dm-panel">
+    <div id="debrid-repair-tab" class="dm-panel{% if dm_default_tab == 'debrid-repair' %} active{% endif %}">
         <div id="debrid-subtab-content">
         <div id="dr-loading" style="padding:40px;text-align:center;color:#888">Loading…</div>
         <div id="dr-content" style="display:none">
@@ -1993,6 +1993,7 @@
 <script>
 window.TPL_DEBRID_MANAGER = {
     dm_mode: '{{ dm_mode }}',
+    dm_default_tab: {{ dm_default_tab | tojson }},
     debrid_all_providers: {{ debrid_all_providers | tojson }},
     debrid_provider_name: {{ debrid_provider_name | tojson }},
     media_server_type: {{ ('Jellyfin' if media_server_type == 'jellyfin' else 'Plex') | tojson }},
@@ -2010,4 +2011,5 @@ window.TPL_DEBRID_MANAGER = {
 {% if symlink_mode %}<script src="{{ url_for('static', filename='js/pages/debrid_manager/symlink_audit.js') }}"></script>{% endif %}
 <script src="{{ url_for('static', filename='js/pages/debrid_manager/battery_audit.js') }}"></script>
 {% if climount_mode %}<script src="{{ url_for('static', filename='js/pages/debrid_manager/bad_torrent_audit.js') }}"></script>{% endif %}
+<script>dmOpenInitialTab();</script>
 {% endblock %}
