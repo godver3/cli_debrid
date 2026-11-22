@@ -158,3 +158,15 @@ def test_jellyfin_scan_matches_by_file_name(monkeypatch, tmp_path):
     assert psi.good_embedded_langs(cached['item:1']) >= {'eng'}
     assert len(cached['item:1']) == 1                                    # commentary skipped
     assert psi.good_embedded_langs(cached['item:2']) == set()          # PGS doesn't count
+
+
+def test_unresolvable_items_are_not_rescanned(env):
+    import time
+    items = [{'id': 9, 'type': 'episode', 'ms_item_id': '500', 'season_number': 7, 'episode_number': 7}]
+    assert env.rating_key(items[0]) is None                     # not in the show's episodes
+    assert env.start_scan(items)
+    for _ in range(100):
+        if not env.scan_status()['running']:
+            break
+        time.sleep(0.05)
+    assert env.cached_tracks([env.cache_key(items[0])]) == {'500:7:7': []}

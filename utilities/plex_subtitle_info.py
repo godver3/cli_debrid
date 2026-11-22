@@ -158,13 +158,18 @@ def cached_tracks(keys):
         conn.close()
 
 
-def _store(found):
+def _store(found, retry_hours=None):
+    """Cache tracks. retry_hours: for items the server couldn't tell us
+    about (not in its library yet), expire after that many hours instead of
+    CACHE_DAYS, so a just-added item is checked again soon."""
     from database.core import get_db_connection
     conn = get_db_connection()
     try:
         _cache_table(conn)
+        when = ("CURRENT_TIMESTAMP" if retry_hours is None
+                else f"datetime('now', '-{CACHE_DAYS} days', '+{int(retry_hours)} hours')")
         conn.executemany("INSERT OR REPLACE INTO subtitle_embedded (rating_key, tracks, checked_at) "
-                         "VALUES (?, ?, CURRENT_TIMESTAMP)", [(k, json.dumps(v)) for k, v in found.items()])
+                         f"VALUES (?, ?, {when})", [(k, json.dumps(v)) for k, v in found.items()])
         conn.commit()
     finally:
         conn.close()
@@ -177,7 +182,7 @@ def fetch_tracks(pairs):
     for i in range(0, len(pairs), BATCH):
         chunk = pairs[i:i + BATCH]
         by_rk = {k: c for c, k in chunk}
-        found = {c: [] for c, _ in chunk}
+        found = {}
         try:
             for m in _get('/library/metadata/' + ','.join(by_rk), timeout=60):
                 c = by_rk.get(str(m.get('ratingKey')))
@@ -187,6 +192,9 @@ def fetch_tracks(pairs):
             logging.debug(f"[subs] Plex batch metadata failed: {e}")
             continue
         _store(found)
+        missing = {c: [] for c, _ in chunk if c not in found}
+        if missing:
+            _store(missing, retry_hours=1)
         with _LOCK:
             _SCAN['done'] = _SCAN.get('done', 0) + len(chunk)
 
@@ -247,6 +255,19 @@ def _jellyfin_scan(items):
             start += PAGE
 
 
+def _remember_unknown(items):
+    """Items the server couldn't tell us about (no episode key, not matched)
+    are cached as 'no embedded tracks' for an hour, so every page load
+    doesn't scan them again."""
+    keys = [cache_key(it) for it in items if cache_key(it)]
+    have = cached_tracks(keys)
+    unknown = {k: [] for k in keys if k not in have}
+    if unknown:
+        _store(unknown, retry_hours=1)
+        logging.info(f"[subs] embedded-subtitle scan: {len(unknown)} item(s) not found on the media server yet; "
+                     f"checking again in an hour")
+
+
 def start_scan(items):
     """Background: resolve keys and cache embedded tracks for items not cached
     yet. No-op if Plex isn't configured or a scan is running."""
@@ -268,6 +289,7 @@ def start_scan(items):
             if which == 'jellyfin':
                 if todo_items:
                     _jellyfin_scan(todo_items)
+                _remember_unknown(todo_items)
                 logging.info(f"[subs] Jellyfin/Emby embedded-subtitle scan: {len(todo_items)} item(s) checked")
                 return
             pairs = []
@@ -279,6 +301,7 @@ def start_scan(items):
                 if k:
                     pairs.append((cache_key(it), k))
             fetch_tracks(pairs)
+            _remember_unknown(todo_items)
             todo = todo_items
             logging.info(f"[subs] Plex embedded-subtitle scan: {len(todo)} item(s) checked")
         except Exception as e:

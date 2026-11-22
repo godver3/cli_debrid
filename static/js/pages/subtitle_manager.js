@@ -78,6 +78,7 @@
   }
 
   let scanTimer = null;
+  let scanReloaded = false;
   function watchEmbeddedScan(scan) {
     const el = $('sm-scan');
     if (!el) return;
@@ -89,7 +90,12 @@
     scanTimer = setTimeout(async () => {
       try {
         const st = await api('/api/subtitles/embedded_scan');
-        if (st.running) watchEmbeddedScan(st); else { el.style.display = 'none'; loadList(); }
+        if (st.running) watchEmbeddedScan(st);
+        else {
+          el.style.display = 'none';
+          // reload once to show the result; never chain into another scan
+          if ((st.done || 0) > 0 && !scanReloaded) { scanReloaded = true; loadList(); }
+        }
       } catch (e) { el.style.display = 'none'; }
     }, 3000);
   }
