@@ -234,11 +234,14 @@ def handled_subtitles(base, key):
     it belongs to, so a sync counts for the latest download only when it
     comes after the previous download of that path; an older sync of a since
     replaced subtitle doesn't count."""
+    # The API reply has no row ids; each list is newest first, so the
+    # position gives the order (episodes and movies are separate lists, and a
+    # subtitle path only ever appears in one of them).
     per_path = {}
-    for r in _history(base, key):
+    for seq, r in enumerate(_history(base, key)):
         path = r.get('subtitles_path')
-        if path and r.get('id') is not None:
-            per_path.setdefault(path, []).append(r)
+        if path:
+            per_path.setdefault(path, []).append(dict(r, id=-seq))
     out = {}
     for path, rows in per_path.items():
         rows.sort(key=lambda x: x['id'])
@@ -246,7 +249,7 @@ def handled_subtitles(base, key):
         if not downloads:
             continue
         latest = downloads[-1]
-        prev_id = downloads[-2]['id'] if len(downloads) > 1 else -1
+        prev_id = downloads[-2]['id'] if len(downloads) > 1 else float('-inf')
         if any(r.get('action') == 5 and r['id'] > prev_id for r in rows):
             out[path] = 'synced by Bazarr'
             continue

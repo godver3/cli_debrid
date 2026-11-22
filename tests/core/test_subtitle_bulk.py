@@ -145,3 +145,19 @@ def test_history_of_replaced_file_does_not_count(db):
                                  side_effect=lambda s, k, d=None: 'eng' if k == 'subtitle_languages' else d):
         missing = {r['id'] for r in subtitle_status.missing_items()}
     assert 1 not in missing and 2 in missing      # item 2's file is now ratingKey 102
+
+
+def test_needs_check_skips_checked_sidecars(db, tmp_path):
+    import hashlib
+    from utilities import subtitle_resync
+    video = tmp_path / 'Show - S01E01.mkv'
+    video.write_bytes(b'')
+    (tmp_path / 'Show - S01E01.en.srt').write_bytes(b'subtitle')
+    item = {'id': 1, 'location_on_disk': str(video), 'ms_item_id': '101'}
+    with _settings():
+        assert subtitle_resync.needs_check(item)
+        db.mark_sync_checked(hashlib.sha1(b'subtitle').hexdigest(), 'synced by Bazarr')
+        assert not subtitle_resync.needs_check(item)
+        # a Plex upload by cli_debrid for another language still needs checking
+        db.record(1, 'x', 'es', 'gestdown', 900, 971, [], '', 'srt', 'plex', None, 'auto', media_key='101')
+        assert subtitle_resync.needs_check(item)

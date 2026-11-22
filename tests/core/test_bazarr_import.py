@@ -88,13 +88,13 @@ def test_handled_subtitles_marked_checked(tmp_path, monkeypatch):
     a, b, c = tmp_path / 'a.en.srt', tmp_path / 'b.en.srt', tmp_path / 'c.en.srt'
     for f in (a, b, c):
         f.write_bytes(f.name.encode())
-    hist = {'data': [
-        {'id': 1, 'action': 1, 'score': '80.0%', 'subtitles_path': str(a)},
-        {'id': 2, 'action': 5, 'score': None, 'subtitles_path': str(a)},
-        {'id': 3, 'action': 1, 'score': '95.5%', 'subtitles_path': str(b)},
-        {'id': 4, 'action': 1, 'score': '70.0%', 'subtitles_path': str(c)},
-        {'id': 5, 'action': 1, 'score': '99%', 'subtitles_path': str(tmp_path / 'gone.srt')},
-    ]}
+    hist = {'data': list(reversed([
+        {'action': 5, 'score': None, 'subtitles_path': str(a)},
+        {'action': 1, 'score': '80.0%', 'subtitles_path': str(a)},
+        {'action': 1, 'score': '95.5%', 'subtitles_path': str(b)},
+        {'action': 1, 'score': '70.0%', 'subtitles_path': str(c)},
+        {'action': 1, 'score': '99%', 'subtitles_path': str(tmp_path / 'gone.srt')},
+    ]))}
 
     def fake_get(url, headers=None, timeout=None):
         return _Resp(hist if 'episodes/history' in url else {'data': []})
@@ -109,14 +109,15 @@ def test_handled_subtitles_marked_checked(tmp_path, monkeypatch):
 
 
 def test_old_sync_does_not_cover_replaced_low_score_subtitle():
-    hist = {'data': [
-        {'id': 10, 'action': 5, 'subtitles_path': '/s/x.srt'},          # sync of first download
-        {'id': 11, 'action': 1, 'score': '80%', 'subtitles_path': '/s/x.srt'},
-        {'id': 20, 'action': 3, 'score': '70%', 'subtitles_path': '/s/x.srt'},  # replaced, sync failed
-        {'id': 30, 'action': 5, 'subtitles_path': '/s/y.srt'},
-        {'id': 31, 'action': 1, 'score': '60%', 'subtitles_path': '/s/y.srt'},  # synced
-        {'id': 40, 'action': 1, 'score': '92%', 'subtitles_path': '/s/z.srt'},
-    ]}
+    # real API shape: no ids, newest first
+    hist = {'data': list(reversed([
+        {'action': 5, 'subtitles_path': '/s/x.srt'},          # sync of first download
+        {'action': 1, 'score': '80%', 'subtitles_path': '/s/x.srt'},
+        {'action': 3, 'score': '70%', 'subtitles_path': '/s/x.srt'},  # replaced, sync failed
+        {'action': 5, 'subtitles_path': '/s/y.srt'},
+        {'action': 1, 'score': '60%', 'subtitles_path': '/s/y.srt'},  # synced
+        {'action': 1, 'score': '92%', 'subtitles_path': '/s/z.srt'},
+    ]))}
     with mock.patch.object(bazarr_import.requests, 'get',
                            side_effect=lambda url, **k: _Resp(hist if 'episodes' in url else {'data': []})):
         got = bazarr_import.handled_subtitles('http://h', 'k')

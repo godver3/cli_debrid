@@ -198,3 +198,28 @@ def resync_item(item, skip_checked=True):
                 notes.append(f"{st.get('language') or 'und'} (Plex): {res['message']}")
             changed += 1 if res.get('changed') else 0
     return changed, checked, notes
+
+
+def needs_check(item, cache=None):
+    """True when the item has a subtitle Sync existing hasn't checked yet: an
+    unchecked sidecar file, or (Plex mode) a subtitle cli_debrid uploaded to
+    Plex. Sidecars are read and hashed locally; Plex isn't asked."""
+    from database import subtitle_history
+    from utilities.subtitle_status import is_plex_mode, sidecar_langs
+    paths = [p for ps in sidecar_langs(item.get('location_on_disk'), cache if cache is not None else {}).values()
+             for p in ps]
+    for p in paths:
+        try:
+            with open(p, 'rb') as f:
+                if not _checked(f.read()):
+                    return True
+        except OSError:
+            continue
+    if is_plex_mode() and item.get('id') is not None:
+        langs_with_file = {os.path.basename(p).split('.')[-2].split('-')[0].lower() for p in paths
+                           if p.count('.') >= 2}
+        uploaded = subtitle_history.languages_by_item(
+            [item['id']], {item['id']: subtitle_history.media_key_of(item)}).get(item['id'], set())
+        if any((lang or '').split('-')[0].lower() not in langs_with_file for lang in uploaded):
+            return True
+    return False

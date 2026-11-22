@@ -294,13 +294,12 @@ def bulk_start():
         scope = 'this season' if data.get('season') is not None else 'this show'
     if kind == 'search':
         items = [r for r in status_mod.with_status(rows) if r['missing']]
-    elif status_mod.is_plex_mode():
-        items = rows
     else:
+        from utilities.subtitle_resync import needs_check
         cache = {}
-        items = [r for r in rows if status_mod.sidecar_langs(r.get('location_on_disk'), cache)]
+        items = [r for r in rows if needs_check(r, cache)]
     if not items:
-        what = 'missing a language' if kind == 'search' else 'with subtitles to sync'
+        what = 'missing a language' if kind == 'search' else 'with subtitles that still need checking'
         return jsonify({'success': False, 'message': f'Nothing to do: no items {what} in {scope}'})
     how, n = subtitle_bulk.start(items, label=f"{kind} {scope}", kind=kind)
     if not n:
