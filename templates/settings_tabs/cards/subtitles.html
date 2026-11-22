@@ -74,6 +74,34 @@
             <p class="settings-description">Styled ASS/SSA and image (PGS/VobSub) subtitles make most Plex/Jellyfin/Emby clients transcode. When on, downloaded ASS/SSA subtitles are converted to plain SRT, and an embedded image or styled track doesn't count as having that language, so an SRT is fetched.</p>
         </div>
 
+        {% set _sync = settings.get('Subtitle Settings', {}).get('sync_subtitles') or 'off' %}
+        <div class="settings-form-group">
+            <label for="additional-sync_subtitles" class="settings-title">Sync Subtitles:</label>
+            <select id="additional-sync_subtitles" class="settings-input"
+                    data-section="Subtitle Settings" data-key="sync_subtitles">
+                <option value="off" {% if _sync == 'off' %}selected{% endif %}>Off</option>
+                <option value="unless_hash" {% if _sync == 'unless_hash' %}selected{% endif %}>Unless matched by file hash</option>
+                <option value="always" {% if _sync == 'always' %}selected{% endif %}>Always</option>
+            </select>
+            <p class="settings-description">Fix subtitle timing after download, without reading the whole file: six 30-second audio samples spread through the video are matched against the subtitle lines to find an offset and frame-rate fix (23.976/24/25 fps). The subtitle is only changed when the new timing clearly fits better. A file-hash match is made for this exact release, so "Unless matched by file hash" skips those. Needs ffmpeg. Existing subtitles can be resynced from Tools → Subtitles.</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-sync_max_offset" class="settings-title">Sync Max Offset (s):</label>
+            <input type="number" min="5" max="600" id="additional-sync_max_offset" name="Subtitle Settings.sync_max_offset"
+                   value="{{ settings.get('Subtitle Settings', {}).get('sync_max_offset', 60) }}" class="settings-input"
+                   data-section="Subtitle Settings" data-key="sync_max_offset">
+            <p class="settings-description">Largest timing shift sync looks for, each way.</p>
+        </div>
+
+        <div class="settings-form-group">
+            <div style="background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.3); padding: 12px 15px; border-radius: 8px;">
+                <p style="margin: 0; font-weight: bold; color: #f59e0b;"><i class="fas fa-exclamation-triangle"></i> Plex users: turn off Plex's own subtitle analysis</p>
+                <p style="margin: 6px 0 0 0; color: var(--text-secondary);">In Plex go to Settings → Library and set <strong>Generate voice activity data</strong> to <strong>never</strong>. Plex uses it to auto-sync subtitles, but it reads every file in full, which on a debrid/usenet mount means downloading your whole library in the background. Sync here only reads a few short samples.</p>
+                <p style="margin: 6px 0 0 0; color: var(--text-secondary);">Moving from Bazarr? Tools → Subtitles → <strong>Import from Bazarr</strong> copies its languages, providers, login and sync settings.</p>
+            </div>
+        </div>
+
         <div class="settings-form-group">
             <label for="additional-probe_for_embedded_subtitles" class="settings-title">Probe for Embedded Subtitles:</label>
             <input type="checkbox" id="additional-probe_for_embedded_subtitles" name="Subtitle Settings.probe_for_embedded_subtitles"

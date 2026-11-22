@@ -151,3 +151,41 @@ def test_oscom_gets_credentials(monkeypatch):
     monkeypatch.setattr(downsub.config, 'OPENSUBTITLES_PASSWORD', 'p')
     pc = downsub.build_provider_configs()
     assert pc['opensubtitlescom'] == {'username': 'u', 'password': 'p'}
+
+
+class _FakeSub:
+    provider_name = 'gestdown'
+    subtitle_format = 'srt'
+
+    def __init__(self, matches):
+        from babelfish import Language
+        self.language = Language('eng')
+        self.content = b'1\n00:00:01,000 --> 00:00:02,000\nhi\n'
+        self._m = set(matches)
+
+    def get_matches(self, video):
+        return set(self._m)
+
+
+def _ctx(tmp_path):
+    lib = tmp_path / 'lib'
+    lib.mkdir()
+    (lib / 'Show - S01E01.mkv').write_bytes(b'')
+    return {'original_path': lib / 'Show - S01E01.mkv', 'video_path': lib / 'Show - S01E01.mkv',
+            'rating_key': None, 'video': Episode('x', 'Show', 1, 1), 'item': {'id': 5}}
+
+
+@pytest.mark.parametrize('mode,matches,synced', [
+    ('off', ['series'], False), ('unless_hash', ['series'], True),
+    ('unless_hash', ['hash'], False), ('always', ['hash'], True)])
+def test_save_applies_sync_per_setting(tmp_path, monkeypatch, mode, matches, synced):
+    from unittest import mock
+    monkeypatch.setattr(downsub.config, 'SYNC_SUBTITLES', mode, raising=False)
+    monkeypatch.setattr(downsub.config, 'TEXT_SUBTITLES_ONLY', False, raising=False)
+    ctx = _ctx(tmp_path)
+    with mock.patch.object(downsub, 'sync_content', return_value=(b'SYNCED', 'synced: shifted -1.00s')) as sc, \
+            mock.patch.object(downsub, '_record_history'):
+        assert downsub.save_subtitles(ctx, [_FakeSub(matches)]) == 1
+    out = (ctx['original_path'].parent / 'Show - S01E01.en.srt').read_bytes()
+    assert (out == b'SYNCED') is synced
+    assert sc.called is synced

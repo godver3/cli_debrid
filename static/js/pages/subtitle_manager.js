@@ -84,9 +84,9 @@
       $('sm-hprev').disabled = d.page <= 1;
       $('sm-hnext').disabled = d.rows.length < 50;
       body.innerHTML = d.rows.length ? d.rows.map(historyRow).join('')
-        : '<tr><td colspan="7" class="sm-empty">No subtitles downloaded yet.</td></tr>';
+        : '<tr><td colspan="8" class="sm-empty">No subtitles downloaded yet.</td></tr>';
     } catch (e) {
-      body.innerHTML = `<tr><td colspan="7" class="sm-empty">Could not load: ${esc(e.message)}</td></tr>`;
+      body.innerHTML = `<tr><td colspan="8" class="sm-empty">Could not load: ${esc(e.message)}</td></tr>`;
     }
   }
 
@@ -99,6 +99,7 @@
       <td class="sm-score">${h.score == null ? '' : esc(h.score)}</td>
       <td>${matchChips(h.matches)}</td>
       <td class="sm-muted">${esc(h.saved_via || '')}${h.format && h.format !== 'srt' ? ' · ' + esc(h.format) : ''}</td>
+      <td class="sm-muted">${esc(h.sync || '')}</td>
     </tr>`;
   }
 
@@ -140,10 +141,12 @@
       if (!d.plex_streams.length) { el.innerHTML = '<span class="sm-muted">Plex has no subtitles for this item.</span>'; return; }
       el.innerHTML = d.plex_streams.map((s) => {
         const heavy = ['ass', 'ssa', 'pgs', 'vobsub', 'dvd_subtitle', 'hdmv_pgs_subtitle', 'dvb_subtitle'].includes((s.codec || '').toLowerCase());
-        return `<div style="margin:3px 0"><span class="sm-chip ok">${esc(s.language || 'und')}</span>
+        return `<div style="display:flex;gap:6px;align-items:center;margin:3px 0;flex-wrap:wrap"><span class="sm-chip ok">${esc(s.language || 'und')}</span>
           <span class="sm-chip${heavy ? ' warn' : ''}" title="${heavy ? 'Many clients transcode to show this format' : ''}">${esc(s.codec)}</span>
           ${s.forced ? '<span class="sm-chip">forced</span>' : ''}${s.external ? '<span class="sm-chip">external</span>' : '<span class="sm-chip">embedded</span>'}
-          <span class="sm-muted">${esc(s.title)}</span></div>`;
+          <span class="sm-muted">${esc(s.title)}</span>
+          ${s.external && s.id != null ? `<button class="sm-btn" data-sync-stream="${esc(s.id)}">Sync</button>
+          <button class="sm-btn sm-btn-red" data-del-stream="${esc(s.id)}">Delete</button>` : ''}</div>`;
       }).join('');
       return;
     }
@@ -153,6 +156,7 @@
       return `<div style="display:flex;gap:8px;align-items:center;margin:3px 0;flex-wrap:wrap">
         <span class="sm-chip ok">${esc(s.language)}</span><span class="sm-chip${ext === 'srt' ? '' : ' warn'}">${esc(ext)}</span>
         <span style="word-break:break-all">${esc(s.name)}</span>
+        <button class="sm-btn" data-sync-path="${esc(s.path)}">Sync</button>
         <button class="sm-btn sm-btn-red" data-del="${esc(s.path)}">Delete</button></div>`;
     }).join('');
   }
@@ -251,6 +255,80 @@
     } catch (e) { toast(e.message, true); }
   }
 
+  async function syncOne(body, btn) {
+    btn.disabled = true;
+    const label = btn.textContent;
+    btn.textContent = 'Syncing…';
+    try {
+      const d = await api(`/api/subtitles/item/${state.item}/sync`, { method: 'POST', body: JSON.stringify(body) });
+      toast(d.message || 'Done', false);
+      if (d.changed) refreshItem();
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = label;
+    }
+  }
+
+  async function delStream(id) {
+    if (!confirm('Remove this subtitle from Plex?')) return;
+    try {
+      await api(`/api/subtitles/item/${state.item}/plex_delete`, { method: 'POST', body: JSON.stringify({ stream_id: id }) });
+      toast('Removed from Plex');
+      refreshItem();
+    } catch (e) { toast(e.message, true); }
+  }
+
+  // ---- Bazarr import
+  function bzBody() {
+    return { url: $('sm-bz-url').value.trim(), api_key: $('sm-bz-key').value.trim() };
+  }
+  async function bzPreview() {
+    $('sm-bz-plan').style.display = 'none';
+    $('sm-bz-status').textContent = '';
+    try {
+      const p = await api('/api/subtitles/bazarr/preview', { method: 'POST', body: JSON.stringify(bzBody()) });
+      const cur = p.current || {};
+      const row = (k, v) => `<span>${esc(k)}</span><span>${v}</span>`;
+      $('sm-bz-kv').innerHTML = [
+        row('Profiles', esc((p.profiles || []).join(', ') || '—')),
+        row('Languages', `${esc(p.subtitle_languages || '—')} <span class="sm-muted">(now ${esc(cur.subtitle_languages || '—')})</span>`),
+        row('Providers', `${esc((p.subtitle_providers || []).join(', ') || '—')} <span class="sm-muted">(now ${esc((cur.subtitle_providers || []).join(', ') || 'default')})</span>`),
+        row('OpenSubtitles.com', p.opensubtitles_username ? `${esc(p.opensubtitles_username)} · password ${p.opensubtitles_password ? 'set' : 'missing'}` : 'not set in Bazarr'),
+        row('Skip embedded languages', p.probe_for_embedded_subtitles ? 'on' : 'off'),
+        row('Avoid transcoding formats', p.text_subtitles_only ? 'on (Bazarr ignores PGS/ASS)' : 'off'),
+        row('Sync', p.sync_subtitles === 'off' ? 'off' : `unless matched by file hash · max ${esc(p.sync_max_offset)}s`),
+      ].join('');
+      $('sm-bz-not').innerHTML = (p.not_carried || []).length
+        ? '<b>Not carried over:</b><br>' + p.not_carried.map(esc).join('<br>') : '';
+      $('sm-bz-stopfeed').checked = !!cur.bazarr_spoof_enabled;
+      $('sm-bz-stopfeed').parentElement.style.display = cur.bazarr_spoof_enabled ? '' : 'none';
+      $('sm-bz-plan').style.display = '';
+    } catch (e) { toast(e.message, true); }
+  }
+  async function bzApply() {
+    const btn = $('sm-bz-apply');
+    btn.disabled = true;
+    try {
+      const body = Object.assign(bzBody(), {
+        enable_downloads: $('sm-bz-enable').checked, stop_bazarr_feed: $('sm-bz-stopfeed').checked
+      });
+      const d = await api('/api/subtitles/bazarr/import', { method: 'POST', body: JSON.stringify(body) });
+      $('sm-bz-status').textContent = 'Imported: ' + d.applied.join(' · ');
+      toast('Bazarr settings imported');
+      loadList();
+    } catch (e) { toast(e.message, true); } finally { btn.disabled = false; }
+  }
+  $('sm-bz-open').addEventListener('click', () => {
+    if (!$('sm-bz-url').value) $('sm-bz-url').value = 'http://' + location.hostname + ':6767';
+    $('sm-bz').classList.add('open');
+  });
+  $('sm-bz-close').addEventListener('click', () => $('sm-bz').classList.remove('open'));
+  $('sm-bz').addEventListener('click', (e) => { if (e.target === $('sm-bz')) $('sm-bz').classList.remove('open'); });
+  $('sm-bz-preview').addEventListener('click', bzPreview);
+  $('sm-bz-apply').addEventListener('click', bzApply);
+
   function closePanel() {
     $('sm-panel').classList.remove('open');
     state.item = null;
@@ -279,7 +357,13 @@
     const p = e.target.closest('[data-pick]');
     if (p) { pick(p.dataset.pick, p); return; }
     const d = e.target.closest('[data-del]');
-    if (d) { del(d.dataset.del); }
+    if (d) { del(d.dataset.del); return; }
+    const sp = e.target.closest('[data-sync-path]');
+    if (sp) { syncOne({ path: sp.dataset.syncPath }, sp); return; }
+    const ss = e.target.closest('[data-sync-stream]');
+    if (ss) { syncOne({ stream_id: ss.dataset.syncStream }, ss); return; }
+    const ds = e.target.closest('[data-del-stream]');
+    if (ds) { delStream(ds.dataset.delStream); }
   });
   $('sm-d-search').addEventListener('click', search);
   $('sm-d-auto').addEventListener('click', autoPick);

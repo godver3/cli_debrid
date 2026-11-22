@@ -90,6 +90,28 @@ def _has_lang(found, ietf, alpha3):
     return bool(keys & {ietf.lower(), alpha3.lower(), base})
 
 
+def _plex_conn():
+    from utilities.settings import get_setting
+    url = (get_setting('Plex', 'url', '') or '').rstrip('/')
+    token = get_setting('Plex', 'token', '') or ''
+    return url, token
+
+
+_PLEX_HEADERS = {
+    'X-Plex-Client-Identifier': 'cli-debrid-subtitles',
+    'X-Plex-Product': 'cli_debrid',
+    'X-Plex-Version': '1.0',
+}
+
+
+def _plex_stream_of_item(item, stream_id):
+    """The external subtitle stream `stream_id` of this item, or None."""
+    for st in _plex_streams(item.get('ms_item_id')) or []:
+        if str(st.get('id')) == str(stream_id) and st.get('external') and st.get('key'):
+            return st
+    return None
+
+
 def _plex_streams(rating_key):
     """Subtitle streams Plex has for an item (embedded and external)."""
     import requests
@@ -113,6 +135,8 @@ def _plex_streams(rating_key):
                         if st.get('streamType') != 3:
                             continue
                         out.append({
+                            'id': st.get('id'),
+                            'key': st.get('key') or '',
                             'language': st.get('languageTag') or st.get('languageCode') or '',
                             'codec': st.get('codec') or '',
                             'title': st.get('displayTitle') or st.get('extendedDisplayTitle') or '',
@@ -343,3 +367,110 @@ def history():
     page_no = max(1, int(request.args.get('page', 1) or 1))
     rows = subtitle_history.recent(limit=50, offset=(page_no - 1) * 50)
     return jsonify({'rows': rows, 'page': page_no})
+
+
+def _sync_mode_note(note):
+    return note or 'not synced'
+
+
+@subtitle_manager_bp.route('/api/subtitles/item/<int:item_id>/sync', methods=['POST'])
+@admin_required
+def sync_existing(item_id):
+    """Resync one existing subtitle: a sidecar file (Symlinked/Local) or an
+    uploaded Plex subtitle (download it, sync, upload, remove the old one)."""
+    import requests
+    from utilities import downsub
+    item = _item(item_id)
+    if not item:
+        return jsonify({'error': 'Item not found or not collected'}), 404
+    downsub.config.reload()
+    video = downsub.resolve_item_path(item)
+    if not video:
+        return jsonify({'error': 'No file path for this item'}), 400
+    data = request.get_json(silent=True) or {}
+
+    if data.get('path'):
+        allowed = {p for paths in _sidecar_langs(item.get('location_on_disk'), {}).values() for p in paths}
+        path = data['path']
+        if path not in allowed:
+            return jsonify({'error': 'Not a subtitle of this item'}), 400
+        real = os.path.realpath(video) if os.path.islink(video) else video
+        with open(path, 'rb') as f:
+            content = f.read()
+        new, note = downsub.sync_content(real, content, os.path.splitext(path)[1][1:].lower())
+        if new is not content and new != content:
+            tmp = path + '.syncing'
+            with open(tmp, 'wb') as f:
+                f.write(new)
+            os.replace(tmp, path)
+            return jsonify({'success': True, 'changed': True, 'message': note})
+        return jsonify({'success': True, 'changed': False, 'message': _sync_mode_note(note)})
+
+    if data.get('stream_id') is not None:
+        st = _plex_stream_of_item(item, data['stream_id'])
+        if not st:
+            return jsonify({'error': 'Not an uploaded subtitle of this item (embedded ones cannot be changed)'}), 400
+        url, token = _plex_conn()
+        r = requests.get(url + st['key'], params={'X-Plex-Token': token}, headers=_PLEX_HEADERS, timeout=30)
+        if r.status_code != 200 or not r.content:
+            return jsonify({'error': f'Could not download the subtitle from Plex (HTTP {r.status_code})'}), 502
+        fmt = (st.get('codec') or 'srt').lower()
+        new, note = downsub.sync_content(video, r.content, fmt)
+        if new is r.content or new == r.content:
+            return jsonify({'success': True, 'changed': False, 'message': _sync_mode_note(note)})
+        lang = st.get('language') or 'und'
+        if not downsub.upload_subtitle_to_plex(item.get('ms_item_id'), new, lang, fmt=fmt):
+            return jsonify({'error': 'Synced, but the upload to Plex failed; the old subtitle was kept'}), 502
+        d = requests.delete(url + st['key'], params={'X-Plex-Token': token}, headers=_PLEX_HEADERS, timeout=30)
+        if d.status_code not in (200, 204):
+            return jsonify({'success': True, 'changed': True,
+                            'message': f'{note}; uploaded, but removing the old one failed (HTTP {d.status_code})'})
+        return jsonify({'success': True, 'changed': True, 'message': note})
+
+    return jsonify({'error': 'path or stream_id required'}), 400
+
+
+@subtitle_manager_bp.route('/api/subtitles/item/<int:item_id>/plex_delete', methods=['POST'])
+@admin_required
+def plex_delete(item_id):
+    """Remove an uploaded/external subtitle from the Plex item. Embedded
+    tracks can't be removed."""
+    import requests
+    item = _item(item_id)
+    if not item:
+        return jsonify({'error': 'Item not found or not collected'}), 404
+    st = _plex_stream_of_item(item, (request.get_json(silent=True) or {}).get('stream_id'))
+    if not st:
+        return jsonify({'error': 'Not an uploaded subtitle of this item (embedded ones cannot be removed)'}), 400
+    url, token = _plex_conn()
+    r = requests.delete(url + st['key'], params={'X-Plex-Token': token}, headers=_PLEX_HEADERS, timeout=30)
+    if r.status_code not in (200, 204):
+        return jsonify({'error': f'Plex refused the delete (HTTP {r.status_code})'}), 502
+    logging.info(f"[subs] removed Plex subtitle stream {st['id']} ({st.get('language')}) from item {item_id}")
+    return jsonify({'success': True})
+
+
+@subtitle_manager_bp.route('/api/subtitles/bazarr/preview', methods=['POST'])
+@admin_required
+def bazarr_preview():
+    from utilities import bazarr_import
+    data = request.get_json(silent=True) or {}
+    try:
+        plan = bazarr_import.fetch_plan(data.get('url') or '', data.get('api_key') or '')
+    except bazarr_import.BazarrError as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify(bazarr_import.public_plan(plan))
+
+
+@subtitle_manager_bp.route('/api/subtitles/bazarr/import', methods=['POST'])
+@admin_required
+def bazarr_apply():
+    from utilities import bazarr_import
+    data = request.get_json(silent=True) or {}
+    try:
+        plan = bazarr_import.fetch_plan(data.get('url') or '', data.get('api_key') or '')
+    except bazarr_import.BazarrError as e:
+        return jsonify({'error': str(e)}), 400
+    applied = bazarr_import.apply_plan(plan, enable=bool(data.get('enable_downloads', True)),
+                                       stop_bazarr_feed=bool(data.get('stop_bazarr_feed')))
+    return jsonify({'success': True, 'applied': applied})

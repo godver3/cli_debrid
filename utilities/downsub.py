@@ -611,9 +611,41 @@ def _record_history(ctx, sub, lang, fmt, via, path, source):
             title = f"{title} S{int(item['season_number']):02d}E{int(item.get('episode_number') or 0):02d}"
         subtitle_history.record(
             item.get('id'), title, lang, sub.provider_name, score, get_scores(video)['hash'],
-            matches, _release_of(sub), fmt, via, path, source)
+            matches, _release_of(sub), fmt, via, path, source, sync=ctx.get('_sync_note'))
     except Exception as e:
         logging.debug(f"[subs] history record failed: {e}")
+
+
+def _maybe_sync(ctx, sub, content, fmt, mode=None):
+    """Sync a downloaded subtitle to the file's audio when the setting asks
+    for it. Returns (content, note); content is unchanged unless synced."""
+    mode = mode or getattr(config, 'SYNC_SUBTITLES', 'off')
+    if mode not in ('unless_hash', 'always'):
+        return content, None
+    try:
+        matches = sub.get_matches(ctx['video'])
+    except Exception:
+        matches = set()
+    if mode == 'unless_hash' and 'hash' in matches:
+        return content, 'skipped: hash match'
+    return sync_content(ctx['video_path'], content, fmt)
+
+
+def sync_content(video_path, content, fmt):
+    """Run the sampled-audio sync; (content, note) with content replaced
+    only when the sync found a clearly better timing."""
+    try:
+        from utilities import subtitle_sync
+        t0 = time.time()
+        new, info = subtitle_sync.sync_subtitle(
+            str(video_path), content, fmt or 'srt',
+            max_offset=float(getattr(config, 'SYNC_MAX_OFFSET', 60) or 60))
+        note = subtitle_sync.describe(info)
+        logging.info(f"[subsync] {os.path.basename(str(video_path))}: {note} ({time.time() - t0:.1f}s)")
+        return (new or content), note
+    except Exception as e:
+        logging.warning(f"[subsync] failed for {video_path}: {e}")
+        return content, f'not synced: {e}'
 
 
 def save_subtitles(ctx, subs, source='auto'):
@@ -643,6 +675,8 @@ def save_subtitles(ctx, subs, source='auto'):
         content = sub.content if isinstance(sub.content, bytes) else (sub.content or '').encode('utf-8')
         if not content:
             continue
+        content, sync_note = _maybe_sync(ctx, sub, content, fmt)
+        ctx['_sync_note'] = sync_note
         if use_plex_upload:
             lang3 = getattr(sub.language, 'alpha3', None) or lang
             if upload_subtitle_to_plex(rating_key, content, lang3, fmt=fmt):

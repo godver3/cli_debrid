@@ -53,6 +53,7 @@
 .sm-toast{position:fixed;right:16px;bottom:16px;background:#222;border:1px solid var(--sm-border2);color:var(--sm-text);padding:10px 14px;border-radius:8px;z-index:1100;display:none;max-width:calc(100vw - 32px)}
 .sm-toast.err{border-color:#7f1d1d}
 .sm-release{max-width:380px;word-break:break-all}
+.sm-note{border-left:3px solid var(--sm-yellow);padding-left:10px}
 @media (max-width:760px){
   .sm-table thead{display:none}
   .sm-table tr{display:block;border-bottom:1px solid #262626;padding:6px 0}
@@ -71,9 +72,14 @@
     Languages, providers and the text-only (no transcoding) option are in <a href="{{ url_for('settings.index') }}#subtitles">Settings → Subtitle Settings</a>.
   </p>
 
+  {% if plex_mode %}
+  <p class="sm-intro sm-note">Turn off Plex's own subtitle analysis: Plex → Settings → Library → <b>Generate voice activity data</b> → never. It reads every file in full (your whole library from the mount); sync here reads only a few short samples.</p>
+  {% endif %}
   <div class="sm-tabs">
     <button class="sm-tab active" data-tab="library">Library</button>
     <button class="sm-tab" data-tab="history">History</button>
+    <span style="flex:1"></span>
+    <button class="sm-btn" id="sm-bz-open">Import from Bazarr</button>
   </div>
 
   <div id="sm-library">
@@ -107,7 +113,7 @@
   <div id="sm-history" style="display:none">
     <div class="sm-card">
       <table class="sm-table">
-        <thead><tr><th>When</th><th>Item</th><th>Lang</th><th>Provider</th><th>Score</th><th>Matched on</th><th>Saved</th></tr></thead>
+        <thead><tr><th>When</th><th>Item</th><th>Lang</th><th>Provider</th><th>Score</th><th>Matched on</th><th>Saved</th><th>Sync</th></tr></thead>
         <tbody id="sm-hrows"></tbody>
       </table>
       <div class="sm-pager">
@@ -139,6 +145,32 @@
       <div id="sm-d-results"></div>
     </div>
     <div class="sm-sec"><h4>History</h4><div id="sm-d-history"></div></div>
+  </div>
+</div>
+<div class="sm-panel" id="sm-bz">
+  <div class="sm-dialog" style="max-width:760px">
+    <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">
+      <div><h3>Import from Bazarr</h3><div class="sm-muted">Copies languages, providers, the OpenSubtitles.com login, embedded-subtitle and sync settings into Subtitle Settings. Nothing in Bazarr is changed.</div></div>
+      <button class="sm-btn" id="sm-bz-close">Close</button>
+    </div>
+    <div class="sm-sec">
+      <div class="sm-bar">
+        <input class="sm-input" id="sm-bz-url" placeholder="http://192.168.1.10:6767" style="max-width:300px">
+        <input class="sm-input" id="sm-bz-key" type="password" placeholder="Bazarr API key" style="max-width:260px">
+        <button class="sm-btn sm-btn-accent" id="sm-bz-preview">Preview</button>
+      </div>
+      <div class="sm-muted">The API key is in Bazarr → Settings → General → Security. From Docker, use the host's IP rather than localhost.</div>
+    </div>
+    <div class="sm-sec" id="sm-bz-plan" style="display:none">
+      <h4>Will be set</h4>
+      <div class="sm-kv" id="sm-bz-kv"></div>
+      <div id="sm-bz-not" class="sm-muted" style="margin-top:10px"></div>
+      <div style="margin-top:12px;display:flex;flex-direction:column;gap:6px">
+        <label><input type="checkbox" id="sm-bz-enable" checked> Turn on subtitle downloads in cli_debrid</label>
+        <label><input type="checkbox" id="sm-bz-stopfeed"> Stop sending new items to Bazarr (turns off Bazarr Integration), so both don't download</label>
+      </div>
+      <div style="margin-top:12px"><button class="sm-btn sm-btn-accent" id="sm-bz-apply">Import</button> <span class="sm-muted" id="sm-bz-status"></span></div>
+    </div>
   </div>
 </div>
 <div class="sm-toast" id="sm-toast"></div>

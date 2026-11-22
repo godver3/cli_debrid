@@ -31,24 +31,29 @@ def _ensure_table(conn):
             saved_via   TEXT,
             path        TEXT,
             source      TEXT,
+            sync        TEXT,
             created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         CREATE INDEX IF NOT EXISTS idx_subtitle_history_item ON subtitle_history (item_id);
         CREATE INDEX IF NOT EXISTS idx_subtitle_history_created ON subtitle_history (created_at);
     """)
+    try:
+        conn.execute("ALTER TABLE subtitle_history ADD COLUMN sync TEXT")
+    except Exception:
+        pass
     _ready = True
 
 
 def record(item_id, title, language, provider, score, max_score, matches,
-           release, fmt, saved_via, path, source):
+           release, fmt, saved_via, path, source, sync=None):
     conn = get_db_connection()
     try:
         _ensure_table(conn)
         conn.execute(
             "INSERT INTO subtitle_history (item_id, title, language, provider, score, max_score, "
-            "matches, release, format, saved_via, path, source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            "matches, release, format, saved_via, path, source, sync) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (item_id, title, language, provider, score, max_score, json.dumps(sorted(matches or [])),
-             release, fmt, saved_via, path, source))
+             release, fmt, saved_via, path, source, sync))
         conn.execute(
             "DELETE FROM subtitle_history WHERE id <= "
             "(SELECT MAX(id) FROM subtitle_history) - ?", (_KEEP_ROWS,))

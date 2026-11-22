@@ -103,3 +103,74 @@ def test_delete_only_this_items_sidecars(env):
 def test_download_with_expired_token(env):
     r = env['client'].post('/api/subtitles/item/1/download', json={'token': 'nope', 'index': 0})
     assert r.status_code == 410
+
+
+def _plex_item(env):
+    import sqlite3
+    conn = sqlite3.connect(os.path.join(os.environ['USER_DB_CONTENT'], 'media_items.db'))
+    conn.execute("UPDATE media_items SET ms_item_id = '777' WHERE id = 1")
+    conn.commit()
+    conn.close()
+
+
+class _R:
+    def __init__(self, status=200, data=None, content=b''):
+        self.status_code, self._d, self.content = status, data, content
+
+    def json(self):
+        return self._d
+
+
+_META = {'MediaContainer': {'Metadata': [{'Media': [{'Part': [{'Stream': [
+    {'streamType': 1, 'id': 1},
+    {'streamType': 3, 'id': 10, 'codec': 'srt', 'languageTag': 'en', 'displayTitle': 'English'},
+    {'streamType': 3, 'id': 11, 'key': '/library/streams/11', 'codec': 'srt', 'languageTag': 'en',
+     'displayTitle': 'English (SRT External)'},
+]}]}]}]}}
+
+
+def test_plex_delete_only_external_streams(env):
+    _plex_item(env)
+    calls = []
+    with mock.patch('requests.get', return_value=_R(200, _META)), \
+            mock.patch('requests.delete', side_effect=lambda url, **k: calls.append(url) or _R(200)), \
+            mock.patch('utilities.settings.get_setting',
+                       side_effect=lambda s, k, d=None: {('Plex', 'url'): 'http://plex:32400',
+                                                         ('Plex', 'token'): 't'}.get((s, k), d)):
+        c = env['client']
+        assert c.post('/api/subtitles/item/1/plex_delete', json={'stream_id': 10}).status_code == 400
+        assert c.post('/api/subtitles/item/1/plex_delete', json={'stream_id': 11}).get_json()['success']
+    assert calls == ['http://plex:32400/library/streams/11']
+
+
+def test_plex_resync_uploads_then_removes_old(env):
+    _plex_item(env)
+    deleted, uploaded = [], []
+
+    def fake_get(url, **k):
+        return _R(200, _META) if url.endswith('/metadata/777') else _R(200, content=b'old subtitle')
+
+    with mock.patch('requests.get', side_effect=fake_get), \
+            mock.patch('requests.delete', side_effect=lambda url, **k: deleted.append(url) or _R(200)), \
+            mock.patch('utilities.downsub.sync_content', return_value=(b'new subtitle', 'synced: shifted -2.00s')), \
+            mock.patch('utilities.downsub.upload_subtitle_to_plex',
+                       side_effect=lambda rk, c, lang, fmt='srt': uploaded.append((rk, c, lang)) or True), \
+            mock.patch('utilities.downsub.resolve_item_path', return_value='/mnt/file.mkv'), \
+            mock.patch('utilities.settings.get_setting',
+                       side_effect=lambda s, k, d=None: {('Plex', 'url'): 'http://plex:32400',
+                                                         ('Plex', 'token'): 't'}.get((s, k), d)):
+        d = env['client'].post('/api/subtitles/item/1/sync', json={'stream_id': 11}).get_json()
+    assert d['changed'] and uploaded == [('777', b'new subtitle', 'en')]
+    assert deleted == ['http://plex:32400/library/streams/11']
+
+
+def test_sidecar_resync_rewrites_file(env):
+    target = os.path.join(env['lib'], 'Show - S01E01.en.srt')
+    with open(target, 'wb') as f:
+        f.write(b'old')
+    with mock.patch('utilities.downsub.sync_content', return_value=(b'new', 'synced: shifted +1.00s')):
+        d = env['client'].post('/api/subtitles/item/1/sync', json={'path': target}).get_json()
+    assert d['changed'] and open(target, 'rb').read() == b'new'
+    with mock.patch('utilities.downsub.sync_content', side_effect=lambda v, c, f: (c, 'already in sync')):
+        d = env['client'].post('/api/subtitles/item/1/sync', json={'path': target}).get_json()
+    assert not d['changed'] and d['message'] == 'already in sync'
