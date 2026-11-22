@@ -179,6 +179,18 @@ SECTIONS = {
             "default": "",
             "sensitive": True
         },
+        "silo_url": {
+            "type": "string",
+            "description": "Silo server URL for library scans when Silo is the media server (e.g. http://localhost:8090)",
+            "default": "",
+            "validate": "url"
+        },
+        "silo_api_key": {
+            "type": "string",
+            "description": "Silo admin API key (starts with sa_). Create one in Silo under Settings → API Keys.",
+            "default": "",
+            "sensitive": True
+        },
         "enable_tracemalloc": {
             "type": "boolean",
             "description": "Enable Python's tracemalloc for detailed memory usage tracking per task. Adds overhead, use only for debugging memory leaks.",

@@ -75,7 +75,7 @@ def _save_required_settings(form):
         'plex_token_for_symlink': plex_token if media_server == 'plex' else '',
     })
     if is_symlink:
-        file_management['media_server_type'] = 'jellyfin' if media_server == 'jellyfin' else 'plex'
+        file_management['media_server_type'] = media_server if media_server in ('jellyfin', 'silo') else 'plex'
     file_management.setdefault('symlink_organize_by_type', True)
 
     def _libraries(name):
@@ -99,6 +99,9 @@ def _save_required_settings(form):
         else:
             debug['emby_jellyfin_url'] = ''
             debug['emby_jellyfin_token'] = ''
+        if media_server == 'silo':
+            debug['silo_url'] = form.get('silo_url', '').strip().rstrip('/')
+            debug['silo_api_key'] = form.get('silo_api_key', '').strip()
 
     if 'use_debrid' in form or 'use_usenet' in form:
         use_debrid = form.get('use_debrid') == 'on'
@@ -800,7 +803,9 @@ def _onboarding_summary(config):
         providers.append({'climount': 'cli_mount', 'nzbdav': 'NzbDAV', 'zurg': 'Zurg',
                           'builtin': 'Built-in mount'}.get(backend, backend) + ' (usenet)')
     if mode == 'Symlinked/Local':
-        if config.get('Debug', {}).get('emby_jellyfin_url'):
+        if file_management.get('media_server_type') == 'silo':
+            media_server = 'Silo'
+        elif config.get('Debug', {}).get('emby_jellyfin_url'):
             media_server = 'Jellyfin / Emby'
         elif file_management.get('plex_url_for_symlink'):
             media_server = 'Plex'
@@ -930,7 +935,11 @@ def onboarding_health():
                 'Will be created on first start' if parent_ok else f'Parent folder: {parent_msg}')
         jellyfin_url = config.get('Debug', {}).get('emby_jellyfin_url')
         plex_url = file_management.get('plex_url_for_symlink')
-        if plex_url:
+        if file_management.get('media_server_type') == 'silo':
+            from utilities.silo_functions import test_connection
+            add('Silo', *test_connection(config.get('Debug', {}).get('silo_url', ''),
+                                         config.get('Debug', {}).get('silo_api_key', '')))
+        elif plex_url:
             add('Plex', *validate_plex_settings(plex_url, file_management.get('plex_token_for_symlink', '')))
         elif jellyfin_url:
             from utilities.jellyfin_auth import jellyfin_auth_headers

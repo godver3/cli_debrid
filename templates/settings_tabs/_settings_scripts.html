@@ -208,7 +208,7 @@ window.TPL_SETTINGS = {
     var _fm = "{{ settings.get('File Management', {}).get('file_collection_management', '') }}";
     var _ms = "{{ settings.get('File Management', {}).get('media_server_type', '') }}";
     function _updatePlexSections() {
-        var show = !(_fm === 'Symlinked/Local' && _ms === 'jellyfin');
+        var show = !(_fm === 'Symlinked/Local' && (_ms === 'jellyfin' || _ms === 'silo'));
         document.querySelectorAll('.plex-only-section').forEach(function(el) {
             el.style.display = show ? '' : 'none';
         });

@@ -102,11 +102,18 @@ def _jellyfin_configured(get):
                 and str(get('Debug', 'emby_jellyfin_token', '') or '').strip())
 
 
+def _silo_configured(get):
+    return (_fm(get) == 'Symlinked/Local'
+            and get('File Management', 'media_server_type', '') == 'silo'
+            and bool(str(get('Debug', 'silo_url', '') or '').strip())
+            and bool(str(get('Debug', 'silo_api_key', '') or '').strip()))
+
+
 def _verify_symlinks_default(get):
     if _fm(get) != 'Symlinked/Local':
         return False
     plex = get('File Management', 'plex_url_for_symlink', '') and get('File Management', 'plex_token_for_symlink', '')
-    return bool(plex or _jellyfin_configured(get))
+    return bool(plex or _jellyfin_configured(get) or _silo_configured(get))
 
 
 def _external_adds_default(get):
@@ -114,14 +121,14 @@ def _external_adds_default(get):
 
 
 def _plex_mode(get):
-    return not (_fm(get) == 'Symlinked/Local' and get('File Management', 'media_server_type', '') == 'jellyfin')
+    return not (_fm(get) == 'Symlinked/Local' and get('File Management', 'media_server_type', '') in ('jellyfin', 'silo'))
 
 
 def _viewer_history_default(get):
     if not str(get('TMDB', 'api_key', '') or '').strip():
         return False
     plex = get('Plex', 'url', '') and get('Plex', 'token', '')
-    return bool(plex or _jellyfin_configured(get))
+    return bool(plex or _jellyfin_configured(get) or _silo_configured(get))
 
 
 def _limited_environment(get):
@@ -130,7 +137,8 @@ def _limited_environment(get):
 
 
 def _overlays(get):
-    return bool(get('Overlay Settings', 'overlays_enabled', False))
+    silo = _fm(get) == 'Symlinked/Local' and get('File Management', 'media_server_type', '') == 'silo'
+    return bool(get('Overlay Settings', 'overlays_enabled', False)) and not silo
 
 
 def _watch_history_default(get):

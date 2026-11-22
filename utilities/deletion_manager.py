@@ -1812,7 +1812,7 @@ class DeletionManager:
                         plex_result = remove_file_from_plex(item.get('title', 'Unknown'), path_for_plex_api, item.get('episode_title'))
                         if plex_result:
                             result['media_server_removed'] = True
-                            result['media_server_type'] = 'plex'
+                            result['media_server_type'] = 'silo' if self.media_server == 'silo' else 'plex'
                             logging.info(f"[DELETE_ITEM] Successfully removed {item.get('title')} from Plex")
                         else:
                             # Direct removal failed - try scan & empty trash as fallback

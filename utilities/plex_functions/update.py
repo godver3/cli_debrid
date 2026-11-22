@@ -21,6 +21,11 @@ def plex_update_item(item: Dict[str, Any]) -> bool:
 
     logger.info(f"Attempting to trigger media server scan for item: {item_display}")
     try:
+        # Silo picked as the symlink media server: it scans, not Jellyfin or Plex
+        from utilities.silo_functions import is_silo_mode, silo_update_item
+        if is_silo_mode():
+            return silo_update_item(item)
+
         # Check for Jellyfin configuration first - if available, use Jellyfin instead
         jellyfin_url = get_setting('Debug', 'emby_jellyfin_url', default='').strip()
         jellyfin_token = get_setting('Debug', 'emby_jellyfin_token', default='').strip()

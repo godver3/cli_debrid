@@ -300,7 +300,7 @@ def recommendation_sources():
             if get_setting('Plex', 'url', ''):
                 name = 'Plex'
             elif viewers:
-                name = {'jellyfin': 'Jellyfin', 'emby': 'Emby'}.get(viewers[0]['source'], 'Library')
+                name = {'jellyfin': 'Jellyfin', 'emby': 'Emby', 'silo': 'Silo'}.get(viewers[0]['source'], 'Library')
             else:
                 name = 'Library'
             sources.append({

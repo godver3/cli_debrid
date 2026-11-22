@@ -179,7 +179,7 @@ window.currentMediaServerType = TPL_SETTINGS_CONTENT_SOURCES.settings;
 function updatePlexOnlySections() {
     const fm = window.currentFileManagementModeForSymlinkVisibility || '';
     const ms = window.currentMediaServerType || '';
-    const show = !(fm === 'Symlinked/Local' && ms === 'jellyfin');
+    const show = !(fm === 'Symlinked/Local' && (ms === 'jellyfin' || ms === 'silo'));
     document.querySelectorAll('.plex-only-section').forEach(el => {
         el.style.display = show ? '' : 'none';
         // Also hide/show parent settings-form-group to prevent empty gap

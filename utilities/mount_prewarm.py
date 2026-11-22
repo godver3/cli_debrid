@@ -1,7 +1,7 @@
 """
 Show precache and stream protection for the built-in mount (both cli_mount
 features, once Plex-only), from one poller over every media server the
-mount serves: Plex, and Jellyfin or Emby (utilities/media_sessions.py).
+mount serves: Plex, Jellyfin or Emby, and Silo (utilities/media_sessions.py).
 
 Stream protection: every 10 s the mount files the media servers report
 playing are posted to the engine, which keeps the playback reserve for them
@@ -148,7 +148,7 @@ def check_once(client, get_setting: Callable, now: Optional[float] = None) -> li
         if not nxt or str(nxt.get('ratingKey')) in _done:
             continue
         # Jellyfin/Emby episodes come with their files; Plex's are looked up.
-        item = nxt if str(nxt.get('ratingKey')).startswith(ms.JF) else (lookup(str(nxt['ratingKey'])) or nxt)
+        item = nxt if str(nxt.get('ratingKey')).startswith((ms.JF, ms.SILO)) else (lookup(str(nxt['ratingKey'])) or nxt)
         for media in item.get('Media') or []:
             part = (media.get('Part') or [{}])[0]
             found = resolve_mount_file(client, part.get('file', ''))

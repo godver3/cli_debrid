@@ -1194,8 +1194,8 @@
     {% endif %}
 
     <!-- ── RECONCILE TAB ── -->
-    {% set ms_label = 'Jellyfin' if media_server_type == 'jellyfin' else 'Plex' %}
-    {% set ms_badge = 'JF' if media_server_type == 'jellyfin' else 'Plex' %}
+    {% set ms_label = {'jellyfin': 'Jellyfin', 'silo': 'Silo'}.get(media_server_type, 'Plex') %}
+    {% set ms_badge = {'jellyfin': 'JF', 'silo': 'Silo'}.get(media_server_type, 'Plex') %}
     <div id="reconcile-tab" class="dm-panel">
         <div class="beta-notice-box" style="border-radius:6px;padding:16px 18px;margin:16px 0 8px 0;display:flex;gap:14px;align-items:flex-start;border-left:3px solid #60a5fa;background:var(--beta-box-bg,#1e2433);">
             <svg style="width:18px;height:18px;color:#60a5fa;flex-shrink:0;margin-top:1px;" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1996,7 +1996,7 @@ window.TPL_DEBRID_MANAGER = {
     dm_default_tab: {{ dm_default_tab | tojson }},
     debrid_all_providers: {{ debrid_all_providers | tojson }},
     debrid_provider_name: {{ debrid_provider_name | tojson }},
-    media_server_type: {{ ('Jellyfin' if media_server_type == 'jellyfin' else 'Plex') | tojson }},
+    media_server_type: {{ {'jellyfin': 'Jellyfin', 'silo': 'Silo'}.get(media_server_type, 'Plex') | tojson }},
 };
 </script>
 <script src="{{ url_for('static', filename='js/pages/debrid_manager/core.js') }}"></script>

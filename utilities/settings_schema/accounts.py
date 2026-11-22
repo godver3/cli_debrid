@@ -238,7 +238,7 @@ SECTIONS = {
             "type": "string",
             "description": "Media server type to use for symlink updates when using Symlinked/Local file collection management",
             "default": "plex",
-            "choices": ["plex", "jellyfin"]
+            "choices": ["plex", "jellyfin", "silo"]
         }
     },
     "Debrid Provider": {

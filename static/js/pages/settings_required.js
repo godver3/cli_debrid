@@ -73,12 +73,14 @@ document.addEventListener('DOMContentLoaded', function() {
             if (value === 'Plex') {
                 if (plexSection) plexSection.style.display = 'block';
                 if (jellyfinSection) jellyfinSection.style.display = 'none';
+                    document.getElementById('silo-settings-in-file-management')?.style.setProperty('display', 'none');
                 if (mediaServerSelection) mediaServerSelection.style.display = 'none';
                 symlinkFields.forEach(field => { if (field) field.style.display = 'none'; });
                 plexSpecificFields.forEach(field => { if (field) field.style.display = 'none'; });
             } else if (value === 'Symlinked/Local') {
                 if (plexSection) plexSection.style.display = 'none';
                 if (jellyfinSection) jellyfinSection.style.display = 'none';
+                    document.getElementById('silo-settings-in-file-management')?.style.setProperty('display', 'none');
                 if (mediaServerSelection) mediaServerSelection.style.display = 'block';
                 symlinkFields.forEach(field => { if (field) field.style.display = 'block'; });
                 // Don't show Plex-specific fields here, let updateMediaServerSettings handle them
@@ -91,6 +93,7 @@ document.addEventListener('DOMContentLoaded', function() {
             } else {
                 if (plexSection) plexSection.style.display = 'none';
                 if (jellyfinSection) jellyfinSection.style.display = 'none';
+                    document.getElementById('silo-settings-in-file-management')?.style.setProperty('display', 'none');
                 if (mediaServerSelection) mediaServerSelection.style.display = 'none';
                 symlinkFields.forEach(field => { if (field) field.style.display = 'none'; });
                 plexSpecificFields.forEach(field => { if (field) field.style.display = 'none'; });
@@ -464,6 +467,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (managementType === 'Plex') {
                     if (plexSection) plexSection.style.display = 'block';
                     if (jellyfinSection) jellyfinSection.style.display = 'none';
+                    document.getElementById('silo-settings-in-file-management')?.style.setProperty('display', 'none');
                     if (mediaServerSelection) mediaServerSelection.style.display = 'none';
                     symlinkFields.forEach(field => {
                         if (field) field.style.display = 'none';
@@ -471,6 +475,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 } else if (managementType === 'Symlinked/Local') {
                     if (plexSection) plexSection.style.display = 'none';
                     if (jellyfinSection) jellyfinSection.style.display = 'none';
+                    document.getElementById('silo-settings-in-file-management')?.style.setProperty('display', 'none');
                     if (mediaServerSelection) mediaServerSelection.style.display = 'block';
                     symlinkFields.forEach(field => {
                         if (field) field.style.display = 'block';
@@ -480,6 +485,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 } else {
                     if (plexSection) plexSection.style.display = 'none';
                     if (jellyfinSection) jellyfinSection.style.display = 'none';
+                    document.getElementById('silo-settings-in-file-management')?.style.setProperty('display', 'none');
                     if (mediaServerSelection) mediaServerSelection.style.display = 'none';
                     symlinkFields.forEach(field => {
                         if (field) field.style.display = 'none';

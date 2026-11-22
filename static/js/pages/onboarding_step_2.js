@@ -9,6 +9,8 @@ document.addEventListener('DOMContentLoaded', function() {
         const jellyfinFields = document.getElementById('symlink-jellyfin-fields');
         if (plexFields) plexFields.style.display = value === 'plex' ? 'block' : 'none';
         if (jellyfinFields) jellyfinFields.style.display = value === 'jellyfin' ? 'block' : 'none';
+        const siloFields = document.getElementById('symlink-silo-fields');
+        if (siloFields) siloFields.style.display = value === 'silo' ? 'block' : 'none';
     }
 
     const symlinkMediaServer = document.getElementById('symlink_media_server');

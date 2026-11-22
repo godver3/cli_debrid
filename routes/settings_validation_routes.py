@@ -541,6 +541,12 @@ def validate_onboarding_settings():
                     jf_valid = False
                     jf_message = f'Error connecting to Jellyfin: {str(e)}'
                 add('Jellyfin Connection', jf_valid, jf_message, blocking=False)
+        elif media_server == 'silo':
+            silo_url = settings_data.get('silo_url', '')
+            silo_key = settings_data.get('silo_api_key', '')
+            if silo_url and silo_key:
+                from utilities.silo_functions import test_connection
+                add('Silo Connection', *test_connection(silo_url, silo_key), blocking=False)
 
     # --- Metadata -------------------------------------------------------------------
     # Shows and movies are looked up on TVDB when a TVDB key is set, otherwise on

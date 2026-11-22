@@ -1408,7 +1408,10 @@ def _cleanup_old_symlink(item: Dict[str, Any], item_identifier: str, source_file
 
         # Remove the old file from Plex or Emby/Jellyfin
         media_server_type = 'none'
-        if get_setting('Debug', 'emby_jellyfin_url', default=False):
+        from utilities.silo_functions import is_silo_mode
+        if is_silo_mode():
+            media_server_type = 'silo'
+        elif get_setting('Debug', 'emby_jellyfin_url', default=False):
             media_server_type = 'emby_jellyfin'
         elif get_setting('File Management', 'plex_url_for_symlink', default=False):
             media_server_type = 'plex'
@@ -1416,7 +1419,10 @@ def _cleanup_old_symlink(item: Dict[str, Any], item_identifier: str, source_file
         if media_server_type != 'none':
             try:
                 episode_title = item.get('episode_title') if item.get('type') == 'episode' else None
-                if media_server_type == 'emby_jellyfin':
+                if media_server_type == 'silo':
+                    from utilities.silo_functions import remove_file_from_silo
+                    remove_file_from_silo(item['title'], old_dest, episode_title)
+                elif media_server_type == 'emby_jellyfin':
                     from utilities.emby_functions import remove_file_from_emby
                     remove_file_from_emby(item['title'], old_dest, episode_title)
                 elif media_server_type == 'plex':

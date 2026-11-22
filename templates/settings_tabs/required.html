@@ -159,6 +159,7 @@
                     <select id="media-server-type" name="File Management.media_server_type" class="settings-input">
                         <option value="plex" {% if settings.get('File Management', {}).get('media_server_type', 'plex') == 'plex' %}selected{% endif %}>Plex</option>
                         <option value="jellyfin" {% if settings.get('File Management', {}).get('media_server_type', 'plex') == 'jellyfin' %}selected{% endif %}>Jellyfin/Emby</option>
+                        <option value="silo" {% if settings.get('File Management', {}).get('media_server_type', 'plex') == 'silo' %}selected{% endif %}>Silo</option>
                     </select>
                     <p class="settings-description">Select which media server to use for symlink updates.</p>
                 </div>
@@ -240,6 +241,26 @@
                        data-section="Debug" data-key="emby_jellyfin_token"
                        autocomplete="new-password">
                 <p class="settings-description">Authentication token for Emby or Jellyfin</p>
+            </div>
+        </div>
+
+        <!-- Silo settings included in File Management section -->
+        <div id="silo-settings-in-file-management" style="display: none;">
+            <div class="settings-form-group">
+                <label for="silo_url" class="settings-title">Silo URL:</label>
+                <input type="text" id="silo_url" name="Debug.silo_url"
+                       value="{{ settings.get('Debug', {}).get('silo_url', '') }}" class="settings-input"
+                       data-section="Debug" data-key="silo_url"
+                       autocomplete="off">
+                <p class="settings-description">URL of your Silo server (e.g. http://localhost:8090)</p>
+            </div>
+            <div class="settings-form-group">
+                <label for="silo_api_key" class="settings-title">Silo API Key:</label>
+                <input type="password" id="silo_api_key" name="Debug.silo_api_key"
+                       value="{{ settings.get('Debug', {}).get('silo_api_key', '') }}" class="settings-input"
+                       data-section="Debug" data-key="silo_api_key"
+                       autocomplete="new-password">
+                <p class="settings-description">An admin API key (starts with sa_), from Silo's Settings → API Keys. Silo's library folders must cover your symlink folder; if Silo sees it at a different path, name each Silo library folder like the folder under the symlink folder (e.g. Movies, TV Shows).</p>
             </div>
         </div>
     </div>
@@ -749,6 +770,8 @@ function updateMediaServerSettings() {
     const mediaServerType = document.getElementById('media-server-type');
     const plexSection = document.getElementById('plex-settings-in-file-management');
     const jellyfinSection = document.getElementById('jellyfin-settings-in-file-management');
+    const siloSection = document.getElementById('silo-settings-in-file-management');
+    if (siloSection) siloSection.style.display = mediaServerType && mediaServerType.value === 'silo' ? 'block' : 'none';
     const plexUrlField = document.querySelector('input[name="File Management.plex_url_for_symlink"]')?.closest('.settings-form-group');
     const plexTokenField = document.querySelector('input[name="File Management.plex_token_for_symlink"]')?.closest('.settings-form-group');
     const movieLibsField = document.querySelector('input[name="Plex.movie_libraries"]')?.closest('.settings-form-group.symlink-plex-setting');
@@ -774,10 +797,10 @@ function updateMediaServerSettings() {
             if (plexTokenField) plexTokenField.style.display = 'block';
             if (movieLibsField) movieLibsField.style.display = 'block';
             if (showsLibsField) showsLibsField.style.display = 'block';
-        } else if (mediaServerType.value === 'jellyfin') {
-            console.log('Setting to Jellyfin');
+        } else if (mediaServerType.value === 'jellyfin' || mediaServerType.value === 'silo') {
+            console.log('Setting to', mediaServerType.value);
             plexSection.style.display = 'none';
-            jellyfinSection.style.display = 'block';
+            jellyfinSection.style.display = mediaServerType.value === 'jellyfin' ? 'block' : 'none';
             if (plexUrlField) plexUrlField.style.display = 'none';
             if (plexTokenField) plexTokenField.style.display = 'none';
             if (movieLibsField) movieLibsField.style.display = 'none';

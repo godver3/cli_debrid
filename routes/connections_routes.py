@@ -249,6 +249,16 @@ def check_plex_connection():
             }
         }
 
+def check_silo_connection():
+    """Check the Silo media server when it is the symlink media server."""
+    from utilities.silo_functions import is_silo_selected, silo_config, test_connection
+    if not is_silo_selected():
+        return None
+    url, key = silo_config()
+    ok, message = test_connection(url, key)
+    return {'name': 'Silo', 'connected': ok, 'error': None if ok else message, 'details': {'url': url}}
+
+
 def check_jellyfin_connection():
     """Check connection to Jellyfin/Emby if configured."""
     jellyfin_url = get_setting('Debug', 'emby_jellyfin_url')
@@ -1423,7 +1433,10 @@ def api_check_system():
         'mounted_files_status': check_mounted_files_connection,
         'phalanx_db_status': check_phalanx_db_connection,
     }
-    if jellyfin_url and jellyfin_token:
+    from utilities.silo_functions import is_silo_selected
+    if is_silo_selected():
+        tasks['silo_status'] = check_silo_connection
+    elif jellyfin_url and jellyfin_token:
         tasks['jellyfin_status'] = check_jellyfin_connection
     else:
         tasks['plex_status'] = check_plex_connection
@@ -1446,6 +1459,7 @@ def api_check_system():
             pass
     results.setdefault('plex_status', None)
     results.setdefault('jellyfin_status', None)
+    results.setdefault('silo_status', None)
     results.setdefault('mounted_files_status', None)
     results.setdefault('phalanx_db_status', None)
     results.setdefault('cli_battery_status', None)
@@ -1645,7 +1659,7 @@ def index():
 
     results = {
         'cli_battery_status': None, 'plex_status': None,
-        'jellyfin_status': None, 'mounted_files_status': None,
+        'jellyfin_status': None, 'silo_status': None, 'mounted_files_status': None,
         'phalanx_db_status': None,
         'tvdb_status': None, 'tmdb_status': None, 'climount_status': None,
         'scrob_status': None, 'trakt_status': None,
@@ -1668,6 +1682,7 @@ def index():
                          cli_battery_status=results['cli_battery_status'],
                          plex_status=results['plex_status'],
                          jellyfin_status=results['jellyfin_status'],
+                         silo_status=results['silo_status'],
                          mounted_files_status=results['mounted_files_status'],
                          phalanx_db_status=results['phalanx_db_status'],
                          tvdb_status=results['tvdb_status'],

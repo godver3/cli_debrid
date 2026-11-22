@@ -1,13 +1,15 @@
 """
-Playback sessions from every media server the mount serves: Plex, and
-Jellyfin or Emby (same API). Stream protection, show precache and Now
+Playback sessions from every media server the mount serves: Plex,
+Jellyfin or Emby (same API), and Silo. Stream protection, show precache and Now
 playing all read sessions through here.
 
 Jellyfin/Emby sessions are turned into the shape of a Plex /status/sessions
 entry (type, title, grandparentTitle, parentIndex, index, viewOffset and
 duration in ms, Media[].Part[].file, User, Player), so the code that matches
 sessions to mount files works the same for every server. Their keys carry a
-"jf:" prefix so they never collide with Plex ratingKeys.
+"jf:" prefix so they never collide with Plex ratingKeys. Silo sessions get
+the same treatment with a "silo:" prefix, and Silo's file paths are mapped
+back to the paths cli_debrid sees.
 """
 
 import logging
@@ -19,6 +21,7 @@ from utilities import mount_now_playing as np
 from utilities.jellyfin_auth import jellyfin_auth_headers
 
 JF = 'jf:'
+SILO = 'silo:'
 
 #: Where the mount's Jellyfin/Emby URL/key come from, first match wins: the
 #: Mount page's own fields, then the Jellyfin/Emby connection in Settings.
@@ -46,8 +49,18 @@ def jellyfin_server(get_setting: Callable) -> tuple:
     return url, token
 
 
+def silo_server(get_setting: Callable) -> tuple:
+    """(url, key) of Silo when it is the Symlinked/Local media server, else ('', '')."""
+    if (get_setting('File Management', 'file_collection_management', '') != 'Symlinked/Local'
+            or (get_setting('File Management', 'media_server_type', '') or '').lower() != 'silo'):
+        return '', ''
+    url = (get_setting('Debug', 'silo_url', '') or '').strip().rstrip('/')
+    key = (get_setting('Debug', 'silo_api_key', '') or '').strip()
+    return (url, key) if url and key else ('', '')
+
+
 def any_server(get_setting: Callable) -> bool:
-    return all(np.plex_server(get_setting)) or all(jellyfin_server(get_setting))
+    return all(np.plex_server(get_setting)) or all(jellyfin_server(get_setting)) or all(silo_server(get_setting))
 
 
 # ---- Jellyfin / Emby -------------------------------------------------------
@@ -192,6 +205,107 @@ def jellyfin_test(url: str, token: str) -> dict:
                                            info.get('Version')) if x)}
 
 
+# ---- Silo ------------------------------------------------------------------
+
+def _silo_item(item: dict, libraries: list, symlink_base: str, playing_file_id=None) -> dict:
+    """A Silo catalog entry in Plex metadata shape, its files mapped to local
+    paths (the one playing first)."""
+    from utilities.silo_functions import from_silo_path
+    versions = sorted(item.get('versions') or [], key=lambda v: str(v.get('file_id')) != str(playing_file_id))
+    media = [{'Part': [{'file': from_silo_path(v['file_path'], libraries, symlink_base),
+                        'size': int(v.get('file_size') or 0)}]}
+             for v in versions if v.get('file_path')]
+    return {
+        'type': item.get('type') or '',
+        'ratingKey': SILO + str(item.get('content_id') or ''),
+        'title': item.get('title') or '',
+        'year': item.get('year'),
+        'grandparentTitle': item.get('series_title') or '',
+        'grandparentRatingKey': SILO + str(item['series_id']) if item.get('series_id') else None,
+        'parentIndex': item.get('season_number'),
+        'index': item.get('episode_number'),
+        'Media': media,
+    }
+
+
+def silo_sessions_checked(get_setting: Callable, timeout: float = 5) -> tuple:
+    """(sessions in Plex shape, error): error is '' when Silo answered."""
+    from utilities import silo_functions as silo
+    url, key = silo_server(get_setting)
+    if not url:
+        return [], 'Silo is not the media server, or has no URL/API key'
+    try:
+        raw = silo.admin_sessions(url, key, timeout)
+        libraries = silo.get_libraries(url=url, key=key) if raw else []
+        items = {i.get('content_id'): i for i in silo.catalog_items(
+            url, key, list({str(s.get('media_item_id')) for s in raw if s.get('media_item_id')}), timeout)}
+    except Exception as exc:
+        logging.debug(f'[now playing] Silo sessions failed: {exc}')
+        return [], str(exc) or type(exc).__name__
+    base = get_setting('File Management', 'symlinked_files_path', '') or ''
+    out = []
+    for s in raw:
+        item = items.get(str(s.get('media_item_id')))
+        if not item:
+            continue
+        d = _silo_item(item, libraries, base, s.get('media_file_id'))
+        decision = (s.get('video_decision') or s.get('play_method') or '').lower()
+        d.update({
+            'duration': int(float(s.get('file_duration') or 0) * 1000),
+            'viewOffset': int(float(s.get('position_seconds') or 0) * 1000),
+            'sessionKey': SILO + str(s.get('session_id') or ''),
+            'User': {'title': s.get('username') or s.get('profile_name') or ''},
+            'Player': {'title': s.get('client_label') or s.get('device_platform') or '',
+                       'product': s.get('client_name') or '',
+                       'state': 'paused' if s.get('is_paused') else 'playing'},
+            'TranscodeSession': ({'videoDecision': 'transcode'} if 'transcode' in decision
+                                 else {'videoDecision': 'copy'} if decision in ('copy', 'remux', 'direct_stream', 'directstream')
+                                 else None),
+            '_server': 'silo',
+        })
+        out.append(d)
+    return out, ''
+
+
+def silo_next_episode(get_setting: Callable, s: dict, timeout: float = 5) -> Optional[dict]:
+    """The episode after session s (Plex metadata shape, with its files), or None."""
+    from utilities import silo_functions as silo
+    url, key = silo_server(get_setting)
+    cur = str(s.get('ratingKey') or '')
+    if not url or not cur.startswith(SILO):
+        return None
+    candidates = silo.next_episode_ids(cur[len(SILO):])
+    try:
+        found = {i.get('content_id'): i for i in silo.catalog_items(url, key, candidates, timeout)}
+        libraries = silo.get_libraries(url=url, key=key) if found else []
+    except Exception as exc:
+        logging.debug(f'[show precache] Silo next episode of {cur}: {exc}')
+        return None
+    base = get_setting('File Management', 'symlinked_files_path', '') or ''
+    for c in candidates:
+        if c in found:
+            return _silo_item(found[c], libraries, base)
+    return None
+
+
+def silo_lookup(get_setting: Callable, timeout: float = 5) -> Callable:
+    from utilities import silo_functions as silo
+    url, key = silo_server(get_setting)
+    base = get_setting('File Management', 'symlinked_files_path', '') or ''
+    cache = {}
+
+    def get(k: str) -> dict:
+        if k not in cache:
+            try:
+                items = silo.catalog_items(url, key, [k[len(SILO):]], timeout)
+                cache[k] = _silo_item(items[0], silo.get_libraries(url=url, key=key), base) if items else {}
+            except Exception as exc:
+                logging.debug(f'[now playing] Silo item {k}: {exc}')
+                cache[k] = {}
+        return cache[k]
+    return get
+
+
 # ---- every server ----------------------------------------------------------
 
 def sessions_checked(get_setting: Callable, timeout: float = 5) -> Tuple[List[dict], str]:
@@ -212,8 +326,14 @@ def sessions_checked(get_setting: Callable, timeout: float = 5) -> Tuple[List[di
         sessions += got
         if err:
             errors.append(f'Jellyfin/Emby: {err}')
+    if all(silo_server(get_setting)):
+        asked = True
+        got, err = silo_sessions_checked(get_setting, timeout)
+        sessions += got
+        if err:
+            errors.append(f'Silo: {err}')
     if not asked:
-        return [], 'no media server set (Plex, or Jellyfin/Emby)'
+        return [], 'no media server set (Plex, Jellyfin/Emby or Silo)'
     return sessions, '; '.join(errors)
 
 
@@ -227,11 +347,15 @@ def lookup(get_setting: Callable) -> Callable:
     j_url, j_token = jellyfin_server(get_setting)
     plex = np.metadata_lookup(p_url, p_token) if p_url and p_token else (lambda k: {})
     jf = jellyfin_lookup(j_url, j_token) if j_url and j_token else (lambda k: {})
-    return lambda key: jf(key) if str(key).startswith(JF) else plex(key)
+    sl = silo_lookup(get_setting) if all(silo_server(get_setting)) else (lambda k: {})
+    return lambda key: (jf(key) if str(key).startswith(JF) else sl(key) if str(key).startswith(SILO)
+                        else plex(key))
 
 
 def next_episode(get_setting: Callable, s: dict) -> Optional[dict]:
     """The next episode after session s, with its files (Media/Part)."""
+    if s.get('_server') == 'silo':
+        return silo_next_episode(get_setting, s)
     if s.get('_server') == 'jellyfin':
         url, token = jellyfin_server(get_setting)
         return jellyfin_next_episode(url, token, s)

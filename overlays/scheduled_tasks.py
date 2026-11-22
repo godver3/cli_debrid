@@ -14,7 +14,7 @@ from typing import Dict
 
 from .overlay_manager import OverlayManager
 from .activity_logger import log_activity
-from .utils import is_jellyfin_mode, get_jellyfin_url, get_jellyfin_token
+from .utils import is_jellyfin_mode, get_jellyfin_url, get_jellyfin_token, overlays_active
 from utilities.settings import get_setting
 
 logger = logging.getLogger(__name__)
@@ -460,7 +460,7 @@ def apply_overlay_for_new_item(item_id: int):
         _overlay_in_flight.add(item_id)
 
     try:
-        if not get_setting('Overlay Settings', 'overlays_enabled', False):
+        if not overlays_active():
             return
 
         # Mode detection: get credentials for whichever media server is active
@@ -1344,8 +1344,8 @@ def task_overlay_sync(triggered_by: str = 'scheduled'):
 
     This task should be run periodically (e.g., every 30 minutes).
     """
-    if not get_setting('Overlay Settings', 'overlays_enabled', False):
-        return {'success': False, 'message': 'Overlay system is disabled'}
+    if not overlays_active():
+        return {'success': False, 'message': 'Overlay system is disabled (or Silo, which draws its own badges)'}
 
     logger.info("Starting overlay sync task")
     _sync_start = time.time()
@@ -2081,8 +2081,8 @@ def task_overlay_cleanup(triggered_by: str = 'scheduled'):
 
     A single activity log entry is written covering all operations.
     """
-    if not get_setting('Overlay Settings', 'overlays_enabled', False):
-        return {'success': False, 'message': 'Overlay system is disabled'}
+    if not overlays_active():
+        return {'success': False, 'message': 'Overlay system is disabled (or Silo, which draws its own badges)'}
 
     logger.info("Starting overlay cleanup task")
     _cleanup_start = time.time()
@@ -3053,8 +3053,8 @@ def task_overlay_full_sync(force: bool = False):
     Args:
         force: Force regeneration even for items with existing overlays
     """
-    if not get_setting('Overlay Settings', 'overlays_enabled', False):
-        return {'success': False, 'message': 'Overlay system is disabled'}
+    if not overlays_active():
+        return {'success': False, 'message': 'Overlay system is disabled (or Silo, which draws its own badges)'}
 
     logger.info(f"Starting full overlay sync (force={force})")
     _full_sync_start = time.time()
