@@ -296,9 +296,9 @@ func TestThrottleKeepsReserve(t *testing.T) {
 func TestThrottleNeverLowersCap(t *testing.T) {
 	pl := newPool(Provider{Name: "p", MaxConns: 20})
 	pl.open = 8
-	pl.throttle()
+	pl.throttle(nil)
 	pl.open = 3
-	pl.throttle()
+	pl.throttle(nil)
 	pl.mu.Lock()
 	got := pl.maxConnsLocked()
 	pl.mu.Unlock()
@@ -306,7 +306,7 @@ func TestThrottleNeverLowersCap(t *testing.T) {
 		t.Fatalf("cap = %d after a second refusal, want 8 (kept)", got)
 	}
 	pl.capUntil = time.Now().Add(-time.Second) // expired: a new refusal re-caps
-	pl.throttle()
+	pl.throttle(nil)
 	pl.mu.Lock()
 	got = pl.maxConnsLocked()
 	pl.mu.Unlock()

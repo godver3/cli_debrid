@@ -33,11 +33,21 @@ var defaultRemoteClient = NewRemoteClient(nil)
 
 // NewRemoteClient returns an HTTP client for debrid downloads with the
 // timeouts above; proxy may be nil (then the environment's proxy is used).
+// Without a proxy its TorBox connections count against the shared cap.
 func NewRemoteClient(proxy func(*http.Request) (*url.URL, error)) *http.Client {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
-	tr.DialContext = (&net.Dialer{Timeout: remoteDialTimeout, KeepAlive: 30 * time.Second}).DialContext
+	dial := (&net.Dialer{Timeout: remoteDialTimeout, KeepAlive: 30 * time.Second}).DialContext
+	if proxy == nil {
+		// TorBox's per-host connection cap (remote_conncap.go). Through a
+		// proxy every dial goes to the proxy, not the CDN host, so it can't
+		// be applied there.
+		dial = sharedCap.wrap(dial)
+		sharedCap.register(tr.CloseIdleConnections)
+	}
+	tr.DialContext = dial
 	tr.ResponseHeaderTimeout = remoteHeaderTimeout
 	tr.TLSHandshakeTimeout = 15 * time.Second
+	tr.IdleConnTimeout = 30 * time.Second // idle connections count against TorBox's limit
 	if proxy != nil {
 		tr.Proxy = proxy
 	}

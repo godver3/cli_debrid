@@ -70,6 +70,16 @@ func (c *Client) problem(provider, kind string, prio Priority, err error) {
 		"class", prioName(prio), "repeats_since_last_log", repeats)
 }
 
+// info logs a provider event at info level (when a logger is set).
+func (c *Client) info(msg string, args ...any) {
+	c.logMu.Lock()
+	log := c.log
+	c.logMu.Unlock()
+	if log != nil {
+		log.Info(msg, args...)
+	}
+}
+
 func prioName(p Priority) string {
 	switch p {
 	case Live:
@@ -88,7 +98,9 @@ func NewClient(providers []Provider) (*Client, error) {
 	sort.SliceStable(ps, func(i, j int) bool { return !ps[i].Backup && ps[j].Backup })
 	c := &Client{}
 	for _, p := range ps {
-		c.pools = append(c.pools, newPool(p))
+		pl := newPool(p)
+		pl.c = c
+		c.pools = append(c.pools, pl)
 	}
 	return c, nil
 }
@@ -137,7 +149,17 @@ func (c *Client) attempt(ctx context.Context, prio Priority, id string,
 	notFound, mismatched := 0, 0
 	var last error
 	hint := missHintFrom(ctx)
-	left := append([]*pool(nil), c.pools...)
+	left := make([]*pool, 0, len(c.pools))
+	for _, pl := range c.pools {
+		// A provider whose breaker is open (refused login, unreachable)
+		// is skipped without a dial: before, every article paid for a
+		// connect, TLS and login (or the whole dial timeout) on it.
+		if isDown, err := pl.down(); isDown {
+			last = fmt.Errorf("%s: %w", pl.p.Name, err)
+			continue
+		}
+		left = append(left, pl)
+	}
 	for len(left) > 0 {
 		k, pre, preErr, got := c.pick(ctx, left, prio)
 		if !got {
@@ -168,8 +190,10 @@ func (c *Client) attempt(ctx context.Context, prio Priority, id string,
 				}
 				last = fmt.Errorf("%s: %w", pl.p.Name, err)
 				if errors.Is(err, ErrBusy) {
-					pl.throttle()
+					pl.throttle(err)
 					c.problem(pl.p.Name, "too many connections", prio, err)
+				} else if errors.Is(err, ErrProviderDown) {
+					// paused: logged once when its breaker opened
 				} else {
 					c.problem(pl.p.Name, "connect", prio, err)
 				}
@@ -200,7 +224,7 @@ func (c *Client) attempt(ctx context.Context, prio Priority, id string,
 				got430 = IsNotFound(err)
 			case errors.Is(err, ErrBusy):
 				pl.discard(cn)
-				pl.throttle()
+				pl.throttle(err)
 				last = fmt.Errorf("%s: %w", pl.p.Name, err)
 				c.problem(pl.p.Name, "too many connections", prio, err)
 				answered = true
@@ -427,6 +451,14 @@ type PoolStats struct {
 	Errors    int64   `json:"errors"`
 	LatencyMs float64 `json:"latency_ms"`
 	LastError string  `json:"last_error,omitempty"`
+	// State is "ok", "auth_failed" (login refused) or "down" (connecting
+	// keeps failing); RetryIn is the seconds until the next try.
+	State   string  `json:"state"`
+	RetryIn float64 `json:"retry_in_s,omitempty"`
+	// ServerLimit is a connection limit the server stated in a refusal
+	// (0 = none learned); CapNow the limit in force right now.
+	ServerLimit int `json:"server_limit,omitempty"`
+	CapNow      int `json:"cap_now"`
 }
 
 // Warm tops every provider up to its MinIdle connections.
@@ -446,7 +478,9 @@ func (c *Client) Stats() (pools []PoolStats, bytes, articles, missing int64) {
 	for _, pl := range c.pools {
 		open, idle, waiting := pl.stats()
 		lastErr, _ := pl.lastErr.Load().(string)
-		pools = append(pools, PoolStats{Name: pl.p.Name, Backup: pl.p.Backup, Max: pl.p.MaxConns,
+		state, retry := pl.state()
+		learned, capNow := pl.limits()
+		pools = append(pools, PoolStats{State: state, RetryIn: retry.Seconds(), ServerLimit: learned, CapNow: capNow, Name: pl.p.Name, Backup: pl.p.Backup, Max: pl.p.MaxConns,
 			Reserve: pl.reserve(), Articles: pl.articles.Load(), Bytes: pl.bytes.Load(), Missing: pl.missing.Load(),
 			Errors: pl.errors.Load(), LatencyMs: float64(pl.latencyNs.Load()) / 1e6, LastError: lastErr,
 			Open: open, Idle: idle, Waiting: waiting})

@@ -2,7 +2,9 @@ package nntp
 
 import (
 	"context"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -172,40 +174,104 @@ func missHintFrom(ctx context.Context) *MissHint {
 }
 
 // busyBackoff: after a "too many connections" answer the pool stops
-// opening connections beyond what it has open for this long.
-const busyBackoff = 30 * time.Second
+// opening connections beyond what it has open for this long. Then it
+// widens by one connection every widenEvery until MaxConns, instead of
+// jumping straight back to the full count and into the same refusals
+// (Ether's learned limits). Vars for tests.
+var (
+	busyBackoff = 30 * time.Second
+	widenEvery  = 5 * time.Second
+)
+
+// statedLimit finds a connection limit in a refusal's text: "connection
+// limit (8)", "max 8 connections", "maximum number of connections (8)
+// reached", "8 connections allowed". 0 when none is stated.
+// A number after "limit"/"max" wins over one before "connections" ("you
+// have 25 connections, limit 20" is 20).
+var (
+	limitAfterRE  = regexp.MustCompile(`(?i)\b(?:limit|max(?:imum)?)(?:\s+(?:number\s+)?(?:of\s+)?(?:connections?|conns?|sessions?))?(?:\s+(?:is|of|reached|exceeded|allowed))?\s*[:=(]?\s*(\d{1,4})\b`)
+	limitBeforeRE = regexp.MustCompile(`(?i)\b(\d{1,4})\s*(?:concurrent\s+|simultaneous\s+)?connections`)
+)
+
+func statedLimit(msg string) int {
+	for _, re := range []*regexp.Regexp{limitAfterRE, limitBeforeRE} {
+		if m := re.FindStringSubmatch(msg); m != nil {
+			if n, err := strconv.Atoi(m[1]); err == nil && n > 0 {
+				return n
+			}
+		}
+	}
+	return 0
+}
 
 // throttle caps the pool at its current open connections for busyBackoff
 // (the account's real limit is lower than MaxConns, or another program
 // uses it). Called with the failed dial's slot already given back. A cap
-// already in place is only extended, never lowered: several refusals in a
-// row each give back a slot, and re-capping at the shrinking open count
-// would walk the pool down to one connection.
-func (pl *pool) throttle() {
+// already in place is only extended during the hold, never lowered:
+// several refusals in a row each give back a slot, and re-capping at the
+// shrinking open count would walk the pool down to one connection.
+//
+// When the refusal states the account's limit below MaxConns, the pool
+// keeps under it for the rest of its life (minus ~10% for the account's
+// other users), ratcheting down only.
+func (pl *pool) throttle(err error) {
 	pl.mu.Lock()
 	defer pl.mu.Unlock()
-	pl.maxConnsLocked() // clears an expired backoff
-	if pl.capConns == 0 {
+	if err != nil {
+		if n := statedLimit(err.Error()); n > 0 && n < pl.p.MaxConns {
+			n = max(n-n/10, 1)
+			if pl.learned == 0 || n < pl.learned {
+				pl.learned = n
+			}
+		}
+	}
+	now := time.Now()
+	if pl.capConns == 0 || !now.Before(pl.capUntil) {
+		// No cap, or one already widening: re-cap at what the server
+		// actually carried.
 		pl.capConns = max(pl.open, 1)
 	}
-	pl.capUntil = time.Now().Add(busyBackoff)
+	pl.capUntil = now.Add(busyBackoff)
 }
 
-// throttled reports whether a "too many connections" backoff is on.
+// throttled reports whether a "too many connections" hold is on (while
+// widening afterwards the pool is used normally).
 func (pl *pool) throttled() bool {
 	pl.mu.Lock()
 	defer pl.mu.Unlock()
-	pl.maxConnsLocked() // clears an expired backoff
-	return pl.capConns > 0
+	pl.maxConnsLocked() // clears a finished widening
+	return pl.capConns > 0 && time.Now().Before(pl.capUntil)
 }
 
-// maxConnsLocked is MaxConns, lowered while a throttle is on (mu held).
+// holdingLocked: a refusal's hold is on, so freed dial slots aren't passed
+// to waiters (mu held).
+func (pl *pool) holdingLocked() bool {
+	return pl.capConns > 0 && time.Now().Before(pl.capUntil)
+}
+
+// maxConnsLocked is the connection limit right now: MaxConns, lowered to a
+// learned server limit and while a refusal's cap holds or widens (mu held).
 func (pl *pool) maxConnsLocked() int {
+	limit := pl.p.MaxConns
+	if pl.learned > 0 {
+		limit = min(limit, pl.learned)
+	}
 	if pl.capConns > 0 {
-		if time.Now().Before(pl.capUntil) {
-			return min(pl.capConns, pl.p.MaxConns)
+		cap := pl.capConns
+		if now := time.Now(); !now.Before(pl.capUntil) {
+			cap += 1 + int(now.Sub(pl.capUntil)/widenEvery)
+		}
+		if cap < limit {
+			return cap
 		}
 		pl.capConns = 0
 	}
-	return pl.p.MaxConns
+	return limit
+}
+
+// limits returns (learned server limit, limit in force now) for status.
+func (pl *pool) limits() (learned, now int) {
+	pl.mu.Lock()
+	defer pl.mu.Unlock()
+	return pl.learned, pl.maxConnsLocked()
 }

@@ -88,7 +88,7 @@ type BrokenFile struct {
 	Reason  string    `json:"reason"`
 	Detail  string    `json:"detail,omitempty"`
 	Segment string    `json:"segment,omitempty"`
-	Via     string    `json:"via"` // "check" or "playback"
+	Via     string    `json:"via"` // "check", "playback" or "prewarm"
 	At      time.Time `json:"at"`
 }
 

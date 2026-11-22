@@ -154,6 +154,7 @@ func (c *Config) defaults() {
 	if c.ReadAhead <= 0 {
 		c.ReadAhead = 8
 	}
+
 	if c.ImportWorkers <= 0 {
 		c.ImportWorkers = 2
 	}
@@ -1267,7 +1268,7 @@ func (e *Engine) runCheck(id string, full bool) {
 		// article conclusively (it would then be listed above again).
 		if j.Health != nil {
 			for _, b := range j.Health.Broken {
-				if b.Via == "playback" && !hasBroken(h.Broken, b.Name) {
+				if readProof(b) && !hasBroken(h.Broken, b.Name) {
 					h.Broken = append(h.Broken, b)
 					h.Status = health.Broken
 				}
@@ -1306,6 +1307,16 @@ const (
 // MarkBroken records a file proven unplayable during playback (an article
 // every provider answered missing for). detail is free text for logs/UI.
 func (e *Engine) MarkBroken(id, file, reason, detail, segment string) {
+	e.markBroken(id, file, reason, detail, segment, "playback")
+}
+
+// readProof: a broken mark from a real read (playback or prewarm) rather
+// than a health check; a later check that didn't cover it keeps it.
+func readProof(b store.BrokenFile) bool { return b.Via == "playback" || b.Via == "prewarm" }
+
+// markBroken is MarkBroken with where the proof came from ("playback",
+// "prewarm").
+func (e *Engine) markBroken(id, file, reason, detail, segment, via string) {
 	_, err := e.Store.Update(id, func(j *store.Job) {
 		h := store.Health{Status: health.Broken}
 		if j.Health != nil {
@@ -1316,12 +1327,12 @@ func (e *Engine) MarkBroken(id, file, reason, detail, segment string) {
 			return
 		}
 		h.Broken = append(h.Broken, store.BrokenFile{Name: file, Reason: reason, Detail: detail,
-			Segment: segment, Via: "playback", At: time.Now()})
+			Segment: segment, Via: via, At: time.Now()})
 		j.Health = &h
 	})
 	if err == nil {
 		e.rebuildTree()
-		e.log.Warn("file marked broken during playback", "job", id, "file", file, "reason", reason, "detail", detail)
+		e.log.Warn("file marked broken", "via", via, "job", id, "file", file, "reason", reason, "detail", detail)
 	}
 }
 

@@ -277,7 +277,14 @@
     $('#pools tbody').innerHTML = pools.length ? pools.map(p => {
       const busy = Math.max(0, (p.open || 0) - (p.idle || 0));
       const pct = p.max ? Math.round(100 * busy / p.max) : 0;
-      return '<tr><td>' + esc(p.name) + '</td><td>' + (p.backup ? 'backup' : 'main') + '</td><td>' + busy + ' / ' + p.max +
+      // Paused by the engine's breaker (refused login / unreachable), or
+      // running under a lowered connection limit after "too many connections".
+      const retry = p.retry_in_s ? ' (retry in ' + Math.ceil(p.retry_in_s) + 's)' : '';
+      const paused = p.state === 'auth_failed' ? '<div class="no" style="font-size:12px">login refused' + retry + '</div>'
+        : (p.state === 'down' ? '<div class="no" style="font-size:12px">unreachable' + retry + '</div>' : '');
+      const capped = (p.cap_now && p.cap_now < p.max)
+        ? '<div class="mid" style="font-size:12px" title="' + (p.server_limit ? 'Server says its limit is ' + p.server_limit : 'Server refused more connections') + '">limit ' + p.cap_now + '</div>' : '';
+      return '<tr><td>' + esc(p.name) + '</td><td>' + (p.backup ? 'backup' : 'main') + paused + '</td><td>' + busy + ' / ' + p.max + capped +
              '</td><td>' + (p.open || 0) + '</td><td>' + (p.waiting || 0) + '</td><td><div class="bar"><i style="width:' + pct + '%"></i></div></td>' +
              '<td>' + (p.articles || 0) + '</td><td>' + fmtBytes(p.bytes || 0) + '</td>' +
              '<td' + (p.missing ? ' class="mid"' : '') + '>' + (p.missing || 0) + '</td>' +

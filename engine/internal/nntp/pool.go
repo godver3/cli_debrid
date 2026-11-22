@@ -2,6 +2,7 @@ package nntp
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -33,6 +34,11 @@ type pool struct {
 	// ("too many connections" from the server; see throttle).
 	capConns int
 	capUntil time.Time
+	learned  int // connection limit the server stated, kept for the pool's life
+	// brk refuses new dials while a provider's login is refused or
+	// connecting keeps failing (breaker.go).
+	brk breaker
+	c   *Client // for logging; nil in tests that build a pool directly
 
 	// Per-provider counters for status pages.
 	articles, bytes, missing, errors atomic.Int64
@@ -169,7 +175,7 @@ func (pl *pool) acquire(ctx context.Context, prio Priority) (*conn, error) {
 
 // dial opens a connection for a slot this caller already owns.
 func (pl *pool) dial(ctx context.Context) (*conn, error) {
-	c, err := dial(ctx, pl.p)
+	c, err := pl.dialGuarded(ctx)
 	if err != nil {
 		pl.drop()
 		return nil, err
@@ -198,7 +204,7 @@ func (pl *pool) passOn(s *slot) {
 	// the next one after it, once per queued request. Waiters get the
 	// connections still open as they are released; the last slot is
 	// always passed so a queue is never left with nothing to wake it.
-	if s.c == nil && pl.open > 1 && pl.capConns > 0 && time.Now().Before(pl.capUntil) {
+	if s.c == nil && pl.open > 1 && pl.holdingLocked() {
 		pl.open--
 		return
 	}
@@ -322,12 +328,15 @@ func (pl *pool) warm(ctx context.Context) error {
 		pl.open++
 		pl.warming++
 		pl.mu.Unlock()
-		c, err := dial(ctx, pl.p)
+		c, err := pl.dialGuarded(ctx)
 		pl.mu.Lock()
 		pl.warming--
 		pl.mu.Unlock()
 		if err != nil {
 			pl.drop()
+			if errors.Is(err, ErrProviderDown) {
+				return nil // paused: already reported when it opened
+			}
 			pl.errors.Add(1)
 			pl.lastErr.Store(err.Error())
 			return err
