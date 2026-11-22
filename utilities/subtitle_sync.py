@@ -237,6 +237,7 @@ def _score_curve(lines, windows, ratio, max_offset):
 # a sync fast. Embedded subtitle lines are exact, so short windows suffice;
 # speech detection needs more audio to be sure.
 EMBED_WINDOWS, EMBED_LEN = 5, 30.0
+EMBED_TIMEOUT = 45
 AUDIO_WINDOWS, AUDIO_LEN = 5, 20.0
 
 
@@ -281,7 +282,15 @@ def sync_subtitle(video_path, content, fmt='srt', max_offset=60.0, timeout=90, d
         pos, lang = ref
         info['reference'] = f'embedded subtitles ({lang})'
         for start in _starts(duration, EMBED_WINDOWS, EMBED_LEN):
-            lines_w = _read_sub_window(video_path, pos, start, EMBED_LEN, timeout)
+            t_w = time.time()
+            lines_w = _read_sub_window(video_path, pos, start, EMBED_LEN, EMBED_TIMEOUT)
+            if lines_w is None and time.time() - t_w >= EMBED_TIMEOUT - 1:
+                # a cold file on the mount that can't serve one window in time
+                # won't serve five: stop instead of tying up the queue
+                info['status'] = 'slow'
+                info['reason'] = f'reading the file took over {EMBED_TIMEOUT}s per sample'
+                info['read_s'] = round(time.time() - t_read, 1)
+                return None, info
             if lines_w is not None:
                 win.append((start, start + EMBED_LEN, lines_w))
             if sum(1 for w in win if w[2]) >= 3:
@@ -463,6 +472,8 @@ def describe(info):
         return 'already in sync' + ref
     if s == 'unsure':
         return 'left as is: no clearly better timing found' + ref
+    if s == 'slow':
+        return f"not checked: {info.get('reason', 'the file was too slow to read')}"
     if s == 'no_reference':
         return 'not checked: no embedded text subtitle in the file to compare with'
     return f"not synced: {info.get('reason', 'failed')}"

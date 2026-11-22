@@ -145,6 +145,10 @@ def resync_sidecar(item, path, skip_checked=False):
         return {'changed': True, 'message': note}
     if note and note.startswith(('already in sync', 'left as is', 'not checked: no embedded')):
         _mark(content, note)
+    if note and note.startswith('not checked:') and not note.startswith('not checked: no embedded'):
+        note = 'kept: no subtitle for this release found; ' + note[len('not checked: '):]
+    elif note and note.startswith('not checked: no embedded'):
+        note = 'kept: no subtitle for this release found, and no embedded subtitles to check the timing'
     return {'changed': False, 'message': note or 'not synced'}
 
 
@@ -334,7 +338,7 @@ def resync_item(item, skip_checked=True):
                 from utilities import downsub as _ds
                 if any(x in _ds.HASH_PROVIDERS for x in _ds.selected_providers()):
                     _mark(content, prev + '; no hash match')
-                res = {'changed': False, 'message': 'left as is: no hash match and sync could not decide'}
+                res = {'changed': False, 'message': 'kept: no subtitle for this release found (its timing was already checked)'}
             if res is None:
                 res = resync_sidecar(item, p, skip_checked=skip_checked)
                 if finder.searched() and (res.get('message') or '').startswith(HASH_PENDING):
@@ -374,7 +378,7 @@ def resync_item(item, skip_checked=True):
                 from utilities import downsub as _ds
                 if any(x in _ds.HASH_PROVIDERS for x in _ds.selected_providers()):
                     _mark(content, prev + '; no hash match')
-                res = {'changed': False, 'message': 'left as is: no hash match and sync could not decide'}
+                res = {'changed': False, 'message': 'kept: no subtitle for this release found (its timing was already checked)'}
             if res is None:
                 res = resync_plex_stream(item, st, skip_checked=skip_checked)
             if not res.get('skipped'):

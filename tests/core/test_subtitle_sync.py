@@ -148,3 +148,20 @@ def test_no_embedded_track_means_not_checked_by_default(media):
     new, info = subtitle_sync.sync_subtitle(path, _srt([(a + 1.0, b + 1.0) for a, b in speech]))
     assert new is None and info['status'] == 'no_reference'
     assert subtitle_sync.describe(info).startswith('not checked: no embedded')
+
+
+def test_slow_file_stops_after_first_window(monkeypatch, media):
+    path, speech = media
+    calls = []
+    monkeypatch.setattr(subtitle_sync, 'EMBED_TIMEOUT', 2)
+    monkeypatch.setattr(subtitle_sync, '_embedded_text_stream', lambda p, timeout=20: (0, 'eng'))
+
+    def slow(*a, **k):
+        calls.append(1)
+        import time as _t
+        _t.sleep(2)
+        return None
+    monkeypatch.setattr(subtitle_sync, '_read_sub_window', slow)
+    new, info = subtitle_sync.sync_subtitle(path, _srt(speech))
+    assert new is None and info['status'] == 'slow' and len(calls) == 1
+    assert subtitle_sync.describe(info).startswith('not checked: reading the file took')
