@@ -50,7 +50,7 @@
                 e.preventDefault();
                 showPopup({
                     type: POPUP_TYPES.CONFIRM,
-                    message: 'Are you sure you want to start the bulk subtitle scan? This may take a while and consume resources.',
+                    message: 'Search subtitles for every collected item missing a language? It runs in the background; progress shows on Tools → Subtitle Manager.',
                     title: 'Confirmation',
                     onConfirm: () => {
                         Loading.show();

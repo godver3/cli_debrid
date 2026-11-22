@@ -124,7 +124,11 @@ def get_health_summary() -> dict:
     try:
         if not _backend_enabled():
             return {}
-        entries = _client().list_repair_health(timeout=60)
+        client = _client()
+        if hasattr(client, 'health_counts'):
+            # built-in mount: every debrid job, unchecked ones as unknown
+            return client.health_counts('debrid')
+        entries = client.list_repair_health(timeout=60)
         if entries is None:
             return {}
         counts: dict = {}

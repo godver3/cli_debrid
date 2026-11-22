@@ -18,7 +18,7 @@ from utilities.settings import get_setting
 from utilities.recommendation_provider import get_available_recommendation_providers
 from utilities.reverse_parser import get_default_version
 from utilities.mdblist_api import fetch_custom_list_items, fetch_list_items, fetch_mdblist_top_lists, get_user_lists as get_mdblist_user_lists, is_mdblist_configured, test_api_connection as test_mdblist_connection
-from utilities.flixpatrol_api import fetch_top10 as fetch_flixpatrol_top10, fetch_top10_weekly as fetch_flixpatrol_top10_weekly, get_available_platforms as get_flixpatrol_platforms
+from utilities.streaming_top10_api import fetch_top10 as fetch_flixpatrol_top10, fetch_top10_weekly as fetch_flixpatrol_top10_weekly, get_available_platforms as get_flixpatrol_platforms
 from routes.models import user_required
 from ._common import (
     NETWORK_ENRICHMENT_FILE,

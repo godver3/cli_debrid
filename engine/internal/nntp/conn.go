@@ -103,7 +103,7 @@ func dial(ctx context.Context, p Provider) (*conn, error) {
 	}
 	if code != 200 && code != 201 {
 		nc.Close()
-		return nil, classify(code, msg)
+		return nil, classifyConnect(code, msg)
 	}
 	if p.Username != "" {
 		if err := c.auth(); err != nil {
@@ -154,7 +154,7 @@ func (c *conn) auth() error {
 		return nil
 	}
 	if code != 381 {
-		return classify(code, msg)
+		return classifyConnect(code, msg)
 	}
 	if err := c.send("AUTHINFO PASS " + c.provider.Password); err != nil {
 		return err
@@ -164,6 +164,9 @@ func (c *conn) auth() error {
 		return err
 	}
 	if code != 281 {
+		if code == 400 || busyMsg(msg) {
+			return fmt.Errorf("%w: %d %s", ErrBusy, code, msg)
+		}
 		return fmt.Errorf("%w: %d %s", ErrAuth, code, msg)
 	}
 	return nil

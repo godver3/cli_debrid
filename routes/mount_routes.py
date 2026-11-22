@@ -48,7 +48,7 @@ GROUPS = [
     ('WebDAV share', ['webdav_enabled', 'webdav_port', 'webdav_username', 'webdav_password']),
     ('Files', ['allowed_extensions', 'deobfuscate_mode']),
     ('Media servers', ['plex_url', 'plex_token', 'jellyfin_url', 'jellyfin_token']),
-    ('Streaming', ['read_ahead_mb', 'max_connections_per_file', 'precache_mb', 'warm_connections',
+    ('Streaming', ['read_ahead_mb', 'max_connections_per_file', 'precache_mb', 'warm_connections', 'primary_load_mode',
                    'playback_reserve_percent', 'playback_reserve_min', 'playback_reserve_max', 'plex_playback_protection', 'buffer_memory_mb', 'idle_timeout_minutes',
                    'plex_prewarm', 'prewarm_trigger_percent', 'prewarm_percent', 'prewarm_max_mb']),
     ('Debrid streaming', ['debrid_chunk_mb', 'debrid_connections_per_file', 'debrid_read_ahead_mb',
@@ -65,7 +65,7 @@ LABELS = {
     'gid': 'Group ID (GID)', 'umask': 'UMASK', 'read_ahead_mb': 'Read ahead (MB)',
     'max_connections_per_file': 'Max connections per file', 'buffer_memory_mb': 'Buffer memory (MB)',
     'idle_timeout_minutes': 'Connection idle timeout (minutes)', 'precache_mb': 'Pre-cache on open (MB)',
-    'warm_connections': 'Warm connections per server', 'webdav_enabled': 'Share the mount over WebDAV',
+    'warm_connections': 'Warm connections per server', 'primary_load_mode': 'Primary server load', 'webdav_enabled': 'Share the mount over WebDAV',
     'webdav_port': 'WebDAV port', 'webdav_username': 'WebDAV username', 'webdav_password': 'WebDAV password', 'plex_prewarm': 'Show precache (fetch the start of the next episode while one plays)',
     'prewarm_trigger_percent': 'Start at (% watched)', 'prewarm_percent': 'Fetch (% of next episode)',
     'prewarm_max_mb': 'Fetch at most (MB)', 'playback_reserve_percent': 'Playback connection reserve %',
@@ -185,7 +185,7 @@ def _coerce(key, spec, value):
 def _merge_servers(new_list, old_list) -> list:
     """Validate the edited server rows; an empty password keeps the old one
     (matched by host + username, else by position)."""
-    from utilities.builtin_engine import servers
+    from utilities.builtin_engine import servers, server_enabled
     old = [s for s in _servers(old_list) if isinstance(s, dict)]
     out = []
     for i, s in enumerate(new_list or []):
@@ -197,6 +197,8 @@ def _merge_servers(new_list, old_list) -> list:
         row = {'host': host, 'port': s.get('port') or 563, 'ssl': bool(s.get('ssl', True)),
                'username': str(s.get('username') or '').strip(), 'connections': s.get('connections') or 10,
                'backup': bool(s.get('backup', False)), 'password': str(s.get('password') or ''),
+               # Off: kept with its settings but not given to the engine.
+               'enabled': server_enabled(s),
                # Servers sharing an article store (same backbone name) answer
                # "missing" for each other: the engine asks only one of them.
                'backbone': str(s.get('backbone') or '').strip()}

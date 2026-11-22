@@ -478,6 +478,14 @@ def handle_state_change(item: Dict[str, Any]) -> None:
             # Run CineSync for items
             run_cinesync(dict(fresh_item))
             
+            # The file is new or replaced: its embedded subtitle tracks must be
+            # read again from the media server, not from the cache
+            try:
+                from .plex_subtitle_info import forget as _forget_embedded
+                _forget_embedded(dict(fresh_item))
+            except Exception:
+                pass
+
             # Run subtitle downloader
             try:
                 file_path = fresh_item.get('location_on_disk')
@@ -488,7 +496,14 @@ def handle_state_change(item: Dict[str, Any]) -> None:
                     # sidecar .srt can't be written next to it. Download subtitles
                     # and upload them to the Plex item via API (keyed on the stored
                     # ratingKey). Storage-agnostic — works for zurg/nzbdav/climount.
-                    rk = fresh_item.get('ms_item_id')
+                    rk = None
+                    if fresh_item.get('ms_item_id'):
+                        # episodes store their show's ratingKey; upload to the episode
+                        try:
+                            from .plex_subtitle_info import rating_key as _plex_rk
+                            rk = _plex_rk(dict(fresh_item))
+                        except Exception:
+                            rk = None
                     if rk:
                         # The on-disk file is often obfuscated (e.g. tGcr.mkv) on
                         # debrid/usenet mounts; the release folder name carries the
@@ -499,13 +514,14 @@ def handle_state_change(item: Dict[str, Any]) -> None:
                                      or _os_sub.path.basename(_os_sub.path.dirname(file_path)) or None)
                         logging.info("Running subtitle downloader (Plex API upload mode).")
                         from .downsub import main as downsub_main
-                        downsub_main(file_path, rating_key=str(rk), name_hint=name_hint)
+                        downsub_main(file_path, rating_key=str(rk), name_hint=name_hint,
+                                     item=dict(fresh_item))
                     else:
                         logging.info("Plex-mode subtitle upload skipped: item has no Plex ratingKey (ms_item_id) yet")
                 else:
                     logging.info("Running subtitle downloader - this may take some time if it has never been run.")
                     from .downsub import main as downsub_main
-                    downsub_main(file_path)
+                    downsub_main(file_path, item=dict(fresh_item))
             except Exception as e:
                 logging.error(f"Failed to run subtitle downloader: {str(e)}")
                 logging.exception("Subtitle downloader traceback:")

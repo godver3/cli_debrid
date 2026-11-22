@@ -608,6 +608,8 @@ func (a *api) stats(w http.ResponseWriter, r *http.Request) {
 		"articles":         articles,
 		"articles_missing": missing,
 		"mem_cache":        map[string]int64{"segments": int64(segs), "bytes": memBytes},
+		// Live reads that stopped waiting on a slow background fetch.
+		"hedges": map[string]int64{"started": a.e.Cache.Hedges.Load(), "won": a.e.Cache.HedgeWins.Load()},
 	}
 	out["debrid"] = stream.RemoteStats()
 	out["usage"] = a.e.Usage.Summaries()

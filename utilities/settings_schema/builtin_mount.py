@@ -45,6 +45,12 @@ SECTIONS = {
             "description": "Built-in mount only. Warm connections per server: kept open and logged in ahead of time so playback doesn't wait for a new connection (backup servers excluded; 0 = off).",
             "default": 2
         },
+        "primary_load_mode": {
+            "type": "string",
+            "description": "Built-in mount only. Primary server load: Fill first uses your first primary server until all its connections are busy and only then the next one. Balanced spreads every request over all primary servers by how busy each is, so each carries load in proportion to its connections. Backup servers are never part of it: they are still only asked for articles the primaries don't have. A server that keeps missing a file's articles is asked last for that file. Only use Balanced when every primary is an unlimited account: a block (pay per GB) account set as a primary would carry a share of all traffic and burn its data. Put block accounts as Backup instead. Takes effect when the mount restarts.",
+            "default": "fill",
+            "choices": ["fill", "balanced"]
+        },
         "playback_reserve_percent": {
             "type": "integer",
             "description": "Built-in mount only. Playback connection reserve: % of each server's connections that only playback may use; read-ahead, imports and health checks never take them (0 = off).",

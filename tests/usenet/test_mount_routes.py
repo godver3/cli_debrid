@@ -91,6 +91,16 @@ class MountRoutesTests(unittest.TestCase):
         from utilities.builtin_engine import servers
         self.assertNotIn('expires', json.dumps(servers({'servers': saved})))
 
+    def test_server_on_off_is_saved_and_password_kept(self):
+        rows = [dict(SERVERS[0], password='', enabled=False)] + [dict(s, password='') for s in SERVERS[1:]]
+        code, body = self.save({'servers': rows})
+        self.assertEqual(code, 200, body)
+        saved = json.loads(self.store['Built-in Mount']['servers'])
+        self.assertEqual([(s['host'], s['enabled'], s['password']) for s in saved][0], ('news.a', False, 'pa'))
+        self.assertTrue(all(s['enabled'] for s in saved[1:]), 'rows without the flag stay on')
+        self.assertFalse(mr._public_settings()['servers'][0]['enabled'])
+        self.sync.assert_called_once()
+
     def test_bad_plan_end_is_rejected(self):
         before = self.store['Built-in Mount']['servers']
         code, body = self.save({'servers': [dict(SERVERS[0], expires='31/12/2026')]})

@@ -181,6 +181,18 @@ class BuiltinClientTests(unittest.TestCase):
         self.engine.routes[('DELETE', '/jobs/rd-LQL6O4QJXWDRK/health')] = _Resp(204)
         self.assertEqual(self.c.delete_repair_health('The Rings Of Power Season 2'), 200)
 
+    def test_health_summary_splits_usenet_and_debrid(self):
+        """Usenet tab showed '4 broken' from debrid jobs and 0 unknown for
+        never-checked jobs (2026-11-22 test image)."""
+        dj = self._with_debrid_job()
+        dj['health'] = {'status': 'broken', 'broken_files': [{'file_name': 'x.mp4', 'reason': 'hoster_unavailable'}]}
+        unchecked = {'id': 'j3', 'name': 'New.Movie', 'status': 'ready', 'path': '/mnt/clid/__all__/New.Movie'}
+        self.engine.routes[('GET', '/jobs')] = _Resp(200, [JOB, dj, unchecked])
+        self.assertEqual(self.c.get_health_summary(), {'broken': 1, 'unknown': 1})
+        self.assertEqual(self.c.health_counts('debrid'), {'broken': 1})
+        self.assertIn(('GET', '/jobs', {'params': {'status': 'ready'}}),
+                      [(m, p, {k: v for k, v in kw.items() if k == 'params'}) for m, p, kw in self.engine.calls])
+
     def test_debug_stats_shape(self):
         st = self.c.get_debug_stats()
         self.assertEqual(st['usenet']['pool'], {'active': 3, 'idle': 2, 'max_connections': 25})
@@ -311,6 +323,20 @@ class EngineManagerTests(unittest.TestCase):
             s['Built-in Mount']['servers'] = bad
             with self.assertRaises(ValueError):
                 self.be.servers(s['Built-in Mount'])
+
+    def test_turned_off_server_is_kept_but_not_given_to_the_engine(self):
+        s = self.settings()
+        s['Built-in Mount']['servers'] = json.dumps([
+            {'host': 'news.a', 'connections': 30},
+            {'host': 'news.slow', 'connections': 40, 'enabled': False},
+            {'host': 'news.b', 'enabled': 'true'}])
+        self.assertEqual([p['host'] for p in self.be.build_config(s)['providers']], ['news.a', 'news.b'])
+        self.assertEqual(len(self.be.server_rows(s['Built-in Mount'])), 3)
+        s['Built-in Mount']['servers'] = json.dumps([{'host': 'news.a', 'enabled': False}])
+        self.assertEqual(self.be.servers(s['Built-in Mount']), [])
+        s['Built-in Mount']['servers'] = json.dumps([{'host': 'news.a', 'port': 'abc', 'enabled': False}])
+        with self.assertRaises(ValueError):  # off rows are still validated
+            self.be.servers(s['Built-in Mount'])
 
     def test_user_stop_survives_sync_until_start(self):
         self.state = 'RUNNING'

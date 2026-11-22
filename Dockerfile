@@ -2,7 +2,7 @@
 #
 # Multi-stage build. Layers are ordered from least to most frequently changed
 # so a code-only change rebuilds just the final `COPY . .` layer:
-#   apt runtime deps -> python venv -> patchright chromium -> node_modules -> app
+#   apt runtime deps -> python venv -> node_modules -> app
 # Compilers live only in the builder stages and never reach the runtime image.
 
 # ---------------------------------------------------------------------------
@@ -89,25 +89,14 @@ WORKDIR /app
 # at runtime is listed explicitly: psmisc (fuser) and procps (ps), both used by
 # routes/program_operation_routes.py.
 #
-# xvfb + Chromium runtime deps are for the Cloudflare-challenge bypass browser
-# (see utilities/cloudflare_bypass.py) — headless mode alone fails the
-# challenge, so a real headed browser under a virtual display is required.
-# Installed explicitly (not via `patchright install --with-deps`) because that
-# command's OS detection doesn't recognize Debian trixie and falls back to
-# Ubuntu 20.04 package names, two of which don't exist on trixie.
-#
-# fonts-dejavu-core: last-resort system-font fallback for poster overlay text
-# (see overlays/font_manager.py's _LOCAL_FONT_MAP).
+# fonts-liberation + fonts-dejavu-core: system-font fallbacks for poster
+# overlay text (see overlays/font_manager.py's _LOCAL_FONT_MAP).
 #
 # fuse3 (fusermount3): the optional built-in mount engine.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         gosu ffmpeg psmisc procps \
-        xvfb xauth fonts-liberation fonts-unifont libnss3 libnspr4 libatk1.0-0 \
-        libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 libxcomposite1 \
-        libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2 libpango-1.0-0 \
-        libcairo2 libatspi2.0-0 \
-        fonts-dejavu-core \
+        fonts-liberation fonts-dejavu-core \
         fuse3 && \
     (grep -q '^user_allow_other' /etc/fuse.conf || echo user_allow_other >> /etc/fuse.conf) && \
     apt-get clean && \
@@ -117,8 +106,7 @@ ENV PUID=0 \
     PGID=0 \
     TERM=xterm \
     VIRTUAL_ENV=/opt/venv \
-    PATH=/opt/venv/bin:$PATH \
-    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+    PATH=/opt/venv/bin:$PATH
 
 COPY --from=pybuild /opt/venv /opt/venv
 
@@ -128,14 +116,6 @@ COPY --from=node /usr/local/bin/node /usr/local/bin/node
 COPY --from=node /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
 RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
     ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
-
-# Chromium for patchright, installed to a fixed, UID-independent path instead
-# of the default $HOME-based cache: the entrypoint runs the app as `appuser`
-# (HOME=/app) whenever a custom PUID/PGID is set, which would otherwise look for
-# the browser under /app/.cache/ms-playwright and fail with "Executable doesn't
-# exist".
-RUN patchright install chromium && \
-    chmod -R a+rX /ms-playwright
 
 RUN mkdir -p /user/db_content /user/config /user/logs /etc/supervisor/conf.d && \
     touch /user/logs/debug.log && \

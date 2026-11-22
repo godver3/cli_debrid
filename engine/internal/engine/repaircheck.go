@@ -130,7 +130,7 @@ func (e *Engine) runDebridCheck(id string) {
 		// Proof from playback stays unless this check covered the file.
 		if j.Health != nil {
 			for _, b := range j.Health.Broken {
-				if b.Via == "playback" && !hasBroken(h.Broken, b.Name) {
+				if readProof(b) && !hasBroken(h.Broken, b.Name) {
 					h.Broken = append(h.Broken, b)
 					h.Status = health.Broken
 				}

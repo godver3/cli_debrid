@@ -69,3 +69,47 @@ func TestParseRejectsEmpty(t *testing.T) {
 		t.Fatal("empty NZB accepted")
 	}
 }
+
+// Some NZB writers leave subject empty and put the file description in
+// poster. Merging by (empty) subject glued every file into one blob.
+func TestEmptySubjectFilesStaySeparate(t *testing.T) {
+	n, err := Parse(strings.NewReader(`<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
+ <file poster="&quot;show.part01.rar&quot; yEnc (1/2)" date="1" subject="">
+  <groups><group>a.b</group></groups>
+  <segments><segment bytes="9" number="1">p1a@x</segment><segment bytes="9" number="2">p1b@x</segment></segments>
+ </file>
+ <file poster="&quot;show.part02.rar&quot; yEnc (1/1)" date="1">
+  <groups><group>a.b</group></groups>
+  <segments><segment bytes="9" number="1">p2a@x</segment></segments>
+ </file>
+ <file poster="someone@example" date="1" subject="">
+  <groups><group>a.b</group></groups>
+  <segments><segment bytes="9" number="1">u1@x</segment></segments>
+ </file>
+ <file poster="someone@example" date="1" subject="">
+  <groups><group>a.b</group></groups>
+  <segments><segment bytes="9" number="1">u2@x</segment></segments>
+ </file>
+</nzb>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(n.Files) != 4 {
+		t.Fatalf("%d files, want 4", len(n.Files))
+	}
+	names := map[string]bool{}
+	ids := map[string]bool{}
+	for _, f := range n.Files {
+		names[f.Name] = true
+		if len(f.Segments) == 0 || f.Segments[0].Number != 1 {
+			t.Fatalf("file %q segments %+v", f.Name, f.Segments)
+		}
+		ids[f.Segments[0].ID] = true
+	}
+	if !names["show.part01.rar"] || !names["show.part02.rar"] {
+		t.Fatalf("names %v", names)
+	}
+	if !ids["u1@x"] || !ids["u2@x"] {
+		t.Fatalf("unnamed files merged: %v", ids)
+	}
+}

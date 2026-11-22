@@ -478,15 +478,22 @@ class BuiltinClient(UnsupportedFeaturesMixin):
         logging.info(f'{_LOG} fetch_broken_items: {len(items)} broken')
         return items
 
-    def get_health_summary(self) -> dict:
-        code, body = self._call('GET', '/health')
-        if code != 200 or not isinstance(body, list):
-            return {}
+    def health_counts(self, protocol: str = 'usenet') -> dict:
+        """Health counts of the ready jobs of one kind ('usenet' or 'debrid').
+        A job that was never checked counts as unknown. /health lists only
+        jobs with a record, so it gave 0 unknown and put debrid jobs on the
+        Usenet tab."""
         counts: Dict[str, int] = {}
-        for j in body:
-            s = (j.get('health') or {}).get('status', 'unknown')
+        for j in self._jobs('ready'):
+            if (j.get('protocol') == 'debrid') != (protocol == 'debrid'):
+                continue
+            s = (j.get('health') or {}).get('status') or 'unknown'
             counts[s] = counts.get(s, 0) + 1
         return counts
+
+    def get_health_summary(self) -> dict:
+        """Usenet tab: NZB jobs only (debrid jobs are on the Debrid tab)."""
+        return self.health_counts('usenet')
 
     def trigger_health_check(self, entry_name: str) -> bool:
         job = self._job_by_folder(entry_name, usenet_only=True)

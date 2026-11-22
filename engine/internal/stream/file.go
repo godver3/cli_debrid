@@ -57,8 +57,8 @@ func Probe(ctx context.Context, f Fetcher, cache *Cache, file nzb.File) (Layout,
 	}
 	first := file.Segments[0]
 	var meta nntp.Meta
-	data, err := cache.DoCtx(ctx, first.ID, nntp.Live, func(ctx context.Context) ([]byte, error) {
-		d, m, err := f.Body(ctx, nntp.Live, first.ID)
+	data, err := cache.DoCtx(ctx, first.ID, nntp.Read, func(ctx context.Context) ([]byte, error) {
+		d, m, err := f.Body(ctx, nntp.Read, first.ID)
 		meta = m
 		return d, err
 	})
@@ -66,7 +66,7 @@ func Probe(ctx context.Context, f Fetcher, cache *Cache, file nzb.File) (Layout,
 		return Layout{}, &SegmentError{File: file.Name, Number: 1, ID: first.ID, Err: err}
 	}
 	if meta.FileSize == 0 { // served from cache by a concurrent Probe; refetch header cheaply
-		_, meta, err = f.Body(ctx, nntp.Live, first.ID)
+		_, meta, err = f.Body(ctx, nntp.Read, first.ID)
 		if err != nil {
 			return Layout{}, &SegmentError{File: file.Name, Number: 1, ID: first.ID, Err: err}
 		}
@@ -99,6 +99,9 @@ type File struct {
 	byNumber  map[int]nzb.Segment
 	readAhead int
 	slots     chan struct{} // caps concurrent prefetches for this file; nil = no cap
+	// miss: which providers keep lacking this file's articles (Balanced
+	// load mode asks them last).
+	miss nntp.MissHint
 
 	mu         sync.Mutex
 	prefetched map[int]bool // segments a read-ahead was already started for
@@ -193,7 +196,7 @@ func (r *File) segment(ctx context.Context, prio nntp.Priority, idx int) ([]byte
 	}
 	return r.cache.DoCtx(ctx, seg.ID, prio, func(ctx context.Context) ([]byte, error) {
 		// A server whose copy doesn't fit is skipped for the next one.
-		data, meta, err := fetchBody(ctx, r.fetch, prio, seg.ID, fits)
+		data, meta, err := fetchBody(nntp.WithMissHint(ctx, &r.miss), r.fetch, prio, seg.ID, fits)
 		if errors.Is(err, nntp.ErrMismatch) {
 			return nil, &SegmentError{File: r.name, Number: idx + 1, ID: seg.ID,
 				Err: fmt.Errorf("%w: no server has a copy at offset %d len %d (%v)", ErrLayout, wantOff, wantLen, err)}

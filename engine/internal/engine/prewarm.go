@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/godver3/cli_debrid/engine/internal/nntp"
+	"github.com/godver3/cli_debrid/engine/internal/stream"
 )
 
 var prewarming sync.Map // "job/file" -> struct{}: one prewarm per file at a time
@@ -66,7 +68,10 @@ func (e *Engine) Prewarm(jobID, file string, n int64) error {
 				}()
 				buf := make([]byte, chunk)
 				for off := range jobs {
-					r.ReadAtCtx(ctx, nntp.Prefetch, buf[:min(chunk, n-off)], off)
+					_, err := r.ReadAtCtx(ctx, nntp.Prefetch, buf[:min(chunk, n-off)], off)
+					if err != nil && ctx.Err() == nil && e.prewarmProof(jobID, file, err) {
+						cancel() // proven broken: the rest can't play either
+					}
 				}
 			}()
 		}
@@ -82,6 +87,29 @@ func (e *Engine) Prewarm(jobID, file string, n int64) error {
 		e.log.Info("prewarmed", "job", jobID, "file", file, "bytes", n, "took", time.Since(start).Round(time.Millisecond))
 	}()
 	return nil
+}
+
+// prewarmProof hands a prewarm read failure that is proof to the repair
+// system, as a playback read does (mount/core.go): every provider answered
+// "no such article", or the debrid service said the file is gone. Anything
+// else (timeouts, busy servers) proves nothing and is dropped. Before, a
+// dead next episode was only found when the viewer pressed play.
+func (e *Engine) prewarmProof(jobID, file string, err error) bool {
+	var dead *stream.DeadFileError
+	switch {
+	case nntp.IsNotFound(err):
+		seg := ""
+		var se *stream.SegmentError
+		if errors.As(err, &se) {
+			seg = se.ID
+		}
+		e.markBroken(jobID, file, ReasonSegmentMissing, "article missing on every provider during prewarm", seg, "prewarm")
+	case errors.As(err, &dead):
+		e.markBroken(jobID, file, dead.Reason, dead.Detail, "", "prewarm")
+	default:
+		return false
+	}
+	return true
 }
 
 // minPlausibleVideo: smaller files (subtitles, samples, NFOs) are never

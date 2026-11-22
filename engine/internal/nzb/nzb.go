@@ -130,6 +130,10 @@ func Parse(r io.Reader) (*NZB, error) {
 
 var yencCount = regexp.MustCompile(`(?i)yEnc\s*\((\d+)/(\d+)\)`)
 
+// posterLooksLikeSubject spots a file description ("x.part01.rar" yEnc
+// (1/50)) in a poster attribute, as opposed to an uploader name.
+var posterLooksLikeSubject = regexp.MustCompile(`(?i)yenc|"|\.par2|\.rar|\.r\d\d|\.7z|\.mkv|\.mp4|\.avi`)
+
 // announcedSegments reads N from a subject's "yEnc (1/N)".
 func announcedSegments(subject string) (int, bool) {
 	m := yencCount.FindStringSubmatch(subject)
@@ -170,9 +174,20 @@ func parseRaw(r io.Reader) (*nzbparser.Nzb, []int, error) {
 	for _, m := range x.Metadata {
 		out.Meta[m.Type] = m.Value
 	}
-	// Merge <file> entries with the same subject, as nzbparser does.
+	// Merge <file> entries with the same subject, as nzbparser does. Some
+	// NZB writers leave subject empty and put the file description in
+	// poster: take it from there, and never merge files that still have no
+	// subject (merging glued every file into one unreadable blob).
 	at := map[string]int{}
 	for _, f := range x.Files {
+		if strings.TrimSpace(f.Subject) == "" {
+			if posterLooksLikeSubject.MatchString(f.Poster) {
+				f.Subject = f.Poster
+			} else {
+				out.Files = append(out.Files, f)
+				continue
+			}
+		}
 		if i, ok := at[f.Subject]; ok {
 			out.Files[i].Segments = append(out.Files[i].Segments, f.Segments...)
 			continue

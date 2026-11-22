@@ -182,7 +182,7 @@ func Build(ctx context.Context, f stream.Fetcher, cache *stream.Cache, n *nzb.NZ
 		}
 		p.sf = stream.Open(f, cache, p.file, p.layout, stream.ReadAhead{})
 		p.head = make([]byte, min(int64(par2.HashLen), p.layout.Size))
-		if _, err := p.sf.ReadAtCtx(ctx, nntp.Live, p.head, 0); err != nil && err != io.EOF {
+		if _, err := p.sf.ReadAtCtx(ctx, nntp.Read, p.head, 0); err != nil && err != io.EOF {
 			p.err = err
 		}
 	}
@@ -193,6 +193,17 @@ func Build(ctx context.Context, f stream.Fetcher, cache *stream.Cache, n *nzb.NZ
 		}
 	}
 	parallel(ctx, todo, opt.Parallel, probe)
+	// A file the NZB gives no name (empty subject) takes its yEnc header
+	// name; an empty name below means "PAR2 index, consumed", so a file
+	// left nameless would be dropped without a word.
+	for _, p := range todo {
+		if strings.TrimSpace(p.name) == "" {
+			p.name = strings.TrimSpace(p.layout.YencName)
+			if p.name == "" {
+				p.name = fmt.Sprintf("unnamed-%03d", p.idx+1)
+			}
+		}
+	}
 
 	res := &Result{}
 	note := func(format string, a ...any) { res.Notes = append(res.Notes, fmt.Sprintf(format, a...)) }
@@ -210,7 +221,7 @@ func Build(ctx context.Context, f stream.Fetcher, cache *stream.Cache, n *nzb.NZ
 			continue // an index file is small; this is a recovery volume
 		}
 		buf := make([]byte, p.layout.Size)
-		if _, err := p.sf.ReadAtCtx(ctx, nntp.Live, buf, 0); err == nil || err == io.EOF {
+		if _, err := p.sf.ReadAtCtx(ctx, nntp.Read, buf, 0); err == nil || err == io.EOF {
 			descs = append(descs, par2.Parse(buf)...)
 		}
 		p.name = "" // consumed; never shown
@@ -230,6 +241,37 @@ func Build(ctx context.Context, f stream.Fetcher, cache *stream.Cache, n *nzb.NZ
 	}
 	if len(descs) > 0 || renamed > 0 {
 		note("PAR2 index lists %d files, %d posted files renamed from it", len(descs), renamed)
+	}
+	// Files the PAR2 recovery set lists that the NZB never posted (an
+	// episode missing from a pack). Missing archive volumes already fail
+	// their set; this only says why a plain file is absent.
+	if len(descs) > 0 {
+		posted := map[string]bool{}
+		listed := map[string]bool{}
+		for _, d := range descs {
+			listed[strings.ToLower(path.Base(d.Name))] = true
+		}
+		unmatched := 0 // posted files PAR2 couldn't name (a failed probe): could be any absent one
+		for _, p := range todo {
+			k := strings.ToLower(path.Base(p.name))
+			posted[k] = true
+			if p.name != "" && !listed[k] {
+				unmatched++
+			}
+		}
+		var absent []string
+		for _, d := range descs {
+			if !posted[strings.ToLower(path.Base(d.Name))] {
+				absent = append(absent, d.Name)
+			}
+		}
+		if len(absent) > unmatched {
+			sort.Strings(absent)
+			if len(absent) > 10 {
+				absent = append(absent[:10], fmt.Sprintf("and %d more", len(absent)-10))
+			}
+			note("PAR2 lists files the NZB does not post: %s", strings.Join(absent, ", "))
+		}
 	}
 	// Without PAR2, a yEnc header name beats an obfuscated subject.
 	for _, p := range candFiles {
@@ -333,11 +375,11 @@ func Build(ctx context.Context, f stream.Fetcher, cache *stream.Cache, n *nzb.NZ
 	sort.Strings(keys)
 	for _, k := range keys {
 		vols := rarSets[k]
-		set, err := archive.OpenRARPassword(ctx, volumesOf(vols), opt.Parallel, opt.Password)
+		set, err := archive.OpenRARPassword(ctx, volumesOf(ctx, vols), opt.Parallel, opt.Password)
 		addSet(setLabel(vols), vols, set, err)
 	}
 	if len(sevenZ) > 0 {
-		set, err := archive.OpenSevenZipPassword(volumesOf(sevenZ), opt.Password)
+		set, err := archive.OpenSevenZipPassword(volumesOf(ctx, sevenZ), opt.Password)
 		addSet(setLabel(sevenZ), sevenZ, set, err)
 	}
 	zipKeys := make([]string, 0, len(zipSets))
@@ -347,7 +389,7 @@ func Build(ctx context.Context, f stream.Fetcher, cache *stream.Cache, n *nzb.NZ
 	sort.Strings(zipKeys)
 	for _, k := range zipKeys {
 		vols := zipSets[k]
-		set, err := archive.OpenZip(volumesOf(vols))
+		set, err := archive.OpenZip(volumesOf(ctx, vols))
 		addSet(setLabel(vols), vols, set, err)
 	}
 
@@ -375,7 +417,7 @@ func Build(ctx context.Context, f stream.Fetcher, cache *stream.Cache, n *nzb.NZ
 		for _, e := range res.Entries {
 			if e.FromArchive != "" && e.Size >= mediaHeaderLen {
 				head := make([]byte, mediaHeaderLen)
-				if _, err := fs.Entry(e).ReadAtCtx(ctx, nntp.Live, head, 0); err == nil && !mediaHeaderValid(e.Name, head) {
+				if _, err := fs.Entry(e).ReadAtCtx(ctx, nntp.Read, head, 0); err == nil && !mediaHeaderValid(e.Name, head) {
 					res.Failures = append(res.Failures, Failure{Name: e.Name, Size: e.Size,
 						Error: fmt.Sprintf("%v (starts %x)", ErrBadMediaHeader, head)})
 					failedArchive = max(failedArchive, e.Size)
@@ -491,7 +533,7 @@ func unnestRAR(ctx context.Context, res *Result, todo []*posted, parallel int, p
 		var total int64
 		for i, ei := range idxs {
 			e := res.Entries[ei]
-			vols[i] = archive.Volume{Name: e.Name, R: fs.Entry(e), Size: e.Size, ID: ei}
+			vols[i] = archive.Volume{Name: e.Name, R: importRead(ctx, fs.Entry(e)), Size: e.Size, ID: ei}
 			total += e.Size
 		}
 		label := res.Entries[idxs[0]].Name
@@ -582,12 +624,28 @@ func LeftoverOnly(largestKept, largestFailed int64) bool {
 	return largestFailed > 0 && float64(largestKept) < leftoverRatio*float64(largestFailed)
 }
 
-func volumesOf(ps []*posted) []archive.Volume {
+func volumesOf(ctx context.Context, ps []*posted) []archive.Volume {
 	vols := make([]archive.Volume, len(ps))
 	for i, p := range ps {
-		vols[i] = archive.Volume{Name: p.name, R: p.sf, Size: p.layout.Size, ID: p.idx}
+		vols[i] = archive.Volume{Name: p.name, R: importRead(ctx, p.sf), Size: p.layout.Size, ID: p.idx}
 	}
 	return vols
+}
+
+// importReader is the io.ReaderAt the archive parsers get during an
+// import. Its reads are nntp.Read, not the live reads a plain ReadAt
+// makes: an import (a season pack walks every volume's headers) goes
+// ahead of prefetch but can't take the playback reserve or rank with a
+// player's reads. They also stop when the import is cancelled.
+type importReader struct {
+	ctx context.Context
+	r   sourceReader
+}
+
+func importRead(ctx context.Context, r sourceReader) importReader { return importReader{ctx, r} }
+
+func (i importReader) ReadAt(p []byte, off int64) (int, error) {
+	return i.r.ReadAtCtx(i.ctx, nntp.Read, p, off)
 }
 
 func setLabel(ps []*posted) string {

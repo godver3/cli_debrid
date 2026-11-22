@@ -1,11 +1,11 @@
-"""FlixPatrol top-10 lists."""
+"""Streaming Top 10 lists (JustWatch charts; routes keep their old /api/flixpatrol paths)."""
 
 import logging
 import requests
 from datetime import datetime
 from flask import jsonify, request
 from utilities.settings import get_setting
-from utilities.flixpatrol_api import get_available_platforms as get_flixpatrol_platforms, fetch_top10 as fetch_flixpatrol_top10, fetch_top10_weekly as fetch_flixpatrol_top10_weekly
+from utilities.streaming_top10_api import get_available_platforms as get_flixpatrol_platforms, fetch_top10 as fetch_flixpatrol_top10, fetch_top10_weekly as fetch_flixpatrol_top10_weekly
 from routes.models import user_required
 from ._common import _FLIXPATROL_TTL, _FLIXPATROL_WEEKLY_TTL, _flixpatrol_cache, _flixpatrol_cache_lock, discover_bp
 from .enrich import add_db_status_and_episode_info
@@ -22,7 +22,7 @@ def flixpatrol_cache_clear():
 @user_required
 def flixpatrol_platforms():
     """
-    Get available streaming platforms for FlixPatrol Top 10.
+    Get available streaming platforms for Top 10.
     No API key required.
     """
     try:
@@ -36,8 +36,8 @@ def flixpatrol_platforms():
 @user_required
 def flixpatrol_top10(platform):
     """
-    Get Top 10 content from FlixPatrol for a specific streaming platform.
-    No API key required - scrapes public FlixPatrol data.
+    Get Top 10 content for a specific streaming platform.
+    No API key required - JustWatch public streaming charts.
 
     Args:
         platform: Platform key (netflix, disney, amazon, hbo, apple, paramount, hulu, peacock)
@@ -73,15 +73,15 @@ def flixpatrol_top10(platform):
                 title = item.get('title', '')
                 media_type = item.get('media_type', 'movie')
                 rank = item.get('rank')
-                flixpatrol_url = item.get('flixpatrol_url')
 
                 # Search TMDB by title directly (faster than FlixPatrol ID lookup)
-                tmdb_id = None
+                # JustWatch charts carry the TMDB ID; title search is only a fallback
+                tmdb_id = item.get('tmdb_id')
                 try:
                     # For unknown media_type (US platforms), try movie first then tv
                     search_types = ['movie', 'tv'] if media_type == 'unknown' else [media_type if media_type == 'tv' else 'movie']
 
-                    for search_type in search_types:
+                    for search_type in ([] if tmdb_id else search_types):
                         search_url = f"https://api.themoviedb.org/3/search/{search_type}?api_key={tmdb_api_key}&query={requests.utils.quote(title)}&page=1"
                         search_response = requests.get(search_url, timeout=5)
                         if search_response.status_code == 200:
@@ -100,7 +100,6 @@ def flixpatrol_top10(platform):
                         'media_type': media_type if media_type != 'unknown' else 'movie',
                         'rank': rank,
                         'db_status': 'unknown',
-                        'flixpatrol_url': flixpatrol_url
                     }
 
                 # Fetch TMDB details
@@ -134,7 +133,6 @@ def flixpatrol_top10(platform):
                             'origin_country': tmdb_data.get('origin_country', []),
                             'company_ids': company_ids,
                             'rank': rank,
-                            'flixpatrol_url': flixpatrol_url,
                             '_tmdb_id': tmdb_id  # Keep for db status lookup
                         }
                 except Exception as e:
@@ -146,7 +144,6 @@ def flixpatrol_top10(platform):
                     'media_type': media_type,
                     'db_status': 'unknown',
                     'rank': rank,
-                    'flixpatrol_url': flixpatrol_url,
                     '_tmdb_id': tmdb_id
                 }
 
@@ -204,7 +201,7 @@ def flixpatrol_top10(platform):
 @user_required
 def flixpatrol_top10_weekly(platform):
     """
-    Get weekly aggregated Top 10 from FlixPatrol (last 7 days, scored by rank).
+    Get this week's Top 10 for a platform.
     Cached for 24 hours since the data changes daily at most.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -233,11 +230,11 @@ def flixpatrol_top10_weekly(platform):
                 title = item.get('title', '')
                 media_type = item.get('media_type', 'movie')
                 rank = item.get('rank')
-                flixpatrol_url = item.get('flixpatrol_url')
-                tmdb_id = None
+                # JustWatch charts carry the TMDB ID; title search is only a fallback
+                tmdb_id = item.get('tmdb_id')
                 try:
                     search_types = ['movie', 'tv'] if media_type == 'unknown' else [media_type if media_type == 'tv' else 'movie']
-                    for search_type in search_types:
+                    for search_type in ([] if tmdb_id else search_types):
                         sr = requests.get(
                             f"https://api.themoviedb.org/3/search/{search_type}?api_key={tmdb_api_key}&query={requests.utils.quote(title)}&page=1",
                             timeout=5)
@@ -248,7 +245,7 @@ def flixpatrol_top10_weekly(platform):
                 except Exception:
                     pass
                 if not tmdb_id:
-                    return {'id': None, 'title': title, 'media_type': media_type, 'rank': rank, 'db_status': 'unknown', 'flixpatrol_url': flixpatrol_url}
+                    return {'id': None, 'title': title, 'media_type': media_type, 'rank': rank, 'db_status': 'unknown'}
                 try:
                     ep = 'tv' if media_type == 'tv' else 'movie'
                     dr = requests.get(f"https://api.themoviedb.org/3/{ep}/{tmdb_id}?api_key={tmdb_api_key}&language=en-US", timeout=5)
@@ -269,12 +266,11 @@ def flixpatrol_top10_weekly(platform):
                             'origin_country': d.get('origin_country', []),
                             'company_ids': [c['id'] for c in d.get('production_companies', [])],
                             'rank': rank,
-                            'flixpatrol_url': flixpatrol_url,
                             '_tmdb_id': tmdb_id,
                         }
                 except Exception:
                     pass
-                return {'id': tmdb_id, 'title': title, 'media_type': media_type, 'db_status': 'unknown', 'rank': rank, 'flixpatrol_url': flixpatrol_url, '_tmdb_id': tmdb_id}
+                return {'id': tmdb_id, 'title': title, 'media_type': media_type, 'db_status': 'unknown', 'rank': rank, '_tmdb_id': tmdb_id}
 
             with ThreadPoolExecutor(max_workers=10) as executor:
                 future_to_idx = {executor.submit(enrich_item, item): idx for idx, item in enumerate(items)}

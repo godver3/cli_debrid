@@ -1,6 +1,6 @@
 <div class="onboarding-container">
     <div class="onboarding-navigation">
-        {% set step_num = current_step if current_step != '3a' else 3.5 %}
+        {% set step_num = 3.5 if current_step == '3a' else (5.5 if current_step == '5a' else current_step) %}
         {% if step_num|float > 1 %}
             <button class="prev-step-btn onboarding-btn">Previous Step</button>
         {% endif %}
@@ -48,6 +48,10 @@ document.addEventListener('DOMContentLoaded', function() {
             const currentStep = '{{ current_step }}';
             if (currentStep === '4') {
                 window.location.href = '{{ url_for("onboarding.onboarding_step", step="3a") }}';
+            } else if (currentStep === '6') {
+                window.location.href = '{{ url_for("onboarding.onboarding_step", step="5a") }}';
+            } else if (currentStep === '5a') {
+                window.location.href = '{{ url_for("onboarding.onboarding_step", step=5) }}';
             } else if (currentStep === '3a') {
                 window.location.href = '{{ url_for("onboarding.onboarding_step", step=3) }}';
             } else {
@@ -70,6 +74,19 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (!this.disabled) {
                     window.location.href = '{{ url_for("onboarding.onboarding_step", step=4) }}';
                 }
+            });
+        } else if (currentStep === '5') {
+            nextStepBtn.addEventListener('click', function() {
+                if (!this.disabled) {
+                    window.location.href = '{{ url_for("onboarding.onboarding_step", step="5a") }}';
+                }
+            });
+        } else if (currentStep === '5a') {
+            // The step saves (or skips) first, then moves on itself.
+            nextStepBtn.addEventListener('click', function() {
+                if (this.disabled) return;
+                const go = () => { window.location.href = '{{ url_for("onboarding.onboarding_step", step=6) }}'; };
+                if (window.saveSubtitleStep) { window.saveSubtitleStep().then(ok => { if (ok) go(); }); } else { go(); }
             });
         } else if (currentStep !== '2') {
             nextStepBtn.addEventListener('click', function() {

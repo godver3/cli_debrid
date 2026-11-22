@@ -101,6 +101,12 @@ def make_request(
         if remaining > 0:
             raise ProviderUnavailableError(
                 f"Torbox torrent adds paused for another {int(remaining) + 1}s after rate limiting")
+        # TorBox's allow_zip defaults to true: a torrent with 100+ files
+        # (big anime / complete-series packs) is then stored as one .zip,
+        # which can't be symlinked or streamed per episode. Every add path
+        # (magnet, .torrent upload, URL) goes through here.
+        data = dict(data or {})
+        data.setdefault('allow_zip', 'false')
     headers = kwargs.get('headers', {})
     headers['Authorization'] = f'Bearer {api_key}'
     kwargs['headers'] = headers

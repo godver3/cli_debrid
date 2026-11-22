@@ -127,10 +127,86 @@ func volumeOrder(vols []Volume, infos []*VolumeInfo) ([]int, bool) {
 		sort.SliceStable(order, func(a, b int) bool { return infos[order[a]].Number < infos[order[b]].Number })
 		return order, true
 	}
+	if grouped, ok := orderBySets(vols, infos); ok {
+		return grouped, true
+	}
 	sort.SliceStable(order, func(a, b int) bool {
 		return volumeNameKey(vols[order[a]].Name) < volumeNameKey(vols[order[b]].Name)
 	})
 	return order, false
+}
+
+// orderBySets handles volumes of several RAR sets given as one (obfuscated
+// names, no PAR2: one set per episode of a pack). Volumes holding a part of
+// the same member belong to one set; each set must then have distinct header
+// volume numbers, and comes out in that order, sets one after another
+// (ordered by their first member's name). Without that proof it reports
+// false and the caller falls back to name order.
+func orderBySets(vols []Volume, infos []*VolumeInfo) ([]int, bool) {
+	parent := make([]int, len(vols))
+	for i := range parent {
+		parent[i] = i
+	}
+	var find func(int) int
+	find = func(i int) int {
+		for parent[i] != i {
+			parent[i] = parent[parent[i]]
+			i = parent[i]
+		}
+		return i
+	}
+	owner := map[string]int{}
+	for i, in := range infos {
+		if in.Number < 0 {
+			return nil, false
+		}
+		for _, p := range in.Parts {
+			if p.Dir {
+				continue
+			}
+			if j, ok := owner[p.Name]; ok {
+				parent[find(i)] = find(j)
+			} else {
+				owner[p.Name] = i
+			}
+		}
+	}
+	groups := map[int][]int{}
+	for i := range vols {
+		groups[find(i)] = append(groups[find(i)], i)
+	}
+	if len(groups) < 2 {
+		return nil, false
+	}
+	type set struct {
+		key  string
+		vols []int
+	}
+	var sets []set
+	for _, g := range groups {
+		seen := map[int]bool{}
+		for _, i := range g {
+			if seen[infos[i].Number] {
+				return nil, false
+			}
+			seen[infos[i].Number] = true
+		}
+		// No member spans two groups, so a set split in two (a member
+		// ending exactly on a volume boundary) or a missing volume still
+		// stitches right: gaps leave members incomplete, as they should.
+		sort.SliceStable(g, func(a, b int) bool { return infos[g[a]].Number < infos[g[b]].Number })
+		key := vols[g[0]].Name
+		if ps := infos[g[0]].Parts; len(ps) > 0 {
+			key = ps[0].Name
+		}
+		sets = append(sets, set{key, g})
+	}
+	sort.SliceStable(sets, func(a, b int) bool { return sets[a].key < sets[b].key })
+	var order []int
+	for _, s := range sets {
+		order = append(order, s.vols...)
+	}
+	return order, true
 }
 
 var (

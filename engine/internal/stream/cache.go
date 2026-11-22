@@ -3,8 +3,10 @@ package stream
 import (
 	"container/list"
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/godver3/cli_debrid/engine/internal/nntp"
 )
@@ -19,6 +21,13 @@ type Cache struct {
 	ll       *list.List
 	items    map[string]*list.Element
 	inflight map[string]*call
+
+	// fetchNs: moving average of how long an article fetch takes once on
+	// the wire, for the live hedge (see hedgeAfter).
+	fetchNs atomic.Int64
+	// Hedges counts live reads that stopped waiting for a slow background
+	// fetch and asked themselves; HedgeWins how many of those finished first.
+	Hedges, HedgeWins atomic.Int64
 }
 
 type entry struct {
@@ -27,12 +36,54 @@ type entry struct {
 }
 
 type call struct {
-	done    chan struct{}
-	data    []byte
-	err     error
-	prio    nntp.Priority
-	started atomic.Bool // the fetch holds a connection (left the queue)
+	done      chan struct{}
+	data      []byte
+	err       error
+	prio      nntp.Priority
+	started   atomic.Bool  // the fetch holds a connection (left the queue)
+	startedAt atomic.Int64 // unix ns it got there (or reached the head of a pipeline)
 }
+
+func (cl *call) markStarted() {
+	if !cl.started.Swap(true) {
+		cl.startedAt.Store(time.Now().UnixNano())
+	}
+}
+
+// Live hedge (Ether's liveHedgeDelay): a playback read that joined a
+// background fetch already on the wire stops waiting for it after
+// hedgeAfter and fetches the article itself; whichever answer comes first
+// is used. Before, it waited for the background fetch however long it
+// took, up to a provider's whole 30 s timeout on a stalled connection.
+// The wait scales with how long fetches normally take, so an ordinary
+// fetch on a full line is not downloaded twice. Vars for tests.
+var (
+	hedgeMin    = 400 * time.Millisecond
+	hedgeMax    = 8 * time.Second
+	hedgeFactor = int64(3)
+)
+
+// hedgeAfter is how long a live read waits on a joined background fetch.
+func (c *Cache) hedgeAfter() time.Duration {
+	return min(max(time.Duration(c.fetchNs.Load()*hedgeFactor), hedgeMin), hedgeMax)
+}
+
+func (c *Cache) noteFetch(cl *call) {
+	at := cl.startedAt.Load()
+	if at == 0 {
+		return
+	}
+	d := time.Now().UnixNano() - at
+	if old := c.fetchNs.Load(); old == 0 {
+		c.fetchNs.Store(d)
+	} else {
+		c.fetchNs.Store(old + (d-old)/8)
+	}
+}
+
+// hedgeable: usenet articles only. Debrid chunks share the cache but are
+// fetched (and stall) differently.
+func hedgeable(key string) bool { return !strings.HasPrefix(key, "remote:") }
 
 // Tier is a slower cache behind memory (the disk cache).
 type Tier interface {
@@ -68,8 +119,9 @@ func (c *Cache) Get(key string) ([]byte, bool) {
 // to the NNTP client so the cache learns when the request leaves the queue.
 //
 // A Live caller joins an in-flight Prefetch fetch only once that fetch is
-// on the wire. While it is still queued behind other prefetches the live
-// caller fetches on its own: a rare duplicate download beats a stall.
+// on the wire, and then only for hedgeAfter (see there). While it is still
+// queued behind other prefetches the live caller fetches on its own: a
+// rare duplicate download beats a stall.
 func (c *Cache) Do(key string, prio nntp.Priority, fetch func(ctx context.Context) ([]byte, error)) ([]byte, error) {
 	return c.DoCtx(context.Background(), key, prio, fetch)
 }
@@ -85,6 +137,9 @@ func (c *Cache) DoCtx(ctx context.Context, key string, prio nntp.Priority,
 	}
 	if cl, ok := c.inflight[key]; ok && (cl.prio >= prio || cl.started.Load()) {
 		c.mu.Unlock()
+		if cl.prio < prio && hedgeable(key) {
+			return c.joinOrHedge(ctx, key, prio, fetch, cl)
+		}
 		<-cl.done
 		if cl.err == nil || cl.prio >= prio {
 			return cl.data, cl.err
@@ -101,14 +156,29 @@ func (c *Cache) DoCtx(ctx context.Context, key string, prio nntp.Priority,
 			cl.data = d
 		}
 	}
+	fetched := false
 	if cl.data == nil {
-		cl.data, cl.err = fetch(nntp.WithAcquireHook(ctx, func() { cl.started.Store(true) }))
-		if cl.err == nil && c.disk != nil {
+		cl.data, cl.err = fetch(nntp.WithAcquireHook(ctx, cl.markStarted))
+		fetched = cl.err == nil
+	}
+	c.complete(key, cl, fetched)
+	return cl.data, cl.err
+}
+
+// complete publishes a finished call: memory, disk (fetched: it came from
+// the network) and its waiters. Exactly once per call.
+func (c *Cache) complete(key string, cl *call, fetched bool) {
+	if fetched {
+		if hedgeable(key) {
+			c.noteFetch(cl)
+		}
+		if c.disk != nil {
 			c.disk.Put(key, cl.data)
 		}
 	}
-	close(cl.done)
-
+	// Unlist (and cache) before waking waiters: one that retries on
+	// wake-up (a live read whose prefetch failed) must not find this
+	// finished call still in flight and spin on it.
 	c.mu.Lock()
 	if c.inflight[key] == cl {
 		delete(c.inflight, key)
@@ -117,7 +187,79 @@ func (c *Cache) DoCtx(ctx context.Context, key string, prio nntp.Priority,
 		c.put(key, cl.data)
 	}
 	c.mu.Unlock()
-	return cl.data, cl.err
+	close(cl.done)
+}
+
+// joinOrHedge waits on a lower-priority fetch already on the wire for up
+// to hedgeAfter from when it started, then fetches the article itself.
+func (c *Cache) joinOrHedge(ctx context.Context, key string, prio nntp.Priority,
+	fetch func(ctx context.Context) ([]byte, error), old *call) ([]byte, error) {
+	wait := c.hedgeAfter()
+	if at := old.startedAt.Load(); at != 0 {
+		wait -= time.Since(time.Unix(0, at))
+	}
+	if wait > 0 {
+		t := time.NewTimer(wait)
+		select {
+		case <-old.done:
+			t.Stop()
+			if old.err == nil {
+				return old.data, nil
+			}
+			return c.DoCtx(ctx, key, prio, fetch) // failed prefetch: own attempt
+		case <-ctx.Done():
+			t.Stop()
+			return nil, ctx.Err()
+		case <-t.C:
+		}
+	}
+	c.mu.Lock()
+	if el, ok := c.items[key]; ok {
+		c.ll.MoveToFront(el)
+		c.mu.Unlock()
+		return el.Value.(*entry).data, nil
+	}
+	if cur, ok := c.inflight[key]; ok && cur != old && cur.prio >= prio {
+		// Another live read already hedged: share its fetch.
+		c.mu.Unlock()
+		<-cur.done
+		return cur.data, cur.err
+	}
+	own := &call{done: make(chan struct{}), prio: prio}
+	c.inflight[key] = own
+	c.mu.Unlock()
+	c.Hedges.Add(1)
+
+	type result struct {
+		data []byte
+		err  error
+	}
+	res := make(chan result, 1)
+	hctx, hcancel := context.WithCancel(ctx)
+	defer hcancel() // the slow fetch won: stop downloading the article twice
+	go func() {
+		d, err := fetch(nntp.WithAcquireHook(hctx, own.markStarted))
+		res <- result{d, err}
+	}()
+	fetched := false
+	select {
+	case r := <-res:
+		own.data, own.err = r.data, r.err
+		fetched = r.err == nil
+		if fetched {
+			c.HedgeWins.Add(1)
+		}
+	case <-old.done:
+		if old.err == nil {
+			own.data = old.data // the slow fetch made it after all
+		} else {
+			r := <-res
+			own.data, own.err = r.data, r.err
+			fetched = r.err == nil
+		}
+	}
+	c.complete(key, own, fetched)
+	return own.data, own.err
 }
 
 // put stores data; caller holds mu.

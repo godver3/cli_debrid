@@ -148,7 +148,7 @@ SECTIONS = {
         "tab": "Additional Settings",
         "enable_subtitles": {
             "type": "boolean",
-            "description": "Enable automatic subtitle downloading for media files using 'downsub'. Works for both movies and TV shows.",
+            "description": "Download subtitles when an item is collected. Symlinked/Local writes a sidecar file; Plex mode uploads to the Plex item. Movies and TV shows.",
             "default": False
         },
         "apply_to_movies": {
@@ -178,7 +178,7 @@ SECTIONS = {
         },
         "opensubtitles_username": {
             "type": "string",
-            "description": "OpenSubtitles username for subtitle downloads",
+            "description": "OpenSubtitles.com username (free account). Needed to download from OpenSubtitles.com, the largest provider; also used for the legacy OpenSubtitles.org provider.",
             "default": "",
             "sensitive": False
         },
@@ -195,18 +195,40 @@ SECTIONS = {
         },
         "subtitle_providers": {
             "type": "list",
-            "description": "Select subtitle providers to use",
-            "default": ["opensubtitles", "opensubtitlescom", "podnapisi", "tvsubtitles"],
-            "choices": ["opensubtitles", "opensubtitlescom", "podnapisi", "tvsubtitles"]
+            "description": "Subtitle providers to search (none need a captcha). All selected providers are searched; the best match wins, then the closest release name, then the most downloaded. opensubtitlescom needs the OpenSubtitles login above to download; gestdown is an Addic7ed mirror (TV only); subtitulamos is Spanish; opensubtitles is the legacy .org API.",
+            "default": ["opensubtitlescom", "podnapisi", "gestdown", "tvsubtitles"],
+            "choices": ["opensubtitlescom", "subdl", "subsource", "podnapisi", "gestdown", "tvsubtitles", "subtitulamos", "bsplayer", "opensubtitles"]
+        },
+        "subdl_api_key": {
+            "type": "string",
+            "description": "SubDL API key (free: subdl.com account → API). Large catalog, strong for TV. Add 'subdl' to the providers to use it.",
+            "default": "",
+            "sensitive": True
+        },
+        "subsource_api_key": {
+            "type": "string",
+            "description": "SubSource API key (free: subsource.net profile → API). Large catalog. Add 'subsource' to the providers to use it.",
+            "default": "",
+            "sensitive": True
+        },
+        "text_subtitles_only": {
+            "type": "boolean",
+            "description": "Avoid subtitle formats that make Plex/Jellyfin/Emby transcode. Downloaded styled ASS/SSA subtitles are converted to plain SRT, and with the embedded probe on, an embedded image (PGS/VobSub) or styled track no longer counts as having that language, so an SRT is fetched.",
+            "default": False
         },
         "user_agent": {
             "type": "string",
             "description": "User agent for subtitle API requests",
             "default": "SubDownloader/1.0 (your-email@example.com)"
         },
+        "ignore_embedded_subtitles": {
+            "type": "boolean",
+            "description": "Never count subtitles embedded in the video file: every configured language is fetched as a separate subtitle (shown as missing until one is downloaded). Off: an embedded text track in a language (not forced, not commentary, not an image/styled format that makes players transcode) counts as having it.",
+            "default": False
+        },
         "probe_for_embedded_subtitles": {
             "type": "boolean",
-            "description": "Before searching for subtitles, probe the file with ffprobe to detect embedded subtitle tracks. If all configured languages are already embedded, the external search is skipped. Applies to built-in subtitle downloader and Bazarr. Requires ffprobe to be installed. Note: probing dereferences the symlink to the debrid mount — ensure your mount is stable before enabling.",
+            "description": "Skip languages the file already has as an embedded (non-forced) subtitle track; if all are embedded, the search and Bazarr notification are skipped. Reuses the add-time ffprobe playability check's header read when that's on, otherwise reads the file header once. Requires ffprobe. In Plex mode only the add-time check's result is used.",
             "default": False
         }
     },

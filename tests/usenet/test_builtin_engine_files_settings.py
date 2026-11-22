@@ -44,6 +44,12 @@ class FileSettingsTests(unittest.TestCase):
         with mock.patch.object(be, 'resolve_token', return_value='t'):
             self.assertEqual(be.build_config({'Built-in Mount': {}})['deobfuscate_mode'], 'season_ep')
 
+    def test_primary_load_mode(self):
+        with mock.patch.object(be, 'resolve_token', return_value='t'):
+            self.assertEqual(be.build_config({'Built-in Mount': {}})['primary_load_mode'], 'fill')
+            for v, want in (('balanced', 'balanced'), (' Balanced ', 'balanced'), ('fill', 'fill'), ('junk', 'fill')):
+                self.assertEqual(be.build_config({'Built-in Mount': {'primary_load_mode': v}})['primary_load_mode'], want)
+
 
 class InstallDefaultTests(unittest.TestCase):
     """New installs default to the built-in mount; existing configs keep cli_mount."""

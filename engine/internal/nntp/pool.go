@@ -2,6 +2,7 @@ package nntp
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -29,6 +30,15 @@ type pool struct {
 	queues  [3][]chan *slot // indexed by Priority
 	closed  bool
 	warming int // dials in progress for MinIdle
+	// While capUntil is ahead, no more than capConns connections are open
+	// ("too many connections" from the server; see throttle).
+	capConns int
+	capUntil time.Time
+	learned  int // connection limit the server stated, kept for the pool's life
+	// brk refuses new dials while a provider's login is refused or
+	// connecting keeps failing (breaker.go).
+	brk breaker
+	c   *Client // for logging; nil in tests that build a pool directly
 
 	// Per-provider counters for status pages.
 	articles, bytes, missing, errors atomic.Int64
@@ -36,15 +46,24 @@ type pool struct {
 	lastErr                          atomic.Value // string
 }
 
-// reserve is the number of connections only live reads may use.
-func (pl *pool) reserve() int {
-	return min(max(pl.p.Reserve, 0), pl.p.MaxConns-1)
-}
+// reserve is the number of connections only live reads may use, as
+// configured (status pages, speed test).
+func (pl *pool) reserve() int { return reserveOf(pl.p.Reserve, pl.p.MaxConns) }
+
+// reserveOf fits the reserve inside limit connections, leaving at least
+// one for other work.
+func reserveOf(reserve, limit int) int { return min(max(reserve, 0), limit-1) }
+
+// reserveLocked is the reserve inside the connections the pool may open
+// right now: while a "too many connections" throttle lowers the limit, the
+// reserve shrinks with it instead of background work taking every
+// connection that is left (mu held).
+func (pl *pool) reserveLocked() int { return reserveOf(pl.p.Reserve, pl.maxConnsLocked()) }
 
 // prefetchMayTake says whether non-live work may take one more connection
 // when busy connections are already handed out (lock held).
 func (pl *pool) prefetchMayTake(busy int) bool {
-	return busy < pl.p.MaxConns-pl.reserve()
+	return busy < pl.maxConnsLocked()-pl.reserveLocked()
 }
 
 // record updates the counters after one fetch.
@@ -108,7 +127,7 @@ func (pl *pool) takeLocked(prio Priority) (c *conn, dial, ok bool) {
 		pl.idle = pl.idle[:n-1]
 		return c, false, true
 	}
-	if pl.open < pl.p.MaxConns {
+	if pl.open < pl.maxConnsLocked() {
 		pl.open++
 		return nil, true, true
 	}
@@ -156,7 +175,7 @@ func (pl *pool) acquire(ctx context.Context, prio Priority) (*conn, error) {
 
 // dial opens a connection for a slot this caller already owns.
 func (pl *pool) dial(ctx context.Context) (*conn, error) {
-	c, err := dial(ctx, pl.p)
+	c, err := pl.dialGuarded(ctx)
 	if err != nil {
 		pl.drop()
 		return nil, err
@@ -180,6 +199,15 @@ func (pl *pool) drop() { pl.passOn(&slot{}) }
 func (pl *pool) passOn(s *slot) {
 	pl.mu.Lock()
 	defer pl.mu.Unlock()
+	// While "too many connections" throttles the pool, a freed dial slot
+	// isn't handed on: the waiter would dial into the same refusal, and
+	// the next one after it, once per queued request. Waiters get the
+	// connections still open as they are released; the last slot is
+	// always passed so a queue is never left with nothing to wake it.
+	if s.c == nil && pl.open > 1 && pl.holdingLocked() {
+		pl.open--
+		return
+	}
 	for prio := Live; prio >= Prefetch; prio-- {
 		if q := pl.queues[prio]; len(q) > 0 {
 			// The slot being passed is still counted busy; a non-live
@@ -293,19 +321,22 @@ func (pl *pool) warm(ctx context.Context) error {
 	want := min(pl.p.MinIdle, pl.p.MaxConns)
 	for {
 		pl.mu.Lock()
-		if pl.closed || pl.open+pl.warming >= want || pl.open >= pl.p.MaxConns {
+		if pl.closed || pl.open+pl.warming >= want || pl.open >= pl.maxConnsLocked() {
 			pl.mu.Unlock()
 			return nil
 		}
 		pl.open++
 		pl.warming++
 		pl.mu.Unlock()
-		c, err := dial(ctx, pl.p)
+		c, err := pl.dialGuarded(ctx)
 		pl.mu.Lock()
 		pl.warming--
 		pl.mu.Unlock()
 		if err != nil {
 			pl.drop()
+			if errors.Is(err, ErrProviderDown) {
+				return nil // paused: already reported when it opened
+			}
 			pl.errors.Add(1)
 			pl.lastErr.Store(err.Error())
 			return err

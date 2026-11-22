@@ -42,6 +42,68 @@ def _item_from_plex_watchlist(item_source_types) -> bool:
     return any(t in _PLEX_WATCHLIST_SOURCE_TYPES for t in item_source_types)
 
 
+SIDECAR_SUBTITLE_EXTS = ('.srt', '.ass', '.ssa', '.sub', '.idx', '.vtt', '.smi')
+
+
+def remove_sidecar_subtitles(video_path):
+    """Delete the subtitle files that belong to a library file being removed:
+    regular files next to it named '<video stem>.<anything><subtitle ext>'
+    (Movie.en.srt, Movie.eng.forced.ass). Without this a deleted item left its
+    subtitles behind and its folder never emptied. Returns the paths removed."""
+    removed = []
+    folder, name = os.path.split(video_path or '')
+    stem = os.path.splitext(name)[0]
+    if not folder or not stem:
+        return removed
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return removed
+    # Another video still here whose name starts with this one's
+    # ('Movie.2020.1080p.REMUX.mkv' next to 'Movie.2020.1080p.mkv') owns
+    # the subtitles named after it.
+    longer = [s for s in (os.path.splitext(f)[0] for f in names if f.lower().endswith(VIDEO_EXTS))
+              if s != stem and s.startswith(stem + '.')]
+    for f in names:
+        if not f.startswith(stem + '.') or not f.lower().endswith(SIDECAR_SUBTITLE_EXTS):
+            continue
+        if any(f.startswith(s + '.') for s in longer):
+            continue
+        path = os.path.join(folder, f)
+        try:
+            if os.path.isfile(path) and not os.path.islink(path):
+                os.remove(path)
+                removed.append(path)
+        except OSError as e:
+            logging.warning(f"Could not remove subtitle {path}: {e}")
+    if removed:
+        logging.info(f"Removed {len(removed)} subtitle file(s) of {name}")
+    return removed
+
+
+VIDEO_EXTS = ('.mkv', '.mp4', '.avi', '.m4v', '.ts', '.m2ts', '.mov', '.wmv', '.webm', '.mpg', '.mpeg', '.iso')
+
+
+def find_orphan_subtitles(library_root):
+    """Every subtitle file in the symlink library that matches no video in its
+    folder (regular files only: never symlinks, so never subtitles that came
+    with a release, and never tracks inside a video). For the Subtitle
+    Manager's opt-in 'Remove orphaned subtitles' tool."""
+    found = []
+    if not library_root or not os.path.isdir(library_root):
+        return found
+    for folder, _dirs, files in os.walk(library_root):
+        stems = [os.path.splitext(f)[0] for f in files if f.lower().endswith(VIDEO_EXTS)]
+        if not stems:
+            continue        # no video here at all: not ours to judge
+        for f in files:
+            if f.lower().endswith(SIDECAR_SUBTITLE_EXTS) and not any(f.startswith(s + '.') for s in stems):
+                path = os.path.join(folder, f)
+                if os.path.isfile(path) and not os.path.islink(path):
+                    found.append(path)
+    return found
+
+
 class DeletionManager:
     """
     Unified deletion manager for all library deletion operations
@@ -442,6 +504,7 @@ class DeletionManager:
                 if os.path.islink(symlink_path):
                     os.unlink(symlink_path)
                     result['deleted_symlinks'].append(symlink_path)
+                    remove_sidecar_subtitles(symlink_path)
                 elif os.path.exists(symlink_path):
                     logging.warning(f"[BATCH_DELETE_SYMLINKS] Path exists but is not a symlink: {symlink_path}")
                 else:
@@ -1586,11 +1649,13 @@ class DeletionManager:
                             os.unlink(symlink_path_to_remove)
                             result['deleted_symlinks'].append(symlink_path_to_remove)
                             logging.info(f"[DELETE_ITEM] Removed symlink {symlink_path_to_remove}")
+                            remove_sidecar_subtitles(symlink_path_to_remove)
                         elif os.path.islink(symlink_path_to_remove):
                             # Broken symlink - still remove it
                             os.unlink(symlink_path_to_remove)
                             result['deleted_symlinks'].append(symlink_path_to_remove)
                             logging.info(f"[DELETE_ITEM] Removed broken symlink {symlink_path_to_remove}")
+                            remove_sidecar_subtitles(symlink_path_to_remove)
                         else:
                             # Path doesn't exist - symlink already gone, still count as removed for accurate reporting
                             if not os.path.exists(symlink_path_to_remove) and not os.path.islink(symlink_path_to_remove):

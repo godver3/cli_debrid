@@ -108,15 +108,36 @@ def problems(settings: dict = None) -> list:
         out.append('WebDAV share is on but has no username/password (Mount page → WebDAV share); it stays off')
     try:
         if not servers(bm) and (usenet_selected(s) or alongside(s)):
-            out.append('no usenet server set (Mount page → Usenet servers)')
+            if server_rows(bm):
+                out.append('every usenet server is turned off (Mount page → Usenet servers)')
+            else:
+                out.append('no usenet server set (Mount page → Usenet servers)')
     except ValueError as exc:
         out.append(f'usenet servers: {exc}')
     return out
 
 
+def server_enabled(e: dict) -> bool:
+    """A server row is used unless it was turned off on the Mount page."""
+    v = e.get('enabled', True)
+    return v if isinstance(v, bool) else str(v).strip().lower() not in ('false', '0', 'no', 'off', '')
+
+
+def server_rows(bm: dict) -> list:
+    """The saved server rows (dicts), turned-off ones included."""
+    raw = bm.get('servers')
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw) if raw.strip() else []
+        except ValueError:
+            return []
+    return [e for e in raw if isinstance(e, dict)] if isinstance(raw, list) else []
+
+
 def servers(bm: dict) -> list:
     """Engine providers from the `servers` JSON list (order kept; the engine
-    asks backups last). Raises ValueError describing the first bad entry."""
+    asks backups last). Servers turned off on the Mount page are left out
+    (still validated). Raises ValueError describing the first bad entry."""
     raw = bm.get('servers')
     if isinstance(raw, str):
         raw = raw.strip()
@@ -140,6 +161,8 @@ def servers(bm: dict) -> list:
         except (TypeError, ValueError):
             raise ValueError(f'server {i}: port and connections must be numbers') from None
         ssl = e.get('ssl', e.get('tls', True))
+        if not server_enabled(e):
+            continue
         out.append({
             'name': str(e.get('name') or e['host']).strip(),
             'host': str(e['host']).strip(),
@@ -267,6 +290,7 @@ def build_config(settings: dict) -> dict:
         'gid': ident('gid', 'PGID'),
         'umask': umask,
         'providers': providers,
+        'primary_load_mode': 'balanced' if str(bm.get('primary_load_mode') or '').strip().lower() == 'balanced' else 'fill',
         **webdav_config(bm),
     }
 
