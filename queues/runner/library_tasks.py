@@ -111,8 +111,9 @@ class LibraryTasks:
             from utilities import downsub, subtitle_bulk, subtitle_status
             downsub.config.reload()
             # 'Apply to movies / TV shows / anime' settings limit the task
+            overrides = {}
             items = [it for it in subtitle_status.missing_items(skip_tried_hours=24)
-                     if downsub.applies_to(it)][:200]
+                     if downsub.applies_to(it, overrides)][:200]
             if not items:
                 logging.info("[BulkSubs] No collected items are missing subtitles.")
                 return

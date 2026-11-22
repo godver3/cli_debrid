@@ -1,5 +1,6 @@
 """Background subtitle work: the page's Search/Sync buttons (per item, season,
-show or the whole filter) and the Bulk subtitles task.
+show or the whole filter) and the Bulk subtitles task. A search that will
+sync the download reads the video, so it waits while something plays.
 
 Two lanes run side by side, each with its own queue, progress and Stop:
 'search' (download missing languages: provider lookups and a tiny hash read,
@@ -36,9 +37,11 @@ def status():
 def stop(kind=None):
     """Stop a lane (or both) after its current item; drop what it had queued."""
     for k in ([kind] if kind in KINDS else KINDS):
-        _CANCEL[k].set()
+        # Together under the lock: the worker reads "cancel set, queue not
+        # empty" as work queued after the stop.
         with _LOCK:
             _QUEUE[k].clear()
+            _CANCEL[k].set()
 
 
 def _search_one(item):
@@ -82,16 +85,24 @@ PLAYBACK_WAIT_STEP = 30.0     # how long a lane sleeps between checks while one 
 _playing_cache = {'at': 0.0, 'n': 0}
 
 
+def _streaming(s):
+    """A session pulling video now: movies/episodes that play or buffer.
+    A paused player left open (overnight) or music doesn't hold the lanes."""
+    state = ((s.get('Player') or {}).get('state') or 'playing').lower()
+    kind = (s.get('type') or '').lower()
+    return state != 'paused' and kind not in ('track', 'audio', 'photo')
+
+
 def playing_sessions():
-    """Sessions playing on Plex/Jellyfin/Emby now (0 when no server is set
-    or it doesn't answer: never blocks work on a broken server)."""
+    """Video sessions playing on Plex/Jellyfin/Emby now (0 when no server is
+    set or it doesn't answer: never blocks work on a broken server)."""
     now = time.monotonic()
     if now - _playing_cache['at'] < PLAYBACK_CHECK_EVERY:
         return _playing_cache['n']
     try:
         from utilities.settings import get_setting
         from utilities.media_sessions import sessions
-        n = len(sessions(get_setting))
+        n = sum(1 for s in sessions(get_setting) if _streaming(s))
     except Exception as e:
         logging.debug(f"[subs] playback check failed: {e}")
         n = 0
@@ -100,11 +111,12 @@ def playing_sessions():
 
 
 def _reads_files(kind):
-    """The lane reads samples of the video over the mount: always for sync,
-    for search only when sync-after-download is on (otherwise just the
-    two 64 KB hash reads)."""
-    if kind == 'sync':
-        return True
+    """The lane reads samples of the video over the mount: only a search
+    with sync-after-download on. Otherwise both lanes read just the file's
+    two 64 KB hash blocks (Fix existing never checks timing; that is the
+    per-subtitle Sync button)."""
+    if kind != 'search':
+        return False
     from utilities import downsub
     return getattr(downsub.config, 'SYNC_SUBTITLES', 'off') in ('unless_hash', 'always')
 

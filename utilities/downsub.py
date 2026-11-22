@@ -469,12 +469,13 @@ def _min_score(video):
     return MIN_MOVIE_SCORE if getattr(video, 'year', None) else MIN_MOVIE_SCORE_NO_YEAR
 
 
-def applies_to(item):
+def applies_to(item, override_cache=None):
     """Whether automatic subtitle downloads (on collect, the Bulk subtitles
     task) cover this item, per the 'Apply to movies / TV shows / anime'
     settings. Anime only counts separately when separate anime folders are
     on (as for the folders). Unknown type: covered. Manual searches on the
-    Subtitle Manager page ignore this."""
+    Subtitle Manager page ignore this. override_cache ({imdb: series type})
+    saves a lookup per episode when checking many items."""
     item = item or {}
     kind = item.get('type')
     if kind not in ('movie', 'episode'):
@@ -486,7 +487,13 @@ def applies_to(item):
             anime = any(str(g).lower() == 'anime' for g in _parse_genres(item.get('genres')))
             if kind == 'episode':
                 from utilities.anime_detection import series_type_override
-                override = series_type_override(item.get('imdb_id'))
+                imdb = item.get('imdb_id')
+                if override_cache is not None and imdb in override_cache:
+                    override = override_cache[imdb]
+                else:
+                    override = series_type_override(imdb)
+                    if override_cache is not None:
+                        override_cache[imdb] = override
                 if override:
                     anime = override == 'anime'
         except Exception as e:

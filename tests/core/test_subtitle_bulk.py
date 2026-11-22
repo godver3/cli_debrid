@@ -359,21 +359,33 @@ def test_kept_is_searched_again_when_a_provider_is_added(db, tmp_path):
             assert subtitle_resync.needs_check(item)                # provider added: search again
 
 
-def test_sync_lane_waits_while_something_plays(db, monkeypatch):
-    from utilities import subtitle_bulk
+def test_syncing_search_waits_while_something_plays(db, monkeypatch):
+    from utilities import subtitle_bulk, downsub
     monkeypatch.setattr(subtitle_bulk, 'PLAYBACK_WAIT_STEP', 0.05)
     playing = {'n': 1}
     with mock.patch.object(subtitle_bulk, 'playing_sessions', side_effect=lambda: playing['n']), \
-            mock.patch.object(subtitle_bulk, '_sync_one', return_value=(True, 'fixed', True)) as one:
-        assert subtitle_bulk.start([{'id': 1, 'title': 'A'}], pause=0, kind='sync')[0] == 'started'
+            mock.patch.object(downsub.config, 'SYNC_SUBTITLES', 'always'), \
+            mock.patch.object(downsub.config, 'reload'), \
+            mock.patch.object(downsub, 'selected_providers', return_value=['podnapisi']), \
+            mock.patch.object(subtitle_bulk, '_search_one', return_value=(True, 'saved', True)) as one:
+        assert subtitle_bulk.start([{'id': 1, 'title': 'A'}], pause=0)[0] == 'started'
         time.sleep(0.3)
-        assert not one.called and 'playing' in subtitle_bulk.status()['sync']['waiting']
+        assert not one.called and 'playing' in subtitle_bulk.status()['search']['waiting']
         playing['n'] = 0
         for _ in range(100):
-            if not subtitle_bulk.status()['sync']['running']:
+            if not subtitle_bulk.status()['search']['running']:
                 break
             time.sleep(0.05)
-    assert one.call_count == 1 and 'waiting' not in subtitle_bulk.status()['sync']
+    assert one.call_count == 1 and 'waiting' not in subtitle_bulk.status()['search']
+
+
+def test_fix_existing_lane_ignores_playback(db):
+    """Fix existing reads only the 64 KB hash: nothing to wait for."""
+    from utilities import subtitle_bulk
+    with mock.patch.object(subtitle_bulk, 'playing_sessions', return_value=3), \
+            mock.patch.object(subtitle_bulk, '_sync_one', return_value=(True, 'fixed', True)) as one:
+        subtitle_bulk.run_now([{'id': 1, 'title': 'A'}], pause=0, kind='sync')
+    assert one.call_count == 1
 
 
 def test_task_stops_instead_of_waiting_for_playback(db):
@@ -421,3 +433,14 @@ def test_work_queued_after_stop_still_runs(db):
                 break
             time.sleep(0.05)
     assert done == [1, 3]
+
+
+def test_paused_and_music_sessions_do_not_hold_lanes(monkeypatch):
+    from utilities import subtitle_bulk
+    monkeypatch.setattr(subtitle_bulk, '_playing_cache', {'at': 0.0, 'n': 0})
+    sessions = [{'type': 'episode', 'Player': {'state': 'paused'}},
+                {'type': 'track', 'Player': {'state': 'playing'}},
+                {'type': 'movie', 'Player': {'state': 'buffering'}},
+                {'type': 'episode'}]
+    with mock.patch('utilities.media_sessions.sessions', return_value=sessions):
+        assert subtitle_bulk.playing_sessions() == 2
