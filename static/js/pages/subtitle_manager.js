@@ -61,8 +61,7 @@
   }
   function actions(attrs, anyMissing) {
     return `<span class="sm-actions">
-      ${anyMissing ? `<button class="sm-btn sm-btn-accent sm-mini" data-act="search" ${attrs}>Search</button>` : ''}
-      <button class="sm-btn sm-mini" data-act="sync" ${attrs}>Sync</button></span>`;
+      ${anyMissing ? `<button class="sm-btn sm-btn-accent sm-mini" data-act="search" ${attrs}>Search</button>` : ''}</span>`;
   }
 
   async function loadList() {
