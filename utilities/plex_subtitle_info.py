@@ -336,12 +336,12 @@ def start_scan(items):
 def good_embedded_langs(tracks):
     """Languages covered by embedded tracks that play without transcoding:
     text formats only (not image PGS/VobSub or styled ASS/SSA), not forced."""
+    from utilities.subtitle_lang import key
     out = set()
     for t in tracks or []:
         if t.get('forced') or t.get('codec') not in TEXT_CODECS:
             continue
-        for k in (t.get('lang'), t.get('code')):
-            if k:
-                out.add(k)
-                out.add(k.split('-')[0])
+        k = key(t.get('lang')) or key(t.get('code'))
+        if k:
+            out.add(k)
     return out

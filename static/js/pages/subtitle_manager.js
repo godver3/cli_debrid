@@ -244,7 +244,7 @@
       } else {
         const haveFile = new Set((d.sidecars || []).map((sc) => sc.language.split('-')[0]));
         for (const st of d.plex_streams) {
-          if (st.external && haveFile.has((st.language || 'und').split('-')[0])) continue;   // the file above
+          if (st.external && haveFile.has((st.lang_key || st.language || 'und').split('-')[0])) continue;   // the file above
           const heavy = ['ass', 'ssa', 'pgs', 'vobsub', 'dvd_subtitle', 'hdmv_pgs_subtitle', 'dvb_subtitle'].includes((st.codec || '').toLowerCase());
           parts.push(`<div style="display:flex;gap:6px;align-items:center;margin:3px 0;flex-wrap:wrap"><span class="sm-chip ok">${esc(st.language || 'und')}</span>
             <span class="sm-chip${heavy ? ' warn' : ''}" title="${heavy ? 'Many clients transcode to show this format' : ''}">${esc(st.codec)}</span>

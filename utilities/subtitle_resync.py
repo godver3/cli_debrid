@@ -19,6 +19,11 @@ PLEX_HEADERS = {
 }
 
 
+def _norm_lang(code):
+    from utilities.subtitle_lang import key
+    return key(code) or ''
+
+
 def item_rk(item):
     """The item's own Plex ratingKey (episodes store their show's in
     ms_item_id)."""
@@ -83,6 +88,7 @@ def _fetch_item_info(rating_key):
                             'id': st.get('id'),
                             'key': st.get('key') or '',
                             'language': st.get('languageTag') or st.get('languageCode') or '',
+                            'lang_key': _norm_lang(st.get('languageTag') or st.get('languageCode')),
                             'codec': st.get('codec') or '',
                             'title': st.get('displayTitle') or st.get('extendedDisplayTitle') or '',
                             'forced': bool(st.get('forced')),
@@ -202,14 +208,8 @@ def resync_plex_stream(item, st, skip_checked=False):
 
 
 def _lang_of(code):
-    from babelfish import Language
-    c = (code or '').strip()
-    for parse in (Language.fromietf, Language.fromalpha2, Language):
-        try:
-            return parse(c)
-        except Exception:
-            continue
-    return None
+    from utilities.subtitle_lang import parse
+    return parse(code)
 
 
 class _HashFinder:
@@ -274,11 +274,14 @@ def _hash_replace_sidecar(item, path, finder):
     result dict, or None when there's no hash match."""
     from utilities import downsub
     name = os.path.basename(path)
-    parts = name.split('.')
-    lang = parts[-2] if len(parts) >= 3 else ''
-    hi = False
-    if lang.lower() in ('hi', 'sdh', 'cc') and len(parts) >= 4:
-        hi, lang = True, parts[-3]
+    from utilities.subtitle_lang import sidecar_lang
+    stem = os.path.splitext(os.path.basename(item.get('location_on_disk') or ''))[0]
+    middle = name[len(stem) + 1:].rsplit('.', 1)[0] if stem and name.startswith(stem + '.') else \
+        '.'.join(name.split('.')[1:-1])
+    lang, flags = sidecar_lang(middle)
+    if not lang or 'forced' in flags or 'foreign' in flags:
+        return None
+    hi = bool(flags & {'hi', 'sdh', 'cc'})
     got = finder.best(lang, hi=hi)
     if not got:
         return None
@@ -375,11 +378,12 @@ def resync_item(item, skip_checked=True):
             notes.append(f"{lang}: {res['message']}")
             changed += 1 if res.get('changed') else 0
     if is_plex_mode():
-        have = {k.split('-')[0] for k in sidecars}
+        from utilities.subtitle_lang import covers as _covers
+        have = set(sidecars)
         for st in plex_item_info(item_rk(item))[0] or []:
             if not (st.get('external') and st.get('key')):
                 continue
-            if (st.get('language') or 'und').split('-')[0].lower() in have:
+            if _covers(st.get('language') or 'und', have):
                 continue          # that's the sidecar file Plex picked up
             prev = content = None
             url, token = plex_conn()
@@ -423,10 +427,10 @@ def needs_check(item, cache=None):
         except OSError:
             continue
     if is_plex_mode() and item.get('id') is not None:
-        langs_with_file = {os.path.basename(p).split('.')[-2].split('-')[0].lower() for p in paths
-                           if p.count('.') >= 2}
+        from utilities.subtitle_lang import covers as _covers
+        langs_with_file = set(sidecar_langs(item.get('location_on_disk'), cache if cache is not None else {}))
         uploaded = subtitle_history.languages_by_item(
             [item['id']], {item['id']: subtitle_history.media_key_of(item)}).get(item['id'], set())
-        if any((lang or '').split('-')[0].lower() not in langs_with_file for lang in uploaded):
+        if any(not _covers(lang, langs_with_file) for lang in uploaded):
             return True
     return False

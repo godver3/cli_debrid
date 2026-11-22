@@ -80,10 +80,12 @@ def expand_languages(codes):
             out.append(LANGUAGE_MAP[c])
             continue
         # last resort: try direct
-        try:
-            out.append(Language(c))
-        except Exception as e:
-            logging.warning(f"⚠️ Unknown language code: {c} - {e}")
+        from utilities.subtitle_lang import parse as _parse_lang
+        lang = _parse_lang(c)          # en, fre/ger (639-2/B), names, pob, zt, es-419...
+        if lang is not None:
+            out.append(lang)
+        else:
+            logging.warning(f"[subs] unknown subtitle language code: {c}")
     return out
 
 #: Providers that work without a captcha. Order is only a tie-break: every
@@ -201,9 +203,10 @@ def get_embedded_subtitle_languages(file_path: Path, text_only=None) -> set:
             continue
         if text_only and t.get('codec') not in TEXT_SUBTITLE_CODECS:
             continue
-        lang = t.get('language') or ''
-        if lang and lang not in ('und', 'unknown'):
-            langs.add(lang)
+        from utilities.subtitle_lang import key as _lkey
+        k = _lkey(t.get('language') or '')
+        if k:
+            langs.add(k)
     return langs
 
 
@@ -692,8 +695,12 @@ def _prepare_video(video_path, rating_key, name_hint, item):
             _plex_cached = cached_subtitle_tracks(str(video_path))
         except Exception:
             _plex_cached = None
-    plex_embedded = _plex_embedded_langs(item) if config.PROBE_FOR_EMBEDDED else None
-    if plex_embedded is not None or (config.PROBE_FOR_EMBEDDED and (not is_plex_mode or _plex_cached is not None)):
+    if getattr(config, 'IGNORE_EMBEDDED', False):
+        plex_embedded = None
+    else:
+        plex_embedded = _plex_embedded_langs(item) if config.PROBE_FOR_EMBEDDED else None
+    if not getattr(config, 'IGNORE_EMBEDDED', False) and (
+            plex_embedded is not None or (config.PROBE_FOR_EMBEDDED and (not is_plex_mode or _plex_cached is not None))):
         # Plex already scanned the file: use its track list instead of
         # probing the file on the mount
         embedded = plex_embedded if plex_embedded is not None else get_embedded_subtitle_languages(video_path)
@@ -702,10 +709,8 @@ def _prepare_video(video_path, rating_key, name_hint, item):
             # Filter out languages already covered by an embedded track.
             # babelfish Language alpha3 (e.g. 'eng', 'fra') is compared against
             # ffprobe tags which are typically ISO-639-2 (also 3-letter).
-            filtered = [
-                lang for lang in languages
-                if lang.alpha3 not in embedded and str(lang) not in embedded
-            ]
+            from utilities.subtitle_lang import covers as _covers, key as _lkey
+            filtered = [lang for lang in languages if not _covers(_lkey(lang), embedded)]
             if not filtered:
                 logging.info(f"[subs] {_label_of(item, original_path)}: every language already embedded, nothing to search")
                 return {'all_embedded': True, 'item': item}

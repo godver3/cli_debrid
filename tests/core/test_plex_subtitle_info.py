@@ -40,7 +40,9 @@ def env(monkeypatch):
     tmp = tempfile.mkdtemp(prefix='psi_')
     monkeypatch.setenv('USER_DB_CONTENT', tmp)
     import database  # noqa: F401
+    from database import subtitle_history
     from utilities import plex_subtitle_info as psi
+    monkeypatch.setattr(subtitle_history, '_ready', False)
     psi._LEAVES.clear()
     monkeypatch.setattr(psi, '_conn', lambda: ('http://plex', 't'))
     conn = sqlite3.connect(os.path.join(tmp, 'media_items.db'))
@@ -76,7 +78,7 @@ def test_only_text_non_forced_embedded_tracks_count(env):
     items.append({'type': 'movie', 'ms_item_id': '600'})
     env.fetch_tracks([(env.cache_key(i), env.rating_key(i)) for i in items])
     cached = env.cached_tracks([env.cache_key(i) for i in items])
-    assert 'en' in env.good_embedded_langs(cached['500:1:1'])          # SRT
+    assert 'eng' in env.good_embedded_langs(cached['500:1:1'])          # SRT
     assert env.good_embedded_langs(cached['500:1:2']) == set()        # PGS + forced SRT
     assert env.good_embedded_langs(cached['600']) == set()            # ASS (external SRT is a file, not embedded)
 

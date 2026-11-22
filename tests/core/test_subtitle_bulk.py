@@ -215,7 +215,7 @@ def test_fix_existing_keeps_subtitle_without_release_match(db, tmp_path):
         changed, checked, notes = subtitle_resync.resync_item(item)
         assert not subtitle_resync.needs_check(item)          # done, skipped next time
     assert changed == 0 and checked == 1 and not sync.called    # no file reads beyond the hash
-    assert notes[0].startswith('en: kept')
+    assert notes[0].startswith('eng: kept')
 
 
 def test_undecided_sync_gets_one_hash_search(db, tmp_path):

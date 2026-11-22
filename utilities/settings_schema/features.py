@@ -232,6 +232,11 @@ SECTIONS = {
             "description": "Largest timing shift (seconds, each way) subtitle sync will look for.",
             "default": 60
         },
+        "ignore_embedded_subtitles": {
+            "type": "boolean",
+            "description": "Never count subtitles embedded in the video file: every configured language is fetched as a separate subtitle (shown as missing until one is downloaded). Off: an embedded text track in a language (not forced, not commentary, not an image/styled format that makes players transcode) counts as having it.",
+            "default": False
+        },
         "probe_for_embedded_subtitles": {
             "type": "boolean",
             "description": "Skip languages the file already has as an embedded (non-forced) subtitle track; if all are embedded, the search and Bazarr notification are skipped. Reuses the add-time ffprobe playability check's header read when that's on, otherwise reads the file header once. Requires ffprobe. In Plex mode only the add-time check's result is used.",

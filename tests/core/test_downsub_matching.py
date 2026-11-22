@@ -135,8 +135,8 @@ def test_embedded_probe_skips_forced_and_image_tracks(monkeypatch):
         stdout = json.dumps(streams)
 
     monkeypatch.setattr(subprocess, 'run', lambda *a, **k: R())
-    assert downsub.get_embedded_subtitle_languages('/x.mkv', text_only=False) == {'eng', 'fre', 'jpn'}
-    assert downsub.get_embedded_subtitle_languages('/x.mkv', text_only=True) == {'fre'}
+    assert downsub.get_embedded_subtitle_languages('/x.mkv', text_only=False) == {'eng', 'fra', 'jpn'}
+    assert downsub.get_embedded_subtitle_languages('/x.mkv', text_only=True) == {'fra'}
 
 
 def test_selected_providers_honours_setting(monkeypatch):

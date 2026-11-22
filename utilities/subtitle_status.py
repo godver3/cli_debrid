@@ -7,6 +7,8 @@ missing" button and the Bulk subtitles task.
 """
 import os
 
+from utilities.subtitle_lang import covers, sidecar_lang
+
 SUB_EXTS = ('.srt', '.ass', '.ssa', '.sub', '.vtt', '.smi')
 ROW_CAP = 5000
 
@@ -17,13 +19,18 @@ def is_plex_mode():
 
 
 def wanted_langs():
-    """Configured languages as (ietf, alpha3) pairs."""
+    """Configured languages as (label, key) pairs, e.g. ('fr', 'fra'),
+    ('pt-BR', 'por-BR'); key from utilities.subtitle_lang."""
     from utilities.config.downsub_config import config
     from utilities.downsub import expand_languages
+    from utilities.subtitle_lang import key
     config.reload()
-    out = []
+    out, seen = [], set()
     for lang in expand_languages(config.SUBTITLE_LANGUAGES):
-        out.append((getattr(lang, 'ietf', None) or str(lang), lang.alpha3))
+        k = key(lang)
+        if k and k not in seen:
+            seen.add(k)
+            out.append((getattr(lang, 'ietf', None) or str(lang), k))
     return out
 
 
@@ -44,14 +51,16 @@ def sidecar_langs(path, dir_cache):
         if not f.lower().endswith(SUB_EXTS) or not f.startswith(stem + '.'):
             continue
         middle = f[len(stem) + 1:].rsplit('.', 1)[0]
-        lang = middle.split('.')[0] if middle else 'und'
-        out.setdefault(lang.lower(), []).append(os.path.join(d, f))
+        lang, flags = sidecar_lang(middle)
+        if 'forced' in flags or 'foreign' in flags:
+            continue        # forced/foreign-only subtitles don't cover the language
+        out.setdefault(lang or 'und', []).append(os.path.join(d, f))
     return out
 
 
-def has_lang(found, ietf, alpha3):
-    keys = {k.lower() for k in found}
-    return bool(keys & {ietf.lower(), alpha3.lower(), ietf.split('-')[0].lower()})
+def has_lang(found, wanted_key):
+    """found: language keys/codes present; wanted_key from wanted_langs()."""
+    return covers(wanted_key, found)
 
 
 def label(item):
@@ -97,9 +106,10 @@ def with_status(rows, plex=None, wanted=None):
               for r in rows})
     embedded = subtitle_history.embedded_items(ids)
     plex_tracks = {}
+    from utilities.config.downsub_config import config as _cfg
     try:
         from utilities import plex_subtitle_info as psi
-        if psi.available():
+        if psi.available() and not getattr(_cfg, 'IGNORE_EMBEDDED', False):
             plex_tracks = psi.cached_tracks([psi.cache_key(r) for r in rows])
     except Exception:
         plex_tracks = {}
@@ -110,17 +120,17 @@ def with_status(rows, plex=None, wanted=None):
         # folder (e.g. a symlink folder Bazarr wrote to) has them too
         found = sidecar_langs(r.get('location_on_disk'), dir_cache)
         for lang in history.get(r['id'], ()):
-            found.setdefault((lang or '').lower(), [])
-        emb = r['id'] in embedded
+            found.setdefault(lang or '', [])
+        emb = r['id'] in embedded and not getattr(_cfg, 'IGNORE_EMBEDDED', False)
         good = set()
         if plex_tracks:
             from utilities import plex_subtitle_info as psi
             good = psi.good_embedded_langs(plex_tracks.get(psi.cache_key(r)))
         langs = []
-        for ietf, a3 in wanted:
-            in_file = has_lang(found, ietf, a3)
-            in_track = emb or bool(good & {ietf.lower(), a3.lower(), ietf.split('-')[0].lower()})
-            langs.append({'lang': ietf, 'has': in_file or in_track, 'embedded': in_track and not in_file})
+        for label, k in wanted:
+            in_file = has_lang(found, k)
+            in_track = emb or covers(k, good)
+            langs.append({'lang': label, 'has': in_file or in_track, 'embedded': in_track and not in_file})
         out.append(dict(r, langs=langs, missing=any(not x['has'] for x in langs)))
     return out
 
