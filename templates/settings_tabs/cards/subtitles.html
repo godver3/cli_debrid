@@ -18,8 +18,22 @@
             <p class="settings-description">Download subtitles when an item is collected. Works in both modes: Symlinked/Local writes a sidecar file next to the library file; Plex mode uploads the subtitle to the Plex item (the mount is read-only). Adds a few seconds per file. Manage and search subtitles under Tools → Subtitle Manager.</p>
         </div>
 
-        <!-- Hidden settings - no longer used with simplified downsub system -->
-        <!-- only_current_file and the per-folder apply_to_* settings are not shown here -->
+        <!-- only_current_file is not used any more and not shown -->
+        {% set _sub = settings.get('Subtitle Settings', {}) %}
+        <div class="settings-form-group">
+            <label class="settings-title">Download Automatically For:</label>
+            <div style="display:flex;flex-wrap:wrap;gap:6px 18px">
+            {% for key, label in [('apply_to_movies', 'Movies'), ('apply_to_tv_shows', 'TV episodes'),
+                                  ('apply_to_anime_movies', 'Anime movies'), ('apply_to_anime_tv_shows', 'Anime episodes')] %}
+                <label style="display:inline-flex;align-items:center;gap:6px;font-weight:400">
+                    <input type="checkbox" id="additional-{{ key }}" name="Subtitle Settings.{{ key }}"
+                           data-section="Subtitle Settings" data-key="{{ key }}"
+                           {% if _sub.get(key, True) %}checked{% endif %}> {{ label }}
+                </label>
+            {% endfor %}
+            </div>
+            <p class="settings-description">Which items get subtitles when collected and in the Bulk subtitles task. Anime only counts separately when separate anime folders are on; otherwise anime follows Movies / TV episodes. Searches you start on Tools → Subtitle Manager always run.</p>
+        </div>
 
         <div class="settings-form-group">
             <label for="additional-opensubtitles_username" class="settings-title">OpenSubtitles Username:</label>

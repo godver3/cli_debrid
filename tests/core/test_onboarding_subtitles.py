@@ -107,3 +107,7 @@ def test_step_template_parses():
     env = jinja2.Environment(loader=jinja2.FileSystemLoader(root))
     env.get_template('onboarding_step_5a.html')
     env.get_template('onboarding_navigation.html')
+    card = env.get_template('settings_tabs/cards/subtitles.html').render(
+        settings={'Subtitle Settings': {'apply_to_movies': False}}, environment_mode='full', url_for=lambda *a, **k: '')
+    assert 'name="Subtitle Settings.apply_to_tv_shows"' in card
+    assert 'data-key="apply_to_movies"\n                           >' in card    # off: not checked
