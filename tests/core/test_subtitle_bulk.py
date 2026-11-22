@@ -239,7 +239,8 @@ def test_undecided_sync_gets_one_hash_search(db, tmp_path):
             subtitle_resync.resync_item(item)
         assert hm.called and not sync.called              # no second futile sync
         assert subtitle_resync.KEPT in db.sync_result(digest)
-        assert not subtitle_resync.needs_check(item)
+        with mock.patch.object(downsub, 'selected_providers', return_value=['opensubtitlescom']):
+            assert not subtitle_resync.needs_check(item)
 
 
 
