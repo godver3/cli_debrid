@@ -159,6 +159,16 @@ func (r *RemoteFile) waitStream(ctx context.Context, from, to int64, dst []byte)
 		if err := ctx.Err(); err != nil {
 			return 0, err
 		}
+		// Another reader's seek pauses every other stream (downloaderFor),
+		// this one too while this read waits on it. Keep it going to the
+		// end of the bytes this read needs (not its read-ahead): otherwise
+		// the read waited for the paused stream to idle out, restarted it
+		// and paused the seek's stream in turn, the two starving each other
+		// until the mount's read timeout (found live: 104 s after a seek).
+		if d.target < to {
+			d.target = to
+			r.scond.Broadcast()
+		}
 		r.scond.Wait()
 	}
 }
