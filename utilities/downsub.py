@@ -217,6 +217,54 @@ def build_provider_configs():
     return pc
 
 
+def test_provider(name, cfg):
+    """Check one provider's login or API key (onboarding's Test buttons).
+    OpenSubtitles.com: logs in. SubDL/SubSource: searches a well-known movie
+    with the key. Uses no download quota. Returns (ok, message, warning)."""
+    if not SUBLIMINAL_AVAILABLE:
+        return False, 'the subtitle library (subliminal) is not installed', False
+    from subliminal.exceptions import AuthenticationError, ConfigurationError, DownloadLimitExceeded
+    try:
+        from utilities.subtitle_providers import RateLimited
+    except Exception:
+        RateLimited = DownloadLimitExceeded
+    try:
+        from subliminal.extensions import provider_manager
+        plugin = provider_manager[name].plugin
+    except Exception:
+        return False, f'{name} is not available in this install', False
+    try:
+        region.configure('dogpile.cache.memory', replace_existing_backend=True)
+    except Exception:
+        pass
+    prov = None
+    try:
+        prov = plugin(**cfg)
+        prov.initialize()
+        if name == 'opensubtitlescom':
+            prov.login()
+            if not getattr(prov, 'token', None):
+                return False, 'OpenSubtitles.com gave no login token; check the username and password', False
+            return True, 'logged in to OpenSubtitles.com', False
+        video = Movie('The.Matrix.1999.1080p.BluRay.x264.mkv', 'The Matrix', year=1999)
+        video.external_ids['imdb_id'] = 'tt0133093'
+        video.external_ids['tmdb_id'] = '603'
+        found = prov.list_subtitles(video, {Language('eng')})
+        return True, f'key works ({len(found)} English subtitles for a test movie)', False
+    except (AuthenticationError, ConfigurationError) as e:
+        return False, f'refused: {e}', False
+    except (RateLimited, DownloadLimitExceeded) as e:
+        return True, f'the key was accepted but the service is rate limiting right now ({e})', True
+    except Exception as e:
+        return False, f'{type(e).__name__}: {e}', False
+    finally:
+        if prov is not None:
+            try:
+                prov.terminate()
+            except Exception:
+                pass
+
+
 def get_embedded_subtitle_languages(file_path: Path, text_only=None) -> set:
     """
     Use ffprobe to detect embedded subtitle track languages in a video file.

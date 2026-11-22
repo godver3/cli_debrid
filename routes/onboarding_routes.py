@@ -273,16 +273,14 @@ def onboarding():
 def onboarding_step(step):
     from routes.auth_routes import db
 
-    # Convert step to int if it's not '3a'
+    # Convert step to int unless it's one of the in-between steps ('3a', '5a')
     try:
-        step_num = int(step) if step != '3a' else step
+        step_num = step if step in ('3a', '5a') else int(step)
     except ValueError:
         abort(404)
 
     # Validate step range
     if isinstance(step_num, int) and (step_num < 1 or step_num > 6):
-        abort(404)
-    elif step_num == '3a' and step != '3a':
         abort(404)
     
     config = load_config()
@@ -429,8 +427,88 @@ def onboarding_step(step):
                              settings=config, 
                              is_onboarding=True)
 
+    elif step_num == '5a':
+        # Optional: subtitles. Always allowed to move on (skipping is fine).
+        return render_template('onboarding_step_5a.html',
+                               current_step=step_num,
+                               can_proceed=True,
+                               is_onboarding=True,
+                               subs=_subtitle_step_values(config))
+
     # If no matching step is found
     abort(404)
+
+
+def _subtitle_step_values(config):
+    """What the optional subtitle step shows (no secrets: only whether set)."""
+    sub = config.get('Subtitle Settings', {}) or {}
+    mode = (config.get('File Management', {}) or {}).get('file_collection_management', 'Plex')
+    return {
+        'enabled': bool(sub.get('enable_subtitles')),
+        'languages': sub.get('subtitle_languages') or 'eng',
+        'os_username': sub.get('opensubtitles_username') or '',
+        'os_password_set': bool(sub.get('opensubtitles_password')),
+        'subdl_key_set': bool(sub.get('subdl_api_key')),
+        'subsource_key_set': bool(sub.get('subsource_api_key')),
+        'plex_mode': mode == 'Plex',
+        'bazarr': bool((config.get('Bazarr Integration', {}) or {}).get('enabled')),
+    }
+
+
+def _save_subtitle_step(data):
+    """Save the optional subtitle step. Off: only turns downloads off. On:
+    languages, logins/keys (blank = keep the saved one) and providers: the
+    ones a key or login was given for are added to the selection."""
+    from utilities.settings import get_setting, set_setting
+    section = 'Subtitle Settings'
+    if not data.get('enable'):
+        set_setting(section, 'enable_subtitles', False)
+        return {'enabled': False}
+    from utilities.subtitle_lang import parse as parse_lang
+    langs = [c.strip() for c in str(data.get('languages') or '').split(',') if c.strip()]
+    if not langs:
+        raise ValueError('Pick at least one subtitle language (e.g. eng)')
+    unknown = [c for c in langs if parse_lang(c) is None]
+    if unknown:
+        raise ValueError(f"Unknown language code(s): {', '.join(unknown)} (use ISO codes like eng, spa, fre, pt-BR)")
+    user = str(data.get('os_username') or '').strip()
+    pwd = str(data.get('os_password') or '')
+    if user and not pwd and not get_setting(section, 'opensubtitles_password', ''):
+        raise ValueError('Enter the OpenSubtitles.com password too')
+    set_setting(section, 'subtitle_languages', ','.join(langs))
+    if user or 'os_username' in data:
+        set_setting(section, 'opensubtitles_username', user)
+    if pwd:
+        set_setting(section, 'opensubtitles_password', pwd)
+    for field, key in (('subdl_key', 'subdl_api_key'), ('subsource_key', 'subsource_api_key')):
+        value = str(data.get(field) or '').strip()
+        if value:
+            set_setting(section, key, value)
+    from utilities.downsub import DEFAULT_PROVIDERS
+    providers = list(get_setting(section, 'subtitle_providers', None) or DEFAULT_PROVIDERS)
+    wanted = [('opensubtitlescom', bool(user)),
+              ('subdl', bool(get_setting(section, 'subdl_api_key', ''))),
+              ('subsource', bool(get_setting(section, 'subsource_api_key', '')))]
+    for name, has_login in wanted:
+        if has_login and name not in providers:
+            providers.insert(0 if name == 'opensubtitlescom' else len(providers), name)
+    set_setting(section, 'subtitle_providers', providers)
+    set_setting(section, 'enable_subtitles', True)
+    return {'enabled': True, 'languages': langs, 'providers': providers}
+
+
+@onboarding_bp.route('/subtitles', methods=['POST'])
+@login_required
+@admin_required
+def onboarding_subtitles():
+    """Optional step 5a: let cli_debrid handle subtitles, or not."""
+    try:
+        return jsonify({'success': True, **_save_subtitle_step(request.get_json(silent=True) or {})})
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    except Exception as e:
+        logging.error(f"[Onboarding] Could not save subtitle settings: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @onboarding_bp.route('/complete', methods=['POST'])
 @login_required
@@ -685,9 +763,28 @@ def onboarding_test(what):
         ok, message = validate_tmdb_api_key(data.get('api_key'))
     elif what == 'mount':
         ok, message, warning = check_mount_path(data.get('path'))
+    elif what in ('opensubtitles', 'subdl', 'subsource'):
+        ok, message, warning = _test_subtitle_login(what, data)
     else:
         abort(404)
     return jsonify({'success': ok, 'message': message, 'warning': warning})
+
+def _test_subtitle_login(what, data):
+    """Step 5a's Test buttons. A blank field means the saved value."""
+    from utilities.settings import get_setting
+    from utilities import downsub
+    section = 'Subtitle Settings'
+    if what == 'opensubtitles':
+        user = (data.get('username') or '').strip() or get_setting(section, 'opensubtitles_username', '')
+        pwd = data.get('password') or get_setting(section, 'opensubtitles_password', '')
+        if not (user and pwd):
+            return False, 'enter the OpenSubtitles.com username and password', False
+        return downsub.test_provider('opensubtitlescom', {'username': user, 'password': pwd})
+    key = (data.get('api_key') or '').strip() or get_setting(section, f'{what}_api_key', '')
+    if not key:
+        return False, 'enter the API key', False
+    return downsub.test_provider(what, {'api_key': key})
+
 
 def _onboarding_summary(config):
     """What onboarding set up, in plain words, for the final step."""
@@ -736,6 +833,9 @@ def _onboarding_summary(config):
         ('Content sources', ', '.join(
             s.get('display_name') or sid for sid, s in config.get('Content Sources', {}).items()) or 'None'),
     ]
+    sub = config.get('Subtitle Settings', {}) or {}
+    rows.append(('Subtitles', f"cli_debrid downloads them ({sub.get('subtitle_languages') or 'eng'})"
+                 if sub.get('enable_subtitles') else 'Off'))
     return rows
 
 def _scraper_reachable(scraper):
