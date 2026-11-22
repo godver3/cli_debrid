@@ -211,3 +211,14 @@ def mark_sync_checked(digest, result):
         logging.debug(f"[subs] sync-checked write failed: {e}")
     finally:
         conn.close()
+
+
+def sync_result(digest):
+    """The stored result for a checked subtitle, or None if never checked."""
+    conn = get_db_connection()
+    try:
+        _ensure_table(conn)
+        row = conn.execute("SELECT result FROM subtitle_sync_checked WHERE digest = ?", (digest,)).fetchone()
+        return (row[0] or '') if row else None
+    finally:
+        conn.close()

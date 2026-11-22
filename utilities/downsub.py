@@ -666,6 +666,48 @@ def _record_history(ctx, sub, lang, fmt, via, path, source):
         logging.debug(f"[subs] history record failed: {e}")
 
 
+def _mark_checked(content, result):
+    try:
+        import hashlib
+        from database import subtitle_history
+        subtitle_history.mark_sync_checked(hashlib.sha1(content).hexdigest(), result)
+    except Exception:
+        pass
+
+
+HASH_PROVIDERS = ('opensubtitlescom', 'opensubtitlescomvip', 'opensubtitles', 'opensubtitlesvip', 'bsplayer')
+
+
+def hash_matches(ctx, languages):
+    """Subtitles made for this exact file (OpenSubtitles hash match), best
+    first, from the selected providers that support hashes and aren't paused.
+    [] without a file hash. Searching costs no download quota."""
+    if not ctx.get('hash'):
+        return []
+    providers = [p for p in selected_providers() if p in HASH_PROVIDERS]
+    if not providers:
+        return []
+    from subliminal.score import compute_score
+    video = ctx['video']
+    out = []
+    with _pool_class()(providers=providers, provider_configs=build_provider_configs()) as pool:
+        for sub in pool.list_subtitles(video, set(languages)):
+            try:
+                if 'hash' in sub.get_matches(video):
+                    out.append((int(compute_score(sub, video)), sub))
+            except Exception:
+                continue
+    out.sort(key=lambda x: x[0], reverse=True)
+    return [sub for _, sub in out]
+
+
+def fetch_subtitle(sub):
+    """Download one subtitle's content; False on failure/quota (the provider
+    is then paused)."""
+    with _pool_class()(providers=[sub.provider_name], provider_configs=build_provider_configs()) as pool:
+        return bool(pool.download_subtitle(sub) and sub.content)
+
+
 def _maybe_sync(ctx, sub, content, fmt, mode=None):
     """Sync a downloaded subtitle to the file's audio when the setting asks
     for it. Returns (content, note); content is unchanged unless synced."""
@@ -676,6 +718,8 @@ def _maybe_sync(ctx, sub, content, fmt, mode=None):
         matches = sub.get_matches(ctx['video'])
     except Exception:
         matches = set()
+    if 'hash' in matches:
+        _mark_checked(content, 'hash match')
     if mode == 'unless_hash' and 'hash' in matches:
         return content, 'skipped: hash match'
     lang = getattr(sub.language, 'ietf', None) or str(sub.language)

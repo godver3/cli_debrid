@@ -102,9 +102,19 @@ def _digest(content):
     return hashlib.sha1(content).hexdigest()
 
 
+HASH_PENDING = 'left as is'      # sync couldn't decide and no hash search yet
+
+
 def _checked(content):
+    """Fully handled: checked, and not an undecided sync still owed a
+    hash-match search."""
     from database import subtitle_history
-    return subtitle_history.sync_checked(_digest(content))
+    res = subtitle_history.sync_result(_digest(content))
+    return res is not None and not _hash_pending(res)
+
+
+def _hash_pending(result):
+    return result.startswith(HASH_PENDING) and 'no hash match' not in result
 
 
 def _mark(content, result):
@@ -170,6 +180,121 @@ def resync_plex_stream(item, st, skip_checked=False):
     return {'changed': True, 'message': note}
 
 
+def _lang_of(code):
+    from babelfish import Language
+    c = (code or '').strip()
+    for parse in (Language.fromietf, Language.fromalpha2, Language):
+        try:
+            return parse(c)
+        except Exception:
+            continue
+    return None
+
+
+class _HashFinder:
+    """Per item: the file hash and OpenSubtitles hash matches, looked up once
+    and only when a subtitle of the item actually needs checking."""
+
+    def __init__(self, item):
+        self.item = item
+        self._ctx = False
+        self._found = {}
+
+    def ctx(self):
+        if self._ctx is False:
+            from utilities import downsub
+            self._ctx = None
+            try:
+                path = downsub.resolve_item_path(self.item)
+                if path:
+                    self._ctx = downsub.prepare_video(path, item=self.item, check_embedded=False)
+            except Exception as e:
+                logging.debug(f"[subs] hash lookup prepare failed: {e}")
+        return self._ctx
+
+    def searched(self):
+        """True once a hash search actually ran for this item."""
+        return bool(self._found)
+
+    def best(self, lang_code, hi=False):
+        """A downloaded hash-matched subtitle for this language, or None."""
+        from utilities import downsub
+        lang = _lang_of(lang_code)
+        ctx = self.ctx()
+        if lang is None or not ctx or ctx.get('all_embedded') or not ctx.get('hash'):
+            return None
+        key = str(lang)
+        if key not in self._found:
+            try:
+                self._found[key] = downsub.hash_matches(ctx, [lang])
+            except Exception as e:
+                logging.debug(f"[subs] hash search failed: {e}")
+                self._found[key] = []
+        cands = sorted(self._found[key], key=lambda s: bool(getattr(s, 'hearing_impaired', False)) != hi)
+        for sub in cands:
+            if downsub.fetch_subtitle(sub):
+                fmt, ext = downsub._final_format(sub)
+                if fmt:
+                    return sub, fmt, ext
+        return None
+
+
+def _hash_replace_sidecar(item, path, finder):
+    """Replace a sidecar with a subtitle made for this exact file. Returns a
+    result dict, or None when there's no hash match."""
+    from utilities import downsub
+    name = os.path.basename(path)
+    parts = name.split('.')
+    lang = parts[-2] if len(parts) >= 3 else ''
+    hi = False
+    if lang.lower() in ('hi', 'sdh', 'cc') and len(parts) >= 4:
+        hi, lang = True, parts[-3]
+    got = finder.best(lang, hi=hi)
+    if not got:
+        return None
+    sub, fmt, ext = got
+    content = sub.content if isinstance(sub.content, bytes) else (sub.content or '').encode('utf-8')
+    with open(path, 'rb') as f:
+        if f.read() == content:
+            _mark(content, 'hash match')
+            return {'changed': False, 'message': 'already the subtitle made for this file (hash match)'}
+    target = os.path.splitext(path)[0] + ext
+    tmp = target + '.syncing'
+    with open(tmp, 'wb') as f:
+        f.write(content)
+    os.replace(tmp, target)
+    if target != path:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    _mark(content, 'hash match')
+    ctx = finder.ctx()
+    downsub._record_history(dict(ctx, _sync_note='hash match, no sync needed'), sub, lang, fmt, 'sidecar',
+                            target, 'hash-replace')
+    return {'changed': True, 'message': f'replaced with a subtitle made for this file (hash match, {sub.provider_name})'}
+
+
+def _hash_replace_plex(item, st, finder):
+    from utilities import downsub
+    got = finder.best(st.get('language') or '', hi=False)
+    if not got:
+        return None
+    sub, fmt, _ = got
+    content = sub.content if isinstance(sub.content, bytes) else (sub.content or '').encode('utf-8')
+    lang3 = getattr(sub.language, 'alpha3', None) or (st.get('language') or 'und')
+    if not downsub.upload_subtitle_to_plex(item.get('ms_item_id'), content, lang3, fmt=fmt):
+        return None
+    _mark(content, 'hash match')
+    ok, code = plex_delete(st)
+    ctx = finder.ctx()
+    downsub._record_history(dict(ctx, _sync_note='hash match, no sync needed'), sub,
+                            getattr(sub.language, 'ietf', None) or str(sub.language), fmt, 'plex', None,
+                            'hash-replace')
+    msg = f'replaced with a subtitle made for this file (hash match, {sub.provider_name})'
+    return {'changed': True, 'message': msg if ok else f'{msg}; Plex would not remove the old one (HTTP {code})'}
+
+
 def resync_item(item, skip_checked=True):
     """Every existing subtitle of one item: sidecar files are fixed in place
     (both modes); in Plex mode, uploaded Plex subtitles for languages without
@@ -178,9 +303,33 @@ def resync_item(item, skip_checked=True):
     changed = checked = 0
     notes = []
     sidecars = sidecar_langs(item.get('location_on_disk'), {})
+    finder = _HashFinder(item)
     for lang, paths in sidecars.items():
         for p in paths:
-            res = resync_sidecar(item, p, skip_checked=skip_checked)
+            res = None
+            try:
+                with open(p, 'rb') as f:
+                    content = f.read()
+            except OSError:
+                continue
+            from database import subtitle_history
+            prev = subtitle_history.sync_result(_digest(content))
+            if skip_checked and prev is not None and not _hash_pending(prev):
+                continue
+            try:
+                res = _hash_replace_sidecar(item, p, finder)
+            except Exception as e:
+                logging.debug(f"[subs] hash replace failed for {p}: {e}")
+            if res is None and prev is not None and _hash_pending(prev):
+                # sync already couldn't decide; only the hash search was owed
+                from utilities import downsub as _ds
+                if any(x in _ds.HASH_PROVIDERS for x in _ds.selected_providers()):
+                    _mark(content, prev + '; no hash match')
+                res = {'changed': False, 'message': 'left as is: no hash match and sync could not decide'}
+            if res is None:
+                res = resync_sidecar(item, p, skip_checked=skip_checked)
+                if finder.searched() and (res.get('message') or '').startswith(HASH_PENDING):
+                    _mark(content, res['message'] + '; no hash match')
             if not res.get('skipped'):
                 checked += 1
                 notes.append(f"{lang}: {res['message']}")
@@ -192,7 +341,33 @@ def resync_item(item, skip_checked=True):
                 continue
             if (st.get('language') or 'und').split('-')[0].lower() in have:
                 continue          # that's the sidecar file Plex picked up
-            res = resync_plex_stream(item, st, skip_checked=skip_checked)
+            res = None
+            prev = None
+            content = None
+            url, token = plex_conn()
+            try:
+                r = requests.get(url + st['key'], params={'X-Plex-Token': token}, headers=PLEX_HEADERS,
+                                 timeout=30)
+                if r.status_code == 200 and r.content:
+                    content = r.content
+            except requests.RequestException:
+                pass
+            if content is not None:
+                from database import subtitle_history
+                prev = subtitle_history.sync_result(_digest(content))
+                if skip_checked and prev is not None and not _hash_pending(prev):
+                    continue
+            try:
+                res = _hash_replace_plex(item, st, finder)
+            except Exception as e:
+                logging.debug(f"[subs] hash replace failed for Plex stream {st.get('id')}: {e}")
+            if res is None and prev is not None and _hash_pending(prev):
+                from utilities import downsub as _ds
+                if any(x in _ds.HASH_PROVIDERS for x in _ds.selected_providers()):
+                    _mark(content, prev + '; no hash match')
+                res = {'changed': False, 'message': 'left as is: no hash match and sync could not decide'}
+            if res is None:
+                res = resync_plex_stream(item, st, skip_checked=skip_checked)
             if not res.get('skipped'):
                 checked += 1
                 notes.append(f"{st.get('language') or 'und'} (Plex): {res['message']}")
