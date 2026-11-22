@@ -83,7 +83,7 @@
                 <option value="unless_hash" {% if _sync == 'unless_hash' %}selected{% endif %}>Unless matched by file hash</option>
                 <option value="always" {% if _sync == 'always' %}selected{% endif %}>Always</option>
             </select>
-            <p class="settings-description">Fix subtitle timing after download, without reading the whole file: six 30-second audio samples spread through the video are matched against the subtitle lines to find an offset and frame-rate fix (23.976/24/25 fps). The subtitle is only changed when the new timing clearly fits better. A file-hash match is made for this exact release, so "Unless matched by file hash" skips those. Needs ffmpeg. Existing subtitles can be resynced from Tools → Subtitles.</p>
+            <p class="settings-description">Fix subtitle timing after download, without reading the whole file: six 30-second windows spread through the video are read, and the subtitle lines are matched against the file's own embedded text subtitle track when it has one (exact and fastest), otherwise against speech in the audio, to find an offset and frame-rate fix (23.976/24/25 fps). The subtitle is only changed when the new timing clearly fits better. A file-hash match is made for this exact release, so "Unless matched by file hash" skips those. Needs ffmpeg. Existing subtitles can be resynced from Tools → Subtitles.</p>
         </div>
 
         <div class="settings-form-group">

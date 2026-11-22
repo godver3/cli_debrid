@@ -95,3 +95,32 @@ def test_describe():
     assert subtitle_sync.describe({'status': 'synced', 'offset': -3.4, 'ratio': 1.0, 'before': 0.1, 'after': 0.5}) \
         .startswith('synced: shifted -3.40s')
     assert subtitle_sync.describe({'status': 'in_sync'}) == 'already in sync'
+
+
+@pytest.fixture(scope='module')
+def silent_mkv_with_subs(tmp_path_factory, media):
+    """Silent audio + an embedded SRT track: any fix must come from the track."""
+    _, speech = media
+    d = tmp_path_factory.mktemp('emb')
+    (d / 'ref.srt').write_bytes(_srt(speech))
+    out = d / 't.mkv'
+    subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i', f'color=c=black:s=32x32:r=10:d={DUR}',
+                    '-f', 'lavfi', '-i', 'anullsrc=r=8000:cl=mono', '-i', str(d / 'ref.srt'),
+                    '-map', '0', '-map', '1', '-map', '2', '-t', str(DUR), '-c:v', 'mpeg4', '-g', '20',
+                    '-c:a', 'pcm_s16le', '-c:s', 'srt', str(out)], check=True)
+    return str(out), speech
+
+
+def test_embedded_track_reference(silent_mkv_with_subs):
+    path, speech = silent_mkv_with_subs
+    new, info = subtitle_sync.sync_subtitle(path, _srt([(a + 2.7, b + 2.7) for a, b in speech]))
+    assert info['status'] == 'synced' and info['reference'].startswith('embedded')
+    assert abs(info['offset'] + 2.7) < 0.1
+    _, info = subtitle_sync.sync_subtitle(path, _srt(speech))
+    assert info['status'] == 'in_sync'
+
+
+def test_falls_back_to_audio_without_text_track(media):
+    path, speech = media
+    _, info = subtitle_sync.sync_subtitle(path, _srt([(a + 1.0, b + 1.0) for a, b in speech]))
+    assert info['reference'] == 'audio' and info['status'] == 'synced'

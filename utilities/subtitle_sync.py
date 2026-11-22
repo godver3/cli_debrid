@@ -1,11 +1,16 @@
-"""Subtitle timing sync from sampled audio.
+"""Subtitle timing sync from sampled windows of the video.
 
 Fits a subtitle to the video with one offset and an optional frame-rate
 ratio (23.976 <-> 24 <-> 25 fps releases), the way alass does without
-splits. Unlike alass/ffsubsync it never decodes the whole audio track:
-ffmpeg reads a handful of short windows spread through the file (input
-seeking, so on a debrid/usenet mount only those parts are fetched), speech
-is detected in them, and the subtitle lines are matched against that.
+splits. Unlike alass/ffsubsync it never reads the whole file: a handful of
+short windows spread through it are read (input seeking, so on a
+debrid/usenet mount only those parts are fetched) and the subtitle lines are
+matched against a reference from those windows:
+
+  1. an embedded text subtitle track (SRT/ASS/mov_text) when the file has
+     one: its line timings are exact for this file, and ffprobe only lists
+     packet timestamps, nothing is decoded;
+  2. otherwise speech detected in the audio.
 
 Pure Python (ffmpeg + pysubs2, both already required). A result is only
 applied when it fits clearly better than the original timing.
@@ -61,6 +66,64 @@ def _read_window(path, start, length, timeout):
     if sys.byteorder == 'big':
         samples.byteswap()
     return samples
+
+
+EMBED_TEXT_CODECS = {'subrip', 'srt', 'ass', 'ssa', 'mov_text', 'webvtt', 'text'}
+
+
+def _embedded_text_stream(path, timeout=20):
+    """(position among subtitle streams, language) of the first non-forced
+    embedded text subtitle track, or None. Header read only."""
+    try:
+        r = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 's',
+                            '-show_entries', 'stream=codec_name:stream_tags=language:stream_disposition=forced',
+                            '-of', 'json', str(path)], capture_output=True, text=True, timeout=timeout)
+        if r.returncode != 0:
+            return None
+        import json
+        streams = json.loads(r.stdout or '{}').get('streams') or []
+    except Exception:
+        return None
+    for pos, st in enumerate(streams):
+        if (st.get('disposition') or {}).get('forced'):
+            continue
+        if (st.get('codec_name') or '').lower() in EMBED_TEXT_CODECS:
+            return pos, ((st.get('tags') or {}).get('language') or 'und')
+    return None
+
+
+def _read_sub_window(path, pos, start, length, timeout):
+    """Line intervals (absolute seconds) of embedded subtitle stream `pos` in
+    [start, start+length), from packet timestamps, or None on failure."""
+    cmd = ['ffprobe', '-v', 'error', '-read_intervals', f'{start:.3f}%+{length:.3f}',
+           '-select_streams', f's:{pos}', '-show_entries', 'packet=pts_time,duration_time,size',
+           '-of', 'csv=p=0', str(path)]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        logging.info(f"[subsync] subtitle read at {start:.0f}s timed out after {timeout}s")
+        return None
+    except Exception:
+        return None
+    if r.returncode != 0:
+        return None
+    out = []
+    end = start + length
+    for line in r.stdout.splitlines():
+        parts = line.strip().split(',')
+        if len(parts) < 2:
+            continue
+        try:
+            pts, dur = float(parts[0]), float(parts[1])
+            size = int(parts[2]) if len(parts) > 2 and parts[2] else 99
+        except ValueError:
+            continue
+        if dur <= 0.05 or size <= 2:        # mov_text "clear" samples
+            continue
+        a, b = max(pts, start), min(pts + dur, end)
+        if b > a:
+            out.append((a, b))
+    return out
 
 
 def _speech_intervals(samples, start):
@@ -186,19 +249,33 @@ def sync_subtitle(video_path, content, fmt='srt', max_offset=60.0, windows=6,
         info['reason'] = 'unknown or short duration'
         return None, info
 
+    starts = [max(0.0, (0.1 + 0.8 * i / max(1, windows - 1)) * duration - window_len / 2)
+              for i in range(windows)]
     win = []
-    for i in range(windows):
-        pos = 0.1 + 0.8 * i / max(1, windows - 1)
-        start = max(0.0, pos * duration - window_len / 2)
-        samples = _read_window(video_path, start, window_len, timeout)
-        if samples is None:
-            continue
-        speech = _speech_intervals(samples, start)
-        if speech:
-            win.append((start, start + len(samples) / RATE, speech))
+    ref = _embedded_text_stream(video_path)
+    if ref is not None:
+        pos, lang = ref
+        for start in starts:
+            lines_w = _read_sub_window(video_path, pos, start, window_len, timeout)
+            if lines_w is not None:
+                win.append((start, start + window_len, lines_w))
+        n_lines = sum(len(w[2]) for w in win)
+        if len(win) >= max(3, windows // 2) and n_lines >= 12 and sum(1 for w in win if w[2]) >= 3:
+            info['reference'] = f'embedded subtitles ({lang})'
+        else:
+            win = []
+    if not win:
+        for start in starts:
+            samples = _read_window(video_path, start, window_len, timeout)
+            if samples is None:
+                continue
+            speech = _speech_intervals(samples, start)
+            if speech:
+                win.append((start, start + len(samples) / RATE, speech))
+        info['reference'] = 'audio'
     info['windows'] = len(win)
     if len(win) < max(3, windows // 2):
-        info['reason'] = f'only {len(win)} usable audio windows'
+        info['reason'] = f'only {len(win)} usable windows'
         return None, info
 
     sub_in_windows = 0.0
@@ -250,7 +327,8 @@ def describe(info):
     if s == 'synced':
         r = info.get('ratio', 1.0)
         fps = '' if r == 1.0 else f", frame rate x{r:.4f}"
-        return f"synced: shifted {info['offset']:+.2f}s{fps} (fit {info['before']:.2f} → {info['after']:.2f})"
+        ref = f" against {info['reference']}" if info.get('reference') else ''
+        return f"synced{ref}: shifted {info['offset']:+.2f}s{fps} (fit {info['before']:.2f} → {info['after']:.2f})"
     if s == 'in_sync':
         return 'already in sync'
     if s == 'unsure':
