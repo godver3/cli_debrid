@@ -130,6 +130,8 @@ def _block_seconds(exc):
     if isinstance(exc, (AuthenticationError, ConfigurationError)):
         return 3600, 'login failed (check the OpenSubtitles username/password)'
     if isinstance(exc, ServiceUnavailable):
+        if 'HTTP 403' in str(exc):
+            return 6 * 3600, 'the site refuses requests (HTTP 403)'
         return 600, 'service unavailable'
     return 600, f'error ({type(exc).__name__ if exc else "unknown"})'
 
@@ -156,6 +158,15 @@ def _pool_class():
             try:
                 return self._prov.list_subtitles(*a, **kw)
             except Exception as e:
+                code = getattr(getattr(e, 'response', None), 'status_code', None)
+                if code in (403, 503):
+                    # The site refuses us (tvsubtitles.net answers 403 to every
+                    # search): subliminal would log a traceback per search and
+                    # keep asking. As ServiceUnavailable it is paused instead.
+                    from subliminal.exceptions import ServiceUnavailable
+                    err = ServiceUnavailable(f'{self._name}: HTTP {code}')
+                    self._errors[self._name] = err
+                    raise err from e
                 self._errors[self._name] = e
                 raise
 

@@ -438,3 +438,24 @@ def test_broken_symlink_is_reported_as_missing(db, tmp_path):
     with _settings('Symlinked/Local'):
         assert downsub.download_subtitles_for_video(str(link), item=item) is False
     assert downsub.last_result_note(item) == 'library file is missing (broken symlink)'
+
+
+def test_provider_answering_403_is_paused_not_retried():
+    import requests
+    from subliminal.core import ProviderPool
+    from subliminal.video import Episode
+    from babelfish import Language
+    from utilities import downsub
+    downsub._BLOCKED.clear()
+
+    class Blocked:
+        def list_subtitles(self, video, languages):
+            resp = requests.Response()
+            resp.status_code = 403
+            raise requests.HTTPError('403 Client Error: Forbidden', response=resp)
+    pool = downsub._pool_class()(providers=['tvsubtitles'])
+    with mock.patch.object(ProviderPool, '__getitem__', return_value=Blocked()):
+        assert pool.list_subtitles(Episode('Show.S01E01.mkv', 'Show', 1, 1), {Language('eng')}) == []
+    assert 'HTTP 403' in downsub.blocked_providers()['tvsubtitles']
+    assert downsub._BLOCKED['tvsubtitles'][0] - time.monotonic() > 3 * 3600
+    downsub._BLOCKED.clear()
