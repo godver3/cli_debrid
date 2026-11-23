@@ -213,6 +213,13 @@ async function previewOverlayCleanup(e) {
         lines.push(`<strong>${d.would_delete}</strong> poster file(s) would be deleted (${d.would_free_mb} MB): `
             + `${k.overlay || 0} old overlay upload(s), ${k.collection || 0} collection, ${k.smart_collection || 0} smart collection.`);
         lines.push(`${d.records_would_remove} overlay record(s) would be removed and ${d.records_would_reset} reset for retry.`);
+        if (d.not_deletable) {
+            const cmd = `sudo find "${d.metadata_path}" -type d -exec setfacl -m u:${d.run_as_uid}:rwx,d:u:${d.run_as_uid}:rwx {} +`;
+            lines.push(`<span style="color:#f0ad4e;"><strong>${d.not_deletable}</strong> of these can't be deleted: cli_debrid runs as uid ${d.run_as_uid} and has no write access to Plex's folders (Plex owns them).</span> `
+                + `To fix it on a Linux host, run once (folders Plex creates later inherit it):`
+                + `<div style="text-align:left;font-family:monospace;font-size:11px;user-select:all;background:rgba(0,0,0,.25);padding:6px;margin-top:4px;word-break:break-all;">${_escHtml(cmd)}</div>`
+                + `<span style="font-size:11px;color:#888;">The path is the one on the host; if your container mounts Plex's folder somewhere else, use the host path.</span>`);
+        }
         if (d.poster_errors) lines.push(`${d.poster_errors} item(s) couldn't be checked and would be skipped.`);
         if (d.files && d.files.length) {
             const shown = d.files.slice(0, 50).map(f => `<div>${_escHtml(f.path)} <span style="color:#888;">(${f.kind}, ${(f.bytes / 1024).toFixed(0)} KB)</span></div>`).join('');

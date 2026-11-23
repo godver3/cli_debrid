@@ -233,3 +233,31 @@ class OverlayHealthTests(OverlayDbTestBase):
         self.assertTrue(h['loop_suspected'])
         self.assertEqual(h['last']['resets'], 5892)
         self.assertEqual(len(h['syncs']), scheduled_tasks.HEALTH_SYNCS)
+
+
+class CleanupPermissionTests(PosterCleanupTests):
+    """Plex owns its Metadata folders; cli_debrid's uid often can't delete there."""
+
+    def test_permission_denied_is_counted_and_logged_once(self):
+        from unittest.mock import patch
+        self.overlaid(1, '100')
+        a = self.file('a1', 'b' * 40)
+        b = self.file('a1', 'c' * 40)
+        plex = _FakePlex({'100': [_upload('a' * 40, True), _upload('b' * 40), _upload('c' * 40)]})
+        with patch.object(scheduled_tasks.os, 'remove', side_effect=PermissionError(13, 'denied')), \
+             self.assertLogs(scheduled_tasks.logger, 'WARNING') as logs:
+            res = self.run_cleanup(plex)
+        self.assertEqual((res['deleted'], res['denied'], res['errors']), (0, 2, 2))
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn('no write access', logs.output[0])
+        self.assertTrue(os.path.exists(a) and os.path.exists(b))
+
+    def test_preview_marks_files_it_could_not_delete(self):
+        from unittest.mock import patch
+        self.overlaid(1, '100')
+        self.file('a1', 'b' * 40)
+        planned = []
+        with patch.object(scheduled_tasks.os, 'access', lambda *a: False):
+            scheduled_tasks._cleanup_overlay_upload_files(
+                self.root, _FakePlex({'100': [_upload('b' * 40)]}), set(), planned=planned)
+        self.assertEqual([p['deletable'] for p in planned], [False])

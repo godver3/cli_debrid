@@ -2087,7 +2087,7 @@ def _cleanup_overlay_upload_files(metadata_root: str, client, keep_hashes: set,
         conn.close()
 
     out = {'deleted': 0, 'errors': 0, 'bytes': 0, 'stale_keys': [],
-           'item_hashes': {}, 'season_hashes': {}}
+           'item_hashes': {}, 'season_hashes': {}, 'denied': 0, 'denied_example': None}
     keys = [(k, False) for k in item_keys] + [(k, True) for k in season_keys]
     if not keys:
         return out
@@ -2146,16 +2146,39 @@ def _cleanup_overlay_upload_files(metadata_root: str, client, keep_hashes: set,
                     except OSError:
                         size = 0
                     if planned is not None:
-                        planned.append({'path': fp, 'bytes': size, 'kind': 'overlay', 'key': rk})
+                        planned.append({'path': fp, 'bytes': size, 'kind': 'overlay', 'key': rk,
+                                        'deletable': _can_delete(fp)})
                     else:
                         os.remove(fp)
                         logger.debug(f"Plex poster cleanup: deleted '{fp}' (key {rk})")
                     out['bytes'] += size
                     out['deleted'] += 1
+                except PermissionError:
+                    # Counted as an error too, so the cleanup window stays put
+                    # and these items are checked again once access is fixed.
+                    if not out['denied']:
+                        out['denied_example'] = fp
+                    out['denied'] += 1
+                    out['errors'] += 1
                 except Exception as e:
                     logger.error(f"Plex poster cleanup: failed '{fp}': {e}")
                     out['errors'] += 1
+    if out['denied']:
+        logger.warning(
+            f"Plex poster cleanup: {out['denied']} file(s) not deleted, no write access "
+            f"(cli_debrid runs as uid {_uid()}, e.g. '{out['denied_example']}'). "
+            f"Plex owns its Metadata folders; give this uid write access to them, "
+            f"e.g. setfacl on the host (see the Overlays cleanup preview).")
     return out
+
+
+def _uid():
+    return os.getuid() if hasattr(os, 'getuid') else None
+
+
+def _can_delete(fp: str) -> bool:
+    """Deleting a file needs write + search permission on its folder."""
+    return os.access(os.path.dirname(fp), os.W_OK | os.X_OK)
 
 
 PREVIEW_FILE_LIMIT = 300
@@ -2248,7 +2271,8 @@ def task_overlay_cleanup(triggered_by: str = 'scheduled', dry_run: bool = False)
         except OSError:
             size = 0
         if planned is not None:
-            planned.append({'path': fp, 'bytes': size, 'kind': kind, 'key': key})
+            planned.append({'path': fp, 'bytes': size, 'kind': kind, 'key': key,
+                            'deletable': _can_delete(fp)})
         else:
             os.remove(fp)
         return size
@@ -2355,6 +2379,7 @@ def task_overlay_cleanup(triggered_by: str = 'scheduled', dry_run: bool = False)
         total_deleted = 0
         total_errors  = 0
         total_bytes   = 0
+        total_denied  = 0
 
         if not is_jellyfin_mode():
             plex_data_path = get_setting('Overlay Settings', 'plex_data_path', default='').strip()
@@ -2384,6 +2409,7 @@ def task_overlay_cleanup(triggered_by: str = 'scheduled', dry_run: bool = False)
                         metadata_root, PlexClient(plex_url, plex_token, timeout=10),
                         keep_hashes, since=_since, planned=planned)
                     total_deleted, total_errors, total_bytes = res['deleted'], res['errors'], res['bytes']
+                    total_denied = res['denied']
 
                     if not dry_run:
                         _record_poster_cleanup(res, _run_started)
@@ -2398,6 +2424,8 @@ def task_overlay_cleanup(triggered_by: str = 'scheduled', dry_run: bool = False)
         if total_deleted > 0:
             _activity_title += (f", {total_deleted} poster(s) deleted "
                                 f"({round(total_bytes / (1024 * 1024), 2)} MB)")
+        if total_denied:
+            _activity_title += f", {total_denied} poster(s) not deleted (no write access to Plex's folders)"
         if not dry_run:
             log_activity(
                 'cleanup',
@@ -2414,6 +2442,7 @@ def task_overlay_cleanup(triggered_by: str = 'scheduled', dry_run: bool = False)
                     'posters_deleted':            total_deleted,
                     'mb_reclaimed':               round(total_bytes / (1024 * 1024), 2),
                     'poster_errors':              total_errors,
+                    'poster_permission_denied':   total_denied,
                 },
                 duration_seconds=int(time.time() - _cleanup_start),
             )
@@ -2615,6 +2644,9 @@ def task_overlay_cleanup(triggered_by: str = 'scheduled', dry_run: bool = False)
                 'by_kind': {k: sum(1 for f in planned if f['kind'] == k)
                             for k in ('overlay', 'collection', 'smart_collection')},
                 'poster_errors': total_errors,
+                'not_deletable': sum(1 for f in planned if not f.get('deletable', True)),
+                'run_as_uid': _uid(),
+                'metadata_path': _meta,
                 'files': files,
                 'files_truncated': len(planned) > PREVIEW_FILE_LIMIT,
             }
