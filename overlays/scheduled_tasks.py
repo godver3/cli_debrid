@@ -1855,27 +1855,50 @@ def _register_show_seasons_pending(manager: OverlayManager, show_ms_item_id: str
 _UPLOAD_PREFIX = 'upload://posters/'
 
 
+_PLEX_DATA_SUBDIRS = (
+    os.path.join('Application Support', 'Plex Media Server'),
+    os.path.join('Library', 'Application Support', 'Plex Media Server'),
+)
+
+
+def check_plex_data_path(plex_data_path: str) -> Dict:
+    """
+    Whether a configured Plex data path contains Plex's Metadata folder.
+
+    Returns {'ok': bool, 'suggestion': str|None}. The suggestion is the standard
+    '.../Application Support/Plex Media Server' folder under the given path when
+    Metadata is there instead (a path set one or two levels too high). Used by the
+    Overlay Settings check and by the cleanup task, which never guesses.
+    """
+    path = (plex_data_path or '').strip()
+    if not path:
+        return {'ok': False, 'suggestion': None}
+    if os.path.isdir(os.path.join(path, 'Metadata')):
+        return {'ok': True, 'suggestion': None}
+    for sub in _PLEX_DATA_SUBDIRS:
+        candidate = os.path.join(path, sub)
+        if os.path.isdir(os.path.join(candidate, 'Metadata')):
+            return {'ok': False, 'suggestion': candidate}
+    return {'ok': False, 'suggestion': None}
+
+
 def _resolve_plex_metadata_root(plex_data_path: str):
     """
     The Plex 'Metadata' folder under the configured Plex data path, or None.
 
-    Never guesses: if the folder is one level down (the path points at
-    .../Library instead of .../Plex Media Server), logs the path to set and
-    returns None, so a cleanup that deletes files only runs against the folder
-    the user named.
+    Never guesses: if the folder is further down (the path points at .../Library
+    instead of .../Plex Media Server), logs the path to set and returns None, so
+    a cleanup that deletes files only runs against the folder the user named.
     """
-    root = os.path.join(plex_data_path, 'Metadata')
-    if os.path.isdir(root):
-        return root
-    for sub in (os.path.join('Application Support', 'Plex Media Server'),
-                os.path.join('Library', 'Application Support', 'Plex Media Server')):
-        candidate = os.path.join(plex_data_path, sub)
-        if os.path.isdir(os.path.join(candidate, 'Metadata')):
-            logger.warning(
-                f"Plex poster cleanup: no Metadata folder in '{plex_data_path}' — skipping. "
-                f"Set the Plex data path to '{candidate}' to enable it.")
-            return None
-    logger.warning(f"Plex poster cleanup: no Metadata folder in '{plex_data_path}' — skipping.")
+    check = check_plex_data_path(plex_data_path)
+    if check['ok']:
+        return os.path.join(plex_data_path, 'Metadata')
+    if check['suggestion']:
+        logger.warning(
+            f"Plex poster cleanup: no Metadata folder in '{plex_data_path}' — skipping. "
+            f"Set the Plex data path to '{check['suggestion']}' to enable it.")
+    else:
+        logger.warning(f"Plex poster cleanup: no Metadata folder in '{plex_data_path}' — skipping.")
     return None
 
 

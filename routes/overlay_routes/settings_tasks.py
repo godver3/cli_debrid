@@ -1,11 +1,20 @@
 """Overlay settings and task triggers."""
 
 from flask import jsonify, request
+from routes.models import admin_required
 from ._common import logger, overlay_bp
 
 # ============================================
 # Settings Endpoints
 # ============================================
+
+@overlay_bp.route('/api/overlays/plex-data-path-check', methods=['GET'])
+@admin_required
+def check_plex_data_path_route():
+    """Check a Plex data path for Plex's Metadata folder (Overlay Settings save)."""
+    from overlays.scheduled_tasks import check_plex_data_path
+    return jsonify(check_plex_data_path(request.args.get('path', ''))), 200
+
 
 @overlay_bp.route('/api/overlays/settings', methods=['GET'])
 def get_overlay_settings():

@@ -119,6 +119,16 @@ class MetadataRootTests(unittest.TestCase):
             self.assertIsNone(scheduled_tasks._resolve_plex_metadata_root(base))
         self.assertIn(os.path.join(base, 'Application Support', 'Plex Media Server'), logs.output[0])
 
+    def test_check_suggests_the_folder_holding_metadata(self):
+        base = tempfile.mkdtemp()
+        target = os.path.join(base, 'Library', 'Application Support', 'Plex Media Server')
+        os.makedirs(os.path.join(target, 'Metadata'))
+        self.assertEqual(scheduled_tasks.check_plex_data_path(base), {'ok': False, 'suggestion': target})
+        self.assertEqual(scheduled_tasks.check_plex_data_path(target), {'ok': True, 'suggestion': None})
+        self.assertEqual(scheduled_tasks.check_plex_data_path(os.path.join(base, 'nope')),
+                         {'ok': False, 'suggestion': None})
+        self.assertEqual(scheduled_tasks.check_plex_data_path('  '), {'ok': False, 'suggestion': None})
+
     def test_correct_path(self):
         base = tempfile.mkdtemp()
         os.makedirs(os.path.join(base, 'Metadata'))
