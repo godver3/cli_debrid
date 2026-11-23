@@ -169,6 +169,25 @@ def release_all_for_nfo(plex=None) -> int:
     return done
 
 
+def lock_new_episodes(imdb_ids) -> Dict[str, str]:
+    """Plex just added episodes of these shows (symlink verification found
+    them). For a show on a chosen order whose order isn't carried by NFO
+    files, set and lock the new episodes' titles too: without this only the
+    episodes present at the order change were locked, and every later one
+    showed Plex's (TMDB-numbered) details. Episodes already right are skipped."""
+    from cli_battery.app.episode_order import show_episode_order
+    notes = {}
+    for imdb_id in sorted({i for i in imdb_ids or () if i}):
+        try:
+            order = show_episode_order(imdb_id)
+            if not order or _nfo_mode(imdb_id):
+                continue
+            notes[imdb_id] = sync_show(imdb_id, order)
+        except Exception as e:
+            logging.warning(f"{_LOG} locking new episodes of {imdb_id}: {e}")
+    return notes
+
+
 def sync_show(imdb_id: str, order: Optional[str] = None, plex=None) -> str:
     """Apply (chosen order) or release (default order) one show. Returns a note.
     With NFO files on, the NFOs carry the order instead: release and refresh."""
