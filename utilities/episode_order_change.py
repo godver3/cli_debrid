@@ -360,6 +360,12 @@ def apply_order_change(imdb_id: str, new_order: Optional[str], sync_plex: bool =
         if titles_note:
             plex_note = f"{plex_note}; {titles_note}" if plex_note else titles_note
 
+    # NFO files carry the order's titles/plots for the renumbered files
+    from utilities.nfo_writer import refresh_show as _refresh_nfos
+    nfo_note = _refresh_nfos(imdb_id)
+    if nfo_note:
+        symlink_note = f"{symlink_note}; {nfo_note}" if symlink_note else nfo_note
+
     logging.info(f"[EpisodeOrder] {imdb_id}: {preview['current_order']} -> {new_order}; "
                  f"{len(preview['moves'])} moved, {len(preview['removes'])} removed, "
                  f"{len(preview['unmappable'])} left unmapped")

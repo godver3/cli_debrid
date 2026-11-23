@@ -78,6 +78,13 @@ def remove_sidecar_subtitles(video_path):
             logging.warning(f"Could not remove subtitle {path}: {e}")
     if removed:
         logging.info(f"Removed {len(removed)} subtitle file(s) of {name}")
+    # cli_debrid's NFO files of this episode (and tvshow.nfo once the show's
+    # folder has no video left), so the folder can empty
+    try:
+        from utilities.nfo_writer import remove_for_video
+        removed += remove_for_video(video_path)
+    except Exception as e:
+        logging.debug(f"NFO cleanup for {video_path} failed: {e}")
     return removed
 
 
