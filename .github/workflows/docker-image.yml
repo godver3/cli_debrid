@@ -299,6 +299,9 @@ jobs:
       # Posts the notes and the release link to the Discord release notes
       # channel (secret DISCORD_RELEASE_WEBHOOK: a webhook made in that
       # channel). Skipped without the secret or without a notes file.
+      # An embed description holds 4096 characters, so long notes are split on
+      # line boundaries into several messages (first one carries the title and
+      # link) instead of being cut off.
       - name: Post release notes to Discord
         if: steps.notes.outputs.post == 'true'
         run: |
@@ -306,17 +309,50 @@ jobs:
             echo "DISCORD_RELEASE_WEBHOOK not set; skipping"
             exit 0
           fi
-          URL="${{ github.server_url }}/${{ github.repository }}/releases/tag/v${VERSION}"
-          if [ "${{ github.ref_name }}" = "main" ]; then LABEL="stable"; COLOR=5763719; else LABEL="dev"; COLOR=16753920; fi
-          jq -n --rawfile notes "release-notes/${VERSION}.md" --arg title "cli_debrid ${VERSION} (${LABEL})" \
-                --arg url "$URL" --argjson color "$COLOR" '
-            ($notes | if length > 3900 then .[0:3900] + "\n\n... full notes on GitHub" else . end) as $d
-            | {username: "cli_debrid releases",
-               embeds: [{title: $title, url: $url, description: $d, color: $color}],
-               allowed_mentions: {parse: []}}' > discord.json
-          curl -fsS -H "Content-Type: application/json" -d @discord.json "$WEBHOOK"
+          python3 - <<'EOF'
+          import json, os, time, urllib.request
+
+          version = os.environ['VERSION']
+          stable = os.environ['REF_NAME'] == 'main'
+          title = f"cli_debrid {version} ({'stable' if stable else 'dev'})"
+          color = 5763719 if stable else 16753920
+          url = f"{os.environ['SERVER_URL']}/{os.environ['REPO']}/releases/tag/v{version}"
+          notes = open(f"release-notes/{version}.md", encoding='utf-8').read().strip()
+
+          LIMIT = 3900
+          chunks, cur = [], ''
+          for line in notes.split('\n'):
+              while len(line) > LIMIT:          # a single huge line: hard split
+                  if cur:
+                      chunks.append(cur); cur = ''
+                  chunks.append(line[:LIMIT]); line = line[LIMIT:]
+              if cur and len(cur) + 1 + len(line) > LIMIT:
+                  chunks.append(cur); cur = line
+              else:
+                  cur = f"{cur}\n{line}" if cur else line
+          if cur:
+              chunks.append(cur)
+
+          for i, chunk in enumerate(chunks, 1):
+              embed = {'description': chunk, 'color': color}
+              if i == 1:
+                  embed.update(title=title, url=url)
+              else:
+                  embed['title'] = f"{title} ({i}/{len(chunks)})"
+              body = json.dumps({'username': 'cli_debrid releases', 'embeds': [embed],
+                                 'allowed_mentions': {'parse': []}}).encode()
+              req = urllib.request.Request(os.environ['WEBHOOK'], data=body,
+                                           headers={'Content-Type': 'application/json',
+                                                    'User-Agent': 'cli_debrid-release'})
+              urllib.request.urlopen(req, timeout=30).read()
+              print(f"posted part {i}/{len(chunks)} ({len(chunk)} chars)")
+              time.sleep(1)  # stay under the webhook rate limit
+          EOF
         env:
           WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+          REF_NAME: ${{ github.ref_name }}
+          SERVER_URL: ${{ github.server_url }}
+          REPO: ${{ github.repository }}
 
       # The dev build creates v<version> first, as a pre-release; the main build
       # only updates it to a full release, and GitHub doesn't move the "Latest"
