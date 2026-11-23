@@ -34,6 +34,7 @@ def _route_functions(path):
 
 
 @pytest.mark.parametrize('path', [ROOT / 'routes' / 'plex_labels_debug_routes.py',
+                                  ROOT / 'routes' / 'metadata_routes.py',
                                   *sorted((ROOT / 'routes' / 'debug_routes').glob('*.py'))],
                          ids=lambda p: p.name)
 def test_debug_routes_need_admin(path):
@@ -294,3 +295,189 @@ def test_bulk_queue_contents_returns_one_queue(app_db):
     data, _ = _call(maintenance.get_queue_contents, query_string={'queue': 'Wanted'})
     assert [i['title'] for i in data['Wanted']] == ['W (2020)']
     assert data['Sleeping'] == []
+
+
+# ── Indexer text is escaped ──────────────────────────────────────────────────
+
+@pytest.mark.parametrize('path,raw', [
+    ('static/js/scraper_tester.js', "filtered-title' : ''}\">${title}</div>"),
+    ('static/js/scraper.js', "<div class=\"card-filename\">${torrent.title"),
+    ('static/js/scraper.js', "${torrent.filter_reason}</div>"),
+    ('static/js/scraper.js', "<span class=\"source-badge\">${p.trim()}</span>"),
+    ('templates/reverse_parser.html', 'data-full-content="${cellContent}">${cellContent}'),
+    ('static/js/pages/database-1.js', "String(rawCellContent).replace(/\"/g, '&quot;')"),
+])
+def test_indexer_text_is_not_inserted_raw(path, raw):
+    assert raw not in (ROOT / path).read_text()
+
+
+# ── Upgrade cleanup keeps shared packs ───────────────────────────────────────
+
+def test_upgrade_cleanup_keeps_a_pack_other_episodes_use(app_db):
+    from database import collected_items as ci
+    conn = app_db()
+    _insert(conn, title='Show', type='episode', season_number=1, episode_number=2,
+            filled_by_torrent_id='PACK1')
+    conn.close()
+    with mock.patch('queues.adding_queue.AddingQueue') as aq:
+        assert ci.remove_original_item_from_account({'title': 'Show', 'filled_by_torrent_id': 'PACK1'}) is False
+        aq.assert_not_called()
+        assert ci.remove_original_item_from_account({'title': 'Show', 'filled_by_torrent_id': 'OTHER'}) is True
+        aq.return_value.remove_unwanted_torrent.assert_called_once_with('OTHER')
+
+
+def test_upgrade_cleanup_checks_nzb_ids_both_ways(app_db):
+    from database import collected_items as ci
+    conn = app_db()
+    _insert(conn, title='Show', type='episode', season_number=1, episode_number=2,
+            filled_by_torrent_id='nzb:abc')
+    conn.close()
+    assert ci._old_release_still_used('abc')
+    assert ci._old_release_still_used('nzb:abc')
+    assert not ci._old_release_still_used('nzb:zzz')
+
+
+def test_clear_hub_queue_keeps_magnets_of_items_in_flight(app_db):
+    from routes import upgrade_hub_routes as uh
+    from database import zilean_upgrade as zu
+    zu._ensure_cache_tables()
+    conn = app_db()
+    waiting = _insert(conn, title='A', type='movie', state='Upgrading')
+    adding = _insert(conn, title='B', type='movie', state='Adding')
+    for iid in (waiting, adding):
+        conn.execute("INSERT INTO upgrade_hub_queued_magnets VALUES (?, '{}', 'now')", (iid,))
+    conn.commit()
+    conn.close()
+    data, _ = _call(uh.clear_hub_queue, method='POST')
+    assert data['reverted'] == 1
+    conn = app_db()
+    left = [r[0] for r in conn.execute('SELECT item_id FROM upgrade_hub_queued_magnets')]
+    state = conn.execute('SELECT state FROM media_items WHERE id = ?', (waiting,)).fetchone()[0]
+    conn.close()
+    assert left == [adding]
+    assert state == 'Collected'
+
+
+# ── Usenet transfer ──────────────────────────────────────────────────────────
+
+def test_transfer_directions():
+    from utilities.provider_transfer import parse_direction
+    assert parse_direction('climount_to_nzbdav') == ('climount', 'nzbdav')
+    assert parse_direction('nzbdav_to_builtin') == ('nzbdav', 'builtin')
+    assert parse_direction('builtin_to_climount') == ('builtin', 'climount')
+    for bad in ('nzbdav_to_nzbdav', 'zurg_to_climount', 'x', ''):
+        assert parse_direction(bad) == (None, None)
+
+
+def _resp(payload, status=200):
+    r = mock.MagicMock(status_code=status)
+    r.json.return_value = payload
+    return r
+
+
+def test_transfer_climount_source_uses_release_names(tmp_path):
+    from utilities import provider_transfer as pt
+    (tmp_path / 'id-1.nzb').write_bytes(b'<nzb/>')
+    (tmp_path / 'id-2.nzb').write_bytes(b'<nzb><head><meta type="name">From.Meta.mkv</meta></head></nzb>')
+    (tmp_path / 'id-3.nzb').write_bytes(b'<nzb/>')
+    page = {'entries': [{'name': 'Show.S01E01.1080p', 'info_hash': 'id-1'}], 'total_pages': 1}
+    with mock.patch.object(pt.requests, 'get', return_value=_resp(page)):
+        items, err = pt.list_source_items('climount_to_nzbdav', 'http://cm', 'tok', str(tmp_path))
+    assert err is None
+    assert [i['name'] for i in items] == ['Show.S01E01.1080p', 'From.Meta.mkv', 'id-3']
+
+
+def test_transfer_climount_target_existing_names_from_library():
+    from utilities import provider_transfer as pt
+    pages = [_resp({'entries': [{'name': 'A'}], 'total_pages': 2}),
+             _resp({'entries': [{'name': 'B'}], 'total_pages': 2})]
+    with mock.patch.object(pt.requests, 'get', side_effect=pages) as get:
+        names = pt._target_existing_names('climount', 'http://cm', '')
+    assert names == {'A', 'B'}
+    assert get.call_args_list[0].args[0] == 'http://cm/api/browse/__all__'
+
+
+def test_transfer_zurg_source_explains_it_has_no_nzbs():
+    from utilities import provider_transfer as pt
+    hist = {'history': {'slots': [{'name': 'x', 'status': 'Completed'}]}}
+    with mock.patch.object(pt.requests, 'get', return_value=_resp(hist)):
+        items, err = pt.list_source_items('nzbdav_to_climount', 'http://zurg', '')
+    assert items is None and 'target' in err
+
+
+def test_transfer_runs_one_job_at_a_time_and_sends_to_builtin():
+    from utilities import provider_transfer as pt
+    pt._jobs.clear()
+    pt._jobs['busy'] = {'complete': False}
+    job, err = pt.start_job({'direction': 'nzbdav_to_builtin'})
+    assert job is None and 'already running' in err
+    assert pt.active_job_id() == 'busy'
+    pt._jobs.clear()
+
+    client = mock.MagicMock()
+    client.add_nzb_content.return_value = 'eng-1'
+    client._usenet_jobs.return_value = []
+    items = [{'name': 'Film.2020', 'ref': 'b', 'category': 'movies', 'status': ''}]
+    with mock.patch.object(pt, '_builtin_client', return_value=client), \
+            mock.patch.object(pt, 'list_source_items', return_value=(items, None)), \
+            mock.patch.object(pt, '_read_nzb', return_value=(b'<nzb/>', None)):
+        pt._jobs['j'] = {'status': 'starting', 'total': 0, 'done': 0, 'submitted': 0,
+                         'skipped': 0, 'failed': 0, 'complete': False, 'log': [], 'error': None}
+        pt._run_job('j', {'direction': 'nzbdav_to_builtin'})
+    client.add_nzb_content.assert_called_once_with(b'<nzb/>', title='Film.2020', category='movies')
+    assert pt._jobs['j']['submitted'] == 1 and pt._jobs['j']['complete']
+    pt._jobs.clear()
+
+
+# ── Create a Symlink ─────────────────────────────────────────────────────────
+
+def test_symlink_tool_rows_carry_the_source_path(app_db):
+    from routes import symlink_tools_routes as st
+    item = {'title': 'Film', 'year': 2020, 'type': 'movie', 'version': '1080p', 'content_source': '',
+            'imdb_id': 'tt5', 'tmdb_id': '5', 'filled_by_file': 'Film.mkv',
+            'original_path_for_symlink': '/mnt/src/Film.2020.mkv'}
+    row_id = st.add_to_database(item, '/links/Movies/Film (2020)/Film.mkv')
+    conn = app_db()
+    row = conn.execute('SELECT * FROM media_items WHERE id = ?', (row_id,)).fetchone()
+    conn.close()
+    assert row['original_path_for_symlink'] == '/mnt/src/Film.2020.mkv'
+    assert row['filled_by_file'] == 'Film.2020.mkv'
+    assert row['state'] == 'Collected' and row['collected_at']
+
+
+def test_symlink_tool_browse_rejects_dotdot(app_settings):
+    from routes import symlink_tools_routes as st
+    app_settings['File Management'] = {'original_files_path': '', 'symlinked_files_path': ''}
+    data, _ = _call(st.browse_files, method='POST', json={'path': '/mnt/../etc'})
+    assert data['success'] is False and 'denied' in data['message']
+
+
+# ── Trakt friends / Plex user tokens ─────────────────────────────────────────
+
+def test_trakt_friend_delete_reloads_sources(tmp_path, monkeypatch):
+    from routes import trakt_friends_routes as tf
+    monkeypatch.setattr(tf, 'TRAKT_FRIENDS_DIR', str(tmp_path))
+    (tmp_path / 'abc.json').write_text('{}')
+    config = {'Content Sources': {'Friends Trakt Watchlist_1': {'auth_id': 'abc'}}}
+    with mock.patch.object(tf, 'load_config', return_value=config), \
+            mock.patch.object(tf, 'save_config'), \
+            mock.patch('routes.settings_routes._reload_components_after_settings_change') as reload_:
+        from flask import Flask
+        with Flask(__name__).test_request_context(method='POST'):
+            tf.delete_friend.__wrapped__('abc')
+    reload_.assert_called_once_with('content_source')
+    assert config['Content Sources'] == {}
+
+
+def test_user_tokens_update_is_private_and_atomic(tmp_path, monkeypatch):
+    from flask import Flask
+    from routes import user_token_routes as ut
+    monkeypatch.setattr(ut, 'get_config_dir', lambda: str(tmp_path))
+    with Flask(__name__).app_context():
+        ut.update_user_tokens(lambda t: t.__setitem__('alice', 'A'))
+        ut.update_user_tokens(lambda t: t.__setitem__('bob', 'B'))
+        assert ut.load_user_tokens() == {'alice': 'A', 'bob': 'B'}
+        assert ut.update_user_tokens(lambda t: t.pop('alice', None) is not None) is True
+        assert ut.load_user_tokens() == {'bob': 'B'}
+    if os.name == 'posix':
+        assert (tmp_path / ut.USER_TOKEN_FILE_NAME).stat().st_mode & 0o077 == 0

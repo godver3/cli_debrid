@@ -1555,8 +1555,13 @@ def provider_transfer_config():
     """The configured Usenet Provider, used to prefill the transfer UI (it lives
     in Debug -> Library where the settings context isn't available)."""
     data_path = get_setting('Usenet Provider', 'data_path', '') or '/climount_data'
+    provider = (get_setting('Usenet Provider', 'provider', '') or '').strip().lower()
+    from utilities import provider_transfer
     return jsonify({
-        'provider': get_setting('Usenet Provider', 'provider', '') or '',
+        'provider': provider,
+        # Zurg speaks the same SAB API as NzbDAV, so it fills the NzbDAV fields.
+        'kind': {'zurg': 'nzbdav', 'nzbdav': 'nzbdav', 'builtin': 'builtin'}.get(provider, 'climount'),
+        'active_job': provider_transfer.active_job_id(),
         'url': get_setting('Usenet Provider', 'url', '') or '',
         'token': get_setting('Usenet Provider', 'api_token', '') or '',
         'data_path': data_path,
@@ -1585,11 +1590,12 @@ def provider_transfer_start():
     """Kick off a background transfer job. Returns a job_id to poll."""
     from utilities import provider_transfer
     p = request.get_json(silent=True) or request.form
-    if p.get('direction') not in ('climount_to_nzbdav', 'nzbdav_to_climount'):
+    _src, target_kind = provider_transfer.parse_direction(p.get('direction'))
+    if target_kind is None:
         return jsonify({'success': False, 'error': 'invalid direction'}), 400
-    if not (p.get('target_url') or '').strip():
+    if target_kind != 'builtin' and not (p.get('target_url') or '').strip():
         return jsonify({'success': False, 'error': 'target URL required'}), 400
-    job_id = provider_transfer.start_job({
+    job_id, err = provider_transfer.start_job({
         'direction': p.get('direction'),
         'source_url': p.get('source_url', ''), 'source_token': p.get('source_token', ''),
         'source_nzb_path': p.get('source_nzb_path', ''),
@@ -1598,6 +1604,8 @@ def provider_transfer_start():
         'skip_existing': p.get('skip_existing', True),
         'max_queue': p.get('max_queue', 3), 'limit': p.get('limit', 0),
     })
+    if err:
+        return jsonify({'success': False, 'error': err}), 409
     return jsonify({'success': True, 'job_id': job_id}), 202
 
 

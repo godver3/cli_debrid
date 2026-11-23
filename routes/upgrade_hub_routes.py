@@ -399,19 +399,38 @@ def clear_hub_queue():
         ).fetchall()
         item_ids = [r['item_id'] for r in rows]
         reverted = 0
+        reverted_ids = []
         if item_ids:
             placeholders = ','.join('?' * len(item_ids))
+            # Only items still waiting in Upgrading are reverted; one already being
+            # scraped/added keeps its pre-seeded magnet (deleting every row pulled
+            # it out from under an upgrade in progress).
+            reverted_ids = [r['id'] for r in conn.execute(
+                f"SELECT id FROM media_items WHERE id IN ({placeholders}) AND state='Upgrading'",
+                item_ids).fetchall()]
+        if reverted_ids:
+            placeholders = ','.join('?' * len(reverted_ids))
             cur = conn.execute(
                 f"UPDATE media_items SET state='Collected', upgrading=0, last_updated=datetime('now')"
                 f" WHERE id IN ({placeholders}) AND state='Upgrading'",
-                item_ids
+                reverted_ids
             )
             reverted = cur.rowcount
-            conn.execute("DELETE FROM upgrade_hub_queued_magnets")
+            conn.execute(f"DELETE FROM upgrade_hub_queued_magnets WHERE item_id IN ({placeholders})",
+                         reverted_ids)
             conn.commit()
-            for iid in item_ids:
+            for iid in reverted_ids:
                 _queued_magnets.pop(iid, None)
         conn.close()
+        if reverted_ids:
+            try:
+                from flask import current_app
+                runner = getattr(current_app, 'program_runner', None)
+                if runner:
+                    # Drop them from the in-memory Upgrading queue too.
+                    runner.queue_manager.queues['Upgrading'].update()
+            except Exception as e:
+                logging.warning(f"[UPGRADE_HUB] Could not refresh the Upgrading queue: {e}")
         logging.info(f"[UPGRADE_HUB] Cleared hub queue: reverted {reverted} items to Collected")
         return jsonify({'success': True, 'reverted': reverted})
     except Exception as e:
@@ -450,6 +469,7 @@ def run_cleanup():
     def _do_cleanup():
         from database.core import get_db_connection as _get_db
         cleaned = 0
+        kept = 0
         conn2 = _get_db()
         try:
             for row in rows:
@@ -460,7 +480,10 @@ def run_cleanup():
                 except Exception as e:
                     logging.warning(f"[UPGRADE_HUB] Plex cleanup failed for {item.get('title')}: {e}")
                 try:
-                    remove_original_item_from_account(item)
+                    # Keeps the old torrent/NZB while other episodes still use it
+                    # (season packs); the last one to upgrade removes it.
+                    if not remove_original_item_from_account(item):
+                        kept += 1
                     # Mark as processed so re-running cleanup won't pick it up again
                     conn2.execute(
                         "UPDATE media_items SET upgrading_from_torrent_id = NULL WHERE id = ?",
@@ -472,7 +495,8 @@ def run_cleanup():
                     logging.warning(f"[UPGRADE_HUB] Account cleanup failed for {item.get('title')}: {e}")
         finally:
             conn2.close()
-        logging.info(f"[UPGRADE_HUB] Manual cleanup complete: {cleaned}/{len(rows)} items processed")
+        logging.info(f"[UPGRADE_HUB] Manual cleanup complete: {cleaned}/{len(rows)} items processed, "
+                     f"{kept} old release(s) kept because other items still use them")
 
     threading.Thread(target=_do_cleanup, daemon=True, name='upgrade-hub-cleanup').start()
     return jsonify({'success': True, 'queued': len(rows),

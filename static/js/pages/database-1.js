@@ -1206,7 +1206,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     const rawCellContent = item[cellContentKey];
                     displayContent = (rawCellContent === null || rawCellContent === undefined || String(rawCellContent).trim() === '')
                         ? 'None'
-                        : String(rawCellContent).replace(/"/g, '&quot;');
+                        // Titles and file names come from indexers: escape fully, not just quotes.
+                        : String(rawCellContent).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
                     if (column === 'state' && displayContent === 'Final_Check') {
                         displayContent = 'Final Scrape';

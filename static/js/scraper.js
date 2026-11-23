@@ -1,6 +1,12 @@
 // SEARCH OPTIMIZATION VERSION: 2026-01-11-v2
 if (window.DEBUG) console.log('🔧 Scraper.js loaded - Search Optimizations ACTIVE (v2026-01-11-v2)');
 
+// Release titles, sources and filter reasons come from indexers: escape them
+// before they go into innerHTML or an attribute.
+function scrEsc(v) {
+    return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
 function addToRealDebrid(magnetLink, torrent) {
     // Check if user is a requester before making the request
     const isRequesterEl = document.getElementById('is_requester');
@@ -863,10 +869,10 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                     ? `<span class="vdiv"></span><span class="stat s-seeds"><i class="fa-solid fa-arrow-up"></i>&nbsp;${torrent.score_breakdown.total_score}</span>`
                     : '';
                 const blockedReason = isFilteredOut && torrent.filter_reason
-                    ? `<div class="card-blocked-reason"><i class="fa-solid fa-ban"></i> ${torrent.filter_reason}</div>` : '';
+                    ? `<div class="card-blocked-reason"><i class="fa-solid fa-ban"></i> ${scrEsc(torrent.filter_reason)}</div>` : '';
 
                 torResDiv.innerHTML = `
-                    <div class="card-filename">${torrent.title || torrent.original_title || 'N/A'}</div>
+                    <div class="card-filename">${scrEsc(torrent.title || torrent.original_title || 'N/A')}</div>
                     <div class="card-stats">
                         <span class="stat s-size"><i class="fa-solid fa-hard-drive"></i>&nbsp;${(torrent.size || 0).toFixed(1)} GB</span>
                         <span class="vdiv"></span>
@@ -874,7 +880,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                         ${scoreSpan}
                     </div>
                     ${blockedReason}
-                    <div class="card-sources">${torrent.source || 'N/A'}</div>
+                    <div class="card-sources">${scrEsc(torrent.source || 'N/A')}</div>
                     <div class="card-footer">
                         ${isNzbCard
                             ? `<span class="quality-badge usenet-badge" title="Usenet / NZB — downloads via ${window.USENET_PROVIDER_NAME || "Usenet provider"}">NZB</span>`
@@ -1276,7 +1282,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 row.innerHTML = `
                     <td>
                         <div class="release-title-wrapper">
-                            <div class="release-title" data-clean-title="${cleanTitle.replace(/"/g, '&quot;')}" data-filename="${filename.replace(/"/g, '&quot;')}">${cleanTitle}</div>
+                            <div class="release-title" data-clean-title="${scrEsc(cleanTitle)}" data-filename="${scrEsc(filename)}">${scrEsc(cleanTitle)}</div>
                             <div class="release-tags">${qualityBadgesHtml}</div>
                         </div>
                     </td>
@@ -1284,8 +1290,8 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                         <div class="size-cell-wrapper">
                             <div class="size-value">${(torrent.size || 0).toFixed(1)} GB</div>
                             <button class="folder-icon-btn desktop-only"
-                                    data-magnet="${(torrent.magnet || '').replace(/"/g, '&quot;')}"
-                                    data-title="${(torrent.title || torrent.original_title || '').replace(/"/g, '&quot;')}"
+                                    data-magnet="${scrEsc(torrent.magnet || '')}"
+                                    data-title="${scrEsc(torrent.title || torrent.original_title || '')}"
                                     aria-label="View file list"
                                     title="${torrent.is_nzb_season_pack ? 'View NZB episode list' : (torrent.nzb_url ? 'View NZB info' : 'View torrent files')}">
                                 ${createFolderIcon()}
@@ -1293,10 +1299,10 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                         </div>
                     </td>
                     <td>
-                        ${(torrent.source || 'N/A').split(' - ').map(p => `<span class="source-badge">${p.trim()}</span>`).join('')}
+                        ${(torrent.source || 'N/A').split(' - ').map(p => `<span class="source-badge">${scrEsc(p.trim())}</span>`).join('')}
                     </td>
                     <td class="text-right">
-                        <span class="score-value ${scoreClass}" ${isFilteredOut ? `title="${torrent.filter_reason || 'Filtered'}"` : ''}>${scoreDisplay}</span>
+                        <span class="score-value ${scoreClass}" ${isFilteredOut ? `title="${scrEsc(torrent.filter_reason || 'Filtered')}"` : ''}>${scoreDisplay}</span>
                     </td>
                     <td class="text-center cache-cell" data-torrent-index="${index}">
                         <span class="cache-icon-wrapper">${cacheIconHtml}</span>
@@ -1412,7 +1418,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                             if (this.checked) {
                                 titleDiv.textContent = filename;
                             } else {
-                                titleDiv.innerHTML = cleanTitle;
+                                titleDiv.textContent = cleanTitle;
                             }
                         }
                     });
@@ -1634,7 +1640,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                     row.innerHTML = `
                         <td>
                             <div class="release-title-wrapper">
-                                <div class="release-title" data-clean-title="${cleanTitle.replace(/"/g, '&quot;')}" data-filename="${filename.replace(/"/g, '&quot;')}">${cleanTitle}</div>
+                                <div class="release-title" data-clean-title="${scrEsc(cleanTitle)}" data-filename="${scrEsc(filename)}">${scrEsc(cleanTitle)}</div>
                                 <div class="release-tags">${qualityBadgesHtml}</div>
                             </div>
                         </td>
@@ -1642,8 +1648,8 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                             <div class="size-cell-wrapper">
                                 <div class="size-value">${(torrent.size || 0).toFixed(1)} GB</div>
                                 <button class="folder-icon-btn desktop-only"
-                                        data-magnet="${(torrent.magnet || '').replace(/"/g, '&quot;')}"
-                                        data-title="${(torrent.title || torrent.original_title || '').replace(/"/g, '&quot;')}"
+                                        data-magnet="${scrEsc(torrent.magnet || '')}"
+                                        data-title="${scrEsc(torrent.title || torrent.original_title || '')}"
                                         aria-label="View file list"
                                         title="${torrent.is_nzb_season_pack ? 'View NZB episode list' : (torrent.nzb_url ? 'View NZB info' : 'View torrent files')}">
                                     ${createFolderIcon()}
@@ -1651,10 +1657,10 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                             </div>
                         </td>
                         <td>
-                            ${(torrent.source || 'N/A').split(' - ').map(p => `<span class="source-badge">${p.trim()}</span>`).join('')}
+                            ${(torrent.source || 'N/A').split(' - ').map(p => `<span class="source-badge">${scrEsc(p.trim())}</span>`).join('')}
                         </td>
                         <td class="text-right">
-                            <span class="score-value ${scoreClass}" ${isFilteredOut ? `title="${torrent.filter_reason || 'Filtered'}"` : ''}>${scoreDisplay}</span>
+                            <span class="score-value ${scoreClass}" ${isFilteredOut ? `title="${scrEsc(torrent.filter_reason || 'Filtered')}"` : ''}>${scoreDisplay}</span>
                         </td>
                         <td class="text-center cache-cell" data-torrent-index="${index}">
                             <span class="cache-icon-wrapper">${cacheIconHtml}</span>

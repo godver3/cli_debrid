@@ -1553,16 +1553,47 @@ def remove_original_item_from_plex(item: Dict[str, Any]) -> bool:
         return False
 
 
+def _old_release_still_used(release_id: str) -> bool:
+    """True while any active row still points at this torrent or NZB job.
+
+    The old release of an upgrade is often a season pack the other episodes
+    (not upgraded yet) still play from; removing it broke all of them. NZB
+    jobs are checked too: season-pack NZBs are shared the same way.
+    """
+    rid = str(release_id or '')
+    bare = rid[4:] if rid.startswith('nzb:') else rid
+    ids = {rid, bare, f'nzb:{bare}'}
+    try:
+        from database.core import get_db_connection
+        conn = get_db_connection()
+        try:
+            row = conn.execute(
+                f"SELECT 1 FROM media_items WHERE filled_by_torrent_id IN ({','.join('?' for _ in ids)}) "
+                "AND state IN ('Adding', 'Checking', 'Collected', 'Upgrading') LIMIT 1",
+                list(ids)).fetchone()
+        finally:
+            conn.close()
+        return row is not None
+    except Exception as e:
+        logging.warning(f"[Cleanup] Could not check other users of {rid}: {e}; keeping it")
+        return True
+
+
 def remove_original_item_from_account(item: Dict[str, Any]):
-    """Remove the old torrent from the debrid account."""
+    """Remove the old torrent from the debrid account, unless other items still use it."""
     from queues.adding_queue import AddingQueue
     original_torrent_id = item.get('filled_by_torrent_id')
 
+    if original_torrent_id and _old_release_still_used(original_torrent_id):
+        logging.info(f"[Cleanup] Keeping {original_torrent_id} for {item.get('title', 'unknown')}: "
+                     "other items still use it")
+        return False
     if original_torrent_id:
         adding_queue = AddingQueue()
         adding_queue.remove_unwanted_torrent(original_torrent_id)
-    else:
-        logging.warning(f"[Cleanup] No torrent ID to remove for: {item.get('title', 'unknown')}")
+        return True
+    logging.warning(f"[Cleanup] No torrent ID to remove for: {item.get('title', 'unknown')}")
+    return False
 
 def remove_original_item_from_results(item: Dict[str, Any], media_items_batch: List[Dict[str, Any]]):
     try:

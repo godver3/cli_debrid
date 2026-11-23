@@ -1,52 +1,68 @@
-{# Migrate between usenet providers (Tools -> Usenet). Self-contained: prefills
+{# Migrate between usenet backends (Tools -> Usenet). Self-contained: prefills
    from /program_operation/api/provider_transfer/config; no Jinja `settings`
-   dependency (the debug template doesn't pass it). #}
+   dependency (the tools template doesn't pass it). #}
 <div class="debug_item" id="provider-transfer" data-cat="usenet">
   <h3>Migrate between usenet providers</h3>
-  <p class="description">Moves the stored <code>.nzb</code> of each item from one usenet backend to the other; the target re-fetches it from usenet. No re-search, categories preserved where the source exposes them. cli-debrid runs in a container, so it reads NzbDAV over HTTP and cli_mount from a mounted path (no Docker needed).</p>
+  <p class="description">Moves the stored <code>.nzb</code> of each item from one usenet backend to another; the target fetches it from usenet again. No re-search, and categories are kept where the source has them. Works with cli_mount, NzbDAV, Zurg (as a target only: it keeps no stored NZBs) and the built-in mount.</p>
 
   <div style="border:1px solid #7a5; border-left-width:4px; border-radius:6px; padding:8px 12px; background:rgba(120,170,90,0.08); margin:8px 0;">
     <strong>Before you run this:</strong>
     <ul style="margin:4px 0 0 18px; line-height:1.5;">
-      <li>The target <strong>re-downloads from usenet</strong> — subject to your provider's retention &amp; connection limits.</li>
+      <li>The target <strong>re-downloads from usenet</strong>, so your provider's retention and connection limits apply.</li>
       <li><strong>Best-effort:</strong> cli_mount trims old <code>.nzb</code> files, so part of an older library may not be transferable.</li>
-      <li>Avoid running it <strong>during a Plex scan</strong> on the same library (heavy concurrent activity).</li>
+      <li>Avoid running it <strong>during a Plex scan</strong> of the same library.</li>
       <li>Start with a small <em>limit</em> to test before transferring everything.</li>
     </ul>
   </div>
 
   <div class="form-group">
-    <label for="pt-direction">Direction:</label>
-    <select id="pt-direction">
-      <option value="climount_to_nzbdav">cli_mount → NzbDAV</option>
-      <option value="nzbdav_to_climount">NzbDAV → cli_mount</option>
+    <label for="pt-src">Source:</label>
+    <select id="pt-src">
+      <option value="climount">cli_mount</option>
+      <option value="nzbdav">NzbDAV</option>
+      <option value="builtin">Built-in mount</option>
+    </select>
+  </div>
+  <div class="form-group">
+    <label for="pt-tgt">Target:</label>
+    <select id="pt-tgt">
+      <option value="nzbdav">NzbDAV / Zurg</option>
+      <option value="climount">cli_mount</option>
+      <option value="builtin">Built-in mount</option>
     </select>
   </div>
 
-  {# --- cli_mount fields --- #}
-  <div class="pt-field" data-for="decy-nzbpath">
-    <label for="pt-decy-nzbpath">cli_mount nzb-store path <span style="color:#888">(source)</span>:</label>
-    <input type="text" id="pt-decy-nzbpath" placeholder="/climount_data/usenet/nzbs">
+  {# --- source fields --- #}
+  <div class="pt-field" data-role="src" data-kind="climount">
+    <label for="pt-src-nzbpath">cli_mount nzb-store path:</label>
+    <input type="text" id="pt-src-nzbpath" placeholder="/climount_data/usenet/nzbs">
     <p class="description">Path <em>inside this cli-debrid container</em> to cli_mount's stored <code>.nzb</code> files. Bind cli_mount's appdata into cli-debrid (the same <code>data_path</code> bind the cli_mount DB tools use) and point this at its <code>usenet/nzbs</code> folder. Example compose volume: <code>- /host/cli_mount/appdata:/climount_data</code> → then this path is <code>/climount_data/usenet/nzbs</code>.</p>
   </div>
-  <div class="pt-field" data-for="decy-conn">
-    <label for="pt-decy-url">cli_mount URL <span style="color:#888">(target)</span>:</label>
-    <input type="text" id="pt-decy-url" placeholder="http://192.168.1.x:8888">
-    <label for="pt-decy-token" style="margin-top:6px;">cli_mount API token (if auth enabled):</label>
-    <input type="text" id="pt-decy-token" placeholder="optional">
+  <div class="pt-field" data-role="src" data-kind="climount nzbdav">
+    <label for="pt-src-url"><span class="pt-src-name">Source</span> URL:</label>
+    <input type="text" id="pt-src-url" placeholder="http://192.168.1.x:8888">
+    <label for="pt-src-token" style="margin-top:6px;"><span class="pt-src-name">Source</span> API token:</label>
+    <input type="password" id="pt-src-token" placeholder="optional" autocomplete="off">
+    <p class="description pt-hint" data-kind="climount">cli_mount stores NZBs under their IDs; its URL is used to look up the release names. Without it, names come from the NZB itself where the indexer wrote one.</p>
+  </div>
+  <div class="pt-field" data-role="src" data-kind="builtin">
+    <p class="description">Reads the NZBs from the built-in mount on this machine; nothing to fill in.</p>
   </div>
 
-  {# --- NzbDAV fields --- #}
-  <div class="pt-field" data-for="nzbdav-conn">
-    <label for="pt-nzbdav-url">NzbDAV URL <span style="color:#888" id="pt-nzbdav-role">(target)</span>:</label>
-    <input type="text" id="pt-nzbdav-url" placeholder="http://192.168.1.x:3000">
-    <label for="pt-nzbdav-token" style="margin-top:6px;">NzbDAV SAB API token:</label>
-    <input type="text" id="pt-nzbdav-token" placeholder="from NzbDAV → Settings → API">
+  {# --- target fields --- #}
+  <div class="pt-field" data-role="tgt" data-kind="climount nzbdav">
+    <label for="pt-tgt-url"><span class="pt-tgt-name">Target</span> URL:</label>
+    <input type="text" id="pt-tgt-url" placeholder="http://192.168.1.x:3000">
+    <label for="pt-tgt-token" style="margin-top:6px;"><span class="pt-tgt-name">Target</span> API token:</label>
+    <input type="password" id="pt-tgt-token" placeholder="NzbDAV: Settings → API; cli_mount: if auth is on" autocomplete="off">
   </div>
-  <div class="pt-field" data-for="nzbdav-cat">
-    <label for="pt-nzbdav-cat">Target category (NzbDAV):</label>
-    <input type="text" id="pt-nzbdav-cat" placeholder="__unplayable__">
-    <p class="description">cli_mount's nzb-store is flat (no category), so transferred items land in this NzbDAV category. Must already exist in NzbDAV. To preserve categories, migrate one category at a time by pointing the path above at that category's releases.</p>
+  <div class="pt-field" data-role="tgt" data-kind="nzbdav">
+    <label for="pt-tgt-cat">Target category (NzbDAV / Zurg):</label>
+    <input type="text" id="pt-tgt-cat" placeholder="__unplayable__">
+    <p class="description">Used for items whose source has no category (cli_mount's store is flat). Must already exist on the target. To keep categories from cli_mount, migrate one category at a time.</p>
+  </div>
+  <div class="pt-field" data-role="tgt" data-kind="builtin">
+    <p class="description">Sends the NZBs to the built-in mount on this machine; nothing to fill in.</p>
   </div>
 
   <div style="display:flex; gap:14px; flex-wrap:wrap; align-items:center; margin-top:6px;">
@@ -62,6 +78,14 @@
   </div>
   <div id="pt-preview-result" style="margin-top:8px;"></div>
   <div id="pt-progress" style="margin-top:8px;"></div>
+  <div id="pt-next" class="description" style="display:none; margin-top:8px; border-left:3px solid #3a6ea5; padding-left:10px;">
+    <strong>Next steps.</strong> The items now exist on the target, but cli_debrid still points at the old backend:
+    <ol style="margin:4px 0 0 18px; line-height:1.5;">
+      <li>Settings → Usenet Provider: switch to the new backend (URL, token, mount path).</li>
+      <li>If the mount path changed, use Tools → Symlinks → <em>Modify Symlink Base Paths</em> (or update File Management's original files path), then <em>Resync Symlinks</em>.</li>
+      <li>Check a few items play before removing anything from the old backend.</li>
+    </ol>
+  </div>
 </div>
 
 <script>
@@ -70,49 +94,67 @@
   if (!root || root.dataset.ptInit) return;
   root.dataset.ptInit = '1';
   var BASE = '/program_operation/api/provider_transfer';
+  var NAMES = {climount: 'cli_mount', nzbdav: 'NzbDAV / Zurg', builtin: 'Built-in mount'};
   function $(id){ return document.getElementById(id); }
   function val(id){ var e=$(id); return e ? e.value.trim() : ''; }
-  function esc(s){ return String(s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];}); }
+  function esc(s){ return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+  function src(){ return $('pt-src').value; }
+  function tgt(){ return $('pt-tgt').value; }
 
   var CFG = {};
+  function prefill(role){
+    // Fill a side's URL/token from the configured Usenet Provider when it is that kind.
+    var kind = role === 'src' ? src() : tgt();
+    if (CFG.kind !== kind || kind === 'builtin') return;
+    if (!val('pt-'+role+'-url')) $('pt-'+role+'-url').value = CFG.url || '';
+    if (!val('pt-'+role+'-token')) $('pt-'+role+'-token').value = CFG.token || '';
+  }
+
+  function apply(){
+    if (src() === tgt()) {
+      // Source and target must differ: move the target to the first other option.
+      var opts = Array.prototype.map.call($('pt-tgt').options, function(o){return o.value;});
+      $('pt-tgt').value = opts.filter(function(v){return v !== src();})[0];
+    }
+    root.querySelectorAll('.pt-field').forEach(function(el){
+      var kind = el.dataset.role === 'src' ? src() : tgt();
+      el.style.display = el.dataset.kind.split(' ').indexOf(kind) >= 0 ? '' : 'none';
+    });
+    root.querySelectorAll('.pt-hint').forEach(function(el){
+      el.style.display = el.dataset.kind === src() ? '' : 'none';
+    });
+    root.querySelectorAll('.pt-src-name').forEach(function(el){ el.textContent = NAMES[src()]; });
+    root.querySelectorAll('.pt-tgt-name').forEach(function(el){ el.textContent = NAMES[tgt()]; });
+    prefill('src'); prefill('tgt');
+  }
+  $('pt-src').addEventListener('change', apply);
+  $('pt-tgt').addEventListener('change', apply);
+
   fetch(BASE + '/config').then(function(r){return r.json();}).then(function(d){
     CFG = d || {};
-    if (CFG.provider === 'nzbdav') { if(!val('pt-nzbdav-url')) $('pt-nzbdav-url').value = CFG.url||''; if(!val('pt-nzbdav-token')) $('pt-nzbdav-token').value = CFG.token||''; }
-    if (CFG.provider === 'climount') { if(!val('pt-decy-url')) $('pt-decy-url').value = CFG.url||''; if(!val('pt-decy-token')) $('pt-decy-token').value = CFG.token||''; }
-    if (!val('pt-decy-nzbpath')) $('pt-decy-nzbpath').value = CFG.nzb_path_guess || '/climount_data/usenet/nzbs';
-    if (!val('pt-nzbdav-cat')) $('pt-nzbdav-cat').value = '__unplayable__';
-  }).catch(function(){});
+    // Default: from the configured backend to something else.
+    if (CFG.kind) {
+      $('pt-src').value = CFG.kind;
+      $('pt-tgt').value = CFG.kind === 'nzbdav' ? 'climount' : 'nzbdav';
+    }
+    if (!val('pt-src-nzbpath')) $('pt-src-nzbpath').value = CFG.nzb_path_guess || '/climount_data/usenet/nzbs';
+    if (!val('pt-tgt-cat')) $('pt-tgt-cat').value = '__unplayable__';
+    apply();
+    if (CFG.active_job) { curJob = CFG.active_job; startPoll(); }  // resume after a reload
+  }).catch(function(){ apply(); });
 
-  function applyDirection(){
-    var d = $('pt-direction').value;
-    var show = (d === 'climount_to_nzbdav')
-      ? {'decy-nzbpath':1,'nzbdav-conn':1,'nzbdav-cat':1,'decy-conn':0}
-      : {'nzbdav-conn':1,'decy-conn':1,'decy-nzbpath':0,'nzbdav-cat':0};
-    root.querySelectorAll('.pt-field').forEach(function(el){
-      el.style.display = show[el.dataset.for] ? '' : 'none';
-    });
-    $('pt-nzbdav-role').textContent = (d === 'climount_to_nzbdav') ? '(target)' : '(source)';
-  }
-  $('pt-direction').addEventListener('change', applyDirection);
-  applyDirection();
-
+  function direction(){ return src() + '_to_' + tgt(); }
   function sourcePayload(){
-    var d = $('pt-direction').value;
-    if (d === 'climount_to_nzbdav') return {direction:d, source_nzb_path: val('pt-decy-nzbpath')};
-    return {direction:d, source_url: val('pt-nzbdav-url'), source_token: val('pt-nzbdav-token')};
+    return {direction: direction(), source_nzb_path: val('pt-src-nzbpath'),
+            source_url: val('pt-src-url'), source_token: val('pt-src-token')};
   }
   function startPayload(){
-    var d = $('pt-direction').value;
-    var base = {direction:d, skip_existing:$('pt-skip').checked,
-                max_queue: parseInt(val('pt-maxqueue')||'3',10), limit: parseInt(val('pt-limit')||'0',10)};
-    if (d === 'climount_to_nzbdav') {
-      base.source_nzb_path = val('pt-decy-nzbpath');
-      base.target_url = val('pt-nzbdav-url'); base.target_token = val('pt-nzbdav-token');
-      base.target_category = val('pt-nzbdav-cat');
-    } else {
-      base.source_url = val('pt-nzbdav-url'); base.source_token = val('pt-nzbdav-token');
-      base.target_url = val('pt-decy-url'); base.target_token = val('pt-decy-token');
-    }
+    var base = sourcePayload();
+    base.skip_existing = $('pt-skip').checked;
+    base.max_queue = parseInt(val('pt-maxqueue')||'3',10);
+    base.limit = parseInt(val('pt-limit')||'0',10);
+    if (tgt() !== 'builtin') { base.target_url = val('pt-tgt-url'); base.target_token = val('pt-tgt-token'); }
+    if (tgt() === 'nzbdav') base.target_category = val('pt-tgt-cat');
     return base;
   }
 
@@ -128,19 +170,20 @@
   });
 
   var poll = null;
-  function stopPoll(){ if(poll){clearInterval(poll);poll=null;} $('pt-cancel').style.display='none'; }
   var curJob = null;
+  function stopPoll(){ if(poll){clearInterval(poll);poll=null;} $('pt-cancel').style.display='none'; }
+  function startPoll(){ $('pt-cancel').style.display=''; $('pt-next').style.display='none'; poll = setInterval(refresh, 2000); refresh(); }
 
   $('pt-start').addEventListener('click', function(){
     var pg = $('pt-progress');
-    if (!startPayload().target_url) { pg.innerHTML='<span style="color:#e57373;">Enter the target URL first.</span>'; return; }
+    var p = startPayload();
+    if (tgt() !== 'builtin' && !p.target_url) { pg.innerHTML='<span style="color:#e57373;">Enter the target URL first.</span>'; return; }
     if (!confirm('Start transferring? The target will re-download these from usenet.')) return;
     pg.innerHTML = 'Starting…';
-    fetch(BASE+'/start', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(startPayload())})
+    fetch(BASE+'/start', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)})
       .then(function(r){return r.json();}).then(function(d){
         if (!d.success){ pg.innerHTML='<span style="color:#e57373;">✗ '+esc(d.error||'failed')+'</span>'; return; }
-        curJob = d.job_id; $('pt-cancel').style.display='';
-        poll = setInterval(refresh, 2000); refresh();
+        curJob = d.job_id; startPoll();
       }).catch(function(e){ pg.innerHTML='<span style="color:#e57373;">✗ '+esc(e)+'</span>'; });
   });
 
@@ -151,7 +194,7 @@
   function refresh(){
     if (!curJob) return;
     fetch(BASE+'/status/'+curJob).then(function(r){return r.json();}).then(function(d){
-      if (!d.success){ return; }
+      if (!d.success){ stopPoll(); return; }
       var s = d.status||{};
       var bar = s.total ? Math.round(100*(s.done||0)/s.total) : 0;
       var color = s.status==='error' ? '#e57373' : (s.complete ? '#4caf50' : '#3a6ea5');
@@ -162,7 +205,10 @@
       var log = (s.log||[]).slice(-6).map(esc).join('<br>');
       if (log) html += '<details style="margin-top:4px;"><summary style="cursor:pointer;">log</summary><div style="font-size:0.8em;color:#aaa;margin-top:4px;">'+log+'</div></details>';
       $('pt-progress').innerHTML = html;
-      if (s.complete) { stopPoll(); }
+      if (s.complete) {
+        stopPoll();
+        if (s.status === 'complete' && (s.submitted||0) > 0) $('pt-next').style.display = '';
+      }
     }).catch(function(){});
   }
 })();
