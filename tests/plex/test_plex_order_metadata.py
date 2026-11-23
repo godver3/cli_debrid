@@ -119,6 +119,23 @@ class PlexOrderMetadataTests(unittest.TestCase):
             pom.sync_show('tt1', 'default')
         self.assertTrue(show.refreshed)
 
+    def test_new_episodes_of_chosen_order_shows_get_locked(self):
+        orders = {'tt_dvd': 'tvdb:dvd', 'tt_default': None, 'tt_nfo': 'tvdb:absolute'}
+        with mock.patch('cli_battery.app.episode_order.show_episode_order', side_effect=orders.get), \
+                mock.patch.object(pom, '_nfo_mode', side_effect=lambda i: i == 'tt_nfo'), \
+                mock.patch.object(pom, 'sync_show', return_value='1 updated') as sync:
+            notes = pom.lock_new_episodes(['tt_dvd', 'tt_default', 'tt_nfo', None, 'tt_dvd'])
+        sync.assert_called_once_with('tt_dvd', 'tvdb:dvd')   # default order and NFO shows left alone
+        self.assertEqual(notes, {'tt_dvd': '1 updated'})
+
+    def test_only_the_new_unlocked_episode_is_edited(self):
+        old = Ep(1, 1, 'Serenity', 'Pilot.', '2002-12-20', locked=('title', 'summary', 'originallyAvailableAt'))
+        new = Ep(1, 2, 'Wrong TMDB title')
+        c = pom.apply_to_plex_show(Show([old, new]), DVD)
+        self.assertEqual((c['updated'], c['unchanged']), (1, 1))
+        self.assertEqual(old.calls, [])
+        self.assertIn(('title', 'The Train Job', True), new.calls)
+
 
 if __name__ == '__main__':
     unittest.main()

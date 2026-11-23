@@ -453,6 +453,7 @@ def _run_plex_verification_scan(max_files: int, recent_only: bool, max_attempts:
 
     verified_count = 0
     total_processed = 0
+    verified_shows = set()  # imdb ids of episodes Plex just added
 
     for file_data in unverified_files:
         total_processed += 1
@@ -510,6 +511,8 @@ def _run_plex_verification_scan(max_files: int, recent_only: bool, max_attempts:
             # Mark as verified
             if mark_file_as_verified(verification_id):
                 verified_count += 1
+                if media_item.get('type') == 'episode' and media_item.get('imdb_id'):
+                    verified_shows.add(media_item['imdb_id'])
                 logger.info(f"Successfully marked verification ID {verification_id} as verified for '{os.path.basename(file_data['full_path'])}'")
             else:
                 logger.error(f"Failed to mark verification ID {verification_id} as verified in DB for '{os.path.basename(file_data['full_path'])}'")
@@ -546,6 +549,17 @@ def _run_plex_verification_scan(max_files: int, recent_only: bool, max_attempts:
                     logger.warning(f"Plex directory scan trigger failed or returned False for directory containing: {base_filename}")
             except Exception as e:
                 logger.error(f"Error triggering Plex update after failed verification: {str(e)}", exc_info=True)
+
+    # New episodes of shows on a chosen episode order: lock that order's
+    # titles on them too (only the episodes present at the order change were)
+    if verified_shows:
+        try:
+            import threading
+            from utilities.plex_order_metadata import lock_new_episodes
+            threading.Thread(target=lock_new_episodes, args=(verified_shows,),
+                             name='plex-order-new-episodes', daemon=True).start()
+        except Exception as e:
+            logger.warning(f"Could not start order locking for new episodes: {e}")
 
     # Log stats
     try:
