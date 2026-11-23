@@ -195,7 +195,7 @@ def is_limited_environment():
 
 # Release notes come from the GitHub releases: a release that has notes was
 # built with release-notes/<version>.md, which the build puts above this marker.
-_NOTES_MARKER = '<!-- discord-posted:'
+_NOTES_MARKER = '<!-- release-notes -->'
 _NOTES_TTL = 900
 _notes_cache = {'at': 0.0, 'branch': None, 'data': None}
 _notes_lock = threading.Lock()

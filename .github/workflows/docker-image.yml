@@ -244,21 +244,28 @@ jobs:
           fi
 
       # Release notes: release-notes/<version>.md, written in the PR that bumps
-      # version.txt, goes on top of the release. The marker records which
-      # branch's build already posted it to Discord, so a rebuild of the same
-      # version (re-run, retarget) doesn't post twice; the main build of a
-      # version posts once more, as the stable release.
+      # version.txt, goes on top of the release, ended by a release-notes
+      # marker (the in-app Release notes popup lists releases that have it).
+      # A second marker records that this branch's build posted it to Discord,
+      # so a rebuild of the same version doesn't post twice; it is only written
+      # when the webhook is set, so a version built before the secret existed
+      # still posts on its next build. The main build posts once more, as stable.
       - name: Build release body
         id: notes
         run: |
           NOTES="release-notes/${VERSION}.md"
-          MARKER="<!-- discord-posted:${{ github.ref_name }} -->"
+          POSTED="<!-- discord-posted:${{ github.ref_name }} -->"
           PREV=$(gh release view "v${VERSION}" --repo "${{ github.repository }}" --json body --jq .body 2>/dev/null || true)
+          ALREADY=false
+          if printf '%s' "$PREV" | grep -qF "$POSTED"; then ALREADY=true; fi
+          POST=false
+          if [ -f "$NOTES" ] && [ -n "$WEBHOOK" ] && [ "$ALREADY" = false ]; then POST=true; fi
           {
             if [ -f "$NOTES" ]; then
               cat "$NOTES"
               printf '\n\n---\n\n'
-              echo "$MARKER"
+              echo "<!-- release-notes -->"
+              if [ "$POST" = true ] || [ "$ALREADY" = true ]; then echo "$POSTED"; fi
             fi
             echo "Version ${VERSION} (${{ github.ref_name }} branch), commit ${{ github.sha }}"
             echo ""
@@ -270,13 +277,10 @@ jobs:
             echo ""
             echo "**Note:** All files must be kept together in the same folder for the application to work properly."
           } > release_body.md
-          if [ -f "$NOTES" ] && ! printf '%s' "$PREV" | grep -qF "$MARKER"; then
-            echo "post=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "post=false" >> "$GITHUB_OUTPUT"
-          fi
+          echo "post=$POST" >> "$GITHUB_OUTPUT"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
 
       - name: Create Release
         id: release

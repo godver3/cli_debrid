@@ -8,7 +8,7 @@ import database  # noqa: F401  (app import order)
 from routes import base_routes
 from utilities import bug_report
 
-FOOTER = '\n\n---\n\n<!-- discord-posted:dev -->\nVersion 0.8.6 (dev branch), commit abc\n\n## Windows install\n...'
+FOOTER = '\n\n---\n\n<!-- release-notes -->\n<!-- discord-posted:dev -->\nVersion 0.8.6 (dev branch), commit abc\n\n## Windows install\n...'
 
 
 def _rel(tag, body, prerelease=True, draft=False):
