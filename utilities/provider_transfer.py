@@ -1,6 +1,6 @@
 """Migrate downloads between usenet providers (cli_mount <-> NzbDAV) over HTTP.
 
-Powers the "Migrate between usenet providers" tool in Debug -> Library. It moves
+Powers the "Migrate between usenet providers" tool in Tools. It moves
 the stored .nzb of each item from a source provider to a target provider, which
 re-fetches it from usenet — no re-search, categories preserved where the source
 exposes them.
@@ -32,7 +32,14 @@ from requests.exceptions import RequestException
 _jobs = {}
 _jobs_lock = threading.Lock()
 
-NZBDAV_REQUIRED_CATEGORIES = ['movies', 'shows', 'movies_1080p_264', 'shows_1080p_264', '__unplayable__', 'music']
+
+def _truthy(value, default=True):
+    """Form posts send 'false'/'0' strings; bool('false') would be True."""
+    if value is None or value == '':
+        return default
+    if isinstance(value, str):
+        return value.strip().lower() not in ('false', '0', 'no', 'off')
+    return bool(value)
 
 
 def _norm(url):
@@ -93,8 +100,14 @@ def list_source_items(direction, source_url='', source_token='', source_nzb_path
 def _read_nzb(direction, item, source_url='', source_token=''):
     if direction == 'nzbdav_to_climount':
         url = _norm(source_url)
+        params = {'nzbBlobId': item['ref']}
+        headers = {}
+        if source_token:
+            # Without the key an auth-enabled NzbDAV answers 401 for every item.
+            params['apikey'] = source_token
+            headers['X-Api-Key'] = source_token
         try:
-            r = requests.get(f'{url}/api/download-nzb', params={'nzbBlobId': item['ref']}, timeout=30)
+            r = requests.get(f'{url}/api/download-nzb', params=params, headers=headers, timeout=30)
             if r.status_code == 200 and r.content:
                 return r.content, None
             return None, f'download-nzb HTTP {r.status_code}'
@@ -178,7 +191,8 @@ def _nzbdav_queue_depth(url, token):
     try:
         r = requests.get(f'{_norm(url)}/api', params={'mode': 'queue', 'apikey': token}, timeout=10)
         if r.status_code == 200:
-            return int((r.json() or {}).get('queue', {}).get('noofslots', 0))
+            q = (r.json() or {}).get('queue', {})
+            return int(q.get('noofslots', q.get('noofslots_total', 0)) or 0)
     except (RequestException, ValueError, TypeError):
         pass
     return 0
@@ -224,8 +238,8 @@ def _run_job(job_id, p):
         target_kind = 'nzbdav' if direction == 'climount_to_nzbdav' else 'climount'
         target_url, target_token = p.get('target_url', ''), p.get('target_token', '')
         target_cat = p.get('target_category', '')
-        skip_existing = bool(p.get('skip_existing', True))
-        max_queue = int(p.get('max_queue', 3) or 3)
+        skip_existing = _truthy(p.get('skip_existing'), True)
+        max_queue = max(1, int(p.get('max_queue', 3) or 3))
         limit = int(p.get('limit', 0) or 0)
 
         items, err = list_source_items(direction, p.get('source_url', ''), p.get('source_token', ''),
@@ -237,18 +251,25 @@ def _run_job(job_id, p):
             items = items[:limit]
 
         existing = _target_existing_names(target_kind, target_url, target_token) if skip_existing else set()
+        sent = set()
         _set(job_id, status='running', total=len(items))
         _log(job_id, f'{len(items)} item(s) at source; {len(existing)} already at target' if skip_existing
                      else f'{len(items)} item(s) at source')
 
         for i, item in enumerate(items, 1):
             with _jobs_lock:
-                if _jobs.get(job_id, {}).get('cancel'):
-                    _set(job_id, status='cancelled', complete=True)
-                    return
+                cancelled = bool(_jobs.get(job_id, {}).get('cancel'))
+            if cancelled:
+                _set(job_id, status='cancelled', complete=True)
+                return
             name = item['name']
-            if skip_existing and name in existing:
+            if (skip_existing and name in existing) or name in sent:
                 _set(job_id, skipped=_jobs[job_id]['skipped'] + 1, done=i)
+                continue
+            if str(item.get('status') or '').lower() == 'failed':
+                # A failed source download has nothing playable to move.
+                _set(job_id, skipped=_jobs[job_id]['skipped'] + 1, done=i)
+                _log(job_id, f'SKIP failed at source: {name}')
                 continue
 
             # throttle on target queue depth (nzbdav only — has a queue endpoint)
@@ -271,6 +292,8 @@ def _run_job(job_id, p):
 
             if jid:
                 _set(job_id, submitted=_jobs[job_id]['submitted'] + 1, done=i)
+                # NzbDAV history can list a name more than once (retries); don't resend it.
+                sent.add(name)
             else:
                 _set(job_id, failed=_jobs[job_id]['failed'] + 1, done=i)
                 _log(job_id, f'FAIL submit {name}: {serr}')
@@ -278,7 +301,10 @@ def _run_job(job_id, p):
         with _jobs_lock:
             j = _jobs[job_id]
             j.update(status='complete', complete=True)
-            _log(job_id, f"Done: {j['submitted']} submitted, {j['skipped']} skipped, {j['failed']} failed")
+            done_msg = f"Done: {j['submitted']} submitted, {j['skipped']} skipped, {j['failed']} failed"
+        # Outside the lock: _log takes it too, and calling it inside deadlocked
+        # every finished job (and then every status poll).
+        _log(job_id, done_msg)
     except Exception as e:
         logging.exception('[provider_transfer] job failed')
         _set(job_id, status='error', error=str(e), complete=True)
