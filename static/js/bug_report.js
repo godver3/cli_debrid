@@ -58,8 +58,8 @@
                     line.appendChild(document.createTextNode(row.value));
                     setup.appendChild(line);
                 });
-                $('bugReportLogsWhich').textContent = data.mount_kind === 'builtin' ? '(cli_debrid + built-in mount)'
-                    : data.mount_kind === 'external' ? '(cli_debrid + cli_mount)' : '(cli_debrid)';
+                const names = { engine: 'built-in mount', climount: 'cli_mount' };
+                $('bugReportLogsWhich').textContent = '(' + ['cli_debrid'].concat((data.log_sources || []).map(k => names[k] || k)).join(' + ') + ')';
             })
             .catch(() => {
                 context = null;
@@ -98,16 +98,16 @@
         const failures = [];
         try {
             if ($('bugReportLogs').checked) {
-                const kind = context && context.mount_kind;
-                try {
-                    logs.push(['cli_debrid logs' + (kind === 'builtin' ? ' (with built-in mount)' : ''),
-                        await upload('/logs/api/logs/share', { include_engine: kind === 'builtin' }, 'cli_debrid logs')]);
-                } catch (e) { failures.push(e.message); }
-                if (kind === 'external') {
-                    try {
-                        logs.push(['cli_mount logs', await upload('/logs/api/climount/logs/share', {}, 'cli_mount logs')]);
-                    } catch (e) { failures.push(e.message); }
-                }
+                const sources = (context && context.log_sources) || [];
+                // Each log gets its own upload and link, all started together.
+                const jobs = [['cli_debrid logs', '/logs/api/logs/share']];
+                if (sources.includes('engine')) jobs.push(['Built-in mount logs', '/logs/api/engine/logs/share']);
+                if (sources.includes('climount')) jobs.push(['cli_mount logs', '/logs/api/climount/logs/share']);
+                const results = await Promise.allSettled(jobs.map(([label, url]) => upload(url, {}, label)));
+                results.forEach((res, i) => {
+                    if (res.status === 'fulfilled') logs.push([jobs[i][0], res.value]);
+                    else failures.push(res.reason && res.reason.message ? res.reason.message : `${jobs[i][0]}: upload failed`);
+                });
             }
             report = { summary, what, steps: $('bugReportSteps').value.trim(), logs };
             $('bugReportOutput').value = githubBody();

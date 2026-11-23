@@ -190,13 +190,10 @@ def share_logs():
             'timestamp': time.time()
         }
         
-        # include_engine: the bug report also attaches the built-in mount's log
-        include_engine = bool((request.get_json(silent=True) or {}).get('include_engine'))
-
         # Start the background upload task
         threading.Thread(
             target=process_log_upload,
-            args=(task_id, include_engine),
+            args=(task_id,),
             daemon=True
         ).start()
         
@@ -239,7 +236,7 @@ def check_share_status(task_id):
         'timestamp': task_info['timestamp']
     })
 
-def process_log_upload(task_id, include_engine=False):
+def process_log_upload(task_id):
     """Background task to process log upload to paste.c-net."""
     try:
         upload_tasks[task_id].update({'status': 'collecting', 'progress': 10, 'message': 'Collecting logs...'})
@@ -285,11 +282,6 @@ def process_log_upload(task_id, include_engine=False):
             "=== End settings snapshot ===\n\n"
             + '\n'.join(logs)
         )
-        if include_engine:
-            engine_lines = _engine_log_for_upload()
-            if engine_lines:
-                log_content += ("\n\n=== Built-in mount engine log (last "
-                                f"{len(engine_lines)} lines) ===\n" + '\n'.join(engine_lines))
 
         upload_tasks[task_id].update({'status': 'compressing', 'progress': 30, 'message': 'Compressing logs...'})
         compressed_buffer = io.BytesIO()
@@ -381,6 +373,43 @@ def _engine_log_for_upload(max_lines=ENGINE_LOG_UPLOAD_LINES):
         return []
 
 
+@logs_bp.route('/api/engine/logs/share', methods=['POST'])
+@admin_required
+def share_engine_logs():
+    """Uploads the built-in mount engine's log on its own, so a bug report
+    links it next to cli_debrid's log instead of burying it at the end."""
+    task_id = str(uuid.uuid4())
+    upload_tasks[task_id] = {'status': 'collecting', 'progress': 10, 'url': None, 'error': None,
+                             'message': 'Collecting built-in mount logs...', 'timestamp': time.time()}
+    threading.Thread(target=process_engine_log_upload, args=(task_id,), daemon=True).start()
+    return jsonify({'success': True, 'task_id': task_id, 'message': 'Built-in mount log upload started in background'})
+
+
+def process_engine_log_upload(task_id):
+    try:
+        lines = _engine_log_for_upload()
+        if not lines:
+            upload_tasks[task_id].update({'status': 'failed', 'error': 'No built-in mount log found',
+                                          'message': 'Failed: No built-in mount log found.'})
+            return
+        buf = io.BytesIO()
+        with gzip.GzipFile(fileobj=buf, mode='wb', compresslevel=6) as gz:
+            gz.write('\n'.join(lines).encode('utf-8'))
+        upload_tasks[task_id].update({'status': 'uploading_to_pastebin', 'progress': 50,
+                                      'message': 'Uploading built-in mount logs to paste.c-net.org...'})
+        url = upload_to_paste_cnet(buf.getvalue(), task_id, filename='mount_engine.log.gz')
+        if not url:
+            raise Exception('Upload to paste.c-net completed but no URL returned.')
+        logging.info(f"Task {task_id}: built-in mount logs uploaded: {url}")
+        upload_tasks[task_id].update({'status': 'completed', 'progress': 100, 'url': url,
+                                      'message': f"Built-in mount logs uploaded: {url.split('/')[-1]}"})
+    except Exception as e:
+        logging.error(f"Task {task_id}: Failed to share built-in mount logs: {e}")
+        upload_tasks[task_id].update({'status': 'failed', 'error': f'Built-in mount log upload failed: {e}',
+                                      'message': 'Failed: built-in mount upload error.'})
+    upload_tasks[task_id]['timestamp'] = time.time()
+
+
 @logs_bp.route('/api/bug-report/context', methods=['GET'])
 @admin_required
 def bug_report_context():
@@ -393,10 +422,9 @@ def bug_report_context():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-def upload_to_paste_cnet(data, task_id=None):
+def upload_to_paste_cnet(data, task_id=None, filename='debug.log.gz'):
     """Upload to paste.c-net.org"""
     url = 'https://paste.c-net.org/'
-    filename = 'debug.log.gz'
     headers = {
         'X-FileName': filename  # Set filename header
     }

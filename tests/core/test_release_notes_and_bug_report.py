@@ -43,7 +43,7 @@ def _settings(values):
 
 
 class BugReportContextTest(unittest.TestCase):
-    def _ctx(self, values, builtin=False, climount_version='2.5.24'):
+    def _ctx(self, values, builtin=False, climount_version='2.5.24', alongside=False):
         get = _settings(values)
         client = mock.Mock(base_url='http://cm:8282')
         client._headers.return_value = {}
@@ -52,7 +52,7 @@ class BugReportContextTest(unittest.TestCase):
         with mock.patch.object(bug_report, 'get_setting', get), \
              mock.patch('utilities.silo_functions.get_setting', get), \
              mock.patch('utilities.builtin_engine.selected', lambda s=None: builtin), \
-             mock.patch('utilities.builtin_engine.alongside', lambda s=None: False), \
+             mock.patch('utilities.builtin_engine.alongside', lambda s=None: alongside), \
              mock.patch('usenet.get_usenet_client', lambda: client), \
              mock.patch('usenet.get_usenet_provider_display_name', lambda: 'cli_mount'), \
              mock.patch('requests.get', lambda *a, **k: resp), \
@@ -65,6 +65,7 @@ class BugReportContextTest(unittest.TestCase):
                                                    'url': 'http://secret-host:8282', 'api_key': 'k'},
                                ('File Management', 'file_collection_management'): 'Plex'})
         self.assertEqual(ctx['mount_kind'], 'external')
+        self.assertEqual(ctx['log_sources'], ['climount'])
         self.assertEqual(rows['Mount'], 'External cli_mount (2.5.24)')
         self.assertEqual(rows['Media server'], 'Plex')
         self.assertNotIn('secret-host', str(ctx))
@@ -74,6 +75,19 @@ class BugReportContextTest(unittest.TestCase):
                                ('File Management', 'file_collection_management'): 'Plex'}, builtin=True)
         self.assertEqual(ctx['mount_kind'], 'builtin')
         self.assertEqual(rows['Mount'], 'Built-in mount')
+        self.assertEqual(ctx['log_sources'], ['engine'])
+
+    def test_builtin_for_debrid_with_climount_for_usenet_uploads_both(self):
+        ctx, _ = self._ctx({'Usenet Provider': {'enabled': True, 'provider': 'climount'},
+                            'Built-in Mount': {'enabled': True}}, builtin=True)
+        self.assertEqual(ctx['mount_kind'], 'builtin')
+        self.assertEqual(ctx['log_sources'], ['engine', 'climount'])
+
+    def test_engine_alongside_climount_uploads_both(self):
+        ctx, _ = self._ctx({'Usenet Provider': {'enabled': True, 'provider': 'climount'},
+                            'Built-in Mount': {'run_alongside': True}}, alongside=True)
+        self.assertEqual(ctx['mount_kind'], 'external')
+        self.assertEqual(ctx['log_sources'], ['engine', 'climount'])
 
     def test_symlink_silo_no_mount(self):
         ctx, rows = self._ctx({'Usenet Provider': {'enabled': False},
@@ -82,6 +96,7 @@ class BugReportContextTest(unittest.TestCase):
         self.assertEqual(ctx['mount_kind'], '')
         self.assertEqual(rows['Media server'], 'Silo')
         self.assertEqual(rows['Mount'], 'None')
+        self.assertEqual(ctx['log_sources'], [])
 
 
 class EngineLogUploadTest(unittest.TestCase):
@@ -101,6 +116,34 @@ class EngineLogUploadTest(unittest.TestCase):
         from routes import log_viewer_routes as lv
         with mock.patch('usenet.builtin_client.engine_log_path', lambda: '/nonexistent/mount_engine.log'):
             self.assertEqual(lv._engine_log_for_upload(), [])
+
+    def test_engine_log_uploads_as_its_own_file(self):
+        from routes import log_viewer_routes as lv
+        lv.upload_tasks['t1'] = {'status': 'collecting', 'progress': 10, 'url': None, 'error': None}
+        sent = {}
+
+        def fake_upload(data, task_id=None, filename='debug.log.gz'):
+            import gzip
+            sent.update(filename=filename, text=gzip.decompress(data).decode())
+            return 'https://paste.example/Engine'
+        with mock.patch.object(lv, '_engine_log_for_upload', lambda: ['engine a', 'engine b']), \
+             mock.patch.object(lv, 'upload_to_paste_cnet', fake_upload):
+            lv.process_engine_log_upload('t1')
+        self.assertEqual(lv.upload_tasks['t1']['status'], 'completed')
+        self.assertEqual(lv.upload_tasks['t1']['url'], 'https://paste.example/Engine')
+        self.assertEqual(sent, {'filename': 'mount_engine.log.gz', 'text': 'engine a\nengine b'})
+
+    def test_no_engine_log_fails_the_upload(self):
+        from routes import log_viewer_routes as lv
+        lv.upload_tasks['t2'] = {'status': 'collecting', 'progress': 10, 'url': None, 'error': None}
+        with mock.patch.object(lv, '_engine_log_for_upload', lambda: []):
+            lv.process_engine_log_upload('t2')
+        self.assertEqual(lv.upload_tasks['t2']['status'], 'failed')
+
+    def test_cli_debrid_upload_no_longer_appends_engine_log(self):
+        import inspect
+        from routes import log_viewer_routes as lv
+        self.assertNotIn('_engine_log_for_upload', inspect.getsource(lv.process_log_upload))
 
 
 if __name__ == '__main__':

@@ -36,7 +36,7 @@ class TestLogUploadRunsScrub(unittest.TestCase):
         self.source = _read("routes/log_viewer_routes.py")
 
     def test_process_log_upload_scrubs_both_pieces_per_line(self):
-        start = self.source.index("def process_log_upload(task_id, include_engine=False):")
+        start = self.source.index("def process_log_upload(task_id):")
         end = self.source.index("def upload_to_paste_cnet(", start)
         body = self.source[start:end]
 
@@ -53,7 +53,7 @@ class TestLogUploadRunsScrub(unittest.TestCase):
         self.assertLess(scrub_call_idx, snapshot_build_idx)
 
     def test_scrub_failure_does_not_break_upload(self):
-        start = self.source.index("def process_log_upload(task_id, include_engine=False):")
+        start = self.source.index("def process_log_upload(task_id):")
         end = self.source.index("def upload_to_paste_cnet(", start)
         body = self.source[start:end]
         scrub_idx = body.index("logs = [scrub(line) for line in logs]")

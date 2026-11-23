@@ -74,6 +74,25 @@ def mount_kind() -> str:
     return ''
 
 
+def log_sources() -> list:
+    """Which mount logs a bug report uploads next to cli_debrid's: 'engine'
+    whenever the built-in mount runs (backend, debrid-only or alongside),
+    'climount' whenever cli_mount is the usenet provider. Both can apply."""
+    out = []
+    try:
+        from utilities import builtin_engine
+        settings = {'Usenet Provider': get_setting('Usenet Provider') or {},
+                    'Built-in Mount': get_setting('Built-in Mount') or {}}
+        if builtin_engine.wanted(settings):
+            out.append('engine')
+    except Exception:
+        pass
+    usenet = get_setting('Usenet Provider') or {}
+    if usenet.get('enabled') and (usenet.get('provider') or 'climount').strip().lower() == 'climount':
+        out.append('climount')
+    return out
+
+
 def _usenet_and_mount():
     usenet = get_setting('Usenet Provider') or {}
     try:
@@ -115,4 +134,5 @@ def build_context() -> dict:
         ('Usenet', usenet_name),
         ('Mount', mount),
     ]
-    return {'rows': [{'label': k, 'value': v} for k, v in rows], 'mount_kind': kind}
+    return {'rows': [{'label': k, 'value': v} for k, v in rows], 'mount_kind': kind,
+            'log_sources': log_sources()}
