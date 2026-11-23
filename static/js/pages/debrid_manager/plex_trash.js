@@ -549,7 +549,6 @@ document.getElementById('pt-bulk-del-notrd')?.addEventListener('click', function
 document.querySelectorAll('.dm-tab[data-tab="plex-trash"]').forEach(btn => {
     btn.addEventListener('click', () => { if (!_ptLoaded) loadPlexTrash(false); });
 });
-if (_dmActiveTab === 'plex-trash') loadPlexTrash(false);
 
 // ── USENET (NZB) SECTION ───────────────────────────────────────────────────
 let _ptInUsenet = [];

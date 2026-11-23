@@ -102,11 +102,23 @@ def _jellyfin_configured(get):
                 and str(get('Debug', 'emby_jellyfin_token', '') or '').strip())
 
 
+def _silo(get):
+    """'symlink', 'library' (Plex mode run with Silo) or None."""
+    from utilities.silo_functions import silo_kind
+    return silo_kind(get)
+
+
+def _silo_configured(get):
+    return (_silo(get) is not None
+            and bool(str(get('Debug', 'silo_url', '') or '').strip())
+            and bool(str(get('Debug', 'silo_api_key', '') or '').strip()))
+
+
 def _verify_symlinks_default(get):
     if _fm(get) != 'Symlinked/Local':
         return False
     plex = get('File Management', 'plex_url_for_symlink', '') and get('File Management', 'plex_token_for_symlink', '')
-    return bool(plex or _jellyfin_configured(get))
+    return bool(plex or _jellyfin_configured(get) or (_silo(get) == 'symlink' and _silo_configured(get)))
 
 
 def _external_adds_default(get):
@@ -114,6 +126,9 @@ def _external_adds_default(get):
 
 
 def _plex_mode(get):
+    """Plex is the media server: Plex-only tasks (collections, box sets)."""
+    if _silo(get):
+        return False
     return not (_fm(get) == 'Symlinked/Local' and get('File Management', 'media_server_type', '') == 'jellyfin')
 
 
@@ -121,7 +136,7 @@ def _viewer_history_default(get):
     if not str(get('TMDB', 'api_key', '') or '').strip():
         return False
     plex = get('Plex', 'url', '') and get('Plex', 'token', '')
-    return bool(plex or _jellyfin_configured(get))
+    return bool(plex or _jellyfin_configured(get) or _silo_configured(get))
 
 
 def _limited_environment(get):
@@ -130,11 +145,12 @@ def _limited_environment(get):
 
 
 def _overlays(get):
-    return bool(get('Overlay Settings', 'overlays_enabled', False))
+    return bool(get('Overlay Settings', 'overlays_enabled', False)) and not _silo(get)
 
 
 def _watch_history_default(get):
-    return bool(get('Debug', 'do_not_add_plex_watch_history_items_to_queue', False))
+    # Plex's watch history; Plex mode run with Silo has no Plex to read
+    return bool(get('Debug', 'do_not_add_plex_watch_history_items_to_queue', False)) and _silo(get) != 'library'
 
 
 # ---- the table -----------------------------------------------------------------

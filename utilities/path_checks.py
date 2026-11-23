@@ -10,7 +10,8 @@ invisible to everyone else and gone on recreate), a built-in mount without
 `rshared` (the engine's FUSE mount never reaches the host), and a media
 server given the folder under a different path. The first two show in
 /proc/self/mountinfo; the last is checked by asking the media server to
-list the folder.
+list the folder. Silo may see the symlink folder at another path (cli_debrid
+maps it by folder name), so for Silo each library folder is checked.
 
 Every check returns (ok, message, warning): warning=True means "could not
 tell / probably fine", never a hard failure.
@@ -156,10 +157,110 @@ def jellyfin_list(url: str, token: str, path: str, timeout: int = 10) -> Optiona
         return None
 
 
+def silo_list(url: str, key: str, path: str, timeout: int = 10) -> Optional[Set[str]]:
+    """Folder names Silo sees in a folder (admin filesystem browser). Empty
+    set when Silo says the folder isn't there; None when it couldn't be asked."""
+    names, cursor = set(), None
+    for _ in range(50):
+        params = {'path': path, 'limit': 200}
+        if cursor:
+            params['cursor'] = cursor
+        try:
+            r = requests.get(f"{url.rstrip('/')}/api/v2/admin/filesystem/browse", params=params,
+                             headers={'Authorization': f'Bearer {key}', 'Accept': 'application/json'},
+                             timeout=timeout)
+        except requests.RequestException as exc:
+            logging.debug(f'[path check] Silo browse {path}: {exc}')
+            return None
+        if r.status_code == 404:
+            return set()
+        if r.status_code != 200:
+            return None
+        try:
+            body = r.json() or {}
+        except ValueError:
+            return None
+        names |= {i.get('name') or os.path.basename((i.get('path') or '').rstrip('/')) for i in body.get('items') or []}
+        cursor = (body.get('page') or {}).get('next_cursor')
+        if not (body.get('page') or {}).get('has_more') or not cursor:
+            return names
+    return names
+
+
 def _lister(server: Dict):
     if server.get('kind') == 'plex':
         return lambda p: plex_list(server['url'], server['token'], p)
+    if server.get('kind') == 'silo':
+        return lambda p: silo_list(server['url'], server['token'], p)
     return lambda p: jellyfin_list(server['url'], server['token'], p)
+
+
+_TYPE_FOLDERS = (('movies_folder_name', 'Movies'), ('tv_shows_folder_name', 'TV Shows'),
+                 ('anime_movies_folder_name', 'Anime Movies'), ('anime_tv_shows_folder_name', 'Anime TV Shows'),
+                 ('documentary_movies_folder_name', 'Documentary Movies'),
+                 ('documentary_tv_shows_folder_name', 'Documentary TV Shows'))
+
+
+def type_folder_names(config: Dict) -> Set[str]:
+    """The folders cli_debrid makes inside the symlink folder (Movies, TV Shows, ...)."""
+    dbg = config.get('Debug', {}) or {}
+    return {(dbg.get(k) or default).strip() for k, default in _TYPE_FOLDERS}
+
+
+def silo_sees_symlinks(server: Dict, symlinks: str, folder_names: Optional[Set[str]] = None) -> List[Tuple[str, Result]]:
+    """One row per Silo library inside the symlink folder: a marker folder made
+    in the library's folder here must show up in Silo's listing of the
+    library root. Silo may see the folder at another path (cli_debrid maps it
+    by folder name), so the roots come from Silo's library list."""
+    from utilities import silo_functions as silo
+    try:
+        libraries = silo.get_libraries(force=True, url=server['url'], key=server['token'])
+    except Exception as exc:
+        return [('Silo libraries', (True, f"Couldn't list Silo's libraries ({exc}); check them by hand", True))]
+    rows = []
+    for lib in libraries:
+        if (lib.get('type') or '') not in ('movies', 'series', 'mixed'):
+            continue
+        for root in lib.get('paths') or []:
+            local = silo.from_silo_path(root, libraries, symlinks)
+            # Silo's root is inside the symlink folder when it is the same path,
+            # its local counterpart exists, or it is named like one of the type
+            # folders cli_debrid will make there. Any other root is unrelated.
+            same_path = root.rstrip('/') == symlinks.rstrip('/') or root.startswith(symlinks.rstrip('/') + '/')
+            named = root.rstrip('/').rsplit('/', 1)[-1] in (folder_names or {n for _, n in _TYPE_FOLDERS})
+            if not (same_path or os.path.isdir(local) or named):
+                continue
+            label = f"Silo library {lib.get('name') or lib.get('id')}"
+            if not os.path.isdir(local):
+                rows.append((label, (True, f"{local} doesn't exist yet (it's made with the first symlink), so Silo's "
+                                           f"view of it ({root}) can't be checked yet", True)))
+                continue
+            marker = os.path.join(local, MARKER_PREFIX + uuid.uuid4().hex[:8])
+            try:
+                os.makedirs(marker)
+            except OSError as exc:
+                rows.append((label, (False, f"Can't write to {local}: {exc}", True)))
+                continue
+            try:
+                seen = silo_list(server['url'], server['token'], root)
+            finally:
+                try:
+                    os.rmdir(marker)
+                except OSError:
+                    pass
+            if seen is None:
+                rows.append((label, (True, f"Couldn't ask Silo what it sees in {root}; check by hand", True)))
+            elif os.path.basename(marker) in seen:
+                rows.append((label, (True, f"Silo sees {local} at {root}", False)))
+            else:
+                rows.append((label, (False, f"Silo's folder {root} isn't cli_debrid's {local}. Give Silo the symlink "
+                                            f"folder and point this library at the matching folder inside it.", False)))
+    if not rows:
+        names = ', '.join(f"{lib.get('name')} ({', '.join(lib.get('paths') or [])})" for lib in libraries) or 'none'
+        rows.append(('Silo libraries', (False, f"No Silo movie or TV library is inside the symlink folder {symlinks}. "
+                                               f"Point Silo's libraries at its Movies and TV Shows folders. Silo's "
+                                               f"libraries now: {names}", False)))
+    return rows
 
 
 def server_sees_folder(server: Dict, path: str, label: str) -> Result:
@@ -209,12 +310,22 @@ def media_server(config: Dict) -> Optional[Dict]:
     """The media server onboarding set up, as {kind, name, url, token}."""
     fm = config.get('File Management', {}) or {}
     if fm.get('file_collection_management') == 'Symlinked/Local':
+        if (fm.get('media_server_type') or '').lower() == 'silo':
+            dbg = config.get('Debug', {}) or {}
+            if dbg.get('silo_url') and dbg.get('silo_api_key'):
+                return {'kind': 'silo', 'name': 'Silo', 'url': dbg['silo_url'], 'token': dbg['silo_api_key']}
+            return None
         if fm.get('plex_url_for_symlink') and fm.get('plex_token_for_symlink'):
             return {'kind': 'plex', 'name': 'Plex', 'url': fm['plex_url_for_symlink'], 'token': fm['plex_token_for_symlink']}
         dbg = config.get('Debug', {}) or {}
         if dbg.get('emby_jellyfin_url') and dbg.get('emby_jellyfin_token'):
             return {'kind': 'jellyfin', 'name': 'Jellyfin / Emby', 'url': dbg['emby_jellyfin_url'],
                     'token': dbg['emby_jellyfin_token']}
+        return None
+    if (fm.get('plex_mode_media_server') or '').lower() == 'silo':
+        dbg = config.get('Debug', {}) or {}
+        if dbg.get('silo_url') and dbg.get('silo_api_key'):
+            return {'kind': 'silo', 'name': 'Silo', 'url': dbg['silo_url'], 'token': dbg['silo_api_key']}
         return None
     plex = config.get('Plex', {}) or {}
     if plex.get('url') and plex.get('token'):
@@ -253,5 +364,8 @@ def onboarding_checks(config: Dict, builtin_mount_path: Optional[str] = None) ->
         if files_path and os.path.isdir(mount_root(files_path)):
             rows.append((f"{server['name']} sees the mount", server_sees_mount(server, mount_root(files_path))))
         if symlinks and os.path.isdir(symlinks):
-            rows.append((f"{server['name']} sees the symlinks", server_sees_folder(server, symlinks, 'symlink folder')))
+            if server['kind'] == 'silo':
+                rows += silo_sees_symlinks(server, symlinks, type_folder_names(config))
+            else:
+                rows.append((f"{server['name']} sees the symlinks", server_sees_folder(server, symlinks, 'symlink folder')))
     return rows

@@ -261,6 +261,18 @@ body.tangerine-theme #tng-connections .tng-empty{text-align:center;padding:3rem;
             </div>
         </div>
 
+        <!-- Silo -->
+        <div class="connection-card" data-service="silo" {% if not silo_status %}style="display:none"{% endif %}>
+            <div class="connection-header">
+                <i class="fas fa-play-circle"></i>
+                <span class="connection-title">Silo</span>
+                <div class="status-indicator {% if silo_status %}{{ 'connected' if silo_status.connected else 'disconnected' }}{% else %}checking{% endif %}"></div>
+            </div>
+            <div class="conn-card-footer" data-ts="">
+                <span class="conn-card-spinner"></span><span>Checking…</span>
+            </div>
+        </div>
+
         <!-- Mounted Files -->
         <div class="connection-card" data-service="mounted-files" {% if not mounted_files_status %}style="display:none"{% endif %}>
             <div class="connection-header">

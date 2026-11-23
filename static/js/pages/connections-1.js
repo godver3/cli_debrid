@@ -165,6 +165,7 @@
                 'cli_battery_status': 'cli_battery',
                 'plex_status': 'plex',
                 'jellyfin_status': 'jellyfin',
+                'silo_status': 'silo',
                 'mounted_files_status': 'mounted-files',
                 'phalanx_db_status': 'phalanx-db',
                 'tvdb_status': 'tvdb',

@@ -12,7 +12,7 @@
   };
 
   const TYPE_MAP = {
-    system:  { cli_battery:'Internal', plex:'Media Server', jellyfin:'Media Server', 'mounted-files':'File System', 'phalanx-db':'Database' },
+    system:  { cli_battery:'Internal', plex:'Media Server', jellyfin:'Media Server', silo:'Media Server', 'mounted-files':'File System', 'phalanx-db':'Database' },
   };
 
   function getType(group, service, name) {
@@ -82,7 +82,7 @@
     const n = name.toLowerCase();
     if (n.includes('battery')) return 'fa-solid fa-battery-full';
     if (n.includes('plex'))    return 'fa-solid fa-play';
-    if (n.includes('jellyfin') || n.includes('emby')) return 'fa-solid fa-play';
+    if (n.includes('jellyfin') || n.includes('emby') || n.includes('silo')) return 'fa-solid fa-play';
     if (n.includes('mount'))   return 'fa-solid fa-hard-drive';
     if (n.includes('phalanx') || n.includes('db')) return 'fa-solid fa-database';
     if (n.includes('jackett')) return 'fa-solid fa-magnifying-glass';

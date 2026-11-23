@@ -416,6 +416,7 @@ def analyze_symlinks():
     return jsonify({'success': True, 'task_id': task_id}) # Return task ID for progress tracking
 
 @debug_bp.route('/analysis_progress/<task_id>')
+@admin_required
 def analysis_progress_stream(task_id):
     """SSE endpoint for tracking analysis progress."""
     def generate():
@@ -614,6 +615,16 @@ def modify_symlink_paths():
     new_original_base = request.form.get('new_original_base', '').strip()
     dry_run = request.form.get('dry_run') == 'on'
 
+    # Compare whole folders: '/mnt/zurg' must not also rewrite '/mnt/zurg_old/...'.
+    def _norm(p):
+        return p.rstrip('/\\') if len(p) > 1 else p
+    current_symlink_base, new_symlink_base = _norm(current_symlink_base), _norm(new_symlink_base)
+    current_original_base, new_original_base = _norm(current_original_base), _norm(new_original_base)
+
+    def _under(path, base):
+        return bool(path) and (path == base or path.startswith(base.rstrip('/\\') + '/')
+                               or path.startswith(base.rstrip('/\\') + '\\'))
+
     modify_symlink = bool(current_symlink_base and new_symlink_base)
     modify_original = bool(current_original_base and new_original_base)
 
@@ -659,12 +670,12 @@ def modify_symlink_paths():
             new_original = current_original
             updated = False
 
-            if modify_symlink and current_location and current_location.startswith(current_symlink_base):
+            if modify_symlink and _under(current_location, current_symlink_base):
                 new_location = current_location.replace(current_symlink_base, new_symlink_base, 1)
                 updated = True
                 logging.debug(f"Item {item_id}: Symlink change '{current_location}' -> '{new_location}'")
 
-            if modify_original and current_original and current_original.startswith(current_original_base):
+            if modify_original and _under(current_original, current_original_base):
                 new_original = current_original.replace(current_original_base, new_original_base, 1)
                 updated = True
                 logging.debug(f"Item {item_id}: Original change '{current_original}' -> '{new_original}'")
@@ -713,7 +724,7 @@ def modify_symlink_paths():
                     updated_count = len(items_to_update)
                     
                 logging.info(f"Successfully updated {updated_count} items in the database.")
-                message = f"Successfully updated {updated_count} items."
+                message = f"Successfully updated {updated_count} items. Run Resync Symlinks to rebuild the links on disk."
             else:
                  message = "No items required updating based on the provided paths."
 

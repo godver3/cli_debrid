@@ -1,11 +1,20 @@
 """Overlay settings and task triggers."""
 
 from flask import jsonify, request
+from routes.models import admin_required
 from ._common import logger, overlay_bp
 
 # ============================================
 # Settings Endpoints
 # ============================================
+
+@overlay_bp.route('/api/overlays/plex-data-path-check', methods=['GET'])
+@admin_required
+def check_plex_data_path_route():
+    """Check a Plex data path for Plex's Metadata folder (Overlay Settings save)."""
+    from overlays.scheduled_tasks import check_plex_data_path
+    return jsonify(check_plex_data_path(request.args.get('path', ''))), 200
+
 
 @overlay_bp.route('/api/overlays/settings', methods=['GET'])
 def get_overlay_settings():
@@ -114,6 +123,27 @@ def trigger_overlay_cleanup():
         return jsonify({'success': True, 'message': 'Cleanup started'})
     except Exception as e:
         logger.error(f"Failed to trigger overlay cleanup: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@overlay_bp.route('/api/overlays/tasks/cleanup-preview', methods=['POST'])
+@admin_required
+def preview_overlay_cleanup():
+    """What the overlay cleanup would delete right now. Changes nothing."""
+    try:
+        from overlays.scheduled_tasks import task_overlay_cleanup
+        return jsonify(task_overlay_cleanup(triggered_by='manual', dry_run=True))
+    except Exception as e:
+        logger.error(f"Overlay cleanup preview failed: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@overlay_bp.route('/api/overlays/health', methods=['GET'])
+def overlay_health():
+    """Recent overlay sync results (Overlays page 'Last sync' card)."""
+    try:
+        from overlays.scheduled_tasks import get_overlay_health
+        return jsonify(get_overlay_health())
+    except Exception as e:
+        logger.error(f"Overlay health failed: {e}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @overlay_bp.route('/api/overlays/tasks/full-sync', methods=['POST'])

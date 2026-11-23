@@ -108,7 +108,7 @@ class JellyfinSessionTests(unittest.TestCase):
         self.assertEqual(ms.jellyfin_server(settings(jf=False)), ('', ''))
 
     def test_no_server_set_is_an_error(self):
-        self.assertEqual(ms.sessions_checked(settings(jf=False)), ([], 'no media server set (Plex, or Jellyfin/Emby)'))
+        self.assertEqual(ms.sessions_checked(settings(jf=False)), ([], 'no media server set (Plex, Jellyfin/Emby or Silo)'))
 
     def test_both_servers_merged(self):
         plex_s = {'type': 'movie', 'ratingKey': '5', 'Media': [{'Part': [{'file': '/m.mkv'}]}]}

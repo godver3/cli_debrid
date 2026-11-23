@@ -351,10 +351,80 @@ def process_log_upload(task_id):
     
     upload_tasks[task_id]['timestamp'] = time.time()
 
-def upload_to_paste_cnet(data, task_id=None):
+ENGINE_LOG_UPLOAD_LINES = 200000
+
+
+def _engine_log_for_upload(max_lines=ENGINE_LOG_UPLOAD_LINES):
+    """The built-in mount engine's recent log lines, readable and scrubbed."""
+    try:
+        from usenet.builtin_client import engine_log_path, format_engine_log_line
+        path = engine_log_path()
+        if not os.path.exists(path):
+            return []
+        lines = [format_engine_log_line(line.rstrip('\n')) for line in _tail_lines(path, max_lines)]
+        try:
+            from utilities.log_redaction import scrub
+            lines = [scrub(line) for line in lines]
+        except Exception:
+            pass
+        return lines
+    except Exception as e:
+        logging.warning(f"Engine log for upload unavailable: {e}")
+        return []
+
+
+@logs_bp.route('/api/engine/logs/share', methods=['POST'])
+@admin_required
+def share_engine_logs():
+    """Uploads the built-in mount engine's log on its own, so a bug report
+    links it next to cli_debrid's log instead of burying it at the end."""
+    task_id = str(uuid.uuid4())
+    upload_tasks[task_id] = {'status': 'collecting', 'progress': 10, 'url': None, 'error': None,
+                             'message': 'Collecting built-in mount logs...', 'timestamp': time.time()}
+    threading.Thread(target=process_engine_log_upload, args=(task_id,), daemon=True).start()
+    return jsonify({'success': True, 'task_id': task_id, 'message': 'Built-in mount log upload started in background'})
+
+
+def process_engine_log_upload(task_id):
+    try:
+        lines = _engine_log_for_upload()
+        if not lines:
+            upload_tasks[task_id].update({'status': 'failed', 'error': 'No built-in mount log found',
+                                          'message': 'Failed: No built-in mount log found.'})
+            return
+        buf = io.BytesIO()
+        with gzip.GzipFile(fileobj=buf, mode='wb', compresslevel=6) as gz:
+            gz.write('\n'.join(lines).encode('utf-8'))
+        upload_tasks[task_id].update({'status': 'uploading_to_pastebin', 'progress': 50,
+                                      'message': 'Uploading built-in mount logs to paste.c-net.org...'})
+        url = upload_to_paste_cnet(buf.getvalue(), task_id, filename='mount_engine.log.gz')
+        if not url:
+            raise Exception('Upload to paste.c-net completed but no URL returned.')
+        logging.info(f"Task {task_id}: built-in mount logs uploaded: {url}")
+        upload_tasks[task_id].update({'status': 'completed', 'progress': 100, 'url': url,
+                                      'message': f"Built-in mount logs uploaded: {url.split('/')[-1]}"})
+    except Exception as e:
+        logging.error(f"Task {task_id}: Failed to share built-in mount logs: {e}")
+        upload_tasks[task_id].update({'status': 'failed', 'error': f'Built-in mount log upload failed: {e}',
+                                      'message': 'Failed: built-in mount upload error.'})
+    upload_tasks[task_id]['timestamp'] = time.time()
+
+
+@logs_bp.route('/api/bug-report/context', methods=['GET'])
+@admin_required
+def bug_report_context():
+    """Setup summary for the top bar's bug report (no URLs, paths or keys)."""
+    try:
+        from utilities.bug_report import build_context
+        return jsonify({'success': True, **build_context()})
+    except Exception as e:
+        logging.error(f"Bug report context failed: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+def upload_to_paste_cnet(data, task_id=None, filename='debug.log.gz'):
     """Upload to paste.c-net.org"""
     url = 'https://paste.c-net.org/'
-    filename = 'debug.log.gz'
     headers = {
         'X-FileName': filename  # Set filename header
     }

@@ -504,8 +504,12 @@ def truncate_path_components(
     return sanitized
 
 
-def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup: bool = False) -> str:
-    """Get the full path for the symlink based on settings and metadata."""
+def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup: bool = False,
+                     symlink_root: Optional[str] = None) -> str:
+    """Get the full path for the symlink based on settings and metadata.
+
+    symlink_root replaces the configured symlinked_files_path for this call
+    (Tools > Rclone Mount to Symlinks with a different base path)."""
     import json
     try:
         # --- BEGIN Enhanced Logging ---
@@ -522,7 +526,7 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
         logging.debug(f"Input item: type={item.get('type')}, genres={item.get('genres')}, content_source={item.get('content_source')}")
 
         # Get the base symlink path from general File Management settings
-        symlinked_path_base = get_setting('File Management', 'symlinked_files_path')
+        symlinked_path_base = symlink_root or get_setting('File Management', 'symlinked_files_path')
         
         # Check for content source specific custom subfolder
         final_symlinked_path_root = symlinked_path_base # Start with the base path
@@ -1408,7 +1412,10 @@ def _cleanup_old_symlink(item: Dict[str, Any], item_identifier: str, source_file
 
         # Remove the old file from Plex or Emby/Jellyfin
         media_server_type = 'none'
-        if get_setting('Debug', 'emby_jellyfin_url', default=False):
+        from utilities.silo_functions import is_silo_mode
+        if is_silo_mode():
+            media_server_type = 'silo'
+        elif get_setting('Debug', 'emby_jellyfin_url', default=False):
             media_server_type = 'emby_jellyfin'
         elif get_setting('File Management', 'plex_url_for_symlink', default=False):
             media_server_type = 'plex'
@@ -1416,7 +1423,10 @@ def _cleanup_old_symlink(item: Dict[str, Any], item_identifier: str, source_file
         if media_server_type != 'none':
             try:
                 episode_title = item.get('episode_title') if item.get('type') == 'episode' else None
-                if media_server_type == 'emby_jellyfin':
+                if media_server_type == 'silo':
+                    from utilities.silo_functions import remove_file_from_silo
+                    remove_file_from_silo(item['title'], old_dest, episode_title)
+                elif media_server_type == 'emby_jellyfin':
                     from utilities.emby_functions import remove_file_from_emby
                     remove_file_from_emby(item['title'], old_dest, episode_title)
                 elif media_server_type == 'plex':

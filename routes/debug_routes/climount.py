@@ -3,7 +3,6 @@
 from flask import jsonify, request
 import logging
 from routes import admin_required
-from routes.models import user_required
 import os
 from datetime import datetime
 from ._common import debug_bp, scan_progress
@@ -300,7 +299,7 @@ def delete_climount_old_databases():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @debug_bp.route('/api/backfill_nzb_names', methods=['POST'])
-@user_required
+@admin_required
 def backfill_nzb_names():
     """Backfill NZB job names for collected NZB items.
     Tier 1: Items not yet in NZB format — rename to new format.
@@ -586,7 +585,7 @@ def backfill_nzb_names():
     return jsonify({'success': True, 'task_id': task_id})
 
 @debug_bp.route('/api/backfill_nzb_names/status/<task_id>', methods=['GET'])
-@user_required
+@admin_required
 def backfill_nzb_names_status(task_id):
     """Get status of a backfill_nzb_names task."""
     return jsonify(scan_progress.get(task_id, {'status': 'not_found', 'complete': True}))

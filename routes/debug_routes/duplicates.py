@@ -59,54 +59,55 @@ def scan_duplicate_symlinks():
         if not symlink_root:
             return jsonify({'success': False, 'error': 'no symlinked_files_path configured'}), 400
 
-        tv_folder_names = [get_setting('Debug', 'tv_shows_folder_name', 'TV Shows')]
-        if get_setting('Debug', 'enable_separate_anime_folders', False):
-            tv_folder_names.append(get_setting('Debug', 'anime_tv_shows_folder_name', 'Anime TV Shows'))
-
-        tv_roots = [os.path.join(symlink_root, name) for name in tv_folder_names]
-        existing_roots = [r for r in tv_roots if os.path.isdir(r)]
-        if not existing_roots:
-            return jsonify({'success': False, 'error': f'No TV symlink folders found (checked: {", ".join(tv_roots)})'}), 400
+        # Episodes come from the database rather than a walk of "TV Shows" (+ anime):
+        # the walk missed documentary folders, content-source and custom folders,
+        # and layouts with the version/resolution folder first.
+        root_prefix = symlink_root.rstrip('/\\') + os.sep
+        conn = get_db_connection()
+        try:
+            rows = conn.execute(
+                "SELECT id, title, year, season_number, episode_number, location_on_disk "
+                "FROM media_items WHERE type = 'episode' AND state IN ('Collected', 'Upgrading') "
+                "AND location_on_disk IS NOT NULL AND location_on_disk != ''").fetchall()
+        finally:
+            conn.close()
 
         by_target = defaultdict(list)
         scanned = 0
-        for tv_root in existing_roots:
-            for dirpath, dirnames, filenames in os.walk(tv_root):
-                for name in filenames:
-                    full = os.path.join(dirpath, name)
-                    if not os.path.islink(full):
-                        continue
-                    scanned += 1
-                    try:
-                        target = os.readlink(full)
-                    except OSError:
-                        continue
-                    by_target[target].append(full)
+        for row in rows:
+            path = row['location_on_disk']
+            if not path.startswith(root_prefix) or not os.path.islink(path):
+                continue
+            scanned += 1
+            try:
+                target = os.readlink(path)
+            except OSError:
+                continue
+            if not os.path.isabs(target):
+                target = os.path.normpath(os.path.join(os.path.dirname(path), target))
+            by_target[target].append(row)
 
-        dupe_groups = {t: paths for t, paths in by_target.items() if len(paths) > 1}
-
-        conn = get_db_connection()
         groups_out = []
-        for target, paths in dupe_groups.items():
+        for target, group_rows in by_target.items():
+            # One row per symlink path: two versions can share a path entry.
+            seen_paths = set()
             items = []
-            for p in paths:
-                row = conn.execute(
-                    "SELECT id, title, year, season_number, episode_number FROM media_items WHERE location_on_disk = ?",
-                    (p,)
-                ).fetchone()
-                # Only items matched to a real database row are actionable from
-                # this UI (nothing to safely rescrape otherwise) - drop the rest
-                # rather than showing an inert "not matched" row.
-                if not row:
+            for row in group_rows:
+                if row['location_on_disk'] in seen_paths:
                     continue
+                seen_paths.add(row['location_on_disk'])
                 items.append({
-                    'path': p,
+                    'path': row['location_on_disk'],
                     'item_id': row['id'],
                     'title': row['title'],
                     'year': row['year'],
                     'season_number': row['season_number'],
                     'episode_number': row['episode_number'],
                 })
+            # The same episode under two versions (version folders) sharing one file
+            # is not a mismatch.
+            if len({(i['title'], i['season_number'], i['episode_number']) for i in items}) < 2:
+                continue
             if len(items) > 1:
                 # Distinguish a genuine mismatch (different episodes wrongly sharing a file)
                 # from a legitimate combined multi-episode release file (e.g. a premiere
@@ -130,7 +131,6 @@ def scan_duplicate_symlinks():
                     'items': items,
                     'is_multi_episode_release': is_multi_episode_release,
                 })
-        conn.close()
 
         groups_out.sort(key=lambda g: -len(g['items']))
 

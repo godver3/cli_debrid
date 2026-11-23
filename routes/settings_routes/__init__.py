@@ -99,6 +99,12 @@ from .misc_api import (
     mark_support_modal_seen,
     save_content_source_order,
 )
+from .transfer import (
+    settings_transfer_apply,
+    settings_transfer_export,
+    settings_transfer_groups,
+    settings_transfer_preview,
+)
 from .plex_collections import (
     get_collection_poster_previews,
     get_plex_boxsets_status,
@@ -225,6 +231,10 @@ __all__ = [
     'send_telegram_notification',
     'serve_collection_poster_preview',
     'settings_bp',
+    'settings_transfer_apply',
+    'settings_transfer_export',
+    'settings_transfer_groups',
+    'settings_transfer_preview',
     'sys',
     'test_notification',
     'threading',

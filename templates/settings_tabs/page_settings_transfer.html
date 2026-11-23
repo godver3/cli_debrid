@@ -1,0 +1,78 @@
+{# Settings → Export / Import. Lives outside #settingsForm so none of these
+   inputs are ever picked up by Save Settings. Logic: static/js/pages/settings_transfer.js #}
+<div class="additional-settings-page" id="settingsTransferPage">
+    <h2 class="additional-settings-title">Export / Import</h2>
+    <p class="additional-settings-subtitle">Share your setup as a file, or start from someone else's. API keys, passwords, tokens, URLs, paths, servers and accounts never go in the file.</p>
+
+    <div class="content-section">
+        <div class="settings-list">
+            <div class="settings-section settings-card expanded">
+                <div class="settings-section-header"><div class="settings-header-left"><h4>Export</h4></div></div>
+                <div class="settings-section-content" style="display:block">
+                    <p class="settings-description">Pick what to include, then download. The file is safe to post: it holds no keys, logins or addresses.</p>
+                    <div class="st-groups" id="stExportGroups"></div>
+                    <div class="st-actions">
+                        <button type="button" class="btn btn-primary" id="stExportBtn"><i class="fas fa-download"></i> Download settings file</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-section settings-card expanded">
+                <div class="settings-section-header"><div class="settings-header-left"><h4>Import</h4></div></div>
+                <div class="settings-section-content" style="display:block">
+                    <p class="settings-description">Choose a settings file. You'll see every change before anything is saved. Your keys, logins, paths and servers are never touched, and nothing is removed. New scrapers and lists arrive turned off.</p>
+                    <div class="st-actions">
+                        <label class="btn btn-secondary st-file-label">
+                            <i class="fas fa-file-import"></i> Choose file
+                            <input type="file" id="stImportFile" accept=".json,application/json" hidden>
+                        </label>
+                        <span class="st-file-name" id="stFileName"></span>
+                    </div>
+                    <div id="stImportError" class="st-error" hidden></div>
+
+                    <div id="stImportStep" hidden>
+                        <p class="st-file-meta" id="stFileMeta"></p>
+                        <div class="st-groups" id="stImportGroups"></div>
+                        <div id="stPreview" class="st-preview"></div>
+                        <div class="st-actions">
+                            <button type="button" class="btn btn-primary" id="stApplyBtn" disabled>Import</button>
+                            <button type="button" class="btn btn-secondary" id="stCancelBtn">Cancel</button>
+                        </div>
+                        <p class="settings-description st-backup-note">Your current settings are saved to <code>settings_backups/</code> in your config folder first.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+#settingsTransferPage .st-groups{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:8px;margin:12px 0}
+#settingsTransferPage .st-group{display:flex;gap:10px;align-items:flex-start;background:#222;border:1px solid #2d2d2d;border-radius:6px;padding:10px 12px;cursor:pointer}
+#settingsTransferPage .st-group:hover{border-color:#3d3d3d}
+#settingsTransferPage .st-group input{accent-color:#e8601c;margin-top:3px;flex-shrink:0}
+#settingsTransferPage .st-group.st-unavailable{opacity:.45;cursor:not-allowed}
+#settingsTransferPage .st-group b{display:block;color:#ededed;font-size:13px;margin-bottom:2px}
+#settingsTransferPage .st-group span{color:#8f8f8f;font-size:12px;line-height:1.4}
+#settingsTransferPage .st-group .st-count{color:#e8601c;font-weight:600}
+#settingsTransferPage .st-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px}
+#settingsTransferPage .st-file-label{cursor:pointer;margin:0}
+#settingsTransferPage .st-file-name,#settingsTransferPage .st-file-meta{color:#8f8f8f;font-size:12px}
+#settingsTransferPage .st-error{color:#ef4444;font-size:13px;margin-top:10px}
+#settingsTransferPage .st-preview{max-height:420px;overflow:auto;border:1px solid #2d2d2d;border-radius:6px;background:#161616;font-size:12px}
+#settingsTransferPage .st-preview:empty{display:none}
+#settingsTransferPage .st-preview h5{position:sticky;top:0;margin:0;padding:6px 10px;background:#222;color:#ededed;font-size:12px;border-bottom:1px solid #2d2d2d}
+#settingsTransferPage .st-row{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr) minmax(0,1fr);gap:10px;padding:5px 10px;border-bottom:1px solid #222}
+#settingsTransferPage .st-row > *{overflow-wrap:anywhere}
+#settingsTransferPage .st-path{color:#bdbdbd}
+#settingsTransferPage .st-old{color:#8f8f8f;text-decoration:line-through}
+#settingsTransferPage .st-old i{text-decoration:none;display:inline-block}
+#settingsTransferPage .st-new{color:#4ade80}
+#settingsTransferPage .st-notes{padding:8px 10px;color:#fbbf24;border-bottom:1px solid #2d2d2d}
+#settingsTransferPage .st-notes li{margin-left:16px}
+#settingsTransferPage .st-empty{padding:10px;color:#8f8f8f}
+@media (max-width:640px){
+  #settingsTransferPage .st-row{grid-template-columns:1fr;gap:2px}
+}
+</style>
+<script src="{{ url_for('static', filename='js/pages/settings_transfer.js') }}" defer></script>

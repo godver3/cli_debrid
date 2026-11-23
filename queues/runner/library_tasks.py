@@ -159,7 +159,10 @@ class LibraryTasks:
         """Scheduled task to clean up unused posters and overlay cache."""
         try:
             logging.info("Overlay cleanup task starting")
-            db_path = os.environ.get('DATABASE_PATH', '/user/db_content/media_items.db')
+            # Same location database.core uses (DATABASE_PATH was never set, so this
+            # used to be a hardcoded /user/db_content path that doesn't exist on
+            # Windows or native installs).
+            db_path = os.path.join(os.environ.get('USER_DB_CONTENT', '/user/db_content'), 'media_items.db')
 
             # 1. Clean up orphaned poster backup files
             try:
@@ -173,16 +176,17 @@ class LibraryTasks:
 
             # 2. Reset stuck 'analyzing' states (older than 30 minutes) to 'pending'
             try:
-                import sqlite3 as _sqlite3
-                conn = _sqlite3.connect(db_path)
-                conn.execute("""
-                    UPDATE media_overlay_state SET status = 'pending'
-                    WHERE status = 'analyzing'
-                      AND updated_at < datetime('now', '-30 minutes')
-                """)
-                stuck_reset = conn.total_changes
-                conn.commit()
-                conn.close()
+                from database.core import get_db_connection
+                conn = get_db_connection()
+                try:
+                    stuck_reset = conn.execute("""
+                        UPDATE media_overlay_state SET status = 'pending'
+                        WHERE status = 'analyzing'
+                          AND updated_at < datetime('now', '-30 minutes')
+                    """).rowcount
+                    conn.commit()
+                finally:
+                    conn.close()
                 if stuck_reset:
                     logging.info(f"Overlay cleanup: reset {stuck_reset} stuck analyzing state(s) to pending")
             except Exception as e:

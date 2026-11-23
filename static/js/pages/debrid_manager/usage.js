@@ -242,5 +242,3 @@ async function loadUsage() {
 document.querySelectorAll('.dm-tab[data-tab="usage"]').forEach(btn => {
     btn.addEventListener('click', loadUsage);
 });
-// If usage tab is the active tab on load, load immediately
-if (_dmActiveTab === 'usage') loadUsage();

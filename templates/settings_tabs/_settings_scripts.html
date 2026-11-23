@@ -207,8 +207,10 @@ window.TPL_SETTINGS = {
     // Show/hide plex-only-section elements based on file management + media server type
     var _fm = "{{ settings.get('File Management', {}).get('file_collection_management', '') }}";
     var _ms = "{{ settings.get('File Management', {}).get('media_server_type', '') }}";
+    var _pms = "{{ settings.get('File Management', {}).get('plex_mode_media_server', 'plex') }}";
     function _updatePlexSections() {
-        var show = !(_fm === 'Symlinked/Local' && _ms === 'jellyfin');
+        var show = !(_fm === 'Symlinked/Local' && (_ms === 'jellyfin' || _ms === 'silo'))
+                   && !(_fm === 'Plex' && _pms === 'silo');
         document.querySelectorAll('.plex-only-section').forEach(function(el) {
             el.style.display = show ? '' : 'none';
         });
@@ -218,6 +220,7 @@ window.TPL_SETTINGS = {
         if (e.detail.section === 'File Management') {
             if (e.detail.key === 'file_collection_management') _fm = e.detail.value;
             if (e.detail.key === 'media_server_type') _ms = e.detail.value;
+            if (e.detail.key === 'plex_mode_media_server') _pms = e.detail.value;
             _updatePlexSections();
         }
     });

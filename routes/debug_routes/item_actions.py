@@ -56,7 +56,14 @@ def rescrape_item():
 
             time.sleep(1) # Allow time for filesystem operations
 
-            if item.get('filled_by_file'): # Ensure filled_by_file exists
+            from utilities.silo_functions import is_silo_mode
+            if is_silo_mode() and item.get('location_on_disk'):
+                # Plex mode run with Silo: rescan the file's mount folder (Silo
+                # needs the path; the file leaves the mount with its release)
+                cache_plex_removal(item['title'], item['location_on_disk'],
+                                   item.get('episode_title') if item['type'] == 'episode' else None)
+                logging.info(f"Rescrape: Queued Silo rescan for {item['title']} (item {item_id}), path: {item['location_on_disk']}.")
+            elif item.get('filled_by_file'): # Ensure filled_by_file exists
                 if item['type'] == 'movie':
                     cache_plex_removal(item['title'], item['filled_by_file'])
                     logging.info(f"Rescrape: Queued Plex removal via cache for movie {item['title']} (item {item_id}), path: {item['filled_by_file']}.")
@@ -94,7 +101,13 @@ def rescrape_item():
 
             # Queue for Plex removal if configured
             plex_url = get_setting('File Management', 'plex_url_for_symlink', '')
-            if plex_url:
+            from utilities.silo_functions import is_silo_mode
+            if is_silo_mode() and symlink_path_for_plex:
+                # Silo: rescan the removed symlink's folder (it needs the full path)
+                cache_plex_removal(item['title'], symlink_path_for_plex,
+                                   item.get('episode_title') if item['type'] == 'episode' else None)
+                logging.info(f"Rescrape: Silo rescan for {item['title']} (item {item_id}), path: {symlink_path_for_plex} (Symlinked/Local mode).")
+            elif plex_url:
                 # For Symlinked/Local, Plex usually sees the symlink.
                 # The path given to cache_plex_removal should be what Plex uses to identify the file.
                 # remove_file_from_plex matches basenames.

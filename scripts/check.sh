@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Run every check before pushing or live-patching: the same checks every time.
 #
-#   scripts/check.sh            everything
-#   scripts/check.sh --quick    skip slow tests (pytest -m "not slow") and the per-folder runs
+#   scripts/check.sh            everything, the Plex bench included (run this before a PR)
+#   scripts/check.sh --quick    skip slow tests, the Plex bench and the per-folder runs
+#
+# Tests run in parallel when pytest-xdist is installed ($PYTHON -m pip install pytest-xdist).
 #
 # PYTHON picks the interpreter (default: python3, which needs requirements-linux.txt,
 # pytest and pyflakes installed). CLI_MOUNT_DIR points at a cli_mount (decypharr)
@@ -12,8 +14,9 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 PYTHON="${PYTHON:-python3}"
 CLI_MOUNT_DIR="${CLI_MOUNT_DIR:-../decypharr}"
-PYTEST_ARGS=()
-[[ "${1:-}" == "--quick" ]] && PYTEST_ARGS=(-m "not slow")
+PYTEST_ARGS=(-m "")  # -m "" lifts pytest.ini's default skip of the Plex bench
+[[ "${1:-}" == "--quick" ]] && PYTEST_ARGS=(-m "not slow and not plex_bench")
+"$PYTHON" -c "import xdist" 2>/dev/null && PYTEST_ARGS+=(-n auto)
 
 failed=()
 skipped=()
@@ -35,7 +38,7 @@ if [[ "${1:-}" != "--quick" ]]; then
     # file loaded a real module (or a stub) for it goes unnoticed there.
     for dir in tests/*/; do
         [[ -f "$dir/__init__.py" ]] || continue
-        "$PYTHON" -m pytest -q -p no:warnings "$dir" >"$scratch/area.log" 2>&1 \
+        "$PYTHON" -m pytest -q -p no:warnings -m "" "$dir" >"$scratch/area.log" 2>&1 \
             && echo "ok  $dir" || { tail -20 "$scratch/area.log"; fail "pytest $dir alone"; }
     done
 fi

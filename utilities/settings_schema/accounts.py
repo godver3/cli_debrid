@@ -238,7 +238,13 @@ SECTIONS = {
             "type": "string",
             "description": "Media server type to use for symlink updates when using Symlinked/Local file collection management",
             "default": "plex",
-            "choices": ["plex", "jellyfin"]
+            "choices": ["plex", "jellyfin", "silo"]
+        },
+        "plex_mode_media_server": {
+            "type": "string",
+            "description": "Plex file management mode: the media server that reads the mount and tracks your library. Silo works like Plex here: it reads the mount's folders, and cli_debrid asks it what it has. Silo needs its URL and an admin API key.",
+            "default": "plex",
+            "choices": ["plex", "silo"]
         }
     },
     "Debrid Provider": {

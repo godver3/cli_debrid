@@ -415,7 +415,10 @@ def fix_match_apply():
             rating_key = next((str(row['ms_item_id']) for row in rows
                                if row['ms_item_id'] not in (None, '')), None)
 
-            if not is_plex:
+            from utilities.silo_functions import is_silo_selected
+            if is_silo_selected():
+                rematch_note = 'Media server rematch skipped - Silo matches files itself'
+            elif not is_plex:
                 rematch_note = 'Media server rematch skipped - not in Plex mode'
             elif not plex_configured:
                 rematch_note = 'Media server rematch skipped - Plex is not configured'

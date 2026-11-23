@@ -852,6 +852,10 @@
         </div>
         <div class="stat-card" style="position:relative;" title="Total posters cleaned up across all runs">
             <button class="stat-reset-btn" onclick="resetCleanupStats(event)" title="Reset cleanup counter"><i class="fas fa-undo"></i></button>
+            <button onclick="previewOverlayCleanup(event)" title="Preview: list the poster files the next cleanup would delete (nothing is deleted)"
+                class="backup-action-btn" id="cleanup-preview-btn" style="position:absolute;top:6px;left:6px;">
+                <i class="fas fa-eye"></i>
+            </button>
             <div class="stat-value" id="stat-cleaned">-</div>
             <div class="stat-label">Cleaned Up</div>
             <div class="stat-breakdown" id="stat-cleaned-breakdown" style="font-size:11px;color:#888;margin-top:2px;">-</div>
@@ -867,6 +871,16 @@
                 <span class="stat-breakdown-sep">·</span>
                 <span class="stat-breakdown-item" title="Failed seasons"><i class="fas fa-layer-group"></i> <span id="stat-failed-seasons">-</span></span>
             </div>
+        </div>
+        <div class="stat-card" id="stat-health-card" style="position:relative;" title="Most recent overlay sync">
+            <div class="stat-value" id="stat-health-when">-</div>
+            <div class="stat-label">Last Sync</div>
+            <div class="stat-applied-breakdown">
+                <span class="stat-breakdown-item" title="Overlays rendered by the last sync"><i class="fas fa-paint-brush"></i> <span id="stat-health-applied">-</span></span>
+                <span class="stat-breakdown-sep">·</span>
+                <span class="stat-breakdown-item" id="stat-health-resets-item" title="Applied overlays the last sync sent back for a re-render (quality / content / poster changed)"><i class="fas fa-redo"></i> <span id="stat-health-resets">-</span></span>
+            </div>
+            <div class="stat-breakdown" id="stat-health-note" style="font-size:11px;color:#888;margin-top:2px;"></div>
         </div>
         <div class="stat-card" style="position:relative;">
             <div class="stat-value" id="stat-backup-size">-</div>

@@ -1686,8 +1686,10 @@ class CheckingQueue:
                         # Collect unique directories for batch Plex scan (prevents hammering Plex API)
                         # Store as dict: {directory: item_type} to preserve type information for section matching
                         directories_to_scan = {}
-                        use_jellyfin = get_setting('Debug', 'emby_jellyfin_url', default=False)
-                        use_plex = get_setting('File Management', 'plex_url_for_symlink', default=False)
+                        from utilities.silo_functions import is_silo_mode, silo_update_item
+                        use_silo = is_silo_mode()
+                        use_jellyfin = not use_silo and get_setting('Debug', 'emby_jellyfin_url', default=False)
+                        use_plex = not use_silo and get_setting('File Management', 'plex_url_for_symlink', default=False)
 
                         for item_in_torrent_group in current_items_for_torrent:
                             try:
@@ -1742,7 +1744,9 @@ class CheckingQueue:
                                                     if len(self._immediate_scan_at) > 500:
                                                         self._immediate_scan_at.pop(next(iter(self._immediate_scan_at)))
                                                     try:
-                                                        if use_jellyfin:
+                                                        if use_silo:
+                                                            silo_update_item({'full_path': directory, 'location_on_disk': directory, 'type': item_type})
+                                                        elif use_jellyfin:
                                                             emby_update_item({'full_path': directory, 'location_on_disk': directory, 'type': item_type})
                                                         elif use_plex:
                                                             plex_update_item({'full_path': directory, 'location_on_disk': directory, 'type': item_type})
@@ -1800,7 +1804,9 @@ class CheckingQueue:
                         if directories_to_scan:
                             logging.info(f"[CheckingQueue] Batch media server update: {len(directories_to_scan)} unique directories to scan")
                             for directory, item_type in directories_to_scan.items():
-                                if use_jellyfin:
+                                if use_silo:
+                                    silo_update_item({'full_path': directory, 'location_on_disk': directory, 'type': item_type})
+                                elif use_jellyfin:
                                     # For Jellyfin, create a minimal item dict with the directory and type
                                     emby_update_item({'full_path': directory, 'location_on_disk': directory, 'type': item_type})
                                 elif use_plex:

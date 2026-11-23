@@ -396,16 +396,83 @@ function initializeTangerineMobileNav() {
     restoreExpandedState();
 }
 
-// Release notes live in the Discord release notes channel
-const RELEASE_NOTES_URL = 'https://discord.com/channels/691282102162948107/1366605850814185492';
-
-function initializeReleaseNotes() {
-    const releaseNotesButton = document.getElementById('releaseNotesButton');
-    if (releaseNotesButton) {
-        releaseNotesButton.addEventListener('click', () => {
-            window.open(RELEASE_NOTES_URL, '_blank', 'noopener');
+// marked is only needed for release notes, so it loads on first open
+// instead of with every page.
+let markedPromise = null;
+function loadMarked() {
+    if (window.marked) return Promise.resolve();
+    if (!markedPromise) {
+        markedPromise = new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = 'https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js';
+            script.onload = () => {
+                // Raw HTML in the notes is shown as text, never run
+                window.marked.use({ renderer: { html(t) { return escapeNotesHtml(typeof t === 'string' ? t : (t && t.text) || ''); } } });
+                resolve();
+            };
+            script.onerror = () => { markedPromise = null; reject(new Error('Failed to load marked')); };
+            document.head.appendChild(script);
         });
     }
+    return markedPromise;
+}
+
+function escapeNotesHtml(text) {
+    return String(text).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// Release notes: the GitHub releases' notes (release-notes/<version>.md in the repo)
+const RELEASE_NOTES_DISCORD_URL = 'https://discord.com/channels/691282102162948107/1366605850814185492';
+
+function initializeReleaseNotes() {
+    const button = document.getElementById('releaseNotesButton');
+    const popup = document.getElementById('releaseNotesPopup');
+    const overlay = document.getElementById('releaseNotesOverlay');
+    const close = document.getElementById('releaseNotesClose');
+    const content = document.getElementById('releaseNotesContent');
+    if (!button || !popup || !overlay || !content) return;
+
+    const discordLink = `<p class="release-notes-footer"><a href="${RELEASE_NOTES_DISCORD_URL}" target="_blank" rel="noopener">Release notes on Discord</a></p>`;
+
+    function show() {
+        popup.style.display = 'block';
+        overlay.style.display = 'block';
+        document.body.classList.add('modal-open');
+        content.innerHTML = '<div class="loading">Loading release notes...</div>';
+        Promise.all([fetch('/base/api/release-notes').then(r => r.json()), loadMarked()])
+            .then(([data]) => {
+                if (!data.success) throw new Error(data.error || 'failed');
+                if (!data.releases.length) {
+                    content.innerHTML = '<p>No release notes yet.</p>' + discordLink;
+                    return;
+                }
+                content.innerHTML = data.releases.map(rel => {
+                    const date = rel.published_at ? new Date(rel.published_at).toLocaleDateString() : '';
+                    return `<section class="release-notes-entry">
+                        <h4><a href="${escapeNotesHtml(rel.url)}" target="_blank" rel="noopener">${escapeNotesHtml(rel.version)}</a>
+                        <span class="release-notes-when">${escapeNotesHtml(date)}</span></h4>
+                        ${window.marked.parse(rel.body)}</section>`;
+                }).join('') + discordLink;
+                content.querySelectorAll('a[href^="http"]').forEach(a => { a.target = '_blank'; a.rel = 'noopener'; });
+            })
+            .catch(error => {
+                if (window.DEBUG) console.error('Error fetching release notes:', error);
+                content.innerHTML = '<div class="error">Couldn\'t load the release notes from GitHub.</div>' + discordLink;
+            });
+    }
+
+    function hide() {
+        popup.style.display = 'none';
+        overlay.style.display = 'none';
+        document.body.classList.remove('modal-open');
+    }
+
+    button.addEventListener('click', show);
+    if (close) close.addEventListener('click', hide);
+    overlay.addEventListener('click', hide);
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && popup.style.display === 'block') hide();
+    });
 }
 
 // Rate Limits Functions

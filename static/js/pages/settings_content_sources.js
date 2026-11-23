@@ -175,11 +175,13 @@ function updateSymlinkSubfolderVisibility(sourceId, fileManagementValue) {
 // Visible when: file_collection_management == 'Plex'
 //            OR file_collection_management == 'Symlinked/Local' AND media_server_type == 'plex'
 window.currentMediaServerType = TPL_SETTINGS_CONTENT_SOURCES.settings;
+window.currentPlexModeMediaServer = TPL_SETTINGS_CONTENT_SOURCES.plex_mode_media_server || 'plex';
 
 function updatePlexOnlySections() {
     const fm = window.currentFileManagementModeForSymlinkVisibility || '';
     const ms = window.currentMediaServerType || '';
-    const show = !(fm === 'Symlinked/Local' && ms === 'jellyfin');
+    const show = !(fm === 'Symlinked/Local' && (ms === 'jellyfin' || ms === 'silo'))
+                 && !(fm === 'Plex' && window.currentPlexModeMediaServer === 'silo');
     document.querySelectorAll('.plex-only-section').forEach(el => {
         el.style.display = show ? '' : 'none';
         // Also hide/show parent settings-form-group to prevent empty gap
@@ -216,6 +218,10 @@ document.addEventListener('settings-changed', function(event) {
     }
     if (event.detail.section === 'File Management' && event.detail.key === 'media_server_type') {
         window.currentMediaServerType = event.detail.value;
+        updatePlexOnlySections();
+    }
+    if (event.detail.section === 'File Management' && event.detail.key === 'plex_mode_media_server') {
+        window.currentPlexModeMediaServer = event.detail.value;
         updatePlexOnlySections();
     }
 });
@@ -270,6 +276,7 @@ const SOURCE_CATALOG = [
     { group: 'Requests', items: [
         ['Overseerr', 'Approved requests from Seerr (Overseerr / Jellyseerr).', 'Seerr URL and API key'],
         ['Agregarr', 'Agregarr sends its requests to cli_debrid as if it were Overseerr.', 'Point Agregarr at this cli_debrid'],
+        ['Silo Requests', 'Approved requests from Silo\'s own request feature (pending ones optional).', 'Silo as the media server (Settings → File Management)'],
     ]},
 ];
 const SOURCE_LABELS = { 'Overseerr': 'Seerr', 'MDBList': 'MDBList' };

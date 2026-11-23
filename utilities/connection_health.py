@@ -55,9 +55,14 @@ def record(kind, payload):
 
 def _run_system():
     from routes import connections_routes as cr
+    from utilities.silo_functions import is_silo_selected
     jellyfin = cr.get_cached_setting('Debug', 'emby_jellyfin_url') and cr.get_cached_setting('Debug', 'emby_jellyfin_token')
+    if is_silo_selected():
+        media_check = cr.check_silo_connection
+    else:
+        media_check = cr.check_jellyfin_connection if jellyfin else cr.check_plex_connection
     checks = [cr.check_cli_battery_connection, cr.check_mounted_files_connection, cr.check_phalanx_db_connection,
-              cr.check_jellyfin_connection if jellyfin else cr.check_plex_connection,
+              media_check,
               cr.check_tvdb_connection, cr.check_tmdb_connection, cr.check_climount_connection,
               cr.check_scrob_connection, cr.check_trakt_connection]
     results = {}

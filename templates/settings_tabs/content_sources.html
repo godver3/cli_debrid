@@ -31,6 +31,7 @@
 window.TPL_SETTINGS_CONTENT_SOURCES = {
     settings: "{{ settings.get('File Management', {}).get('media_server_type', '') }}",
     settings_2: "{{ settings.get('File Management', {}).get('file_collection_management', '') }}",
+    plex_mode_media_server: "{{ settings.get('File Management', {}).get('plex_mode_media_server', 'plex') }}",
 };
 </script>
 <script src="{{ url_for('static', filename='js/pages/settings_content_sources.js') }}"></script>

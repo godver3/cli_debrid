@@ -43,6 +43,16 @@ def cache_plex_removal(item_title: str, item_path: str, episode_title: Optional[
         logging.error(f"Attempted to cache Plex removal for title '{item_title}' with a None item_path. Skipping.")
         return
 
+    # Silo picked as the media server: a rescan of the gone file's folder drops
+    # it, and costs nothing, so it runs now as well as from the cache later.
+    # (Silo's realtime monitoring may already have dropped it.)
+    try:
+        from utilities.silo_functions import is_silo_mode, remove_file_from_silo
+        if is_silo_mode() and os.path.isabs(item_path) and not os.path.lexists(item_path):
+            remove_file_from_silo(item_title, item_path, episode_title)
+    except Exception as e:
+        logging.warning(f"Silo rescan for {item_title} ({item_path}) failed: {e}")
+
     # Check if caching is enabled
     if not get_setting('Debug', 'enable_plex_removal_caching', default=True):
         logging.info(f"Plex removal caching is disabled. Processing immediate removal for {item_title} ({item_path}).")

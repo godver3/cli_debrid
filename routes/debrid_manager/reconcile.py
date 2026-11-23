@@ -100,7 +100,23 @@ def api_reconcile():
 
         _media_server = get_setting('File Management', 'media_server_type', 'plex')
 
-        if _media_server == 'jellyfin':
+        from utilities.silo_functions import is_silo_selected
+        if is_silo_selected():
+            # ── Silo ─────────────────────────────────────────────────────────
+            from utilities.silo_functions import is_silo_mode, get_collected_from_silo
+            if is_silo_mode():
+                _silo_lib = get_collected_from_silo()
+                if _silo_lib is None:
+                    logging.warning("[Reconcile] Silo catalog fetch failed (continuing without)")
+                else:
+                    for _si in _silo_lib['movies'] + _silo_lib['episodes']:
+                        _parts = (_si.get('location') or '').replace('\\', '/').rstrip('/').rsplit('/', 2)
+                        plex_file_set.add(_parts[-1].lower())
+                        if len(_parts) >= 2:
+                            plex_folder_set.add(_parts[-2].lower())
+                    plex_total = len(plex_file_set)
+                    logging.info(f"[Reconcile] Silo library: {plex_total} files fetched")
+        elif _media_server == 'jellyfin':
             # ── Jellyfin / Emby ──────────────────────────────────────────────
             _jf_url   = get_setting('Debug', 'emby_jellyfin_url', default='').rstrip('/')
             _jf_token = get_setting('Debug', 'emby_jellyfin_token', default='').strip()

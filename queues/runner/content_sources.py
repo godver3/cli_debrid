@@ -218,6 +218,9 @@ class ContentSourceTasks:
             elif source_type == 'Simkl Watchlist':
                 from content_checkers.simkl import get_wanted_from_simkl_watchlist
                 wanted_content = get_wanted_from_simkl_watchlist(data, versions_from_config, unblacklist=unblacklist_on_source_run)
+            elif source_type == 'Silo Requests':
+                from content_checkers.silo_requests import get_wanted_from_silo_requests
+                wanted_content = get_wanted_from_silo_requests(data, versions_from_config, unblacklist=unblacklist_on_source_run)
             elif source_type == 'Collected':
                 wanted_content = get_wanted_from_collected() # Doesn't take versions arg
             elif source_type == 'My Plex Watchlist':

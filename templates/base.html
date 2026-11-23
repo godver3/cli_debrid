@@ -285,9 +285,14 @@
                         <i class="fas fa-bell"></i>
                         <span class="st-notif-count" id="st_notif_count" style="display:none;"></span>
                     </button>
-                    <button class="st-nav-icon-btn" id="st_releaseNotesButton" title="Release notes on Discord" data-tooltip="global.releaseNotesButton">
+                    <button class="st-nav-icon-btn" id="st_releaseNotesButton" title="Release notes" data-tooltip="global.releaseNotesButton">
                         <i class="fas fa-file-alt"></i>
                     </button>
+                    {% if current_user.role == 'admin' %}
+                    <button class="st-nav-icon-btn" id="st_bugReportButton" title="Report a bug" data-tooltip="global.bugReportButton">
+                        <i class="fas fa-bug"></i>
+                    </button>
+                    {% endif %}
                     {% if current_user.role == 'admin' %}
                     {% if builtin_mount_selected() %}
                     <button id="st_mountControlButton" class="st-nav-act-btn st-btn-starting" title="Built-in mount: start or stop it (the program and the mount run separately)" disabled>
@@ -309,8 +314,11 @@
                         <i class="fas fa-bell"></i>
                         <span class="st-notif-count" id="st_notif_count" style="display:none;"></span>
                     </button>
-                    <button class="st-nav-icon-btn" id="st_releaseNotesButton" title="Release notes on Discord" data-tooltip="global.releaseNotesButton">
+                    <button class="st-nav-icon-btn" id="st_releaseNotesButton" title="Release notes" data-tooltip="global.releaseNotesButton">
                         <i class="fas fa-file-alt"></i>
+                    </button>
+                    <button class="st-nav-icon-btn" id="st_bugReportButton" title="Report a bug" data-tooltip="global.bugReportButton">
+                        <i class="fas fa-bug"></i>
                     </button>
                     {% if builtin_mount_selected() %}
                     <button id="st_mountControlButton" class="st-nav-act-btn st-btn-starting" title="Built-in mount: start or stop it (the program and the mount run separately)" disabled>
@@ -840,6 +848,52 @@
         <div id="hack-text"></div>
     </div>
 
+    <!-- Bug report (admins): a formatted report with version, setup and log links -->
+    <div class="release-notes-overlay" id="bugReportOverlay" style="display: none;"></div>
+    <div class="release-notes-popup bug-report-popup" id="bugReportPopup" style="display: none;" role="dialog" aria-labelledby="bugReportTitle">
+        <div class="release-notes-header">
+            <h3 class="release-notes-title" id="bugReportTitle">Report a bug</h3>
+            <button class="release-notes-close" id="bugReportClose" aria-label="Close">&times;</button>
+        </div>
+        <div class="release-notes-content">
+            <div id="bugReportForm">
+                <label for="bugReportSummary">Summary</label>
+                <input type="text" id="bugReportSummary" maxlength="120" placeholder="e.g. Episodes stuck in Checking after upgrade">
+                <label for="bugReportWhat">What happened?</label>
+                <textarea id="bugReportWhat" rows="4" placeholder="What you saw, and what you expected instead"></textarea>
+                <label for="bugReportSteps">When or how does it happen? <span class="bug-report-optional">(optional)</span></label>
+                <textarea id="bugReportSteps" rows="3" placeholder="Steps, the title involved, roughly when it started"></textarea>
+                <label class="bug-report-check"><input type="checkbox" id="bugReportLogs" checked> Upload logs (redacted) and link them <span id="bugReportLogsWhich"></span></label>
+                <div class="bug-report-setup" id="bugReportSetup">Loading your setup...</div>
+                <button class="btn btn-primary" id="bugReportCreate">Create report</button>
+                <div class="bug-report-status" id="bugReportStatus"></div>
+            </div>
+            <div id="bugReportResult" style="display: none;">
+                <textarea id="bugReportOutput" rows="12" aria-label="Report (you can edit it)"></textarea>
+                <div class="bug-report-actions">
+                    <button class="btn btn-primary" id="bugReportGithub"><i class="fab fa-github"></i> Open GitHub issue</button>
+                    <button class="btn" id="bugReportCopyGithub"><i class="fas fa-copy"></i> Copy for GitHub</button>
+                    <button class="btn" id="bugReportCopyDiscord"><i class="fab fa-discord"></i> Copy for Discord</button>
+                    <button class="btn" id="bugReportDiscord"><i class="fas fa-external-link-alt"></i> Open Discord</button>
+                    <button class="btn" id="bugReportBack">Edit</button>
+                </div>
+                <div class="bug-report-status" id="bugReportCopied"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Release notes popup -->
+    <div class="release-notes-overlay" id="releaseNotesOverlay" style="display: none;"></div>
+    <div class="release-notes-popup" id="releaseNotesPopup" style="display: none;">
+        <div class="release-notes-header">
+            <h3 class="release-notes-title">Release Notes</h3>
+            <button class="release-notes-close" id="releaseNotesClose">&times;</button>
+        </div>
+        <div class="release-notes-content" id="releaseNotesContent">
+            <div class="loading">Loading release notes...</div>
+        </div>
+    </div>
+
     <!-- Scripts -->
     <script>
     // Remove page-loading class after page is fully loaded to enable nav menu hover
@@ -852,6 +906,7 @@
     <script type="module" src="{{ url_for('static', filename='js/tooltips.js') }}"></script>
     <script type="module" src="{{ url_for('static', filename='js/task_monitor.js') }}"></script>
     <script type="module" src="{{ url_for('static', filename='js/base.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/bug_report.js') }}" defer></script>
     <script src="{{ url_for('static', filename='js/zabby.js') }}" defer></script>
     <script src="{{ url_for('static', filename='js/library_settings_modal.js') }}" defer></script>
     <script src="{{ url_for('static', filename='js/discover_settings_modal.js') }}" defer></script>
@@ -1081,7 +1136,7 @@
                 <div class="overlay-setting-group">
                     <label for="overlaySettingsMediaDataPath">Media Server Data Path</label>
                     <input type="text" id="overlaySettingsMediaDataPath" class="overlay-setting-input" placeholder="/config/Library/Application Support/Plex Media Server">
-                    <p class="overlay-setting-description">Path to the Plex Media Server data directory. Required for the poster cleanup task to delete old uploaded overlay versions directly from the filesystem.</p>
+                    <p class="overlay-setting-description">The Plex Media Server data folder, the one that contains Plex's <code>Metadata</code> folder, as cli_debrid's container sees it. Required for the poster cleanup task to delete old overlay versions Plex no longer uses.</p>
                 </div>
 
                 <div class="overlay-setting-group">

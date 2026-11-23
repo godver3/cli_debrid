@@ -1,6 +1,7 @@
 import json
 import os
 import logging
+import threading
 from typing import Dict
 
 # Get db_content directory from environment variable with fallback
@@ -12,6 +13,8 @@ BLACKLIST_FILE = os.path.join(DB_CONTENT_DIR, 'manual_blacklist.json')
 # Cache for the manual blacklist so we don't hit the disk on every lookup
 _cached_blacklist = None
 _cached_mtime = None
+# Serialises read-modify-write so two concurrent adds can't drop one another.
+_write_lock = threading.RLock()
 
 def _get_cached_blacklist():
     """
@@ -41,15 +44,32 @@ def load_manual_blacklist():
     try:
         with open(BLACKLIST_FILE, 'r') as f:
             return json.load(f)
-    except json.JSONDecodeError:
-        logging.error(f"Error decoding {BLACKLIST_FILE}. Starting with empty blacklist.")
+    except (json.JSONDecodeError, OSError) as e:
+        logging.error(f"Error reading {BLACKLIST_FILE}: {e}. Treating blacklist as empty.")
         return {}
 
 def save_manual_blacklist(blacklist):
-    with open(BLACKLIST_FILE, 'w') as f:
-        json.dump(blacklist, f)
+    """Atomic write: a crash mid-save used to leave truncated JSON, which then
+    loaded as {} (nothing blocked) and was overwritten by the next add."""
+    global _cached_blacklist, _cached_mtime
+    with _write_lock:
+        os.makedirs(os.path.dirname(BLACKLIST_FILE), exist_ok=True)
+        tmp = BLACKLIST_FILE + '.tmp'
+        with open(tmp, 'w') as f:
+            json.dump(blacklist, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, BLACKLIST_FILE)
+        # Coarse mtimes can hide a same-second rewrite; drop the cache outright.
+        _cached_blacklist = None
+        _cached_mtime = None
 
 def add_to_manual_blacklist(imdb_id: str, media_type: str, title: str, year: str, season: int = None):
+    with _write_lock:
+        _add_to_manual_blacklist(imdb_id, media_type, title, year, season)
+
+
+def _add_to_manual_blacklist(imdb_id, media_type, title, year, season=None):
     blacklist = get_manual_blacklist()
     
     # Ensure title and year are strings
@@ -67,6 +87,11 @@ def add_to_manual_blacklist(imdb_id: str, media_type: str, title: str, year: str
                 'year': year,
                 'seasons': [season]
             }
+        elif blacklist[imdb_id].get('media_type') == 'episode' and not blacklist[imdb_id].get('seasons'):
+            # Whole show already blocked (empty list = all seasons). Appending
+            # one season here used to narrow it to just that season.
+            logging.info(f"{imdb_id} already blacklisted for all seasons; season {season} is covered")
+            return
         else:
             # Add season if not already blacklisted
             if 'seasons' not in blacklist[imdb_id]:
@@ -91,13 +116,14 @@ def add_to_manual_blacklist(imdb_id: str, media_type: str, title: str, year: str
         logging.info(f"Added {imdb_id}: {title} ({year}) to manual blacklist as {media_type}")
 
 def remove_from_manual_blacklist(imdb_id):
-    blacklist = get_manual_blacklist()
-    if imdb_id in blacklist:
-        item = blacklist.pop(imdb_id)
-        save_manual_blacklist(blacklist)
-        logging.info(f"Removed {imdb_id}: {item['title']} ({item['year']}) from manual blacklist.")
-    else:
-        logging.warning(f"{imdb_id} not found in manual blacklist.")
+    with _write_lock:
+        blacklist = get_manual_blacklist()
+        if imdb_id in blacklist:
+            item = blacklist.pop(imdb_id)
+            save_manual_blacklist(blacklist)
+            logging.info(f"Removed {imdb_id}: {item.get('title')} ({item.get('year')}) from manual blacklist.")
+        else:
+            logging.warning(f"{imdb_id} not found in manual blacklist.")
 
 def is_blacklisted(imdb_id, season: int = None):
     # Use cached blacklist to avoid re-reading the file for every check
@@ -106,7 +132,7 @@ def is_blacklisted(imdb_id, season: int = None):
         return False
         
     item = blacklist[imdb_id]
-    if item['media_type'] != 'episode':
+    if item.get('media_type') != 'episode':
         return True
         
     # If seasons is empty or doesn't exist, the entire show is blacklisted
@@ -135,4 +161,7 @@ def get_manual_blacklist() -> Dict[str, Dict[str, str]]:
                     item['seasons'] = []
             return blacklist
     except FileNotFoundError:
+        return {}
+    except (json.JSONDecodeError, OSError) as e:
+        logging.error(f"Error reading {BLACKLIST_FILE}: {e}. Treating blacklist as empty.")
         return {}

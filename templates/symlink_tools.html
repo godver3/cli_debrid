@@ -17,6 +17,11 @@ body.tangerine-theme #stClassic{display:none!important}
 }
 .st-wrap{max-width:1000px;margin:0 auto;padding:1.25rem;font-family:var(--st-sans);font-size:13px;color:var(--st-text)}
 .st-hdr{margin-bottom:1.25rem}
+.st-flash{margin-bottom:14px;display:flex;flex-direction:column;gap:6px}
+.st-flash-msg{border:1px solid var(--st-border2);border-left-width:3px;border-radius:6px;padding:8px 12px;font-size:12px;background:var(--st-surface)}
+.st-flash-success{border-left-color:var(--st-green)}
+.st-flash-error{border-left-color:var(--st-red)}
+.st-flash-warning{border-left-color:var(--st-yellow)}
 .st-title{font-size:20px;font-weight:700;border-left:3px solid var(--st-accent);padding-left:10px;color:var(--st-text);margin-bottom:6px}
 .st-desc{font-size:12px;color:var(--st-text3);padding-left:13px}
 .st-section{background:var(--st-surface);border:1px solid var(--st-border);border-radius:9px;padding:16px;margin-bottom:14px}
@@ -102,6 +107,10 @@ body.tangerine-theme #stClassic{display:none!important}
 <div id="stClassic">
 <div class="container">
     <h1>Symlink Tools</h1>
+{# The form posts and redirects back here; without this its success/error message was never shown. #}
+{% with messages = get_flashed_messages(with_categories=true) %}{% if messages %}
+<div class="st-flash">{% for cat, msg in messages %}<div class="st-flash-msg st-flash-{{ cat }}">{{ msg }}</div>{% endfor %}</div>
+{% endif %}{% endwith %}
     <p class="description">
         Manually create symlinks for media files when metadata is incorrect or missing.
         This tool allows you to select a media file and create a symlink following your configured naming templates.
@@ -253,6 +262,10 @@ body.tangerine-theme #stClassic{display:none!important}
     <div class="st-title">Symlink Tools</div>
     <div class="st-desc">Manually create symlinks for media files when metadata is incorrect or missing.</div>
   </div>
+{# The form posts and redirects back here; without this its success/error message was never shown. #}
+{% with messages = get_flashed_messages(with_categories=true) %}{% if messages %}
+<div class="st-flash">{% for cat, msg in messages %}<div class="st-flash-msg st-flash-{{ cat }}">{{ msg }}</div>{% endfor %}</div>
+{% endif %}{% endwith %}
 
   <!-- Current Settings -->
   <div class="st-section">

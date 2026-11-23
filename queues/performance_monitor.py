@@ -4,11 +4,24 @@ import sys
 import logging
 import threading
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 import time
 import json
 
 _IS_WINDOWS = sys.platform == 'win32'
+
+
+def entry_epoch(entry):
+    """Epoch seconds for a performance-log entry.
+
+    basic_metrics are stamped with naive UTC, every other type with naive local
+    time (the dashboard JS reads them that way), so a naive stamp alone is
+    ambiguous on any host not running in UTC.
+    """
+    dt = datetime.fromisoformat(str(entry['timestamp']).replace('Z', '+00:00'))
+    if dt.tzinfo is None and entry.get('type') == 'basic_metrics':
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.timestamp()
 
 
 def _open_files(process):
@@ -572,7 +585,7 @@ No memory snapshot available""")
                 for line in old_file:
                     try:
                         entry = json.loads(line.strip())
-                        entry_time = datetime.fromisoformat(entry['timestamp']).timestamp()
+                        entry_time = entry_epoch(entry)
                         
                         if entry_time >= cutoff_time:
                             new_file.write(line)

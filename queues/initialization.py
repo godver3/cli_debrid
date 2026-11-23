@@ -128,8 +128,9 @@ def plex_collection_update():
     update_initialization_step("Plex Update", "Starting Plex scan")
     logging.info("Updating Plex collection...")
 
-    # Check if we should pull watch history
-    if get_setting('Debug', 'do_not_add_plex_watch_history_items_to_queue', False):
+    # Check if we should pull watch history (Plex's; not when Plex mode is run with Silo)
+    from utilities.silo_functions import is_silo_library_mode
+    if get_setting('Debug', 'do_not_add_plex_watch_history_items_to_queue', False) and not is_silo_library_mode():
         update_initialization_step("Pulling Plex Watch History", "Retrieving watch history from Plex", is_substep=True)
         try:
             sync_get_watch_history_from_plex()

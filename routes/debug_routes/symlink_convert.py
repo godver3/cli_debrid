@@ -12,6 +12,34 @@ from database.database_writing import RESET_COLLECTION_STATE_SQL
 from ._common import debug_bp, scan_progress
 from utilities.paths import safe_realpath
 
+def _has_same_item_copy(cursor, item):
+    """True when another Wanted/Collected row is the same movie or the same
+    episode (same season and episode) in the same version.
+
+    Matching on title alone treated every other episode of a show as a copy,
+    so an episode whose source file was missing got its row deleted instead of
+    going back to Wanted.
+    """
+    where = ["type = ?", "TRIM(version, '*') = TRIM(?, '*')",
+             "state IN ('Wanted', 'Collected')", "id != ?",
+             "COALESCE(season_number, -1) = COALESCE(?, -1)",
+             "COALESCE(episode_number, -1) = COALESCE(?, -1)"]
+    params = [item.get('type'), item.get('version') or '', item.get('id'),
+              item.get('season_number'), item.get('episode_number')]
+    imdb_id, tmdb_id = item.get('imdb_id'), item.get('tmdb_id')
+    if imdb_id:
+        where.append("imdb_id = ?")
+        params.append(imdb_id)
+    elif tmdb_id:
+        where.append("tmdb_id = ?")
+        params.append(str(tmdb_id))
+    else:
+        where.append("title = ?")
+        params.append(item.get('title'))
+    cursor.execute(f"SELECT COUNT(*) FROM media_items WHERE {' AND '.join(where)}", params)
+    return cursor.fetchone()[0] > 0
+
+
 @debug_bp.route('/convert_to_symlinks', methods=['POST'])
 @admin_required
 def convert_to_symlinks():
@@ -90,7 +118,8 @@ def convert_to_symlinks():
                     current_location = item_dict.get('location_on_disk', '')
                     
                     # If the current location is in the symlink folder, skip it
-                    if current_location.startswith(symlinked_path):
+                    _sym_root = symlinked_path.rstrip('/\\')
+                    if current_location == _sym_root or current_location.startswith(_sym_root + os.sep):
                         logging.info(f"Skipping {item_dict['title']} ({item_dict['version']}) - already in symlink folder")
                         skipped_count += 1
                         scan_progress[task_id].update({
@@ -131,18 +160,7 @@ def convert_to_symlinks():
                     else:
                         # If error is "Source file not found", handle specially
                         if "Source file not found" in result['error']:
-                            # Check for duplicate
-                            cursor.execute("""
-                                SELECT COUNT(*) as count 
-                                FROM media_items 
-                                WHERE title = ? 
-                                AND type = ? 
-                                AND TRIM(version, '*') = TRIM(?, '*')
-                                AND state IN ('Wanted', 'Collected')
-                                AND id != ?
-                            """, (item_dict['title'], item_dict['type'], item_dict['version'], item_dict['id']))
-                            
-                            has_duplicate = cursor.fetchone()['count'] > 0
+                            has_duplicate = _has_same_item_copy(cursor, item_dict)
                             
                             if has_duplicate:
                                 # Delete this item as we already have a copy
@@ -225,6 +243,7 @@ def convert_to_symlinks():
         return jsonify({'success': False, 'error': str(e)})
 
 @debug_bp.route('/api/conversion_progress/<task_id>')
+@admin_required
 def conversion_progress(task_id):
     """SSE endpoint for tracking library conversion progress."""
     def generate():

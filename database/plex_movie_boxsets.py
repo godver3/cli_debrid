@@ -90,24 +90,39 @@ def _get_api_key() -> str:
     return get_setting('TMDB', 'api_key', '')
 
 
-def _tmdb_get(path: str, params: dict = None) -> Optional[dict]:
-    """Single TMDB GET call. Returns parsed JSON or None on any error."""
+def _tmdb_get_status(path: str, params: dict = None):
+    """Single TMDB GET call. Returns (status_code, json_or_None); status 0 = no response."""
     api_key = _get_api_key()
     if not api_key:
         logger.warning("[BoxSets] TMDB API key not configured")
-        return None
+        return 0, None
     p = dict(params or {})
     p['api_key'] = api_key
     p.setdefault('language', 'en-US')
     try:
         resp = requests.get(f"{TMDB_BASE}{path}", params=p, timeout=15)
         if resp.status_code == 200:
-            return resp.json()
+            return 200, resp.json()
         logger.debug(f"[BoxSets] TMDB {path} returned {resp.status_code}")
-        return None
+        return resp.status_code, None
     except Exception as e:
         logger.warning(f"[BoxSets] TMDB request failed for {path}: {e}")
-        return None
+        return 0, None
+
+
+def _tmdb_get(path: str, params: dict = None) -> Optional[dict]:
+    """Single TMDB GET call. Returns parsed JSON or None on any error."""
+    return _tmdb_get_status(path, params)[1]
+
+
+def _distinct_movie_count(movies: List[dict]) -> int:
+    """Owned movies counted once each, however many versions/rows exist."""
+    keys = set()
+    for m in movies:
+        key = m.get('tmdb_id') or m.get('imdb_id') or m.get('ms_item_id')
+        if key:
+            keys.add(str(key))
+    return len(keys)
 
 
 # ── DB helpers ────────────────────────────────────────────────────────────────
@@ -275,8 +290,13 @@ def sync_collection_data_for_movies() -> None:
     for row in rows:
         db_id = row['id']
         tmdb_id = row['tmdb_id']
-        data = _tmdb_get(f'/movie/{tmdb_id}')
+        status, data = _tmdb_get_status(f'/movie/{tmdb_id}')
         time.sleep(0.25)  # Stay well within TMDB rate limit (40 req/10s)
+
+        if data is None and status != 404:
+            # Outage / 429 / timeout: leave NULL so the next run retries it.
+            # Writing '' here marked the movie "not in a collection" forever.
+            continue
 
         collection = data.get('belongs_to_collection') if data else None
         if collection and collection.get('id'):
@@ -347,9 +367,10 @@ def build_boxset_list(name_pattern: str, min_movies: int = 2) -> List[dict]:
         owned_movies = grouped['movies']
         owned_imdb_ids = set(m['imdb_id'] for m in owned_movies if m['imdb_id'])
         owned_ms_ids = set(m['ms_item_id'] for m in owned_movies if m['ms_item_id'])
+        owned_count = _distinct_movie_count(owned_movies)
 
-        if len(owned_ms_ids) < min_movies:
-            logger.debug(f"[BoxSets] Collection {coll_id} has {len(owned_ms_ids)} owned movie(s), below threshold {min_movies} — skipping")
+        if owned_count < min_movies:
+            logger.debug(f"[BoxSets] Collection {coll_id} has {owned_count} owned movie(s), below threshold {min_movies} — skipping")
             continue
 
         # Fetch full collection from TMDB to get poster_path and all parts
@@ -419,7 +440,8 @@ def build_boxset_list(name_pattern: str, min_movies: int = 2) -> List[dict]:
 
 def sync_plex_collections(boxsets: List[dict], plex_url: str, token: str,
                           section_key: str, machine_id: str,
-                          sort_order: str = 'release_date_asc') -> Dict[str, str]:
+                          sort_order: str = 'release_date_asc',
+                          state: Optional[dict] = None) -> Dict[str, str]:
     """
     For each boxset, find or create a Plex collection and ensure all owned
     movies are members. Returns {collection_id: plex_rating_key}.
@@ -447,19 +469,23 @@ def sync_plex_collections(boxsets: List[dict], plex_url: str, token: str,
             imdb = m.get('imdb_id') or ''
             tmdb = str(m.get('tmdb_id') or '')
             local_rk = id_map.get(imdb) or (id_map.get('tmdb:' + tmdb) if tmdb else None)
-            if local_rk:
+            if local_rk and local_rk not in desired_rks:
                 desired_rks.append(local_rk)
 
         if not desired_rks:
             logger.warning(f"[BoxSets] '{display_name}': none of the {len(bs['owned_movies'])} owned movie(s) found in Plex section {section_key} — skipping (wrong library section?)")
             continue
 
-        if len(desired_rks) < len(bs['owned_movies']):
-            logger.info(f"[BoxSets] '{display_name}': resolved {len(desired_rks)}/{len(bs['owned_movies'])} owned movie(s) to local ratingKeys in section {section_key}")
+        if len(desired_rks) < _distinct_movie_count(bs['owned_movies']):
+            logger.info(f"[BoxSets] '{display_name}': resolved {len(desired_rks)}/{_distinct_movie_count(bs['owned_movies'])} owned movie(s) to local ratingKeys in section {section_key}")
 
         try:
-            collection_rk = _get_or_create_collection(plex_url, token, section_key, display_name, sort_order)
+            existed = _find_existing_collection(plex_url, token, section_key, display_name)
+            collection_rk = existed or _create_collection(plex_url, token, section_key, display_name, sort_order)
             plex_map[coll_id] = collection_rk
+            if state is not None and not existed:
+                # Only collections this task created are ever deleted by cleanup.
+                state.setdefault('created_ratingkeys', {})[coll_id] = collection_rk
 
             # Always re-apply sort so a settings change takes effect on existing collections
             _apply_collection_sort(plex_url, token, collection_rk, sort_order)
@@ -649,65 +675,65 @@ def add_missing_movies_to_wanted(boxsets: List[dict], version: str) -> int:
 def cleanup_collections_below_threshold(plex_url: str, token: str, section_key: str,
                                         min_movies: int, state: dict) -> dict:
     """
-    Find all managed Plex collections (those whose names match a collection in our
-    DB) that now have fewer than min_movies owned movies. Delete them from Plex and
-    remove their fingerprints from state.
+    Delete box-set collections this task manages that now have fewer than
+    min_movies owned movies (including none at all), and drop their state.
+
+    A collection counts as managed only if this task created it or applied its
+    poster (ratingKey recorded in state). Title matching alone used to delete
+    same-named collections the user built by hand or with another tool.
     """
+    created = state.setdefault('created_ratingkeys', {})
+    postered = state.setdefault('collection_ratingkeys', {})
+    managed = dict(postered)
+    managed.update(created)
+    if not managed:
+        logger.info("[BoxSets] No managed collections to check for cleanup")
+        return state
+
     conn = _get_db()
     try:
-        # Find all collection IDs that have at least 1 but fewer than min_movies owned movies
         rows = conn.execute(
-            """SELECT tmdb_collection_id, tmdb_collection_name,
-                      COUNT(*) as owned_count
+            """SELECT tmdb_collection_id,
+                      COUNT(DISTINCT COALESCE(tmdb_id, imdb_id, ms_item_id)) AS owned_count
                FROM media_items
                WHERE type = 'movie'
                  AND tmdb_collection_id != ''
                  AND tmdb_collection_id IS NOT NULL
                  AND state = 'Collected'
                  AND ms_item_id IS NOT NULL
-               GROUP BY tmdb_collection_id
-               HAVING owned_count < ?""",
-            (min_movies,)
+               GROUP BY tmdb_collection_id""",
         ).fetchall()
     finally:
         conn.close()
+    owned = {str(r['tmdb_collection_id']): r['owned_count'] for r in rows}
 
-    if not rows:
+    below = [cid for cid in managed if owned.get(str(cid), 0) < min_movies]
+    if not below:
         logger.info("[BoxSets] No collections below threshold to clean up")
         return state
 
-    name_pattern = get_setting('Plex Movie Box Sets', 'collection_name_pattern', '{title} Collection') or '{title} Collection'
-
-    # Get all current Plex collections once
     try:
-        all_plex = _get_all_plex_collections(plex_url, token, section_key)
+        live_rks = {c['ratingKey'] for c in _get_all_plex_collections(plex_url, token, section_key)}
     except Exception as e:
         logger.error(f"[BoxSets] Cannot fetch Plex collections for cleanup: {e}")
         return state
 
-    plex_by_title = {c['title']: c['ratingKey'] for c in all_plex}
-    fingerprints = state.setdefault('collection_fingerprints', {})
+    names = state.get('collection_names', {})
     deleted = 0
-
-    for row in rows:
-        coll_id = row['tmdb_collection_id']
-        tmdb_name = row['tmdb_collection_name'] or ''
-        if not tmdb_name:
-            continue
-        display_name = _format_collection_name(tmdb_name, name_pattern)
-        rk = plex_by_title.get(display_name)
-        if rk:
+    for coll_id in below:
+        rk = str(managed[coll_id])
+        label = names.get(coll_id, coll_id)
+        if rk in live_rks:
             try:
                 _delete_collection(plex_url, token, rk)
-                logger.info(f"[BoxSets] Deleted Plex collection '{display_name}' (owned {row['owned_count']} < threshold {min_movies})")
+                logger.info(f"[BoxSets] Deleted Plex collection '{label}' (owned {owned.get(str(coll_id), 0)} < threshold {min_movies})")
                 deleted += 1
             except Exception as e:
-                logger.error(f"[BoxSets] Failed to delete collection '{display_name}': {e}")
-        else:
-            logger.debug(f"[BoxSets] Collection '{display_name}' not found in Plex, nothing to delete")
-
-        # Remove fingerprint regardless so it won't be stale if threshold changes later
-        fingerprints.pop(coll_id, None)
+                logger.error(f"[BoxSets] Failed to delete collection '{label}': {e}")
+                continue
+        for key in ('collection_fingerprints', 'collection_ratingkeys', 'created_ratingkeys',
+                    'collection_poster_hashes'):
+            state.get(key, {}).pop(coll_id, None)
 
     if deleted:
         logger.info(f"[BoxSets] Cleanup complete — deleted {deleted} Plex collection(s) below threshold")
@@ -771,7 +797,8 @@ def run_plex_movie_boxsets() -> None:
             return
 
         # Phase 3: create/update Plex collections
-        plex_map = sync_plex_collections(boxsets, plex_url, plex_token, section_key, machine_id, sort_order=sort_order)
+        plex_map = sync_plex_collections(boxsets, plex_url, plex_token, section_key, machine_id,
+                                         sort_order=sort_order, state=state)
 
         # Phase 4: apply posters
         state = apply_boxset_posters(boxsets, plex_map, plex_url, plex_token, state)
@@ -822,7 +849,6 @@ def reapply_single_collection_poster(collection_id: str) -> dict:
         section_key = _get_movie_section_key(plex_url, plex_token)
         if not section_key:
             return {'success': False, 'message': 'No movie library section found in Plex'}
-        machine_id = _get_machine_id(plex_url, plex_token)
     except Exception as e:
         return {'success': False, 'message': f'Cannot connect to Plex: {e}'}
 
@@ -832,7 +858,8 @@ def reapply_single_collection_poster(collection_id: str) -> dict:
         row = conn.execute(
             """SELECT tmdb_collection_id, tmdb_collection_name,
                       GROUP_CONCAT(imdb_id) as imdb_ids,
-                      GROUP_CONCAT(ms_item_id) as ms_item_ids
+                      GROUP_CONCAT(ms_item_id) as ms_item_ids,
+                      COUNT(DISTINCT COALESCE(tmdb_id, imdb_id, ms_item_id)) as owned_count
                FROM media_items
                WHERE type = 'movie'
                  AND tmdb_collection_id = ?
@@ -850,8 +877,8 @@ def reapply_single_collection_poster(collection_id: str) -> dict:
     owned_imdb_ids = set(i for i in (row['imdb_ids'] or '').split(',') if i)
     owned_ms_ids = set(i for i in (row['ms_item_ids'] or '').split(',') if i)
 
-    if len(owned_ms_ids) < min_movies:
-        return {'success': False, 'message': f'Collection has only {len(owned_ms_ids)} owned movie(s), below the minimum threshold of {min_movies}'}
+    if (row['owned_count'] or 0) < min_movies:
+        return {'success': False, 'message': f'Collection has only {row["owned_count"]} owned movie(s), below the minimum threshold of {min_movies}'}
 
     # Fetch just this TMDB collection
     coll_data = _tmdb_get(f'/collection/{collection_id}')
@@ -880,19 +907,23 @@ def reapply_single_collection_poster(collection_id: str) -> dict:
     }
 
     # Find/create the Plex collection and get its ratingKey
+    created_rk = None
     try:
-        collection_rk = _get_or_create_collection(plex_url, plex_token, section_key, bs['display_name'], sort_order)
+        collection_rk = _find_existing_collection(plex_url, plex_token, section_key, bs['display_name'])
+        if not collection_rk:
+            collection_rk = created_rk = _create_collection(plex_url, plex_token, section_key, bs['display_name'], sort_order)
     except Exception as e:
         return {'success': False, 'message': f'Plex collection lookup failed: {e}'}
 
     # Apply poster
+    upload_hash = None
     try:
         if bs['poster_path']:
             img_url = f"{TMDB_IMAGE_BASE}{bs['poster_path']}"
             resp = requests.get(img_url, timeout=30)
             if resp.status_code == 200:
-                upload_collection_poster(plex_url, plex_token, collection_rk, resp.content)
-            else:
+                upload_hash = upload_collection_poster(plex_url, plex_token, collection_rk, resp.content)
+            if not upload_hash:
                 bs['poster_path'] = None  # fall through to renderer
 
         if not bs['poster_path']:
@@ -908,7 +939,9 @@ def reapply_single_collection_poster(collection_id: str) -> dict:
             )
             if not poster_bytes:
                 return {'success': False, 'message': 'Poster render returned None'}
-            upload_collection_poster(plex_url, plex_token, collection_rk, poster_bytes)
+            upload_hash = upload_collection_poster(plex_url, plex_token, collection_rk, poster_bytes)
+            if not upload_hash:
+                return {'success': False, 'message': 'Plex rejected the poster upload'}
 
     except Exception as e:
         return {'success': False, 'message': f'Poster apply failed: {e}'}
@@ -920,6 +953,10 @@ def reapply_single_collection_poster(collection_id: str) -> dict:
     fp_input = ','.join(sorted(bs['owned_imdb_ids'])) + '|' + ','.join(sorted(bs['owned_ms_ids']))
     fingerprints[collection_id] = hashlib.md5(fp_input.encode()).hexdigest()
     collection_names[collection_id] = bs['display_name']
+    state.setdefault('collection_ratingkeys', {})[collection_id] = collection_rk
+    state.setdefault('collection_poster_hashes', {})[collection_id] = upload_hash
+    if created_rk:
+        state.setdefault('created_ratingkeys', {})[collection_id] = created_rk
     _save_state(state)
 
     logger.info(f"[BoxSets] Force reapply: '{bs['display_name']}' poster applied successfully")

@@ -128,11 +128,12 @@ class ResetTraktAuthTests(unittest.TestCase):
 class ManualTaskListTests(unittest.TestCase):
     def test_tasks_exist_on_the_runner(self):
         source = runner_source()
-        listed = project_source('routes/debug_routes.py')
+        # Tools > Run Task lists the task registry (routes/debug_routes/tasks.py).
+        registry = project_source('queues/runner/task_registry.py')
         for task in ('task_purge_not_wanted_urls_file', 'task_purge_not_wanted_nzbs_files',
                      'task_purge_all_not_wanted_files', 'task_reset_trakt_auth'):
             self.assertIn(f'def {task}(self)', source)
-            self.assertIn(f"'id': '{task}'", listed)
+            self.assertIn(f"TaskSpec('{task}'", registry)
 
 
 if __name__ == '__main__':

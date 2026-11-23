@@ -679,6 +679,14 @@ def api_plex_force_scan():
 
         media_server = get_setting('File Management', 'media_server_type', 'plex')
 
+        from utilities.silo_functions import is_silo_selected
+        if is_silo_selected():
+            from utilities.silo_functions import is_silo_mode, scan_path
+            if not is_silo_mode():
+                return jsonify({'success': False, 'error': 'Silo URL or API key not configured in Settings → Required Settings → File Management'})
+            failed = [p for p in paths if not scan_path(p)]
+            return jsonify({'success': not failed, 'paths_scanned': [p for p in paths if p not in failed],
+                            'errors': [f'Silo did not take the scan of {p}' for p in failed]})
         if media_server == 'jellyfin':
             jf_url   = get_setting('Debug', 'emby_jellyfin_url', default='').rstrip('/')
             jf_token = get_setting('Debug', 'emby_jellyfin_token', default='').strip()

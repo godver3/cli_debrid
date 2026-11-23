@@ -9,6 +9,15 @@ from ._common import _get_overlay_manager, invalidate_poster_thumb_cache, invali
 # Cache Cleanup Endpoints
 # ============================================
 
+def _cleanup_problem():
+    try:
+        from overlays.scheduled_tasks import get_cleanup_problem
+        return get_cleanup_problem()
+    except Exception as e:
+        logger.debug(f"Cleanup problem check failed: {e}")
+        return None
+
+
 @overlay_bp.route('/api/overlays/cleanup/stats', methods=['GET'])
 def get_cleanup_stats():
     """Combined cleanup stats: applied overlay count, backup dir size, and cumulative totals."""
@@ -65,6 +74,7 @@ def get_cleanup_stats():
             'backup_orphaned': orphaned_count,
             'cleaned_total_posters': total_posters,
             'cleaned_total_mb': total_mb,
+            'cleanup_problem': _cleanup_problem(),
         })
     except Exception as e:
         logger.error(f"Failed to get cleanup stats: {e}", exc_info=True)

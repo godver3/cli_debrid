@@ -636,8 +636,6 @@ function _usenetPollRepairProgress() {
     }, 3000);
 }
 
-if (_dmActiveTab === 'usenet') { loadUsenetTab(); afStartPolling(); }
-
 // ── ACTIVE FILES WIDGET ────────────────────────────────────────────────────
 var _afTimer = null;
 

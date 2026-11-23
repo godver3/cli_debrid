@@ -2667,7 +2667,7 @@ async function loadTrending() {
 let _trendingLoaded = false; // Only fetch once per page load
 let _recLoaded = false;  // Only fetch once per page load (per chosen source/user)
 const REC_SOURCE_KEY = 'discoverRecSource';
-const REC_SERVER_LABELS = { plex: 'Plex', jellyfin: 'Jellyfin', emby: 'Emby' };
+const REC_SERVER_LABELS = { plex: 'Plex', jellyfin: 'Jellyfin', emby: 'Emby', silo: 'Silo' };
 window.recState = { sources: null, selection: null };  // selection: {source, viewer}
 
 async function loadRecommendationSources() {

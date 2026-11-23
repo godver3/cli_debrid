@@ -329,6 +329,11 @@ def remove_movie_from_plex(movie_title: str, imdb_id: str = None, tmdb_id: str =
 
 def remove_file_from_plex(item_title, item_path, episode_title=None):
     try:
+        # Silo picked as the symlink media server: a rescan of the path drops the file
+        from utilities.silo_functions import is_silo_mode, remove_file_from_silo
+        if is_silo_mode():
+            return remove_file_from_silo(item_title, item_path, episode_title)
+
         # Check for Jellyfin configuration first - if available, use Jellyfin instead
         jellyfin_url = get_setting('Debug', 'emby_jellyfin_url', default='').strip()
         jellyfin_token = get_setting('Debug', 'emby_jellyfin_token', default='').strip()

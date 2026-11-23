@@ -3,15 +3,18 @@
 ## Running them
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -r requirements-linux.txt pytest pyflakes ruff
-PYTHON=.venv/bin/python scripts/check.sh          # everything: tests, pyflakes, ruff, JS, cli_mount
-PYTHON=.venv/bin/python scripts/check.sh --quick  # skip the slow tests
+python3 -m venv .venv && .venv/bin/pip install -r requirements-linux.txt pytest pytest-xdist pyflakes ruff
+PYTHON=.venv/bin/python scripts/check.sh          # everything: tests (Plex bench included), pyflakes, ruff, JS, cli_mount
+PYTHON=.venv/bin/python scripts/check.sh --quick  # skip the slow tests and the Plex bench
 ```
 
 `check.sh` points `USER_CONFIG`, `USER_DB_CONTENT` and `USER_LOGS` at a throwaway folder, so tests never touch `/user`. To run pytest yourself, do the same (or let `conftest.py` pick a temp folder):
 
 ```bash
-.venv/bin/python -m pytest                     # all (~1 minute)
+.venv/bin/python -m pytest -n auto             # everyday run, in parallel (needs pytest-xdist; ~1 minute)
+.venv/bin/python -m pytest                     # the same, one test at a time (~1.5 minutes)
+.venv/bin/python -m pytest -m plex_bench       # only the Plex bench (skipped by default, ~1.5 minutes)
+.venv/bin/python -m pytest -m "" -n auto       # everything, the Plex bench included: run before a PR
 .venv/bin/python -m pytest -m "not slow"       # skip tests that start a fresh interpreter
 .venv/bin/python -m pytest -m usenet           # one area
 .venv/bin/python -m pytest tests/plex/test_plex_reported_issues.py -k cap
@@ -32,7 +35,7 @@ Tests are grouped by the part of the app they cover, and each test is automatica
 | `queues/` | Queue states, sleeping and wake limits, the scheduler, task toggles |
 | `metadata/` | Metadata refresh, release dates, TMDB/TVDB |
 | `core/` | Settings, database, logging, stats, onboarding, Task Manager info, the UI |
-| `plex_bench/` | Plex mode end to end on a simulated clock against a simulated Plex (see its README) |
+| `plex_bench/` | Plex mode end to end on a simulated clock against a simulated Plex (see its README). Skipped unless `-m` selects it |
 
 ## Writing a test
 

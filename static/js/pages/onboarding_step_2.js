@@ -9,7 +9,24 @@ document.addEventListener('DOMContentLoaded', function() {
         const jellyfinFields = document.getElementById('symlink-jellyfin-fields');
         if (plexFields) plexFields.style.display = value === 'plex' ? 'block' : 'none';
         if (jellyfinFields) jellyfinFields.style.display = value === 'jellyfin' ? 'block' : 'none';
+        const siloFields = document.getElementById('symlink-silo-fields');
+        if (siloFields) siloFields.style.display = value === 'silo' ? 'block' : 'none';
     }
+
+    // Plex mode with Silo: Silo's fields instead of Plex's, and no Plex sign-in
+    const plexModeServer = document.getElementById('plex_mode_media_server');
+    function togglePlexModeServer() {
+        const silo = plexModeServer && plexModeServer.value === 'silo';
+        const siloFields = document.getElementById('plex-mode-silo-fields');
+        const plexOnly = document.getElementById('plex-mode-plex-fields');
+        if (siloFields) siloFields.style.display = silo ? 'block' : 'none';
+        if (plexOnly) plexOnly.style.display = silo ? 'none' : 'block';
+        const fm = document.getElementById('file_collection_management');
+        const auth = document.querySelector('.plex-auth-section');
+        if (auth && fm && fm.value === 'Plex') auth.style.display = silo ? 'none' : 'block';
+        if (fm) updateRequiredFields(fm.value);
+    }
+    if (plexModeServer) plexModeServer.addEventListener('change', togglePlexModeServer);
 
     const symlinkMediaServer = document.getElementById('symlink_media_server');
     if (symlinkMediaServer) {
@@ -58,14 +75,17 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Function to update required fields based on management type
     function updateRequiredFields(managementType) {
-        // Plex fields
+        // Plex mode fields: Plex's or Silo's, by the Media Server picked
+        const pms = document.getElementById('plex_mode_media_server');
+        const siloPicked = !!pms && pms.value === 'silo';
         const plexInputs = plexFields.querySelectorAll('input:not([type="checkbox"])');
         plexInputs.forEach(input => {
             // Skip optional fields
             if (input.id === 'update_plex_on_file_discovery' || input.id === 'original_files_path') {
                 return;
             }
-            input.required = managementType === 'Plex';
+            const isSilo = input.id === 'plex_silo_url' || input.id === 'plex_silo_api_key';
+            input.required = managementType === 'Plex' && (isSilo === siloPicked);
         });
 
         // Local fields
@@ -100,9 +120,11 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         // The Plex sign-in is only useful when Plex is the media server.
         const mediaServer = document.getElementById('symlink_media_server');
-        const usesPlex = managementType === 'Plex' || (mediaServer && mediaServer.value === 'plex');
+        const plexModeSilo = managementType === 'Plex' && plexModeServer && plexModeServer.value === 'silo';
+        const usesPlex = (managementType === 'Plex' && !plexModeSilo) || (managementType !== 'Plex' && mediaServer && mediaServer.value === 'plex');
         document.querySelector('.plex-auth-section').style.display = usesPlex ? 'block' : 'none';
         updateRequiredFields(managementType);
+        togglePlexModeServer();
     }
 
     // Function to update the Symlinked/Local option availability and warning visibility

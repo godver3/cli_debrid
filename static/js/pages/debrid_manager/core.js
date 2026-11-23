@@ -56,7 +56,8 @@ function status_class(s) {
 let _libPollTimer  = null;
 // Debrid Manager and the cli_mount page share this template; each shows its own tabs.
 const DM_MODE = TPL_DEBRID_MANAGER.dm_mode;
-let _dmActiveTab   = DM_MODE === 'climount' ? '' : 'active';
+// Set by the first tab click, which waits until every page script has loaded.
+let _dmActiveTab   = '';
 let _pollTimer     = null;
 let _pollInterval  = 5000;
 let _noChangeCount = 0;
@@ -92,10 +93,13 @@ document.querySelectorAll('.dm-tab').forEach(btn => {
         if (btn.dataset.tab === 'reconcile' && typeof _slInitAudit === 'function') _slInitAudit();
     });
 });
-const _urlTab = new URLSearchParams(window.location.search).get('tab');
-const _savedTab = _urlTab || sessionStorage.getItem('dm_tab_' + DM_MODE);
-{
-    const btn = (_savedTab && document.querySelector(`.dm-tab[data-tab="${_savedTab}"]`))
-        || (DM_MODE === 'climount' ? document.querySelector('.dm-tab') : null);
+// Opens the first tab. debrid_manager.html calls this after the last page
+// script: the tab loaders live in the later files (repair.js, library.js,
+// usenet.js ...), so clicking from here threw and left the tab on "Loading…".
+function dmOpenInitialTab() {
+    const saved = new URLSearchParams(window.location.search).get('tab')
+        || sessionStorage.getItem('dm_tab_' + DM_MODE);
+    const pick = name => name && document.querySelector(`.dm-tab[data-tab="${name}"]`);
+    const btn = pick(saved) || pick(TPL_DEBRID_MANAGER.dm_default_tab) || document.querySelector('.dm-tab');
     if (btn) btn.click();
 }

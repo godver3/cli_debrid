@@ -496,7 +496,11 @@ def validate_onboarding_settings():
         add('Mount Path', ok, msg, blocking=is_symlink or update_plex, warning=warn)
 
     # --- Library / media server -----------------------------------------------------
-    if management_type in ('plex_direct', 'plex_symlink', 'Plex'):
+    if management_type in ('plex_direct', 'plex_symlink', 'Plex') and settings_data.get('plex_mode_media_server') == 'silo':
+        from utilities.silo_functions import test_connection
+        add('Silo Connection', *test_connection(settings_data.get('plex_silo_url', ''),
+                                                settings_data.get('plex_silo_api_key', '')))
+    elif management_type in ('plex_direct', 'plex_symlink', 'Plex'):
         plex_valid, plex_message = validate_plex_settings(settings_data.get('plex_url', ''),
                                                           settings_data.get('plex_token', ''))
         add('Plex Connection', plex_valid, plex_message)
@@ -541,6 +545,12 @@ def validate_onboarding_settings():
                     jf_valid = False
                     jf_message = f'Error connecting to Jellyfin: {str(e)}'
                 add('Jellyfin Connection', jf_valid, jf_message, blocking=False)
+        elif media_server == 'silo':
+            silo_url = settings_data.get('silo_url', '')
+            silo_key = settings_data.get('silo_api_key', '')
+            if silo_url and silo_key:
+                from utilities.silo_functions import test_connection
+                add('Silo Connection', *test_connection(silo_url, silo_key), blocking=False)
 
     # --- Metadata -------------------------------------------------------------------
     # Shows and movies are looked up on TVDB when a TVDB key is set, otherwise on

@@ -173,7 +173,12 @@ def plex_is_scanning() -> Optional[bool]:
     """True while Plex is scanning a library, False when idle, None if Plex didn't answer.
 
     Cached for 30 s: every held release in a Checking pass asks the same question.
+    Silo (Plex mode run with Silo) reports no scan state; its scans are quick and
+    coalesced, so it counts as idle and the scans-accepted limit decides.
     """
+    from utilities.silo_functions import is_silo_library_mode
+    if is_silo_library_mode():
+        return False
     now = time.time()
     with _scanning_lock:
         if _scanning_cache['value'] is not None and 0 <= now - _scanning_cache['at'] < _SCANNING_CACHE_SECONDS:
@@ -240,6 +245,9 @@ def collect_from_plex(items: List[Dict[str, Any]]) -> Optional[Tuple[int, int]]:
     since the last recently-added pass, and replacing it then deletes a file Plex
     is serving.
     """
+    from utilities.silo_functions import is_silo_library_mode, collect_from_silo
+    if is_silo_library_mode():
+        return collect_from_silo(items)
     entries = []
     found_files = 0
     show_cache: Dict[str, Optional[Dict[str, Any]]] = {}

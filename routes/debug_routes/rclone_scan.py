@@ -1,7 +1,7 @@
 """Battery DB delete and rclone-to-symlink scan."""
 
 from flask import jsonify, request, Response, stream_with_context
-from utilities.settings import get_setting, set_setting
+from utilities.settings import get_setting
 import logging
 from routes import admin_required
 from cli_battery.app.direct_api import DirectAPI
@@ -220,7 +220,6 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
 
     try:
         rclone_mount_path = Path(rclone_mount_path_str)
-        symlink_base_path_setting_backup = get_setting('File Management', 'symlinked_files_path')
 
         # Check if rclone_mount_path is a directory
         if not rclone_mount_path.is_dir():
@@ -229,12 +228,10 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
         if not symlink_base_path_str:
              raise ValueError("Symlink Base Path cannot be empty.")
         
-        logging.info(f"[RcloneScan {task_id}] Temporarily setting symlink path to: {symlink_base_path_str}")
-        try:
-             set_setting('File Management', 'symlinked_files_path', symlink_base_path_str)
-        except Exception as set_setting_err:
-             raise RuntimeError(f"Failed to temporarily set symlink base path: {set_setting_err}")
-
+        # The base path goes straight to get_symlink_path. This used to write it into
+        # the global symlinked_files_path setting for the whole scan and restore it
+        # afterwards; a restart mid-scan, a settings save or an overlapping
+        # webhook/external scan could leave the wrong path saved.
         update_progress(status='scanning', message='Scanning Rclone mount path...')
         video_extensions = {'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm', '.mpeg', '.mpg'}
         total_files_scanned = 0
@@ -692,7 +689,8 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
             # 4. Generate Symlink Path
             try:
                 # item_for_db_filtered_for_symlink has 'genres' as a list, which is correct for get_symlink_path
-                symlink_dest_path = get_symlink_path(item_for_db_filtered_for_symlink, item_path.name, skip_jikan_lookup=True)
+                symlink_dest_path = get_symlink_path(item_for_db_filtered_for_symlink, item_path.name, skip_jikan_lookup=True,
+                                                     symlink_root=symlink_base_path_str)
                 if not symlink_dest_path: raise ValueError("get_symlink_path returned None")
                 
                 # Prepare item_for_db_filtered_for_db with genres as JSON string
@@ -810,7 +808,8 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                             plex_url = get_setting('File Management', 'plex_url_for_symlink', '')
                             plex_token = get_setting('File Management', 'plex_token_for_symlink', '')
                             
-                            if plex_url and plex_token:
+                            from utilities.silo_functions import is_silo_mode
+                            if (plex_url and plex_token) or is_silo_mode():  # plex_update_item scans Silo when it is selected
                                 logging.info(f"[RcloneScan {task_id}] Plex configured and update triggered. Attempting library update for: {symlink_dest_path}")
                                 try:
                                     # Make sure item_for_db_filtered_for_db has the necessary info (title, year, type etc.)
@@ -897,12 +896,6 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
         logging.error(f"[RcloneScan {task_id}] Critical error in Rclone scan task: {e}", exc_info=True)
         update_progress(status='error', message=f'Task failed: {e}', complete=True, success=False)
     finally:
-        try:
-             if symlink_base_path_setting_backup is not None:
-                 set_setting('File Management', 'symlinked_files_path', symlink_base_path_setting_backup)
-        except Exception as restore_err:
-             logging.error(f"[RcloneScan {task_id}] Failed to restore symlink path setting: {restore_err}")
-             # ... (append to errors in progress dict) ...
         # Save final progress one last time, e.g. if loop broke early
         if not dry_run: save_rclone_progress() 
         threading.Timer(300, lambda: rclone_scan_progress.pop(task_id, None)).start()
@@ -967,21 +960,38 @@ def rclone_scan_progress_stream(task_id):
 # --- End Riven Symlink Recovery Routes ---
 # --- Symlink Path Modification ---
 
-@debug_bp.route('/api/resync_symlinks_trigger', methods=['POST'])
-@admin_required
-def resync_symlinks_route():
-    logging.info("Attempting to resync symlinks with current settings.")
+_resync_lock = threading.Lock()
 
+
+def _run_resync():
     try:
-        # This function logs its own progress and errors.
-        # It's a potentially long-running synchronous operation.
-        # Call the underlying function without the optional path arguments
         resync_symlinks_with_new_settings(
             old_original_files_path_setting=None,
             new_original_files_path_setting=None
         )
-        # The function itself handles logging. The UI will show this generic success message.
-        return jsonify({'success': True, 'message': 'Symlink resynchronization process initiated. Check server logs for details and progress.'})
     except Exception as e:
-        logging.error(f"Error during symlink resynchronization trigger: {str(e)}", exc_info=True)
-        return jsonify({'success': False, 'error': f'An error occurred: {str(e)}'}), 500
+        logging.error(f"Error during symlink resynchronization: {e}", exc_info=True)
+    finally:
+        _resync_lock.release()
+
+
+@debug_bp.route('/api/resync_symlinks_trigger', methods=['POST'])
+@admin_required
+def resync_symlinks_route():
+    """Start a resync of every collected item's symlink in the background.
+
+    It used to run inside the request while answering "initiated", so on a big
+    library the page sat behind the loading overlay until the request timed out.
+    """
+    if get_setting('File Management', 'file_collection_management') != 'Symlinked/Local':
+        return jsonify({'success': False, 'error': 'Resync only works in Symlinked/Local file management.'}), 400
+    if not _resync_lock.acquire(blocking=False):
+        return jsonify({'success': False, 'error': 'A symlink resync is already running.'}), 409
+    logging.info("Starting symlink resync with current settings.")
+    try:
+        threading.Thread(target=_run_resync, daemon=True, name='symlink-resync').start()
+    except Exception as e:
+        _resync_lock.release()
+        logging.error(f"Could not start symlink resync: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': f'An error occurred: {e}'}), 500
+    return jsonify({'success': True, 'message': 'Symlink resync started in the background. Progress is in the logs.'})

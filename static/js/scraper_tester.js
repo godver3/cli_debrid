@@ -1,4 +1,7 @@
 document.addEventListener('DOMContentLoaded', function() {
+    // Release titles, sources and filter reasons come from indexers: escape before
+    // putting them into innerHTML.
+    const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const searchSection = document.getElementById('search-section');
     const scrapeSection = document.getElementById('scrape-section');
     const searchInput = document.getElementById('search-input');
@@ -1313,7 +1316,7 @@ document.addEventListener('DOMContentLoaded', function() {
             // Release: title + quality badges
             const titleCell = row.insertCell();
             const title = result.title || result.original_title || 'N/A';
-            titleCell.innerHTML = `<div class="release-title${isFilteredOut ? ' filtered-title' : ''}">${title}</div>`;
+            titleCell.innerHTML = `<div class="release-title${isFilteredOut ? ' filtered-title' : ''}">${esc(title)}</div>`;
 
             // Size
             const sizeCell = row.insertCell();
@@ -1324,7 +1327,7 @@ document.addEventListener('DOMContentLoaded', function() {
             // Source: badge(s)
             const sourceCell = row.insertCell();
             const sourceParts = (result.source || 'N/A').split(' - ');
-            sourceCell.innerHTML = `<div class="st-source-container">${sourceParts.map(p => `<span class="st-source-badge">${p.trim()}</span>`).join('')}</div>`;
+            sourceCell.innerHTML = `<div class="st-source-container">${sourceParts.map(p => `<span class="st-source-badge">${esc(p.trim())}</span>`).join('')}</div>`;
 
             // Score / filter reason
             const scoreCell = row.insertCell();
@@ -1355,7 +1358,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const reasonElement = document.createElement('div');
         reasonElement.className = 'filter-reason-text';
-        reasonElement.innerHTML = `<strong>Reason for filtering:</strong> ${result.filter_reason || 'Unknown reason'}`;
+        reasonElement.innerHTML = `<strong>Reason for filtering:</strong> ${esc(result.filter_reason || 'Unknown reason')}`;
         filterReasonDiv.appendChild(reasonElement);
 
         // Add additional details if available
@@ -1364,7 +1367,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         if (result.source) {
             const sourceItem = document.createElement('li');
-            sourceItem.innerHTML = `<strong>Source:</strong> ${result.source}`;
+            sourceItem.innerHTML = `<strong>Source:</strong> ${esc(result.source)}`;
             detailsList.appendChild(sourceItem);
         }
 
@@ -1378,12 +1381,12 @@ document.addEventListener('DOMContentLoaded', function() {
             const parsedInfo = result.parsed_info;
             if (parsedInfo.resolution) {
                 const resolutionItem = document.createElement('li');
-                resolutionItem.innerHTML = `<strong>Resolution:</strong> ${parsedInfo.resolution}`;
+                resolutionItem.innerHTML = `<strong>Resolution:</strong> ${esc(parsedInfo.resolution)}`;
                 detailsList.appendChild(resolutionItem);
             }
             if (parsedInfo.year) {
                 const yearItem = document.createElement('li');
-                yearItem.innerHTML = `<strong>Year:</strong> ${parsedInfo.year}`;
+                yearItem.innerHTML = `<strong>Year:</strong> ${esc(parsedInfo.year)}`;
                 detailsList.appendChild(yearItem);
             }
         }
@@ -1486,7 +1489,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         if (rowItems[i]) {
                             const [key, value] = rowItems[i];
                             if (Array.isArray(value)) {
-                                td.innerHTML = `<strong>${key}:</strong> ${value.join(', ')}`;
+                                td.innerHTML = `<strong>${esc(key)}:</strong> ${esc(value.join(', '))}`;
                             } else {
                                 td.innerHTML = `<strong>${key}:</strong> ${formatValue(value)}`;
                             }

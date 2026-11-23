@@ -316,11 +316,27 @@ def check_service_connectivity():
                 services_reachable = False
                 failed_services_details.append({"service": f"Symlinked files path ({symlinked_path})", "type": "CONFIG_ERROR", "message": f"Cannot create symlinked files path. Error: {str(e)}"})
                 
+        # Silo picked as the media server: check it, and not a Plex or Jellyfin
+        # connection left over from before
+        from utilities.silo_functions import is_silo_selected, silo_config, test_connection as silo_test
+        silo_selected = is_silo_selected()
+        if silo_selected:
+            silo_url, silo_key = silo_config()
+            if silo_url and silo_key:
+                ok, message = silo_test(silo_url, silo_key)
+                if ok:
+                    logging.debug("Silo connectivity check passed")
+                else:
+                    logging.error(f"Silo check for symlink updates failed: {message}")
+                    services_reachable = False
+                    failed_services_details.append({"service": "Silo (for symlink updates)", "type": "CONNECTION_ERROR",
+                                                    "status_code": None, "message": message})
+
         # Check Plex connectivity for symlink updates if enabled
         plex_url_symlink = get_setting('File Management', 'plex_url_for_symlink')
         plex_token_symlink = get_setting('File Management', 'plex_token_for_symlink')
         
-        if plex_url_symlink and plex_token_symlink:
+        if plex_url_symlink and plex_token_symlink and not silo_selected:
             try:
                 response = api.get(f"{plex_url_symlink}?X-Plex-Token={plex_token_symlink}", timeout=5)
                 response.raise_for_status()
@@ -345,7 +361,7 @@ def check_service_connectivity():
         jellyfin_url = get_setting('Debug', 'emby_jellyfin_url')
         jellyfin_token = get_setting('Debug', 'emby_jellyfin_token')
         
-        if jellyfin_url and jellyfin_token:
+        if jellyfin_url and jellyfin_token and not silo_selected:
             try:
                 # Ensure URL ends with a slash
                 if not jellyfin_url.endswith('/'):
@@ -377,8 +393,22 @@ def check_service_connectivity():
                 services_reachable = False
                 failed_services_details.append({"service": "Jellyfin/Emby (for symlink updates)", "type": "CONNECTION_ERROR", "status_code": None, "message": error_msg})
 
+    # Plex mode run with Silo: check Silo instead of Plex
+    from utilities.silo_functions import is_silo_library_mode
+    plex_mode_silo = is_silo_library_mode()
+    if plex_mode_silo:
+        from utilities.silo_functions import silo_config, test_connection as silo_test
+        ok, message = silo_test(*silo_config())
+        if ok:
+            logging.debug("Silo connectivity check passed (Plex mode)")
+        else:
+            logging.error(f"Silo check failed: {message}")
+            services_reachable = False
+            failed_services_details.append({"service": "Silo", "type": "CONNECTION_ERROR",
+                                            "status_code": None, "message": message})
+
     # Check Plex connectivity and libraries
-    if get_setting('File Management', 'file_collection_management') == 'Plex':
+    if get_setting('File Management', 'file_collection_management') == 'Plex' and not plex_mode_silo:
         try:
             # First check basic connectivity and token validity
             response = api.get(f"{plex_url}?X-Plex-Token={plex_token}", timeout=5)
@@ -875,7 +905,9 @@ def check_program_conditions():
     # Consider content sources present (ignoring per-source enabled flags); UI toggles control runtime
     content_sources_enabled = bool(config.get('Content Sources', {}))
     
-    required_settings = [
+    from utilities.silo_functions import is_silo_selected
+    # Silo as the media server needs no Plex connection
+    required_settings = [] if is_silo_selected() else [
         ('Plex', 'url'),
         ('Plex', 'token'),
     ]
@@ -1523,8 +1555,13 @@ def provider_transfer_config():
     """The configured Usenet Provider, used to prefill the transfer UI (it lives
     in Debug -> Library where the settings context isn't available)."""
     data_path = get_setting('Usenet Provider', 'data_path', '') or '/climount_data'
+    provider = (get_setting('Usenet Provider', 'provider', '') or '').strip().lower()
+    from utilities import provider_transfer
     return jsonify({
-        'provider': get_setting('Usenet Provider', 'provider', '') or '',
+        'provider': provider,
+        # Zurg speaks the same SAB API as NzbDAV, so it fills the NzbDAV fields.
+        'kind': {'zurg': 'nzbdav', 'nzbdav': 'nzbdav', 'builtin': 'builtin'}.get(provider, 'climount'),
+        'active_job': provider_transfer.active_job_id(),
         'url': get_setting('Usenet Provider', 'url', '') or '',
         'token': get_setting('Usenet Provider', 'api_token', '') or '',
         'data_path': data_path,
@@ -1553,11 +1590,12 @@ def provider_transfer_start():
     """Kick off a background transfer job. Returns a job_id to poll."""
     from utilities import provider_transfer
     p = request.get_json(silent=True) or request.form
-    if p.get('direction') not in ('climount_to_nzbdav', 'nzbdav_to_climount'):
+    _src, target_kind = provider_transfer.parse_direction(p.get('direction'))
+    if target_kind is None:
         return jsonify({'success': False, 'error': 'invalid direction'}), 400
-    if not (p.get('target_url') or '').strip():
+    if target_kind != 'builtin' and not (p.get('target_url') or '').strip():
         return jsonify({'success': False, 'error': 'target URL required'}), 400
-    job_id = provider_transfer.start_job({
+    job_id, err = provider_transfer.start_job({
         'direction': p.get('direction'),
         'source_url': p.get('source_url', ''), 'source_token': p.get('source_token', ''),
         'source_nzb_path': p.get('source_nzb_path', ''),
@@ -1566,6 +1604,8 @@ def provider_transfer_start():
         'skip_existing': p.get('skip_existing', True),
         'max_queue': p.get('max_queue', 3), 'limit': p.get('limit', 0),
     })
+    if err:
+        return jsonify({'success': False, 'error': err}), 409
     return jsonify({'success': True, 'job_id': job_id}), 202
 
 

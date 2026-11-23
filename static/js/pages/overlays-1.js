@@ -101,10 +101,12 @@ async function _safeJsonFetch(url) {
 }
 
 async function loadStats() {
-    const [data, cd] = await Promise.all([
+    const [data, cd, health] = await Promise.all([
         _safeJsonFetch('/api/overlays/status'),
-        _safeJsonFetch('/api/overlays/cleanup/stats')
+        _safeJsonFetch('/api/overlays/cleanup/stats'),
+        _safeJsonFetch('/api/overlays/health')
     ]);
+    if (health?.success) _renderOverlayHealth(health);
 
     if (data?.success) {
         document.getElementById('stat-total').textContent = data.layouts.total;
@@ -138,8 +140,114 @@ async function loadStats() {
         const reclaimedStr = totalMb >= 1024
             ? (totalMb / 1024).toFixed(1) + ' GB reclaimed'
             : totalMb.toFixed(1) + ' MB reclaimed';
-        document.getElementById('stat-cleaned-breakdown').textContent =
-            totalPosters > 0 ? reclaimedStr : 'No cleanups yet';
+        const breakdown = document.getElementById('stat-cleaned-breakdown');
+        const prob = cd.cleanup_problem;
+        breakdown.style.color = prob ? '#f0ad4e' : '#888';
+        if (prob?.kind === 'permission') {
+            breakdown.textContent = `${prob.count} old poster(s) couldn't be deleted — click 👁 for the fix`;
+            breakdown.title = "cli_debrid has no write access to Plex's folders. The preview (eye button) shows the command that fixes it.";
+        } else if (prob?.kind === 'path') {
+            breakdown.textContent = "Cleanup off: Plex data path has no Metadata folder";
+            breakdown.title = prob.suggestion
+                ? `Set the Plex data path in Overlay Settings to: ${prob.suggestion}`
+                : `No Metadata folder in ${prob.path}. Set the Plex data path in Overlay Settings.`;
+        } else {
+            breakdown.textContent = totalPosters > 0 ? reclaimedStr : 'No cleanups yet';
+            breakdown.title = '';
+        }
+    }
+}
+
+function _timeAgo(ts) {
+    if (!ts) return '-';
+    const d = new Date(ts.endsWith('Z') ? ts : ts.replace(' ', 'T') + 'Z');
+    const mins = Math.round((Date.now() - d.getTime()) / 60000);
+    if (isNaN(mins)) return '-';
+    if (mins < 1) return 'just now';
+    if (mins < 60) return mins + 'm ago';
+    if (mins < 48 * 60) return Math.round(mins / 60) + 'h ago';
+    return Math.round(mins / 1440) + 'd ago';
+}
+
+function _renderOverlayHealth(h) {
+    const when = document.getElementById('stat-health-when');
+    if (!when) return;
+    const note = document.getElementById('stat-health-note');
+    const card = document.getElementById('stat-health-card');
+    const last = h.last;
+    if (!last) {
+        when.textContent = '-';
+        note.textContent = 'No syncs yet';
+        return;
+    }
+    when.textContent = _timeAgo(last.at);
+    document.getElementById('stat-health-applied').textContent = last.applied ?? 0;
+    document.getElementById('stat-health-resets').textContent = last.resets ?? '-';
+    const parts = [];
+    if (last.resets != null) {
+        parts.push(`quality ${last.quality_resets ?? 0}, content ${last.content_resets ?? 0}, poster ${last.thumb_resets ?? 0}`
+            + (last.repeats != null ? `; ${last.repeats} of them were rendered by the sync before` : ''));
+    }
+    const recent = (h.syncs || []).map(s => s.resets == null ? '?' : s.resets).join(' · ');
+    document.getElementById('stat-health-resets-item').title =
+        'Applied overlays sent back for a re-render.\n' +
+        (parts.length ? 'Last sync: ' + parts[0] + '\n' : '') +
+        'Recent syncs (newest first): ' + recent;
+    if (h.loop_suspected) {
+        card.style.borderColor = '#f0ad4e';
+        note.style.color = '#f0ad4e';
+        note.textContent = `Re-rendering the same posters every sync (last ${h.loop_syncs}) — check the logs`;
+    } else {
+        card.style.borderColor = '';
+        note.style.color = '#888';
+        note.textContent = last.failed ? `${last.failed} failed` : (last.result === 'failed' ? 'Sync failed' : '');
+    }
+}
+
+async function previewOverlayCleanup(e) {
+    e.stopPropagation();
+    const btn = document.getElementById('cleanup-preview-btn');
+    const originalHTML = btn.innerHTML;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+    btn.disabled = true;
+    try {
+        const resp = await fetch('/api/overlays/tasks/cleanup-preview', {method: 'POST'});
+        const d = await resp.json();
+        if (!d.success) {
+            showPopup({ type: 'error', title: 'Cleanup preview', message: _escHtml(d.message || d.error || 'Preview failed'), autoClose: 6000 });
+            return;
+        }
+        const lines = [];
+        if (!d.plex_data_path) {
+            lines.push('Plex data path is not set, so no poster files would be touched.');
+        } else if (!d.path_ok) {
+            lines.push(`No Metadata folder in <code>${_escHtml(d.plex_data_path)}</code>, so the overlay poster step would be skipped. Fix the path in Overlay Settings.`);
+        }
+        const k = d.by_kind || {};
+        lines.push(`<strong>${d.would_delete}</strong> poster file(s) would be deleted (${d.would_free_mb} MB): `
+            + `${k.overlay || 0} old overlay upload(s), ${k.collection || 0} collection, ${k.smart_collection || 0} smart collection.`);
+        lines.push(`${d.records_would_remove} overlay record(s) would be removed and ${d.records_would_reset} reset for retry.`);
+        if (d.not_deletable) {
+            const cmd = `sudo find "${d.metadata_path}" -type d -exec setfacl -m u:${d.run_as_uid}:rwx,d:u:${d.run_as_uid}:rwx {} +`;
+            lines.push(`<span style="color:#f0ad4e;"><strong>${d.not_deletable}</strong> of these can't be deleted: cli_debrid runs as uid ${d.run_as_uid} and has no write access to Plex's folders (Plex owns them).</span> `
+                + `To fix it on a Linux host, run once (folders Plex creates later inherit it):`
+                + `<div style="text-align:left;font-family:monospace;font-size:11px;user-select:all;background:rgba(0,0,0,.25);padding:6px;margin-top:4px;word-break:break-all;">${_escHtml(cmd)}</div>`
+                + `<span style="font-size:11px;color:#888;">The path is the one on the host; if your container mounts Plex's folder somewhere else, use the host path.</span>`);
+        }
+        if (d.poster_errors) lines.push(`${d.poster_errors} item(s) couldn't be checked and would be skipped.`);
+        if (d.files && d.files.length) {
+            const shown = d.files.slice(0, 50).map(f => `<div>${_escHtml(f.path)} <span style="color:#888;">(${f.kind}, ${(f.bytes / 1024).toFixed(0)} KB)</span></div>`).join('');
+            const more = d.would_delete - Math.min(d.files.length, 50);
+            lines.push(`<div style="max-height:260px;overflow:auto;text-align:left;font-family:monospace;font-size:11px;margin-top:6px;">${shown}`
+                + (more > 0 ? `<div style="color:#888;">…and ${more} more (full list in the log)</div>` : '') + '</div>');
+        }
+        lines.push('<em>Nothing was changed.</em>');
+        showPopup({ type: 'info', title: 'Cleanup preview', message: lines.join('<br>') });
+    } catch (err) {
+        showPopup({ type: 'error', title: 'Cleanup preview', message: 'Preview failed', autoClose: 5000 });
+    } finally {
+        btn.innerHTML = originalHTML;
+        btn.disabled = false;
     }
 }
 

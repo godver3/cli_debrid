@@ -175,6 +175,14 @@ def run_media_verification_scan(max_files: int = 500, recent_only: bool = False,
     Returns:
         Tuple of (verified_count, total_processed)
     """
+    # Silo picked as the symlink media server: same file-name check as Jellyfin
+    from utilities.silo_functions import is_silo_mode, get_collected_from_silo, silo_update_item
+    if is_silo_mode():
+        logger.info("Silo selected, using Silo for verification")
+        return _run_jellyfin_verification_scan(max_files, max_attempts,
+                                               fetch_library=get_collected_from_silo,
+                                               update_item=silo_update_item)
+
     # Check for Jellyfin/Emby configuration first
     jellyfin_url = get_setting('Debug', 'emby_jellyfin_url', default='').strip()
     jellyfin_token = get_setting('Debug', 'emby_jellyfin_token', default='').strip()
@@ -187,9 +195,11 @@ def run_media_verification_scan(max_files: int = 500, recent_only: bool = False,
     logger.info("Using Plex for verification")
     return _run_plex_verification_scan(max_files, recent_only, max_attempts)
 
-def _run_jellyfin_verification_scan(max_files: int, max_attempts: int) -> Tuple[int, int]:
+def _run_jellyfin_verification_scan(max_files: int, max_attempts: int,
+                                    fetch_library=None, update_item=None) -> Tuple[int, int]:
     """
-    Run verification scan using Jellyfin/Emby.
+    Run verification scan using Jellyfin/Emby, or another server whose library
+    listing has the same shape (Silo passes its own fetch_library/update_item).
     
     Args:
         max_files: Maximum number of files to check in one run
@@ -211,9 +221,12 @@ def _run_jellyfin_verification_scan(max_files: int, max_attempts: int) -> Tuple[
     # Get Jellyfin/Emby library contents
     media_library: Optional[Dict[str, Any]] = None
     try:
-        from utilities.emby_functions import get_collected_from_emby
-        logger.info("Calling get_collected_from_emby(bypass=True)...")
-        media_library = get_collected_from_emby(bypass=True)
+        if fetch_library is not None:
+            media_library = fetch_library()
+        else:
+            from utilities.emby_functions import get_collected_from_emby
+            logger.info("Calling get_collected_from_emby(bypass=True)...")
+            media_library = get_collected_from_emby(bypass=True)
 
         if media_library is None:
             logger.error("Jellyfin/Emby scan failed to return data. Aborting verification run.")
@@ -336,8 +349,11 @@ def _run_jellyfin_verification_scan(max_files: int, max_attempts: int) -> Tuple[
                 item_for_update = {'full_path': file_data['full_path'], 'title': file_data['title']}
 
                 # Attempt the Jellyfin/Emby update
-                from utilities.emby_functions import emby_update_item
-                update_result = emby_update_item(item_for_update)
+                if update_item is not None:
+                    update_result = update_item(item_for_update)
+                else:
+                    from utilities.emby_functions import emby_update_item
+                    update_result = emby_update_item(item_for_update)
                 if update_result:
                     logger.info(f"Successfully triggered Jellyfin/Emby directory scan potentially including: {base_filename}")
                 else:

@@ -243,7 +243,47 @@ jobs:
             exit 1
           fi
 
+      # Release notes: release-notes/<version>.md, written in the PR that bumps
+      # version.txt, goes on top of the release, ended by a release-notes
+      # marker (the in-app Release notes popup lists releases that have it).
+      # A second marker records that this branch's build posted it to Discord,
+      # so a rebuild of the same version doesn't post twice; it is only written
+      # when the webhook is set, so a version built before the secret existed
+      # still posts on its next build. The main build posts once more, as stable.
+      - name: Build release body
+        id: notes
+        run: |
+          NOTES="release-notes/${VERSION}.md"
+          POSTED="<!-- discord-posted:${{ github.ref_name }} -->"
+          PREV=$(gh release view "v${VERSION}" --repo "${{ github.repository }}" --json body --jq .body 2>/dev/null || true)
+          ALREADY=false
+          if printf '%s' "$PREV" | grep -qF "$POSTED"; then ALREADY=true; fi
+          POST=false
+          if [ -f "$NOTES" ] && [ -n "$WEBHOOK" ] && [ "$ALREADY" = false ]; then POST=true; fi
+          {
+            if [ -f "$NOTES" ]; then
+              cat "$NOTES"
+              printf '\n\n---\n\n'
+              echo "<!-- release-notes -->"
+              if [ "$POST" = true ] || [ "$ALREADY" = true ]; then echo "$POSTED"; fi
+            fi
+            echo "Version ${VERSION} (${{ github.ref_name }} branch), commit ${{ github.sha }}"
+            echo ""
+            echo "## Windows install"
+            echo ""
+            echo "1. Download the ZIP file"
+            echo "2. Extract all contents to a folder of your choice"
+            echo '3. Run `cli_debrid.exe` from the extracted folder'
+            echo ""
+            echo "**Note:** All files must be kept together in the same folder for the application to work properly."
+          } > release_body.md
+          echo "post=$POST" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+
       - name: Create Release
+        id: release
         uses: softprops/action-gh-release@v1
         with:
           files: "windows-executable/cli_debrid-${{ env.VERSION }}.zip"
@@ -252,21 +292,67 @@ jobs:
           target_commitish: ${{ github.sha }}
           draft: false
           prerelease: ${{ github.ref_name == 'dev' }}
-          body: |
-            Version ${{ env.VERSION }} (${{ github.ref_name }} branch)
-            
-            This release was automatically created from the ${{ github.ref_name }} branch.
-            Commit: ${{ github.sha }}
-            
-            ## Installation Instructions:
-            
-            1. Download the ZIP file
-            2. Extract all contents to a folder of your choice
-            3. Run `cli_debrid.exe` from the extracted folder
-            
-            **Note:** All files must be kept together in the same folder for the application to work properly.
+          body_path: release_body.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Posts the notes and the release link to the Discord release notes
+      # channel (secret DISCORD_RELEASE_WEBHOOK: a webhook made in that
+      # channel). Skipped without the secret or without a notes file.
+      # An embed description holds 4096 characters, so long notes are split on
+      # line boundaries into several messages (first one carries the title and
+      # link) instead of being cut off.
+      - name: Post release notes to Discord
+        if: steps.notes.outputs.post == 'true'
+        run: |
+          if [ -z "$WEBHOOK" ]; then
+            echo "DISCORD_RELEASE_WEBHOOK not set; skipping"
+            exit 0
+          fi
+          python3 - <<'EOF'
+          import json, os, time, urllib.request
+
+          version = os.environ['VERSION']
+          stable = os.environ['REF_NAME'] == 'main'
+          title = f"cli_debrid {version} ({'stable' if stable else 'dev'})"
+          color = 5763719 if stable else 16753920
+          url = f"{os.environ['SERVER_URL']}/{os.environ['REPO']}/releases/tag/v{version}"
+          notes = open(f"release-notes/{version}.md", encoding='utf-8').read().strip()
+
+          LIMIT = 3900
+          chunks, cur = [], ''
+          for line in notes.split('\n'):
+              while len(line) > LIMIT:          # a single huge line: hard split
+                  if cur:
+                      chunks.append(cur); cur = ''
+                  chunks.append(line[:LIMIT]); line = line[LIMIT:]
+              if cur and len(cur) + 1 + len(line) > LIMIT:
+                  chunks.append(cur); cur = line
+              else:
+                  cur = f"{cur}\n{line}" if cur else line
+          if cur:
+              chunks.append(cur)
+
+          for i, chunk in enumerate(chunks, 1):
+              embed = {'description': chunk, 'color': color}
+              if i == 1:
+                  embed.update(title=title, url=url)
+              else:
+                  embed['title'] = f"{title} ({i}/{len(chunks)})"
+              body = json.dumps({'username': 'cli_debrid releases', 'embeds': [embed],
+                                 'allowed_mentions': {'parse': []}}).encode()
+              req = urllib.request.Request(os.environ['WEBHOOK'], data=body,
+                                           headers={'Content-Type': 'application/json',
+                                                    'User-Agent': 'cli_debrid-release'})
+              urllib.request.urlopen(req, timeout=30).read()
+              print(f"posted part {i}/{len(chunks)} ({len(chunk)} chars)")
+              time.sleep(1)  # stay under the webhook rate limit
+          EOF
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+          REF_NAME: ${{ github.ref_name }}
+          SERVER_URL: ${{ github.server_url }}
+          REPO: ${{ github.repository }}
 
       # The dev build creates v<version> first, as a pre-release; the main build
       # only updates it to a full release, and GitHub doesn't move the "Latest"

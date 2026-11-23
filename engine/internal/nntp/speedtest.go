@@ -69,27 +69,14 @@ func (c *Client) SpeedTest(ctx context.Context, provider string, ids []string, c
 				if !ok || ctx.Err() != nil {
 					return
 				}
-				cn, err := pl.acquire(ctx, Prefetch)
-				if err != nil {
+				data, took, connected, err := speedFetch(ctx, pl, id)
+				if !connected {
 					mu.Lock()
 					if ctx.Err() == nil {
 						lastErr = err
 					}
 					mu.Unlock()
 					return
-				}
-				began := time.Now()
-				data, _, err := cn.body(id)
-				took := time.Since(began)
-				pl.record(began, cn.lastBytes, err == nil, err)
-				var pe *ProtocolError
-				switch {
-				case err == nil:
-					pl.release(cn)
-				case IsNotFound(err) || errors.Is(err, ErrTruncated) || errors.As(err, &pe):
-					pl.release(cn)
-				default:
-					pl.discard(cn)
 				}
 				mu.Lock()
 				switch {
@@ -126,4 +113,37 @@ func (c *Client) SpeedTest(ctx context.Context, provider string, ids []string, c
 		res.Error = lastErr.Error()
 	}
 	return res, nil
+}
+
+// speedFetch reads one article on one connection. Like Body, it retries
+// once on a fresh connection when a reused one turns out closed by the
+// server while idle ("broken pipe" on the first test after a quiet spell):
+// that says nothing about the server's speed. connected is false when no
+// connection could be had at all.
+func speedFetch(ctx context.Context, pl *pool, id string) (data []byte, took time.Duration, connected bool, err error) {
+	for try := 0; ; try++ {
+		cn, err := pl.acquire(ctx, Prefetch)
+		if err != nil {
+			return nil, 0, false, err
+		}
+		idleFor := time.Since(cn.lastUsed)
+		began := time.Now()
+		data, _, err = cn.body(id)
+		took = time.Since(began)
+		pl.record(began, cn.lastBytes, err == nil, err)
+		var pe *ProtocolError
+		switch {
+		case err == nil, IsNotFound(err), errors.Is(err, ErrTruncated),
+			errors.As(err, &pe) && !isClosing(err):
+			pl.release(cn)
+			return data, took, true, err
+		}
+		pl.discard(cn)
+		if try > 0 || ctx.Err() != nil {
+			return nil, took, true, err
+		}
+		if idleFor >= staleIdleAge {
+			pl.dropIdleOlderThan(min(idleFor, staleIdleCap))
+		}
+	}
 }
