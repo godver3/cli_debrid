@@ -26,7 +26,10 @@ def reverse_parser():
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        page = int(request.args.get('page', 1))
+        try:
+            page = max(1, int(request.args.get('page', 1)))
+        except (TypeError, ValueError):
+            page = 1
         items_per_page = 100
         filter_default = request.args.get('filter_default', 'false').lower() == 'true'
 
@@ -38,8 +41,9 @@ def reverse_parser():
         version_order = get_version_order()
 
         # Construct the base query
+        # filled_by_torrent_id is fetched (not shown) so NZB items parse as NZB.
         query = f"""
-            SELECT id, {', '.join(data['selected_columns'])}
+            SELECT id, {', '.join(data['selected_columns'])}, filled_by_torrent_id
             FROM media_items
             WHERE state = 'Collected'
         """
@@ -72,7 +76,7 @@ def reverse_parser():
 
         conn.close()
 
-        items = [dict(zip(['id'] + data['selected_columns'], item)) for item in items]
+        items = [dict(zip(['id'] + data['selected_columns'] + ['filled_by_torrent_id'], item)) for item in items]
 
         # Parse versions using parse_filename_for_version function
         for item in items:
@@ -110,21 +114,46 @@ def reverse_parser():
 @database_bp.route('/apply_parsed_versions', methods=['POST'])
 @admin_required
 def apply_parsed_versions():
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     items_to_update = data.get('items_to_update', [])
     updated_count = 0
     errors = []
     database_locked_encountered = False
 
-    for item in items_to_update:
-        if item['filled_by_file']:
-            parsed_version = parse_filename_for_version(item['filled_by_file'], is_nzb=str(item.get('filled_by_torrent_id') or '').startswith('nzb:'))
-            
-            current_version = item.get('version') # Use .get() for safety
+    # Re-read each row instead of trusting the page: it hardcoded state
+    # 'Collected' and never sent filled_by_torrent_id, so NZB items were
+    # re-parsed as debrid.
+    ids = []
+    for it in items_to_update:
+        try:
+            ids.append(int(it.get('id')))
+        except (TypeError, ValueError, AttributeError):
+            continue
+    rows = {}
+    if ids:
+        from database import get_db_connection
+        conn = get_db_connection()
+        try:
+            for i in range(0, len(ids), 500):
+                chunk = ids[i:i + 500]
+                for r in conn.execute(
+                        f"SELECT id, state, version, filled_by_file, filled_by_torrent_id FROM media_items "
+                        f"WHERE id IN ({','.join('?' * len(chunk))})", chunk):
+                    rows[r['id']] = r
+        finally:
+            conn.close()
+
+    for item_id in ids:
+        item = rows.get(item_id)
+        if item and item['filled_by_file']:
+            parsed_version = parse_filename_for_version(item['filled_by_file'], is_nzb=str(item['filled_by_torrent_id'] or '').startswith('nzb:'))
+
+            current_version = item['version']
             if parsed_version != current_version:
                 try:
-                    from database import update_media_item_state # Assuming this handles its own DB connection
-                    update_media_item_state(item['id'], item['state'], version=parsed_version)
+                    from database import update_media_item_state
+                    # Version-only change: keep the row's real state, no state hooks.
+                    update_media_item_state(item['id'], item['state'], skip_state_change_hook=True, version=parsed_version)
                     updated_count += 1
                 except sqlite3.OperationalError as e:
                     if "database is locked" in str(e):
