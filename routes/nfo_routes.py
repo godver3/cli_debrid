@@ -91,14 +91,6 @@ def api_mode():
         if _media_server_is_plex():
             _plex_step('restore')
         nfo_writer._set_job(removed=nfo_writer.remove_library())
-        if _media_server_is_plex():
-            # Back to the pre-NFO way: lock the chosen orders' titles in Plex
-            from utilities.plex_order_metadata import shows_with_chosen_order, sync_show
-            for imdb_id, order in shows_with_chosen_order():
-                try:
-                    sync_show(imdb_id, order)
-                except Exception as e:
-                    logging.warning(f"[NFO] re-locking {imdb_id}: {e}")
     threading.Thread(target=off, name='nfo-off', daemon=True).start()
     return jsonify({'success': True, 'message': "Restoring Plex's previous agent and removing cli_debrid's NFO files."})
 
@@ -130,3 +122,59 @@ def api_plex(action):
     except Exception as e:
         logging.error(f"[NFO] Plex agent {action} failed: {e}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@nfo_bp.route('/api/shows')
+@admin_required
+def api_shows():
+    from utilities.nfo_check import library_shows
+    return jsonify({'success': True, 'shows': library_shows(request.args.get('q', ''))})
+
+
+@nfo_bp.route('/api/check')
+@admin_required
+def api_check():
+    from utilities.nfo_check import check_show
+    imdb_id = (request.args.get('imdb_id') or '').strip()
+    if not imdb_id:
+        return jsonify({'success': False, 'error': 'imdb_id is required'}), 400
+    try:
+        return jsonify({'success': True, 'result': check_show(imdb_id)})
+    except Exception as e:
+        logging.error(f"[NFO] check {imdb_id} failed: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@nfo_bp.route('/api/fix', methods=['POST'])
+@admin_required
+def api_fix():
+    from utilities.nfo_check import fix_show
+    imdb_id = ((request.get_json(silent=True) or {}).get('imdb_id') or '').strip()
+    if not imdb_id:
+        return jsonify({'success': False, 'error': 'imdb_id is required'}), 400
+    try:
+        return jsonify({'success': True, 'message': fix_show(imdb_id)})
+    except Exception as e:
+        logging.error(f"[NFO] fix {imdb_id} failed: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@nfo_bp.route('/api/override', methods=['POST'])
+@admin_required
+def api_override():
+    """Per-show NFO override: auto (follow the mode), full (every episode's
+    details), none (no NFO files). Applied at once: NFOs rewritten or
+    removed and Plex re-reads the show."""
+    from utilities import nfo_writer
+    from utilities.nfo_check import fix_show
+    data = request.get_json(silent=True) or {}
+    imdb_id, value = (data.get('imdb_id') or '').strip(), (data.get('value') or '').strip()
+    if not imdb_id or value not in nfo_writer.OVERRIDES:
+        return jsonify({'success': False, 'error': 'imdb_id and value (auto, full or none) are required'}), 400
+    nfo_writer.set_show_override(imdb_id, value)
+    logging.info(f"[NFO] {imdb_id}: override set to {value}")
+    try:
+        note = fix_show(imdb_id) if nfo_writer.enabled() else ''
+    except Exception as e:
+        note = f'saved; applying it failed: {e}'
+    return jsonify({'success': True, 'message': note or 'Saved'})

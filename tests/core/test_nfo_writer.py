@@ -247,7 +247,7 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(x.findtext('thumb'), 'https://image.tmdb.org/t/p/original/right.jpg')
         self.assertEqual(x.findtext('credits'), 'W. Riter')
         self.assertEqual(x.find('actor').findtext('role'), 'Videl')
-        self.assertEqual(x.find('ratings').find('rating').findtext('value'), '8.1')
+        self.assertIsNone(x.find('ratings'))   # Plex mixes ratings up with a custom agent
 
     def test_moved_episode_missing_from_tmdb_uses_tvdb_image(self):
         plan = self._plans([{'season': 4, 'episode': 21, 'title': 'Peace for the Future!', 'aired': '2011-03-27',

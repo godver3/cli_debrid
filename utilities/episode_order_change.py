@@ -371,21 +371,15 @@ def apply_order_change(imdb_id: str, new_order: Optional[str], sync_plex: bool =
         symlink_note = f"{symlink_note}; {nfo_note}" if symlink_note else nfo_note
 
     plex_note = preview['plex_note']
-    ordering_set = False
-    if sync_plex and preview['plex_ordering']:
+    nfo_show = _nfo_mode(imdb_id)
+    # NFO files carry the order: plex_order_metadata.sync_show below numbers
+    # the show by TMDB in Plex (what the NFOs are written against)
+    if sync_plex and preview['plex_ordering'] and not nfo_show:
         rating_keys = [str(r['ms_item_id']) for r in _show_rows(imdb_id) if r.get('ms_item_id')]
         plex_note = sync_plex_ordering(imdb_id, preview['plex_ordering'], rating_keys)
-        ordering_set = plex_note.startswith('Plex episode ordering set')
-    if sync_plex and not ordering_set and _nfo_mode(imdb_id):
-        # No Plex ordering matches this order: the NFOs carry it, measured
-        # against TMDB's aired numbering, so Plex must use exactly that (an
-        # ordering left from the previous order would number it differently)
-        rating_keys = [str(r['ms_item_id']) for r in _show_rows(imdb_id) if r.get('ms_item_id')]
-        pin = sync_plex_ordering(imdb_id, TMDB_DEFAULT_ORDERING, rating_keys)
-        plex_note = f"{plex_note}; {pin}" if plex_note else pin
     if sync_plex:
-        # Plex numbers shows by TMDB after it drops TheTVDB: lock the chosen
-        # order's episode titles/summaries/dates in (or release them again).
+        # NFO shows: number by TMDB + refresh. Otherwise only release title
+        # locks left by 0.8.0-0.8.6 (cli_debrid no longer locks them).
         from utilities.plex_order_metadata import sync_show
         titles_note = sync_show(imdb_id, new_order)
         if titles_note:

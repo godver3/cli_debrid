@@ -302,16 +302,19 @@ def _sync_plex_order_for_new_show(imdb_id, order):
     show is usually not in Plex yet, so this mostly returns a reminder."""
     try:
         from utilities.episode_order_change import _plex_ordering_for, sync_plex_ordering
+        from utilities.plex_order_metadata import _nfo_mode, sync_show
         candidates = _plex_ordering_for(order)
-        from utilities.plex_order_metadata import sync_show
+        if _nfo_mode(imdb_id):
+            # NFO files carry the order; sync_show numbers the show by TMDB in
+            # Plex once it's there (and new episodes do it when Plex adds them)
+            titles = sync_show(imdb_id, order)
+            return titles or "NFO files carry this order; Plex follows them once it has the show."
         note = (sync_plex_ordering(imdb_id, candidates, []) if candidates
                 else "Plex has no matching episode ordering")
         if note.startswith('Show not found in Plex'):
             return "Once the show appears in Plex, set its episode ordering there to match."
-        # Already in Plex: lock the order's episode titles/summaries/dates in
+        # Already in Plex: release title locks left by older versions
         titles = sync_show(imdb_id, order)
-        if 'not in Plex yet' in titles:
-            titles = ''
         return f"{note}; {titles}" if titles else note
     except Exception as e:
         logging.warning(f"Plex ordering for {imdb_id} after manual assign failed: {e}")
