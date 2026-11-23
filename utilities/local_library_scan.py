@@ -1083,6 +1083,24 @@ def _get_video_extensions() -> set:
     return {'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.mpg', '.mpeg', '.ts', '.m2ts'}
 
 
+def _additional_video_files(all_video_files: List[str], primary_file: str) -> List[str]:
+    """The folder's other videos that may be more versions of the item: every
+    video except the primary file, samples and trailers.
+
+    A sample named like the episode ("show.s02e07...sample.mkv") parses as the
+    same SxxEyy, so it became a second Collected row with its own library
+    symlink. cli_mount drops samples at import; the built-in mount engine
+    (0.8.0) keeps them in the job folder, which is when this started.
+    The primary file is never filtered, so a show named "Sample" still works.
+    """
+    from debrid.common.utils import is_unwanted_file
+    others = [f for f in all_video_files if f != primary_file]
+    skipped = [f for f in others if is_unwanted_file(os.path.basename(f))]
+    if skipped:
+        logging.info(f"[MultiFile] Skipping sample/trailer file(s): {[os.path.basename(f) for f in skipped]}")
+    return [f for f in others if f not in skipped]
+
+
 def _find_all_video_files_in_folder(folder_path: str, primary_file: str) -> List[str]:
     """
     Find all video files in the same folder as the primary file.
@@ -2129,8 +2147,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 if source_folder and not skip_multifile_scan:
                     try:
                         all_video_files = _find_all_video_files_in_folder(source_folder, source_file)
-                        # Filter out the primary file we already processed
-                        additional_files = [f for f in all_video_files if f != source_file]
+                        additional_files = _additional_video_files(all_video_files, source_file)
 
                         if additional_files:
                             item_type = item.get('type', 'movie')
