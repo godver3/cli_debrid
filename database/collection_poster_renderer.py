@@ -883,8 +883,13 @@ _previews_generated = False
 
 def generate_preview_images():
     """
-    Generate static preview PNG files for all 8 designs.
+    Generate the design preview images that are missing.
     Only runs once per process — guarded by lock to prevent repeated calls.
+
+    The previews ship with the app (static/img/collection_poster_previews), so
+    usually there is nothing to do. On Docker installs with a PUID that folder
+    belongs to root and isn't writable; existing files are left alone and a
+    failed write logs one warning.
     """
     global _previews_generated
     if not PIL_AVAILABLE:
@@ -898,23 +903,23 @@ def generate_preview_images():
             return
         _previews_generated = True  # Set before generation to prevent re-entry
 
-    PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Copy default poster
-    # Use the app's own plexcollection.png as the default preview
-    default_src = STATIC_DIR / 'image' / 'plexcollection.png'
-    if not default_src.exists():
-        default_src = Path('/home/mash2k3/Documents/Projects/Tangerine_CLI/posters/transcode.jpeg')
-    if default_src.exists():
-        from PIL import Image as _Image
-        _img = _Image.open(str(default_src))
-        _img.save(str(PREVIEW_DIR / 'default.jpg'), 'JPEG', quality=92)
-    else:
-        # Create a placeholder
-        img = Image.new('RGB', (W, H), (20, 20, 30))
-        draw = ImageDraw.Draw(img)
-        draw.text((W//2-60, H//2-15), 'Plex Default', fill=(100, 100, 120))
-        img.save(str(PREVIEW_DIR / 'default.jpg'), 'JPEG', quality=85)
+    try:
+        PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+        default_out = PREVIEW_DIR / 'default.jpg'
+        if not default_out.exists():
+            # Use the app's own plexcollection.png as the default preview
+            default_src = STATIC_DIR / 'image' / 'plexcollection.png'
+            if default_src.exists():
+                Image.open(str(default_src)).convert('RGB').save(str(default_out), 'JPEG', quality=92)
+            else:
+                # Create a placeholder
+                img = Image.new('RGB', (W, H), (20, 20, 30))
+                draw = ImageDraw.Draw(img)
+                draw.text((W//2-60, H//2-15), 'Plex Default', fill=(100, 100, 120))
+                img.save(str(default_out), 'JPEG', quality=85)
+    except PermissionError as e:
+        logger.warning(f"[CollectionPoster] Can't write preview images ({e}); keeping the shipped ones")
+        return
 
     # Preview configs for active designs only
     # Designs 1 and 6 show numbers on cards — pass placeholder thumbs as None (dark cards shown)
@@ -946,13 +951,23 @@ def generate_preview_images():
             )
             img.convert('RGB').save(str(out_path), 'JPEG', quality=95)
             logger.info(f"[CollectionPoster] Generated preview design_{design_id}.jpg")
+        except PermissionError as e:
+            logger.warning(f"[CollectionPoster] Can't write preview design_{design_id}.jpg ({e})")
+            return
         except Exception as e:
             logger.error(f"[CollectionPoster] Preview gen failed design {design_id}: {e}", exc_info=True)
 
 
 def regenerate_all_previews():
     """Force regeneration of all preview images (for admin use)."""
+    global _previews_generated
     if PREVIEW_DIR.exists():
-        for f in PREVIEW_DIR.glob('design_*.jpg'):
-            f.unlink(missing_ok=True)
+        try:
+            for f in PREVIEW_DIR.glob('design_*.jpg'):
+                f.unlink(missing_ok=True)
+        except PermissionError as e:
+            logger.warning(f"[CollectionPoster] Can't replace preview images ({e}); keeping the shipped ones")
+            return
+    with _preview_generation_lock:
+        _previews_generated = False  # the once-per-process guard would skip the rebuild
     generate_preview_images()
