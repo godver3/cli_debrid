@@ -153,6 +153,24 @@ class EpisodeOrderPlexSupportTests(unittest.TestCase):
             'default': True, 'tvdb:dvd': True, 'tvdb:absolute': True,
             'tmdb_group:5cab8f8e0e0a260f3cca2b07': False})
 
+    def test_with_nfo_files_every_order_is_supported(self):
+        self.addCleanup(_fresh_app_modules().stop)
+        from flask import Flask
+        import routes.magnet_routes as mr
+        import routes.models as models
+        app = Flask(__name__)
+        app.register_blueprint(mr.magnet_bp, url_prefix='/magnet')
+        orders = [{'id': 'tvdb:alternate', 'name': 'Alternate Order (TVDB)'},
+                  {'id': 'tmdb_group:abc', 'name': 'Story Arcs (TMDB)'}]
+        with mock.patch.object(models, 'is_user_system_enabled', return_value=False), \
+                mock.patch('metadata.metadata.get_imdb_id_if_missing', return_value='tt1409055'), \
+                mock.patch('cli_battery.app.episode_order.list_episode_orders', return_value=orders), \
+                mock.patch('utilities.nfo_writer.enabled', return_value=True), \
+                patch_in_package(mr, '_saved_episode_order', return_value='default'), \
+                patch_in_package(mr, '_library_episode_rows', return_value=0):
+            data = app.test_client().get('/magnet/episode_orders?tmdb_id=61709').get_json()
+        self.assertTrue(all(o['plex_supported'] for o in data['orders']))
+
 
 class DiscoverShowsSavedOrderTests(unittest.TestCase):
     """A show set to DVD order on its page is shown in that order on Discover."""

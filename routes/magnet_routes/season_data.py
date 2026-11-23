@@ -21,9 +21,15 @@ def episode_orders():
         if not imdb_id:
             return jsonify({'success': False, 'error': 'No IMDb ID for this show'}), 404
         orders = list_episode_orders(imdb_id, tmdb_id)
+        # Either NFO mode: picking any non-default order writes NFO files
+        from utilities.nfo_writer import enabled as _nfo_on
+        nfo = _nfo_on()
         for order in orders:
-            # Plex can follow TVDB's aired/DVD/absolute orders, not TMDB episode groups
-            order['plex_supported'] = _plex_ordering_for(order['id']) is not None
+            # With NFO files Plex follows any order. Without, Plex has TVDB's
+            # aired/DVD/absolute orders; it lists only some of a show's TMDB
+            # episode groups, so those aren't promised here.
+            order['plex_supported'] = nfo or (not str(order['id']).startswith('tmdb_group:')
+                                              and _plex_ordering_for(order['id']) is not None)
         return jsonify({
             'success': True,
             'imdb_id': imdb_id,

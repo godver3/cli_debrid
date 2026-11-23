@@ -59,8 +59,23 @@ def _plex_ordering_for(order: str) -> Optional[List[str]]:
     """Candidate Plex showOrdering values for an order, or None if Plex has none."""
     from cli_battery.app import tvdb_client
     if order == 'default':
-        return PLEX_SHOW_ORDERING['tvdb:official'] if tvdb_client.is_available() else TMDB_DEFAULT_ORDERING
+        # TMDB aired is the fallback once Plex no longer offers TheTVDB (2026-12-03)
+        return (PLEX_SHOW_ORDERING['tvdb:official'] + TMDB_DEFAULT_ORDERING) if tvdb_client.is_available() \
+            else TMDB_DEFAULT_ORDERING
+    kind, _, value = (order or '').partition(':')
+    if kind == 'tmdb_group' and value:
+        # Plex lists a show's TMDB episode groups as orderings too
+        return [f'tmdbGroup-{value}']
     return PLEX_SHOW_ORDERING.get(order)
+
+
+def _nfo_mode(imdb_id: str) -> bool:
+    """This show's order is carried by NFO files (Tools -> NFO Files)."""
+    try:
+        from utilities.nfo_writer import wants_show
+        return wants_show(imdb_id)
+    except Exception:
+        return False
 
 
 def plex_ordering_value(show, candidates: List[str]) -> Optional[str]:
@@ -348,10 +363,26 @@ def apply_order_change(imdb_id: str, new_order: Optional[str], sync_plex: bool =
             logging.error(f"[EpisodeOrder] Queueing missing episodes for {imdb_id} failed: {e}", exc_info=True)
             missing_added = None
 
+    # NFO files carry the order's details for the renumbered files; written
+    # before Plex is asked to re-read the show below
+    from utilities.nfo_writer import refresh_show as _refresh_nfos
+    nfo_note = _refresh_nfos(imdb_id)
+    if nfo_note:
+        symlink_note = f"{symlink_note}; {nfo_note}" if symlink_note else nfo_note
+
     plex_note = preview['plex_note']
+    ordering_set = False
     if sync_plex and preview['plex_ordering']:
         rating_keys = [str(r['ms_item_id']) for r in _show_rows(imdb_id) if r.get('ms_item_id')]
         plex_note = sync_plex_ordering(imdb_id, preview['plex_ordering'], rating_keys)
+        ordering_set = plex_note.startswith('Plex episode ordering set')
+    if sync_plex and not ordering_set and _nfo_mode(imdb_id):
+        # No Plex ordering matches this order: the NFOs carry it, measured
+        # against TMDB's aired numbering, so Plex must use exactly that (an
+        # ordering left from the previous order would number it differently)
+        rating_keys = [str(r['ms_item_id']) for r in _show_rows(imdb_id) if r.get('ms_item_id')]
+        pin = sync_plex_ordering(imdb_id, TMDB_DEFAULT_ORDERING, rating_keys)
+        plex_note = f"{plex_note}; {pin}" if plex_note else pin
     if sync_plex:
         # Plex numbers shows by TMDB after it drops TheTVDB: lock the chosen
         # order's episode titles/summaries/dates in (or release them again).
@@ -359,12 +390,6 @@ def apply_order_change(imdb_id: str, new_order: Optional[str], sync_plex: bool =
         titles_note = sync_show(imdb_id, new_order)
         if titles_note:
             plex_note = f"{plex_note}; {titles_note}" if plex_note else titles_note
-
-    # NFO files carry the order's titles/plots for the renumbered files
-    from utilities.nfo_writer import refresh_show as _refresh_nfos
-    nfo_note = _refresh_nfos(imdb_id)
-    if nfo_note:
-        symlink_note = f"{symlink_note}; {nfo_note}" if symlink_note else nfo_note
 
     logging.info(f"[EpisodeOrder] {imdb_id}: {preview['current_order']} -> {new_order}; "
                  f"{len(preview['moves'])} moved, {len(preview['removes'])} removed, "

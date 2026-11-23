@@ -44,15 +44,40 @@ _BAD_XML_CHARS = re.compile('[\x00-\x08\x0b\x0c\x0e-\x1f]')
 # ─── settings ────────────────────────────────────────────────────────────────
 
 SECTION = 'NFO'
+MODES = ('off', 'changed', 'all')
 
 
 def symlinked_mode() -> bool:
     return get_setting('File Management', 'file_collection_management', '') == 'Symlinked/Local'
 
 
+def mode() -> str:
+    """'off', 'changed' (only shows whose episode order was changed) or
+    'all'. NFO.enabled (the first version's switch) reads as 'all'."""
+    m = str(get_setting(SECTION, 'mode', '') or '').strip().lower()
+    if m in MODES:
+        return m
+    return 'all' if get_setting(SECTION, 'enabled', False) else 'off'
+
+
 def enabled() -> bool:
-    """Write NFOs: turned on (Tools → NFO Files) and the library is symlinked."""
-    return bool(get_setting(SECTION, 'enabled', False)) and symlinked_mode()
+    """NFO files are on (either mode) and the library is symlinked."""
+    return mode() != 'off' and symlinked_mode()
+
+
+def wants_show(imdb_id: Optional[str]) -> bool:
+    """Does this show get NFO files? 'all': every show; 'changed': shows
+    whose episode order isn't the default (the rest look exactly as Plex
+    makes them, as without NFOs)."""
+    if not imdb_id or not enabled():
+        return False
+    if mode() == 'all':
+        return True
+    try:
+        from cli_battery.app.episode_order import show_episode_order
+        return show_episode_order(imdb_id) is not None
+    except Exception:
+        return False
 
 
 def library_root() -> str:
@@ -257,7 +282,9 @@ def remove_for_video(video_path: str) -> List[str]:
     """A library file is being removed: drop its episode NFO, and the show's
     tvshow.nfo once no video is left in the show folder. Only our files."""
     removed = []
-    if not video_path:
+    # NFO files off: nothing of ours exists (turning them off deletes them),
+    # so deletions stay exactly as they were without this feature
+    if not video_path or not enabled():
         return removed
     # Called just before or after the file itself is removed
     nfo = episode_nfo_path(video_path)
@@ -422,6 +449,12 @@ def write_show(imdb_id: str, rows: Optional[List[Dict]] = None, prune: bool = Tr
     tvshow.nfo is still made when missing."""
     counts = _empty_counts()
     rows = rows if rows is not None else _episode_rows(imdb_id)
+    if not wants_show(imdb_id):
+        # 'changed' mode and the show is back on its default order (or the
+        # mode changed): its NFO files go, so Plex shows its own details
+        if only_paths is None:
+            counts['removed'] += remove_show(imdb_id, rows)
+        return counts
     root = library_root()
     rows = [r for r in rows if r.get('location_on_disk') and os.path.lexists(r['location_on_disk'])]
     if not rows or not root:
@@ -568,6 +601,8 @@ def refresh_show(imdb_id: str) -> str:
         return ''
     try:
         c = write_show(imdb_id)
+        if not wants_show(imdb_id):
+            return f"NFO files removed ({c['removed']}): the show is back on its default order" if c['removed'] else ''
         return (f"NFO files: {c['written']} updated, {c['unchanged']} unchanged"
                 + (f", {c['removed']} removed" if c['removed'] else '')) if (c['written'] or c['removed']) else ''
     except Exception as e:
@@ -628,6 +663,29 @@ def write_library(on_done=None) -> bool:
 
     threading.Thread(target=run, name='nfo-library', daemon=True).start()
     return True
+
+
+def remove_show(imdb_id: str, rows: Optional[List[Dict]] = None) -> int:
+    """Delete our NFO files of one show (its episode NFOs and tvshow.nfo)."""
+    rows = rows if rows is not None else _episode_rows(imdb_id)
+    root = library_root()
+    n, folders = 0, set()
+    for r in rows:
+        loc = r.get('location_on_disk')
+        if not loc:
+            continue
+        if _remove_ours(episode_nfo_path(loc)):
+            n += 1
+        folder = show_folder(loc, root)
+        if folder:
+            folders.add(folder)
+    for folder in folders:
+        if _show_imdb_ids_in(folder) - {imdb_id}:
+            continue
+        if _remove_ours(os.path.join(folder, SHOW_NFO)):
+            n += 1
+        n += prune_orphans(folder)
+    return n
 
 
 def remove_library() -> Dict[str, int]:
