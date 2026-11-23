@@ -195,6 +195,7 @@
     {% if not current_user.oidc_sub %}
     <form id="changeOwnPasswordForm">
       <div class="mu-form-row">
+        <input class="mu-input" type="password" name="current_password" placeholder="Current Password" required autocomplete="current-password">
         <input class="mu-input" type="password" name="new_password" placeholder="New Password" required autocomplete="new-password">
         <input class="mu-input" type="password" name="confirm_password" placeholder="Confirm New Password" required autocomplete="new-password">
         <button type="submit" class="mu-btn mu-btn-primary">Change Password</button>
@@ -338,6 +339,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (changeOwnPasswordForm) {
         changeOwnPasswordForm.addEventListener('submit', function(e) {
             e.preventDefault();
+            const currentPassword = this.elements.current_password.value;
             const newPassword = this.elements.new_password.value;
             const confirmPassword = this.elements.confirm_password.value;
             if (newPassword !== confirmPassword) { showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: 'Passwords do not match.' }); return; }
@@ -350,7 +352,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     fetch("{{ url_for('user_management.change_own_password') }}", {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-                        body: JSON.stringify({ new_password: newPassword, confirm_password: confirmPassword })
+                        body: JSON.stringify({ current_password: currentPassword, new_password: newPassword, confirm_password: confirmPassword })
                     })
                     .then(r => r.json())
                     .then(data => {

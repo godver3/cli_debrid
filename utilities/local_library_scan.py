@@ -41,6 +41,19 @@ except ImportError as e:
     logging.info(f"[MEDIAINFO_DEBUG] ✗ pymediainfo import failed: {e}")
     logging.info(f"[MEDIAINFO] MediaInfo not available ({e}) - will parse resolution from filenames only")
 
+def is_single_folder_name(name) -> bool:
+    """True when name is one folder name that stays inside the directory it is joined to:
+    no path separators, not '.'/'..' (or all dots), not absolute, not blank."""
+    if not isinstance(name, str):
+        return False
+    stripped = name.strip()
+    if not stripped or set(stripped) == {'.'}:
+        return False
+    if '/' in stripped or '\\' in stripped or os.path.isabs(stripped):
+        return False
+    return True
+
+
 def sanitize_filename(filename: str) -> str:
     """Sanitize filename to be safe for symlinks."""
     # Get replacement character from settings, default to underscore
@@ -561,7 +574,9 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
         if selected_folder and selected_folder_is_custom:
             # User selected a custom folder - update the root path
             sanitized_selected_folder = sanitize_filename(selected_folder)
-            if sanitized_selected_folder:
+            if not is_single_folder_name(sanitized_selected_folder):
+                logging.warning(f"[SymlinkPath] Ignoring user-selected custom folder {selected_folder!r}: not a single folder name. Using current root.")
+            elif sanitized_selected_folder:
                 final_symlinked_path_root = os.path.join(symlinked_path_base, sanitized_selected_folder)
                 logging.info(f"[SymlinkPath] User selected custom folder '{sanitized_selected_folder}'. New root: '{final_symlinked_path_root}'")
             else:
@@ -757,6 +772,12 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
                 logging.info(f"[SymlinkPath] selected_folder_is_custom: {selected_folder_is_custom}")
                 logging.info(f"[SymlinkPath] Root path: {final_symlinked_path_root}")
                 logging.info(f"[SymlinkPath] =============================================")
+
+                if selected_folder and not selected_folder_is_custom and not is_single_folder_name(selected_folder):
+                    # Requests (any user role) send this name, and it is joined into the
+                    # symlink path: '..' or a path would put links outside the library.
+                    logging.warning(f"[SymlinkPath] Ignoring user-selected folder {selected_folder!r}: not a single folder name. Using auto-detection.")
+                    selected_folder = None
 
                 if selected_folder and not selected_folder_is_custom:
                     # User selected a standard type folder (not a custom folder)
