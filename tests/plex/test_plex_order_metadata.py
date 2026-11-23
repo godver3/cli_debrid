@@ -99,6 +99,26 @@ class PlexOrderMetadataTests(unittest.TestCase):
         fetch.assert_called_once_with('tt1', 'tvdb:dvd')
         self.assertIn('1 updated', note)
 
+    def test_with_nfo_files_an_order_change_releases_instead_of_locking(self):
+        # NFOs carry the order: locked titles would stop Plex taking them
+        locked = Ep(1, 1, 'wrong', locked=('title',))
+        show = Show([locked])
+        with mock.patch.object(pom, '_nfo_mode', return_value=True), \
+                mock.patch.object(pom, '_plex_show', return_value=(show, None)), \
+                mock.patch('cli_battery.app.episode_order.fetch_seasons_for_order') as fetch:
+            note = pom.sync_show('tt1', 'tvdb:dvd')
+        fetch.assert_not_called()
+        self.assertEqual(locked.calls, [('edit', {'title.locked': 0})])
+        self.assertTrue(show.refreshed)
+        self.assertIn("NFO", note)
+
+    def test_with_nfo_files_unlocked_show_is_still_refreshed(self):
+        show = Show([Ep(1, 1, 'x')])
+        with mock.patch.object(pom, '_nfo_mode', return_value=True), \
+                mock.patch.object(pom, '_plex_show', return_value=(show, None)):
+            pom.sync_show('tt1', 'default')
+        self.assertTrue(show.refreshed)
+
 
 if __name__ == '__main__':
     unittest.main()

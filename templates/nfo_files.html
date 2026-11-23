@@ -16,6 +16,9 @@
 .nfo td,.nfo th{padding:4px 6px;border-bottom:1px solid #2a2a2a;text-align:left;vertical-align:top}
 .nfo ul{margin:6px 0 0 18px;padding:0}
 .nfo code{background:#111;border:1px solid #333;border-radius:4px;padding:0 4px}
+.nfo .modes{display:flex;flex-direction:column;gap:8px;margin:10px 0}
+.nfo .modes label{display:block;cursor:pointer}
+.nfo .modes .muted{display:block;margin-left:22px}
 </style>
 {% endblock %}
 {% block content %}
@@ -30,16 +33,25 @@
     in Plex mode cli_debrid has no library folder to write them to.</span></div>
 
   <div class="card">
-    <div class="row">
-      <label><input type="checkbox" id="nfoOn"> Write NFO files for my TV library</label>
-      <span id="nfoMsg" class="muted"></span>
+    <strong>NFO files for my TV library</strong> <span id="nfoMsg" class="muted"></span>
+    <div class="modes">
+      <label><input type="radio" name="nfoMode" value="off"> <b>Off</b>
+        <span class="muted">No NFO files; Plex shows its own details, as before. Shows whose numbering differs from Plex's
+        (custom orders, many anime) will show Plex's episode details from 3 December.</span></label>
+      <label><input type="radio" name="nfoMode" value="changed"> <b>Shows with a changed episode order</b>
+        <span class="muted">NFO files only for shows you set to another order (Show options or Manual Assign), written
+        automatically when you change it. Every other show looks exactly as Plex makes it.</span></label>
+      <label><input type="radio" name="nfoMode" value="all"> <b>All shows</b>
+        <span class="muted">Every show gets NFO files. Where Plex already numbers an episode the same way it's a minimal
+        file, so Plex still supplies its title, description, thumbnail and cast; only episodes Plex would mix up get
+        cli_debrid's details. Also fixes default-order shows that TMDB numbers differently.</span></label>
     </div>
     <ul class="muted">
-      <li>Turning this on writes <code>tvshow.nfo</code> and one <code>.nfo</code> per episode file under <code id="root"></code>,
-        keeps them up to date as episodes are added, upgraded, removed or renumbered, and (with Plex) switches the TV library
-        to an agent that reads them, then refreshes it.</li>
-      <li>Turning it off puts Plex's previous agent back and deletes the NFO files cli_debrid wrote.
-        NFO files you made yourself are never changed or deleted.</li>
+      <li>Files go under <code id="root"></code>: <code>tvshow.nfo</code> (ids only) and one <code>.nfo</code> per episode file,
+        kept up to date as episodes are added, upgraded, removed or renumbered.</li>
+      <li>With Plex, turning NFO files on switches the TV library to an agent that reads them (then refreshes it); shows
+        without NFO files keep matching through Plex Series exactly as before. Off puts Plex's previous agent back and
+        deletes the NFO files cli_debrid wrote. NFO files you made yourself are never changed or deleted.</li>
     </ul>
   </div>
 
@@ -99,10 +111,9 @@
   }
   function load(withPlex) {
     return fetch('/nfo/api/status' + (withPlex ? '?plex=1' : '')).then(r => r.json()).then(d => {
-      $('#nfoOn').checked = !!d.enabled;
+      document.querySelectorAll('input[name=nfoMode]').forEach(r => { r.checked = r.value === d.mode; r.disabled = (r.value !== 'off' && !d.symlinked_mode) || (d.job && d.job.running); });
       $('#root').textContent = d.library_root || '(symlinked files path)';
       $('#modeWarn').style.display = d.symlinked_mode ? 'none' : '';
-      $('#nfoOn').disabled = !d.symlinked_mode && !d.enabled;
       $('#convert').disabled = !d.enabled || (d.job && d.job.running);
       $('#plexCard').style.display = d.media_server_plex ? '' : 'none';
       renderJob(d.job);
@@ -112,18 +123,19 @@
       else if (d.job && d.job.finished && !withPlex && d.media_server_plex) load(true);
     });
   }
-  $('#nfoOn').onchange = e => {
-    const on = e.target.checked;
-    const msg = on
-      ? 'Write NFO files for the whole TV library and switch Plex\'s TV library to the NFO agent (then refresh it)?'
-      : 'Put Plex\'s previous agent back and delete the NFO files cli_debrid wrote?';
-    if (!confirm(msg)) { e.target.checked = !on; return; }
-    post('/nfo/api/enable', {on}).then(d => {
+  let current = null;
+  document.querySelectorAll('input[name=nfoMode]').forEach(r => r.onchange = e => {
+    const mode = e.target.value;
+    const msg = {
+      off: 'Turn NFO files off? Plex\'s previous agent is put back and the NFO files cli_debrid wrote are deleted.',
+      changed: 'Write NFO files for shows with a changed episode order (and remove them from other shows), then set up Plex and refresh the TV library?',
+      all: 'Write NFO files for every show, then set up Plex and refresh the TV library?'}[mode];
+    if (!confirm(msg)) { load(false); return; }
+    post('/nfo/api/mode', {mode}).then(d => {
       $('#nfoMsg').textContent = d.success ? d.message : (d.error || 'Failed');
-      if (!d.success) e.target.checked = !on;
       load(false);
     });
-  };
+  });
   $('#convert').onclick = () => {
     if (!confirm('Rewrite every show\'s NFO files, then set up Plex and refresh the TV library?')) return;
     post('/nfo/api/convert', {plex: true}).then(d => { if (!d.success) alert(d.error); load(false); });

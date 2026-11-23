@@ -41,6 +41,8 @@ class NfoWriterTests(unittest.TestCase):
                               'release_date': '2013-03-10', 'runtime': 60, 'location_on_disk': path})
         patches = [
             mock.patch.object(nw, 'library_root', return_value=self.root),
+            mock.patch.object(nw, 'enabled', return_value=True),
+            mock.patch.object(nw, 'mode', return_value='all'),
             mock.patch.object(nw, '_battery', return_value=(META, SEASONS)),
             mock.patch.object(nw, '_show_imdb_ids_in', return_value={'tt2396135'}),
             mock.patch.object(nw, '_episode_rows', side_effect=lambda imdb_id=None: [dict(r) for r in self.rows]),
@@ -150,9 +152,64 @@ class NfoWriterTests(unittest.TestCase):
             c = nw.write_show('tt2396135')
         self.assertEqual(c['written'], 0)
 
+    def test_off_means_deletions_touch_nothing(self):
+        nw.write_show('tt2396135')
+        nfo = self.rows[0]['location_on_disk'][:-4] + '.nfo'
+        with mock.patch.object(nw, 'enabled', return_value=False), \
+                mock.patch.object(nw, '_videos_in') as walk:
+            self.assertEqual(nw.remove_for_video(self.rows[0]['location_on_disk']), [])
+        walk.assert_not_called()
+        self.assertTrue(os.path.exists(nfo))
+
+    def test_off_means_order_change_writes_nothing(self):
+        with mock.patch.object(nw, 'enabled', return_value=False), \
+                mock.patch.object(nw, 'write_show') as write:
+            self.assertEqual(nw.refresh_show('tt2396135'), '')
+        write.assert_not_called()
+
+    def test_changed_mode_only_writes_shows_with_a_chosen_order(self):
+        with mock.patch.object(nw, 'mode', return_value='changed'), \
+                mock.patch('cli_battery.app.episode_order.show_episode_order', return_value=None):
+            c = nw.write_show('tt2396135')
+        self.assertEqual(c['written'], 0)
+        self.assertFalse(os.path.exists(os.path.join(self.show, 'tvshow.nfo')))
+        with mock.patch.object(nw, 'mode', return_value='changed'), \
+                mock.patch('cli_battery.app.episode_order.show_episode_order', return_value='tvdb:dvd'):
+            self.assertEqual(nw.write_show('tt2396135')['written'], 3)
+
+    def test_changed_mode_back_to_default_order_removes_the_shows_nfos(self):
+        nw.write_show('tt2396135')                       # 'all' mode: written
+        with mock.patch.object(nw, 'mode', return_value='changed'), \
+                mock.patch('cli_battery.app.episode_order.show_episode_order', return_value=None):
+            note = nw.refresh_show('tt2396135')
+        self.assertIn('removed (3)', note)
+        self.assertEqual([f for d, _, fs in os.walk(self.show) for f in fs if f.endswith('.nfo')], [])
+
+    def test_hook_skips_shows_the_mode_leaves_out(self):
+        with mock.patch.object(nw, 'mode', return_value='changed'), \
+                mock.patch('cli_battery.app.episode_order.show_episode_order', return_value=None):
+            c = nw.write_show('tt2396135', only_paths=[self.rows[0]['location_on_disk']])
+        self.assertEqual((c['written'], c['removed']), (0, 0))
+
     def test_control_characters_are_dropped(self):
         xml = nw.build_episode_nfo([{'season': 1, 'episode': 1, 'title': 'a\x01b'}], 'S')
         self.assertEqual(_parse_episodes(xml)[0].findtext('title'), 'ab')
+
+
+class ModeTests(unittest.TestCase):
+    def _mode(self, settings, symlinked=True):
+        get = lambda section, key, default=None: settings.get((section, key), default)
+        with mock.patch.object(nw, 'get_setting', side_effect=lambda s, k, d=None: (
+                'Symlinked/Local' if symlinked else 'Plex') if (s, k) == ('File Management', 'file_collection_management')
+                else get(s, k, d)):
+            return nw.mode(), nw.enabled()
+
+    def test_modes(self):
+        self.assertEqual(self._mode({}), ('off', False))
+        self.assertEqual(self._mode({('NFO', 'mode'): 'changed'}), ('changed', True))
+        self.assertEqual(self._mode({('NFO', 'mode'): 'all'}), ('all', True))
+        self.assertEqual(self._mode({('NFO', 'enabled'): True}), ('all', True))   # first version's switch
+        self.assertEqual(self._mode({('NFO', 'mode'): 'all'}, symlinked=False), ('all', False))
 
 
 class PlanTests(unittest.TestCase):

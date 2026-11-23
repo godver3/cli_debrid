@@ -27,7 +27,14 @@ def _plex_step(action: str):
         nfo_writer._set_job(plex={'skipped': 'media server is not Plex (Jellyfin/Emby/Kodi read the NFOs by themselves)'})
         return
     try:
-        result = plex_nfo_agent.apply(refresh=True) if action == 'apply' else plex_nfo_agent.restore(refresh=True)
+        if action == 'apply':
+            # Titles locked by the pre-NFO order sync would block the NFOs
+            from utilities.plex_order_metadata import release_all_for_nfo
+            released = release_all_for_nfo()
+            result = plex_nfo_agent.apply(refresh=True)
+            result['released_shows'] = released
+        else:
+            result = plex_nfo_agent.restore(refresh=True)
         nfo_writer._set_job(plex=result)
     except Exception as e:
         logging.error(f"[NFO] Plex agent {action} failed: {e}", exc_info=True)
@@ -44,7 +51,8 @@ def page():
 @admin_required
 def api_status():
     from utilities import nfo_writer
-    out = {'enabled': bool(get_setting(nfo_writer.SECTION, 'enabled', False)),
+    out = {'mode': nfo_writer.mode(),
+           'enabled': nfo_writer.enabled(),
            'symlinked_mode': nfo_writer.symlinked_mode(),
            'library_root': nfo_writer.library_root(),
            'media_server_plex': _media_server_is_plex(),
@@ -55,27 +63,42 @@ def api_status():
     return jsonify(out)
 
 
-@nfo_bp.route('/api/enable', methods=['POST'])
+@nfo_bp.route('/api/mode', methods=['POST'])
 @admin_required
-def api_enable():
-    """Turn NFO files on (write the library, then switch Plex to the NFO
-    agent) or off (restore Plex's previous agent, then remove our NFOs)."""
+def api_mode():
+    """off | changed (only shows with a changed episode order) | all.
+    Turning on: write the NFOs, then switch Plex to the NFO agent. Between
+    the two on modes: add/remove NFOs per show and refresh Plex. Off: put
+    Plex's previous agent back, delete our NFOs, re-lock chosen orders."""
     from utilities import nfo_writer
-    on = bool((request.get_json(silent=True) or {}).get('on'))
-    if on and not nfo_writer.symlinked_mode():
+    new = str((request.get_json(silent=True) or {}).get('mode') or '').lower()
+    if new not in nfo_writer.MODES:
+        return jsonify({'success': False, 'error': 'mode must be off, changed or all'}), 400
+    if new != 'off' and not nfo_writer.symlinked_mode():
         return jsonify({'success': False, 'error': 'NFO files need Symlinked/Local file management.'}), 400
     if nfo_writer.job_status().get('running'):
         return jsonify({'success': False, 'error': 'A run is already going; wait for it to finish.'}), 409
-    set_setting(nfo_writer.SECTION, 'enabled', on)
-    logging.info(f"[NFO] NFO files turned {'on' if on else 'off'}")
-    if on:
+    old = nfo_writer.mode()
+    set_setting(nfo_writer.SECTION, 'mode', new)
+    set_setting(nfo_writer.SECTION, 'enabled', new != 'off')
+    logging.info(f"[NFO] mode {old} -> {new}")
+    if new != 'off':
         nfo_writer.write_library(on_done=lambda: _plex_step('apply'))
-        return jsonify({'success': True, 'message': 'Writing NFO files for the library; Plex is switched when that finishes.'})
+        what = 'every show' if new == 'all' else 'shows with a changed episode order'
+        return jsonify({'success': True, 'message': f'Writing NFO files for {what}; Plex is set up and refreshed when that finishes.'})
 
     def off():
         if _media_server_is_plex():
             _plex_step('restore')
         nfo_writer._set_job(removed=nfo_writer.remove_library())
+        if _media_server_is_plex():
+            # Back to the pre-NFO way: lock the chosen orders' titles in Plex
+            from utilities.plex_order_metadata import shows_with_chosen_order, sync_show
+            for imdb_id, order in shows_with_chosen_order():
+                try:
+                    sync_show(imdb_id, order)
+                except Exception as e:
+                    logging.warning(f"[NFO] re-locking {imdb_id}: {e}")
     threading.Thread(target=off, name='nfo-off', daemon=True).start()
     return jsonify({'success': True, 'message': "Restoring Plex's previous agent and removing cli_debrid's NFO files."})
 

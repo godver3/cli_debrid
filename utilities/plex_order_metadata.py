@@ -129,11 +129,54 @@ def _plex_show(imdb_id: str, plex=None):
     return show, None if show is not None else 'show not in Plex yet'
 
 
+def _nfo_mode(imdb_id: str) -> bool:
+    """This show's order is carried by NFO files (Tools -> NFO Files)."""
+    try:
+        from utilities.nfo_writer import wants_show
+        return wants_show(imdb_id)
+    except Exception:
+        return False
+
+
+def release_for_nfo(imdb_id: str, plex=None) -> str:
+    """NFO files carry the order's episode details: drop the locks this module
+    set (they would stop Plex from taking the NFO's values) and have Plex
+    re-read the show."""
+    show, problem = _plex_show(imdb_id, plex)
+    if show is None:
+        return ''
+    n = release_plex_show(show)  # refreshes the show when it unlocked something
+    if not n:
+        try:
+            show.refresh()
+        except Exception as e:
+            logging.debug(f"{_LOG} {show.title}: refresh: {e}")
+    return f"Plex re-reading {show.title}'s NFO files" + (f" ({n} episode locks released)" if n else '')
+
+
+def release_all_for_nfo(plex=None) -> int:
+    """Every show with a chosen order: release the locks (turning NFO files on)."""
+    plex = plex or __import__('utilities.episode_order_change', fromlist=['_plex_server'])._plex_server()
+    if plex is None:
+        return 0
+    done = 0
+    for imdb_id, _order in shows_with_chosen_order():
+        try:
+            if release_for_nfo(imdb_id, plex):
+                done += 1
+        except Exception as e:
+            logging.warning(f"{_LOG} releasing {imdb_id} for NFO: {e}")
+    return done
+
+
 def sync_show(imdb_id: str, order: Optional[str] = None, plex=None) -> str:
-    """Apply (chosen order) or release (default order) one show. Returns a note."""
+    """Apply (chosen order) or release (default order) one show. Returns a note.
+    With NFO files on, the NFOs carry the order instead: release and refresh."""
     from cli_battery.app.episode_order import fetch_seasons_for_order, show_episode_order
     order = order if order is not None else show_episode_order(imdb_id)
     try:
+        if _nfo_mode(imdb_id):
+            return release_for_nfo(imdb_id, plex)
         show, problem = _plex_show(imdb_id, plex)
         if show is None:
             return f'Plex episode titles not updated: {problem}'
