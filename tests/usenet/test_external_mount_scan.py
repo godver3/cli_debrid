@@ -249,9 +249,35 @@ class TestPruning(ExternalMountScanTestBase):
 
         shutil.rmtree(os.path.join(self.mount_dir.name, 'Gone.Show.S01'))
         self._run_scan()
+        # One missed listing only marks it gone; it isn't forgotten yet.
+        state = self._state()
+        self.assertIn('gone_since', state['Gone.Show.S01'])
+
+        # Past the grace period it is dropped.
+        real_time = time.time
+        with patch.object(ems.time, 'time', lambda: real_time() + ems.GONE_GRACE_SECONDS + 1):
+            self._run_scan()
         state = self._state()
         self.assertNotIn('Gone.Show.S01', state)
         self.assertIn('Staying.Show.S01', state)
+
+    def test_folder_missing_from_one_listing_stays_baselined(self):
+        # A flaky mount lists only part of its folders once. When the rest come
+        # back they must still be baseline -- not imported as "new" content.
+        self._mkfolder('Staying.Show.S01')
+        self._mkfolder('Flaky.Show.S01')
+        self._run_scan()
+
+        flaky = os.path.join(self.mount_dir.name, 'Flaky.Show.S01')
+        shutil.rmtree(flaky)
+        self._run_scan()
+        os.makedirs(flaky)
+        self._run_scan()
+
+        self.assertEqual(self.import_calls, [])
+        entry = self._state()['Flaky.Show.S01']
+        self.assertTrue(entry['baseline'])
+        self.assertNotIn('gone_since', entry)
 
 
 class TestModeAndPathGuards(ExternalMountScanTestBase):

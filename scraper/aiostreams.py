@@ -163,12 +163,14 @@ def parse_size(size_info: str) -> float:
     Looks for patterns like: 📦 2.5 GB
     Returns size in GB.
     """
+    # Units are spelled out: a bare (\w+) let "2 Men..." read as 2 MB.
+    _unit = r'([KMGT]i?B)\b'
     size_patterns = [
-        r'📦\s*([\d.]+)\s*(\w+)',  # Package emoji format
-        r'💾\s*([\d.]+)\s*(\w+)',  # Disk emoji format
-        r'(?:Size[: ]*|^)([\d.]+)\s*(\w+)',  # Text format
-        r'\[([\d.]+)\s*(\w+)\]',  # Bracket format
-        r'\(([\d.]+)\s*(\w+)\)',  # Parentheses format
+        r'📦\s*([\d.]+)\s*' + _unit,  # Package emoji format
+        r'💾\s*([\d.]+)\s*' + _unit,  # Disk emoji format
+        r'(?:Size[: ]*|^)([\d.]+)\s*' + _unit,  # Text format
+        r'\[([\d.]+)\s*' + _unit + r'\]',  # Bracket format
+        r'\(([\d.]+)\s*' + _unit + r'\)',  # Parentheses format
     ]
 
     for pattern in size_patterns:
@@ -199,9 +201,10 @@ def parse_seeder(seeder_info: str) -> int:
     Parse seeder count from description.
     Looks for patterns like: 👤 50 or Seeders: 50
     """
+    # No bare line-start alternative: it read "1080p WEB-DL" as 1080 seeders.
     seeder_patterns = [
         r'👤\s*(\d+)',  # Emoji format
-        r'(?:Seeders?[: ]*|^)(\d+)',  # Text format
+        r'\bSeeders?[: ]*(\d+)',  # Text format
         r'\[(\d+)\s*seeders?\]',  # Bracket format
         r'\((\d+)\s*seeders?\)',  # Parentheses format
     ]
@@ -340,12 +343,12 @@ def parse_results(streams: List[Dict[str, Any]], instance: str) -> List[Dict[str
             magnet_link = ''
 
             # Try to get infoHash from stream
-            if 'infoHash' in stream:
-                info_hash = stream['infoHash']
+            if stream.get('infoHash'):
+                info_hash = str(stream['infoHash']).lower()
                 logging.debug(f"Extracted infoHash: {info_hash}")
 
             # Try to get magnet from externalUrl
-            if 'externalUrl' in stream and stream['externalUrl'].startswith('magnet:'):
+            if str(stream.get('externalUrl') or '').startswith('magnet:'):
                 magnet_link = stream['externalUrl']
                 logging.debug(f"Extracted magnet from externalUrl: {magnet_link[:100]}")
                 # Extract hash from magnet if we don't have info_hash
@@ -585,7 +588,7 @@ def parse_api_results(results: List[Dict[str, Any]], instance: str) -> List[Dict
     for result in results:
         try:
             # Extract info hash
-            info_hash = result.get('infoHash', '')
+            info_hash = str(result.get('infoHash') or '').lower()
             if not info_hash:
                 continue
 
