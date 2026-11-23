@@ -120,10 +120,16 @@ class DebridLinkProvider(DebridProvider):
 
     def _find_by_hash(self, hash_value: str) -> Optional[Dict]:
         """Find an existing torrent by hash in the seedbox."""
+        return self._seedbox_by_hash().get(hash_value.lower())
+
+    def _seedbox_by_hash(self) -> Dict[str, Dict]:
+        """One paginated seedbox listing, indexed by lowercase hash."""
+        index: Dict[str, Dict] = {}
         for t in get_all_torrents(self.api_key):
-            if (t.get('hashString') or '').lower() == hash_value.lower():
-                return t
-        return None
+            h = (t.get('hashString') or '').lower()
+            if h and h not in index:
+                index[h] = t
+        return index
 
     # ── Cache check ─────────────────────────────────────────────────────────
 
@@ -157,6 +163,9 @@ class DebridLinkProvider(DebridProvider):
         items = magnet_or_url if isinstance(magnet_or_url, list) else [magnet_or_url]
         return_single = not isinstance(magnet_or_url, list)
         results: Dict[str, Optional[bool]] = {}
+        # List the seedbox once for the whole batch; a lookup per item re-paged
+        # the full listing every time (N results x pages, each rate limited).
+        seedbox_index: Optional[Dict[str, Dict]] = None
 
         for item in items:
             torrent_id = None
@@ -172,7 +181,9 @@ class DebridLinkProvider(DebridProvider):
                 hash_value = hash_value.lower()
 
                 # Check if already in seedbox — never remove pre-existing torrents
-                existing = self._find_by_hash(hash_value)
+                if seedbox_index is None:
+                    seedbox_index = self._seedbox_by_hash()
+                existing = seedbox_index.get(hash_value)
                 if existing:
                     torrent_was_preexisting = True
                     torrent_id = str(existing.get('id', ''))

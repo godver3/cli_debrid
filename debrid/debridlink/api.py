@@ -19,6 +19,14 @@ _rate_limiter = {
 }
 
 
+# Debrid-Link v2 error codes, incl. OAuth-style spellings. Unknown codes still
+# fall through to DebridLinkAPIError.
+_AUTH_ERRORS = frozenset({'badToken', 'unauthorized', 'hidedToken', 'accountLocked',
+                          'invalid_token', 'expired_token', 'unauthorized_client'})
+_FLOOD_ERRORS = frozenset({'floodDetected'})
+_UNAVAILABLE_ERRORS = frozenset({'serverError', 'server_error', 'maintenance', 'internalError'})
+
+
 def _wait_for_rate_limit() -> None:
     with _rate_limiter['lock']:
         elapsed = time.time() - _rate_limiter['last_request_time']
@@ -94,8 +102,14 @@ def make_request(
         if isinstance(result, dict) and not result.get('success', True):
             error_code = result.get('error', 'UNKNOWN')
             desc = result.get('error_description', 'Unknown error')
-            if error_code in ('badToken', 'unauthorized'):
+            if error_code in _AUTH_ERRORS:
                 raise DebridLinkAuthError(desc)
+            if error_code in _FLOOD_ERRORS:
+                with _rate_limiter['lock']:
+                    _rate_limiter['min_interval'] = min(5.0, _rate_limiter['min_interval'] * 2)
+                raise RateLimitError(f"Debrid-Link rate limit [{error_code}]: {desc}")
+            if error_code in _UNAVAILABLE_ERRORS:
+                raise ProviderUnavailableError(f"Debrid-Link unavailable [{error_code}]: {desc}")
             raise DebridLinkAPIError(f"Debrid-Link API error [{error_code}]: {desc}")
 
         # Decay rate limit on success
@@ -136,7 +150,7 @@ def get_all_torrents(api_key: str) -> List[Dict]:
         torrents.extend(value)
         pagination = result.get('pagination', {})
         next_page = pagination.get('next', -1)
-        if next_page == -1 or len(value) < per_page:
+        if not isinstance(next_page, int) or next_page <= page or len(value) < per_page:
             break
         page = next_page
     return torrents
