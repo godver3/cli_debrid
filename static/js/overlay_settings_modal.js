@@ -148,7 +148,9 @@
             }
             updatedSettings['Overlay Settings'].plex_data_path = mediaDataPathInput.value.trim();
             if (contentCheckDaysInput) {
-                updatedSettings['Overlay Settings'].overlay_content_check_interval_days = parseInt(contentCheckDaysInput.value) || 7;
+                const _days = parseInt(contentCheckDaysInput.value, 10);
+                // 0 is valid (refresh every sync), so only fall back to 7 for a blank/invalid value
+                updatedSettings['Overlay Settings'].overlay_content_check_interval_days = Number.isNaN(_days) || _days < 0 ? 7 : _days;
             }
             if (syncItemsPerRunInput) {
                 updatedSettings['Overlay Settings'].sync_items_per_run = parseInt(syncItemsPerRunInput.value) || 200;

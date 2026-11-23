@@ -455,12 +455,12 @@ SECTIONS = {
         },
         "plex_data_path": {
             "type": "string",
-            "description": "Path to the Plex Media Server data directory (e.g. /config/Library/Application Support/Plex Media Server). Required for the poster cleanup task to delete old uploaded overlay versions directly from the filesystem.",
+            "description": "Path to the Plex Media Server data directory, the folder that contains Plex's Metadata folder (e.g. /config/Library/Application Support/Plex Media Server). Required for the poster cleanup task to delete old uploaded overlay versions directly from the filesystem. Only uploaded posters Plex reports as not selected, on items cli_debrid overlaid, are deleted.",
             "default": ""
         },
         "overlay_content_check_interval_days": {
             "type": "number",
-            "description": "How often (in days) to re-fetch ratings (IMDb/TMDB/Trakt/RT) and show status from the MDBList API to detect changes that should trigger an overlay refresh. Set to 0 to check every sync run. Default is 7 days. Version count changes are always checked every sync regardless of this setting.",
+            "description": "How old (in days) a title's ratings (IMDb/TMDB/Trakt/RT) can get before they are re-fetched to detect changes that should trigger an overlay refresh. Each sync refreshes up to 40 of the oldest. Set to 0 to refresh every sync. Default is 7 days. Show status and version count changes are checked every sync regardless of this setting.",
             "default": 7
         },
         "sync_items_per_run": {

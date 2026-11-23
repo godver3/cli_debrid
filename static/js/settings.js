@@ -1021,7 +1021,9 @@ export function updateSettings() {
         if (!settingsData['Overlay Settings']) {
             settingsData['Overlay Settings'] = {};
         }
-        settingsData['Overlay Settings']['overlay_content_check_interval_days'] = parseInt(overlayContentCheckDays.value) || 7;
+        const _days = parseInt(overlayContentCheckDays.value, 10);
+        // 0 is valid (refresh every sync), so only fall back to 7 for a blank/invalid value
+        settingsData['Overlay Settings']['overlay_content_check_interval_days'] = Number.isNaN(_days) || _days < 0 ? 7 : _days;
     }
 
     const doNotAddPlexWatchHistoryItemsToQueue = document.getElementById('scraping-do_not_add_plex_watch_history_items_to_queue');
