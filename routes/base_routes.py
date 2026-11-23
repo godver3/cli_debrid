@@ -193,6 +193,59 @@ def is_limited_environment():
     from utilities.set_supervisor_env import is_limited_environment
     return is_limited_environment()
 
+# Release notes come from the GitHub releases: a release that has notes was
+# built with release-notes/<version>.md, which the build puts above this marker.
+_NOTES_MARKER = '<!-- discord-posted:'
+_NOTES_TTL = 900
+_notes_cache = {'at': 0.0, 'branch': None, 'data': None}
+_notes_lock = threading.Lock()
+
+
+def release_notes_from_releases(releases, branch, limit=10):
+    """[{version, name, published_at, url, body}] for the releases with notes,
+    newest first. The dev branch sees pre-releases too; main only full releases."""
+    out = []
+    for rel in releases or []:
+        if rel.get('draft') or (rel.get('prerelease') and branch != 'dev'):
+            continue
+        body = rel.get('body') or ''
+        if _NOTES_MARKER not in body:
+            continue
+        notes = body.split(_NOTES_MARKER, 1)[0].rstrip()
+        if notes.endswith('---'):
+            notes = notes[:-3].rstrip()
+        if not notes:
+            continue
+        out.append({'version': (rel.get('tag_name') or '').lstrip('v'), 'name': rel.get('name') or '',
+                    'published_at': rel.get('published_at') or '', 'url': rel.get('html_url') or '',
+                    'body': notes})
+        if len(out) >= limit:
+            break
+    return out
+
+
+@base_bp.route('/api/release-notes', methods=['GET'])
+@user_required
+def get_release_notes():
+    branch = get_current_branch()
+    with _notes_lock:
+        if (_notes_cache['data'] is not None and _notes_cache['branch'] == branch
+                and time.time() - _notes_cache['at'] < _NOTES_TTL):
+            return jsonify({'success': True, 'branch': branch, 'releases': _notes_cache['data']})
+    try:
+        r = requests.get('https://api.github.com/repos/godver3/cli_debrid/releases',
+                         params={'per_page': 50}, timeout=10,
+                         headers={'User-Agent': 'cli-debrid-app', 'Accept': 'application/vnd.github+json'})
+        r.raise_for_status()
+        data = release_notes_from_releases(r.json(), branch)
+    except Exception as e:
+        logging.warning(f"Release notes: GitHub releases unavailable: {e}")
+        return jsonify({'success': False, 'error': 'Could not reach GitHub for the release notes.'}), 502
+    with _notes_lock:
+        _notes_cache.update(at=time.time(), branch=branch, data=data)
+    return jsonify({'success': True, 'branch': branch, 'releases': data})
+
+
 @base_bp.route('/api/check-update', methods=['GET'])
 @cache_for_seconds(3600)  # Cache for 1 hour
 def check_for_update():

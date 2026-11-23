@@ -190,10 +190,13 @@ def share_logs():
             'timestamp': time.time()
         }
         
+        # include_engine: the bug report also attaches the built-in mount's log
+        include_engine = bool((request.get_json(silent=True) or {}).get('include_engine'))
+
         # Start the background upload task
         threading.Thread(
             target=process_log_upload,
-            args=(task_id,),
+            args=(task_id, include_engine),
             daemon=True
         ).start()
         
@@ -236,7 +239,7 @@ def check_share_status(task_id):
         'timestamp': task_info['timestamp']
     })
 
-def process_log_upload(task_id):
+def process_log_upload(task_id, include_engine=False):
     """Background task to process log upload to paste.c-net."""
     try:
         upload_tasks[task_id].update({'status': 'collecting', 'progress': 10, 'message': 'Collecting logs...'})
@@ -282,6 +285,11 @@ def process_log_upload(task_id):
             "=== End settings snapshot ===\n\n"
             + '\n'.join(logs)
         )
+        if include_engine:
+            engine_lines = _engine_log_for_upload()
+            if engine_lines:
+                log_content += ("\n\n=== Built-in mount engine log (last "
+                                f"{len(engine_lines)} lines) ===\n" + '\n'.join(engine_lines))
 
         upload_tasks[task_id].update({'status': 'compressing', 'progress': 30, 'message': 'Compressing logs...'})
         compressed_buffer = io.BytesIO()
@@ -350,6 +358,40 @@ def process_log_upload(task_id):
         })
     
     upload_tasks[task_id]['timestamp'] = time.time()
+
+ENGINE_LOG_UPLOAD_LINES = 200000
+
+
+def _engine_log_for_upload(max_lines=ENGINE_LOG_UPLOAD_LINES):
+    """The built-in mount engine's recent log lines, readable and scrubbed."""
+    try:
+        from usenet.builtin_client import engine_log_path, format_engine_log_line
+        path = engine_log_path()
+        if not os.path.exists(path):
+            return []
+        lines = [format_engine_log_line(line.rstrip('\n')) for line in _tail_lines(path, max_lines)]
+        try:
+            from utilities.log_redaction import scrub
+            lines = [scrub(line) for line in lines]
+        except Exception:
+            pass
+        return lines
+    except Exception as e:
+        logging.warning(f"Engine log for upload unavailable: {e}")
+        return []
+
+
+@logs_bp.route('/api/bug-report/context', methods=['GET'])
+@admin_required
+def bug_report_context():
+    """Setup summary for the top bar's bug report (no URLs, paths or keys)."""
+    try:
+        from utilities.bug_report import build_context
+        return jsonify({'success': True, **build_context()})
+    except Exception as e:
+        logging.error(f"Bug report context failed: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 
 def upload_to_paste_cnet(data, task_id=None):
     """Upload to paste.c-net.org"""
