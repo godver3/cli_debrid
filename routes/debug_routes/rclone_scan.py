@@ -810,7 +810,8 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                             plex_url = get_setting('File Management', 'plex_url_for_symlink', '')
                             plex_token = get_setting('File Management', 'plex_token_for_symlink', '')
                             
-                            if plex_url and plex_token:
+                            from utilities.silo_functions import is_silo_mode
+                            if (plex_url and plex_token) or is_silo_mode():  # plex_update_item scans Silo when it is selected
                                 logging.info(f"[RcloneScan {task_id}] Plex configured and update triggered. Attempting library update for: {symlink_dest_path}")
                                 try:
                                     # Make sure item_for_db_filtered_for_db has the necessary info (title, year, type etc.)

@@ -297,7 +297,10 @@ def recommendation_sources():
             except Exception as e:
                 logging.error(f"Recommendation viewers error: {e}")
                 viewers = []
-            if get_setting('Plex', 'url', ''):
+            from utilities.silo_functions import is_silo_selected
+            if is_silo_selected():
+                name = 'Silo'  # even with a Plex URL left over from before
+            elif get_setting('Plex', 'url', ''):
                 name = 'Plex'
             elif viewers:
                 name = {'jellyfin': 'Jellyfin', 'emby': 'Emby', 'silo': 'Silo'}.get(viewers[0]['source'], 'Library')

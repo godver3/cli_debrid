@@ -329,6 +329,10 @@ def remove_file_from_silo(item_title: str, item_path: str, episode_title: str = 
     if not item_path:
         return False
     label = f'{item_title} - {episode_title}' if episode_title else item_title
+    if not os.path.isabs(item_path):
+        # A bare file name (Plex removal matches by name) has no folder to rescan
+        logging.info(f'[Silo] No folder to rescan for {label} ({item_path}); Silo drops it on its next scan')
+        return False
     logging.info(f'[Silo] Rescanning {item_path} so Silo drops {label}')
     if os.path.lexists(item_path):
         logging.info(f'[Silo] {item_path} still exists; the rescan will keep it')

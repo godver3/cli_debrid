@@ -30,9 +30,18 @@ PLEX_SOURCES = (
 
 
 def plex_server_source(get_setting: Callable) -> tuple:
-    """(url, token, where each came from) of the Plex server the mount asks."""
+    """(url, token, where each came from) of the Plex server the mount asks.
+    With Silo as the media server, only the Mount page's own Plex fields count:
+    a Plex URL left in Settings from before Silo isn't polled."""
     url = token = url_src = token_src = ''
-    for section, url_key, token_key, label in PLEX_SOURCES:
+    sources = PLEX_SOURCES
+    try:
+        from utilities.silo_functions import is_silo_selected
+        if is_silo_selected(get_setting):
+            sources = PLEX_SOURCES[:1]
+    except Exception:
+        pass
+    for section, url_key, token_key, label in sources:
         if not url and (get_setting(section, url_key, '') or '').strip():
             url, url_src = get_setting(section, url_key, '').strip().rstrip('/'), label
         if not token and (get_setting(section, token_key, '') or '').strip():

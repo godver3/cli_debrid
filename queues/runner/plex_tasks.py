@@ -1458,8 +1458,14 @@ class PlexTasks:
             if result is not None:
                 logging.info(f"Silo file check: Silo has {result[0]} of {len(found)} found file(s); "
                              f"{result[1]} item(s) collected")
+        # Items Silo just collected are done: drop their tick count, so a later
+        # re-check of the same file (repair) waits for Silo again
+        still_checking = self._ids_still_checking([i['id'] for i, _, _ in found])
         collected = 0
         for item, path, cache_key in found:
+            if item['id'] not in still_checking:
+                self.plex_scan_tick_counts.pop(cache_key, None)
+                continue
             tick = self.plex_scan_tick_counts.get(cache_key, 0) + 1
             self.plex_scan_tick_counts[cache_key] = tick
             if not checks_off and tick <= self.SILO_COLLECT_AFTER_TICKS:
@@ -1470,6 +1476,19 @@ class PlexTasks:
         if collected:
             logging.info(f"Silo file check: {collected} item(s) collected with their mount path "
                          f"({'library checks disabled' if checks_off else 'Silo did not list them'})")
+
+    @staticmethod
+    def _ids_still_checking(ids):
+        if not ids:
+            return set()
+        conn = get_db_connection()
+        try:
+            rows = conn.execute(
+                f"SELECT id FROM media_items WHERE id IN ({','.join('?' * len(ids))}) AND state = 'Checking'",
+                ids).fetchall()
+        finally:
+            conn.close()
+        return {r[0] for r in rows}
 
     def _mark_collected_on_mount(self, item, path):
         """Checking -> Collected with the file's mount path (when Silo didn't collect it)."""

@@ -277,7 +277,7 @@ def sync_silo():
     series = catalog(it.get('series_id') for it in items.values() if it.get('type') == 'episode')
     try:
         r = silo._request('GET', '/api/v2/admin/users', url, key, timeout=30)
-        users = (r.json() or {}).get('items') or [] if r.status_code == 200 else []
+        users = ((r.json() or {}).get('items') or []) if r.status_code == 200 else []
     except Exception:
         users = []  # only decides the main viewer
     admins = {str(u.get('id')) for u in users if u.get('role') == 'admin'}
