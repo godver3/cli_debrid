@@ -301,3 +301,34 @@ class StaleSeasonTests(PosterCleanupTests):
         self.assertEqual(self.execute("SELECT COUNT(*) FROM season_overlay_state")[0][0], 0)
         self.assertEqual(self.execute("SELECT value FROM overlay_sync_state "
                                       "WHERE key = 'last_poster_cleanup_at'")[0][0], '2026-11-23 00:00:00')
+
+
+class CleanupProblemTests(OverlayDbTestBase):
+    def problem(self, path):
+        from unittest.mock import patch
+        with patch.object(scheduled_tasks, 'get_setting',
+                          lambda sec, key, default=None, **k: path if key == 'plex_data_path' else default), \
+             patch.object(scheduled_tasks, 'is_jellyfin_mode', lambda: False):
+            return scheduled_tasks.get_cleanup_problem()
+
+    def cleanup_row(self, denied):
+        import json
+        self.execute("INSERT INTO overlay_activity (action_type, triggered_by, result, title, stats_json) "
+                     "VALUES ('cleanup', 'manual', 'partial', 't', ?)",
+                     (json.dumps({'poster_permission_denied': denied}),))
+
+    def test_unset_path_is_not_a_problem(self):
+        self.assertIsNone(self.problem(''))
+
+    def test_path_without_metadata(self):
+        target = os.path.join(self.tmp, 'Library', 'Application Support', 'Plex Media Server')
+        os.makedirs(os.path.join(target, 'Metadata'))
+        self.assertEqual(self.problem(self.tmp),
+                         {'kind': 'path', 'path': self.tmp, 'suggestion': target})
+
+    def test_last_cleanup_permission_denied(self):
+        os.makedirs(os.path.join(self.tmp, 'Metadata'))
+        self.cleanup_row(8654)
+        self.assertEqual(self.problem(self.tmp), {'kind': 'permission', 'count': 8654})
+        self.cleanup_row(0)     # fixed: the next run deleted fine
+        self.assertIsNone(self.problem(self.tmp))

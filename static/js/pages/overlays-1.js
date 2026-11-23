@@ -140,8 +140,21 @@ async function loadStats() {
         const reclaimedStr = totalMb >= 1024
             ? (totalMb / 1024).toFixed(1) + ' GB reclaimed'
             : totalMb.toFixed(1) + ' MB reclaimed';
-        document.getElementById('stat-cleaned-breakdown').textContent =
-            totalPosters > 0 ? reclaimedStr : 'No cleanups yet';
+        const breakdown = document.getElementById('stat-cleaned-breakdown');
+        const prob = cd.cleanup_problem;
+        breakdown.style.color = prob ? '#f0ad4e' : '#888';
+        if (prob?.kind === 'permission') {
+            breakdown.textContent = `${prob.count} old poster(s) couldn't be deleted — click 👁 for the fix`;
+            breakdown.title = "cli_debrid has no write access to Plex's folders. The preview (eye button) shows the command that fixes it.";
+        } else if (prob?.kind === 'path') {
+            breakdown.textContent = "Cleanup off: Plex data path has no Metadata folder";
+            breakdown.title = prob.suggestion
+                ? `Set the Plex data path in Overlay Settings to: ${prob.suggestion}`
+                : `No Metadata folder in ${prob.path}. Set the Plex data path in Overlay Settings.`;
+        } else {
+            breakdown.textContent = totalPosters > 0 ? reclaimedStr : 'No cleanups yet';
+            breakdown.title = '';
+        }
     }
 }
 

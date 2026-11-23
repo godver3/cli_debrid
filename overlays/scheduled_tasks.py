@@ -1993,6 +1993,39 @@ def check_plex_data_path(plex_data_path: str) -> Dict:
     return {'ok': False, 'suggestion': None}
 
 
+
+def get_cleanup_problem():
+    """
+    Why poster cleanup can't do its job right now, for the Overlays page
+    'Cleaned Up' card, or None.
+
+    {'kind': 'path', 'path', 'suggestion'}: the Plex data path has no Metadata
+    folder, so cleanup skips. {'kind': 'permission', 'count'}: the last cleanup
+    couldn't delete files (no write access to Plex's folders). An unset path
+    and Jellyfin/Emby mode aren't problems: cleanup is simply not in use.
+    """
+    import json as _json
+    if is_jellyfin_mode():
+        return None
+    path = get_setting('Overlay Settings', 'plex_data_path', default='').strip()
+    if not path:
+        return None
+    check = check_plex_data_path(path)
+    if not check['ok']:
+        return {'kind': 'path', 'path': path, 'suggestion': check['suggestion']}
+    conn = _get_db_connection()
+    try:
+        row = conn.execute(
+            "SELECT stats_json FROM overlay_activity WHERE action_type = 'cleanup' "
+            "AND stats_json IS NOT NULL ORDER BY id DESC LIMIT 1").fetchone()
+    finally:
+        conn.close()
+    try:
+        denied = int((_json.loads(row[0]) if row else {}).get('poster_permission_denied') or 0)
+    except (TypeError, ValueError):
+        denied = 0
+    return {'kind': 'permission', 'count': denied} if denied else None
+
 def _resolve_plex_metadata_root(plex_data_path: str):
     """
     The Plex 'Metadata' folder under the configured Plex data path, or None.
