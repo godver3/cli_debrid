@@ -125,6 +125,27 @@ def trigger_overlay_cleanup():
         logger.error(f"Failed to trigger overlay cleanup: {e}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@overlay_bp.route('/api/overlays/tasks/cleanup-preview', methods=['POST'])
+@admin_required
+def preview_overlay_cleanup():
+    """What the overlay cleanup would delete right now. Changes nothing."""
+    try:
+        from overlays.scheduled_tasks import task_overlay_cleanup
+        return jsonify(task_overlay_cleanup(triggered_by='manual', dry_run=True))
+    except Exception as e:
+        logger.error(f"Overlay cleanup preview failed: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@overlay_bp.route('/api/overlays/health', methods=['GET'])
+def overlay_health():
+    """Recent overlay sync results (Overlays page 'Last sync' card)."""
+    try:
+        from overlays.scheduled_tasks import get_overlay_health
+        return jsonify(get_overlay_health())
+    except Exception as e:
+        logger.error(f"Overlay health failed: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @overlay_bp.route('/api/overlays/tasks/full-sync', methods=['POST'])
 def trigger_full_sync():
     """Manually trigger full overlay sync task."""

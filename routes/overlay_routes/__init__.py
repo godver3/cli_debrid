@@ -87,6 +87,8 @@ from .media import (
 )
 from .settings_tasks import (
     get_overlay_settings,
+    overlay_health,
+    preview_overlay_cleanup,
     trigger_full_sync,
     trigger_overlay_cleanup,
     trigger_overlay_sync,
@@ -252,6 +254,8 @@ __all__ = [
     'system_status',
     'trigger_full_sync',
     'trigger_overlay_cleanup',
+    'overlay_health',
+    'preview_overlay_cleanup',
     'trigger_overlay_sync',
     'update_layout',
     'update_overlay_settings',

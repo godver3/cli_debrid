@@ -1129,6 +1129,66 @@ def _reset_deselected_posters(plex_url: str, plex_token: str) -> int:
         conn.close()
 
 
+HEALTH_SYNCS = 6            # recent syncs shown on the Overlays page
+LOOP_SYNCS = 3              # this many syncs in a row ...
+LOOP_RESETS = 25            # ... each resetting at least this many rows
+
+
+def get_overlay_health() -> Dict:
+    """
+    Recent overlay sync results for the Overlays page 'Last sync' card.
+
+    Reads the last HEALTH_SYNCS 'overlay_sync' activity rows. 'resets' is the
+    number of already-applied rows the change checks (quality, content, poster
+    deselected) sent back for a re-render; None for syncs logged before these
+    counts existed. 'loop_suspected' is set when each of the last LOOP_SYNCS
+    syncs reset at least LOOP_RESETS rows: real changes come and go, a loop
+    resets about the same rows every time.
+    """
+    import json as _json
+    conn = _get_db_connection()
+    try:
+        rows = conn.execute(
+            "SELECT created_at, result, stats_json, duration_seconds, triggered_by "
+            "FROM overlay_activity WHERE action_type = 'overlay_sync' "
+            "ORDER BY id DESC LIMIT ?", (HEALTH_SYNCS,)).fetchall()
+    finally:
+        conn.close()
+
+    syncs = []
+    for created_at, result, stats_json, duration, triggered_by in rows:
+        try:
+            st = _json.loads(stats_json) if stats_json else {}
+        except (TypeError, ValueError):
+            st = {}
+        keys = ('quality_resets', 'content_resets', 'thumb_resets')
+        has_resets = any(k in st for k in keys)
+        syncs.append({
+            'at': created_at,
+            'result': result,
+            'triggered_by': triggered_by,
+            'duration_seconds': duration,
+            'applied': (st.get('applied') or 0) + (st.get('seasons_applied') or 0),
+            'failed': (st.get('failed') or 0) + (st.get('seasons_failed') or 0),
+            'resets': sum(st.get(k) or 0 for k in keys) if has_resets else None,
+            'quality_resets': st.get('quality_resets'),
+            'content_resets': st.get('content_resets'),
+            'thumb_resets': st.get('thumb_resets'),
+        })
+
+    recent = syncs[:LOOP_SYNCS]
+    loop = (len(recent) == LOOP_SYNCS
+            and all(s['resets'] is not None and s['resets'] >= LOOP_RESETS for s in recent))
+    return {
+        'success': True,
+        'last': syncs[0] if syncs else None,
+        'syncs': syncs,
+        'loop_suspected': loop,
+        'loop_syncs': LOOP_SYNCS,
+        'loop_resets': LOOP_RESETS,
+    }
+
+
 def task_overlay_sync(triggered_by: str = 'scheduled'):
     """
     Periodic overlay sync task.
@@ -1233,9 +1293,10 @@ def task_overlay_sync(triggered_by: str = 'scheduled'):
 
         # Step 1.9: Detect deselected overlay posters (Plex only) by comparing stored
         # thumb URLs against Plex's current thumb via one bulk fetch per library section.
+        thumb_reset_count = 0
         if not is_jellyfin_mode():
             try:
-                _reset_deselected_posters(plex_url, plex_token)
+                thumb_reset_count = _reset_deselected_posters(plex_url, plex_token) or 0
             except Exception as _te:
                 logger.debug(f"[ThumbCheck] Thumb deselection check failed (non-fatal): {_te}")
 
@@ -1539,6 +1600,10 @@ def task_overlay_sync(triggered_by: str = 'scheduled'):
             'total': total, 'applied': applied, 'failed': failed,
             'skipped': skipped, 'seasons_applied': season_applied,
             'seasons_failed': season_failed, 'seasons_skipped': season_skipped,
+            # Applied rows the change checks sent back for a re-render. Read by
+            # get_overlay_health: high counts on every sync point at a loop.
+            'quality_resets': quality_reset_count, 'content_resets': content_reset_count,
+            'thumb_resets': thumb_reset_count,
         }
         if failure_details:
             _sync_stats['failures'] = failure_details
@@ -1977,7 +2042,7 @@ def _recorded_upload_hashes() -> set:
 
 
 def _cleanup_overlay_upload_files(metadata_root: str, client, keep_hashes: set,
-                                  since: str = None) -> Dict:
+                                  since: str = None, planned: list = None) -> Dict:
     """
     Delete old overlay uploads from the Plex bundles of items cli_debrid overlaid.
 
@@ -1990,6 +2055,9 @@ def _cleanup_overlay_upload_files(metadata_root: str, client, keep_hashes: set,
     reports as NOT selected are deleted, and never one whose hash is selected on
     any item checked this run or is in keep_hashes (recorded overlay uploads,
     collection posters). An item whose poster list can't be fetched is skipped.
+
+    planned: a list for a dry run. Files are appended to it as
+    {'path', 'bytes', 'kind', 'key'} instead of being deleted.
 
     Returns {'deleted', 'errors', 'bytes', 'stale_keys', 'item_hashes', 'season_hashes'}.
     """
@@ -2074,21 +2142,88 @@ def _cleanup_overlay_upload_files(metadata_root: str, client, keep_hashes: set,
                     continue
                 try:
                     try:
-                        out['bytes'] += os.path.getsize(fp)
+                        size = os.path.getsize(fp)
                     except OSError:
-                        pass
-                    os.remove(fp)
+                        size = 0
+                    if planned is not None:
+                        planned.append({'path': fp, 'bytes': size, 'kind': 'overlay', 'key': rk})
+                    else:
+                        os.remove(fp)
+                        logger.debug(f"Plex poster cleanup: deleted '{fp}' (key {rk})")
+                    out['bytes'] += size
                     out['deleted'] += 1
-                    logger.debug(f"Plex poster cleanup: deleted '{fp}' (key {rk})")
                 except Exception as e:
                     logger.error(f"Plex poster cleanup: failed '{fp}': {e}")
                     out['errors'] += 1
     return out
 
 
-def task_overlay_cleanup(triggered_by: str = 'scheduled'):
+PREVIEW_FILE_LIMIT = 300
+
+
+def _record_poster_cleanup(res: Dict, run_started: str) -> None:
+    """Store what a (real) poster cleanup run found: selected upload hashes,
+    stale Plex keys, the cleanup window and the all-time counters."""
+    total_deleted, total_errors, total_bytes = res['deleted'], res['errors'], res['bytes']
+    _w = _get_db_connection()
+    try:
+        # Record the selected upload hash where none was stored yet
+        for _ms_id, _uhash in res['item_hashes'].items():
+            _w.execute(
+                """UPDATE media_overlay_state SET last_plex_upload_hash = ?
+                    WHERE media_item_id IN (SELECT id FROM media_items WHERE ms_item_id = ?)
+                      AND (last_plex_upload_hash IS NULL OR last_plex_upload_hash = '')""",
+                (_uhash, _ms_id))
+        for _sms_id, _suhash in res['season_hashes'].items():
+            _w.execute(
+                """UPDATE season_overlay_state SET last_plex_upload_hash = ?
+                    WHERE season_ms_item_id = ?
+                      AND (last_plex_upload_hash IS NULL OR last_plex_upload_hash = '')""",
+                (_suhash, _sms_id))
+        # Plex no longer knows these keys: clear them so the sync re-keys them
+        for _sk in res['stale_keys']:
+            _ids = [r[0] for r in _w.execute(
+                'SELECT id FROM media_items WHERE ms_item_id = ?', (_sk,))]
+            _w.execute('UPDATE media_items SET ms_item_id = NULL WHERE ms_item_id = ?', (_sk,))
+            if _ids:
+                _w.execute(
+                    f"UPDATE media_overlay_state SET status='pending', "
+                    f"reason='Stale ms_item_id cleared during poster cleanup', "
+                    f"updated_at=CURRENT_TIMESTAMP "
+                    f"WHERE media_item_id IN ({','.join('?' * len(_ids))})", _ids)
+        # Only move the window forward after a clean run, so items whose
+        # poster list couldn't be fetched are checked again next time.
+        if total_errors == 0:
+            _w.execute('''
+                INSERT INTO overlay_sync_state (key, value, updated_at)
+                VALUES ('last_poster_cleanup_at', ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value,
+                                               updated_at = CURRENT_TIMESTAMP
+            ''', (run_started,))
+        if total_deleted > 0:
+            for _k, _v in (('cleanup_total_posters', total_deleted),
+                           ('cleanup_total_bytes', total_bytes)):
+                _w.execute('''
+                    INSERT INTO overlay_sync_state (key, value, updated_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(key) DO UPDATE SET
+                        value = CAST(CAST(value AS INTEGER) + ? AS TEXT),
+                        updated_at = CURRENT_TIMESTAMP
+                ''', (_k, str(_v), _v))
+        _w.commit()
+    finally:
+        _w.close()
+
+
+def task_overlay_cleanup(triggered_by: str = 'scheduled', dry_run: bool = False):
     """
     Periodic overlay cleanup task — DB housekeeping + Plex poster pruning.
+
+    dry_run: report what a run would do, change nothing. DB housekeeping is
+    rolled back, no poster file is deleted, no activity row or counter is
+    written, and the cleanup window doesn't move. The result lists the poster
+    files a real run would delete ('files', paths relative to Plex's Metadata
+    folder, at most PREVIEW_FILE_LIMIT) with 'would_delete' / 'would_free_mb'.
 
     - Remove overlay state for items no longer in media_items table
     - Remove state records older than 90 days for skipped/failed items
@@ -2101,8 +2236,22 @@ def task_overlay_cleanup(triggered_by: str = 'scheduled'):
     if not overlays_active():
         return {'success': False, 'message': 'Overlay system is disabled (or Silo, which draws its own badges)'}
 
-    logger.info("Starting overlay cleanup task")
+    logger.info("Starting overlay cleanup preview (dry run)" if dry_run else "Starting overlay cleanup task")
     _cleanup_start = time.time()
+    planned = [] if dry_run else None
+    _verb = 'would delete' if dry_run else 'deleted'
+
+    def _drop(fp, kind, key):
+        """Delete a poster file, or list it in a dry run."""
+        try:
+            size = os.path.getsize(fp)
+        except OSError:
+            size = 0
+        if planned is not None:
+            planned.append({'path': fp, 'bytes': size, 'kind': kind, 'key': key})
+        else:
+            os.remove(fp)
+        return size
 
     try:
         conn = _get_db_connection()
@@ -2187,7 +2336,10 @@ def task_overlay_cleanup(triggered_by: str = 'scheduled'):
         ''')
         season_no_poster_reset = cursor.rowcount
 
-        conn.commit()
+        if dry_run:
+            conn.rollback()
+        else:
+            conn.commit()
         conn.close()
 
         total_removed = orphaned_count + old_records_count + season_orphaned_count + season_old_count + season_removed_count
@@ -2230,60 +2382,14 @@ def task_overlay_cleanup(triggered_by: str = 'scheduled'):
                     keep_hashes |= _collection_upload_hashes(plex_url, plex_token)
                     res = _cleanup_overlay_upload_files(
                         metadata_root, PlexClient(plex_url, plex_token, timeout=10),
-                        keep_hashes, since=_since)
+                        keep_hashes, since=_since, planned=planned)
                     total_deleted, total_errors, total_bytes = res['deleted'], res['errors'], res['bytes']
 
-                    _w = _get_db_connection()
-                    try:
-                        # Record the selected upload hash where none was stored yet
-                        for _ms_id, _uhash in res['item_hashes'].items():
-                            _w.execute(
-                                """UPDATE media_overlay_state SET last_plex_upload_hash = ?
-                                    WHERE media_item_id IN (SELECT id FROM media_items WHERE ms_item_id = ?)
-                                      AND (last_plex_upload_hash IS NULL OR last_plex_upload_hash = '')""",
-                                (_uhash, _ms_id))
-                        for _sms_id, _suhash in res['season_hashes'].items():
-                            _w.execute(
-                                """UPDATE season_overlay_state SET last_plex_upload_hash = ?
-                                    WHERE season_ms_item_id = ?
-                                      AND (last_plex_upload_hash IS NULL OR last_plex_upload_hash = '')""",
-                                (_suhash, _sms_id))
-                        # Plex no longer knows these keys: clear them so the sync re-keys them
-                        for _sk in res['stale_keys']:
-                            _ids = [r[0] for r in _w.execute(
-                                'SELECT id FROM media_items WHERE ms_item_id = ?', (_sk,))]
-                            _w.execute('UPDATE media_items SET ms_item_id = NULL WHERE ms_item_id = ?', (_sk,))
-                            if _ids:
-                                _w.execute(
-                                    f"UPDATE media_overlay_state SET status='pending', "
-                                    f"reason='Stale ms_item_id cleared during poster cleanup', "
-                                    f"updated_at=CURRENT_TIMESTAMP "
-                                    f"WHERE media_item_id IN ({','.join('?' * len(_ids))})", _ids)
-                        # Only move the window forward after a clean run, so items whose
-                        # poster list couldn't be fetched are checked again next time.
-                        if total_errors == 0:
-                            _w.execute('''
-                                INSERT INTO overlay_sync_state (key, value, updated_at)
-                                VALUES ('last_poster_cleanup_at', ?, CURRENT_TIMESTAMP)
-                                ON CONFLICT(key) DO UPDATE SET value = excluded.value,
-                                                               updated_at = CURRENT_TIMESTAMP
-                            ''', (_run_started,))
-                        if total_deleted > 0:
-                            for _k, _v in (('cleanup_total_posters', total_deleted),
-                                           ('cleanup_total_bytes', total_bytes)):
-                                _w.execute('''
-                                    INSERT INTO overlay_sync_state (key, value, updated_at)
-                                    VALUES (?, ?, CURRENT_TIMESTAMP)
-                                    ON CONFLICT(key) DO UPDATE SET
-                                        value = CAST(CAST(value AS INTEGER) + ? AS TEXT),
-                                        updated_at = CURRENT_TIMESTAMP
-                                ''', (_k, str(_v), _v))
-                        _w.commit()
-                    finally:
-                        _w.close()
+                    if not dry_run:
+                        _record_poster_cleanup(res, _run_started)
                     logger.info(
-                        f"Plex poster cleanup: {total_deleted} deleted, "
-                        f"{round(total_bytes / (1024 * 1024), 2)} MB reclaimed, {total_errors} error(s)")
+                        f"Plex poster cleanup: {total_deleted} {_verb}, "
+                        f"{round(total_bytes / (1024 * 1024), 2)} MB, {total_errors} error(s)")
                 except Exception as _pce:
                     logger.warning(f"Plex poster cleanup failed: {_pce}")
                     total_errors += 1
@@ -2292,24 +2398,25 @@ def task_overlay_cleanup(triggered_by: str = 'scheduled'):
         if total_deleted > 0:
             _activity_title += (f", {total_deleted} poster(s) deleted "
                                 f"({round(total_bytes / (1024 * 1024), 2)} MB)")
-        log_activity(
-            'cleanup',
-            triggered_by=triggered_by,
-            result='success' if total_errors == 0 else 'partial',
-            title=_activity_title,
-            stats={
-                'orphaned_removed':           orphaned_count,
-                'old_records_removed':        old_records_count,
-                'failed_items_reset':         reset_count,
-                'season_orphaned_removed':    season_orphaned_count,
-                'season_old_records_removed': season_old_count,
-                'season_failed_items_reset':  season_reset_count,
-                'posters_deleted':            total_deleted,
-                'mb_reclaimed':               round(total_bytes / (1024 * 1024), 2),
-                'poster_errors':              total_errors,
-            },
-            duration_seconds=int(time.time() - _cleanup_start),
-        )
+        if not dry_run:
+            log_activity(
+                'cleanup',
+                triggered_by=triggered_by,
+                result='success' if total_errors == 0 else 'partial',
+                title=_activity_title,
+                stats={
+                    'orphaned_removed':           orphaned_count,
+                    'old_records_removed':        old_records_count,
+                    'failed_items_reset':         reset_count,
+                    'season_orphaned_removed':    season_orphaned_count,
+                    'season_old_records_removed': season_old_count,
+                    'season_failed_items_reset':  season_reset_count,
+                    'posters_deleted':            total_deleted,
+                    'mb_reclaimed':               round(total_bytes / (1024 * 1024), 2),
+                    'poster_errors':              total_errors,
+                },
+                duration_seconds=int(time.time() - _cleanup_start),
+            )
 
         # ── Collection poster cleanup ──────────────────────────────────────────
         # Delete old non-selected uploaded posters from CLI Debrid managed collections.
@@ -2411,16 +2518,16 @@ def task_overlay_cleanup(triggered_by: str = 'scheduled'):
                                     )
                                     for _cf in _cglob.glob(_cpat):
                                         try:
-                                            os.remove(_cf)
+                                            _drop(_cf, 'collection', _rk)
                                             collection_posters_deleted += 1
-                                            logger.info(f"Collection poster cleanup: deleted '{_cf}' (rk={_rk})")
+                                            logger.info(f"Collection poster cleanup: {_verb} '{_cf}' (rk={_rk})")
                                         except Exception as _cfe:
                                             logger.warning(f"Collection poster cleanup: failed to delete '{_cf}': {_cfe}")
                             except Exception as _ce:
                                 logger.debug(f"Collection poster cleanup error for rk={_rk}: {_ce}")
 
                     if collection_posters_deleted > 0:
-                        logger.info(f"Collection poster cleanup: deleted {collection_posters_deleted} old poster(s)")
+                        logger.info(f"Collection poster cleanup: {_verb} {collection_posters_deleted} old poster(s)")
         except Exception as _cpe:
             logger.warning(f"Collection poster cleanup failed: {_cpe}")
 
@@ -2469,18 +2576,48 @@ def task_overlay_cleanup(triggered_by: str = 'scheduled'):
                                     )
                                     for _scf in _scglob.glob(_scpat):
                                         try:
-                                            os.remove(_scf)
+                                            _drop(_scf, 'smart_collection', _sc_rk)
                                             smart_posters_deleted += 1
-                                            logger.info(f"Smart collection poster cleanup: deleted '{_scf}' (rk={_sc_rk})")
+                                            logger.info(f"Smart collection poster cleanup: {_verb} '{_scf}' (rk={_sc_rk})")
                                         except Exception as _scfe:
                                             logger.warning(f"Smart collection poster cleanup: failed to delete '{_scf}': {_scfe}")
                             except Exception as _sce:
                                 logger.debug(f"Smart collection poster cleanup error for rk={_sc_rk}: {_sce}")
 
                     if smart_posters_deleted > 0:
-                        logger.info(f"Smart collection poster cleanup: deleted {smart_posters_deleted} old poster(s)")
+                        logger.info(f"Smart collection poster cleanup: {_verb} {smart_posters_deleted} old poster(s)")
         except Exception as _spe:
             logger.warning(f"Smart collection poster cleanup failed: {_spe}")
+
+        if dry_run:
+            _plex_data = get_setting('Overlay Settings', 'plex_data_path', default='').strip()
+            _meta = os.path.join(_plex_data, 'Metadata') if _plex_data else ''
+            for f in planned:
+                if f['kind'] != 'overlay':
+                    continue  # collection files were logged as they were found
+                logger.info(f"Overlay cleanup preview: would delete '{f['path']}' ({f['kind']}, key {f['key']})")
+            files = []
+            for f in planned[:PREVIEW_FILE_LIMIT]:
+                path = f['path']
+                if _meta and path.startswith(_meta + os.sep):
+                    path = path[len(_meta) + 1:]
+                files.append({**f, 'path': path})
+            return {
+                'success': True,
+                'dry_run': True,
+                'message': 'Cleanup preview — nothing was changed',
+                'plex_data_path': _plex_data,
+                'path_ok': bool(_plex_data) and check_plex_data_path(_plex_data)['ok'],
+                'records_would_remove': total_removed,
+                'records_would_reset': total_reset,
+                'would_delete': len(planned),
+                'would_free_mb': round(sum(f['bytes'] for f in planned) / (1024 * 1024), 2),
+                'by_kind': {k: sum(1 for f in planned if f['kind'] == k)
+                            for k in ('overlay', 'collection', 'smart_collection')},
+                'poster_errors': total_errors,
+                'files': files,
+                'files_truncated': len(planned) > PREVIEW_FILE_LIMIT,
+            }
 
         return {
             'success': True,
@@ -2499,6 +2636,8 @@ def task_overlay_cleanup(triggered_by: str = 'scheduled'):
 
     except Exception as e:
         logger.error(f"Overlay cleanup task failed: {e}", exc_info=True)
+        if dry_run:
+            return {'success': False, 'dry_run': True, 'message': str(e)}
         log_activity('cleanup', triggered_by=triggered_by, result='failed',
                      title=f"Overlay cleanup failed: {e}",
                      duration_seconds=int(time.time() - _cleanup_start))

@@ -137,3 +137,99 @@ class MetadataRootTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class CleanupPreviewTests(PosterCleanupTests):
+    """Dry run: same decisions as a real run, nothing deleted or written."""
+
+    def test_planned_list_instead_of_delete(self):
+        self.overlaid(1, '100')
+        old = self.file('a1', 'b' * 40)
+        planned = []
+        res = scheduled_tasks._cleanup_overlay_upload_files(
+            self.root, _FakePlex({'100': [_upload('a' * 40, True), _upload('b' * 40)]}),
+            set(), planned=planned)
+        self.assertEqual(res['deleted'], 1)
+        self.assertTrue(os.path.exists(old))
+        self.assertEqual([(p['path'], p['kind'], p['key']) for p in planned], [(old, 'overlay', '100')])
+
+    def _run_task(self, plex, dry_run):
+        from unittest.mock import patch
+        settings = {('Overlay Settings', 'plex_data_path'): self.tmp,
+                    ('Plex', 'token'): 'tok', ('Plex', 'url'): 'http://plex.invalid'}
+        with patch.object(scheduled_tasks, 'get_setting',
+                          lambda sec, key, default=None, **k: settings.get((sec, key), default)), \
+             patch.object(scheduled_tasks, 'overlays_active', lambda: True), \
+             patch.object(scheduled_tasks, 'is_jellyfin_mode', lambda: False), \
+             patch.object(scheduled_tasks, '_collection_upload_hashes', lambda *a: set()), \
+             patch('overlays.plex_client.PlexClient', lambda *a, **k: plex), \
+             patch.object(scheduled_tasks, 'log_activity') as log_activity:
+            res = scheduled_tasks.task_overlay_cleanup(triggered_by='manual', dry_run=dry_run)
+        return res, log_activity
+
+    def test_task_dry_run_changes_nothing(self):
+        self.overlaid(1, '100')
+        self.add_item(2, 'movie', 'tt2', '200')
+        self.execute("INSERT INTO media_overlay_state (media_item_id, status, retry_count, last_retry) "
+                     "VALUES (2, 'failed', 5, datetime('now', '-30 days'))")
+        old = self.file('a1', 'b' * 40)
+        plex = _FakePlex({'100': [_upload('a' * 40, True), _upload('b' * 40)]})
+
+        res, log_activity = self._run_task(plex, dry_run=True)
+        self.assertTrue(res['success'] and res['dry_run'])
+        self.assertTrue(res['path_ok'])
+        self.assertEqual(res['would_delete'], 1)
+        self.assertEqual(res['by_kind']['overlay'], 1)
+        self.assertEqual(res['files'][0]['path'],
+                         os.path.relpath(old, self.root))
+        self.assertEqual(res['records_would_reset'], 1)
+        self.assertTrue(os.path.exists(old))
+        log_activity.assert_not_called()
+        self.assertEqual(self.execute("SELECT status FROM media_overlay_state WHERE media_item_id = 2")[0][0],
+                         'failed')
+        state = dict(self.execute("SELECT key, value FROM overlay_sync_state"))
+        self.assertNotIn('last_poster_cleanup_at', state)
+        self.assertEqual(state.get('cleanup_total_posters', '0'), '0')
+        self.assertEqual(self.execute("SELECT last_plex_upload_hash FROM media_overlay_state "
+                                      "WHERE media_item_id = 1")[0][0] or '', '')
+
+        # The real run then does exactly what the preview listed
+        res, log_activity = self._run_task(plex, dry_run=False)
+        self.assertEqual(res['posters_deleted'], 1)
+        self.assertFalse(os.path.exists(old))
+        log_activity.assert_called_once()
+
+
+class OverlayHealthTests(OverlayDbTestBase):
+    def sync(self, **stats):
+        import json
+        self.execute("INSERT INTO overlay_activity (action_type, triggered_by, result, title, stats_json) "
+                     "VALUES ('overlay_sync', 'scheduled', 'success', 't', ?)", (json.dumps(stats),))
+
+    def test_empty(self):
+        h = scheduled_tasks.get_overlay_health()
+        self.assertIsNone(h['last'])
+        self.assertFalse(h['loop_suspected'])
+
+    def test_old_rows_without_counts_never_flag(self):
+        for _ in range(3):
+            self.sync(applied=170)
+        h = scheduled_tasks.get_overlay_health()
+        self.assertIsNone(h['last']['resets'])
+        self.assertFalse(h['loop_suspected'])
+
+    def test_loop_needs_every_recent_sync_high(self):
+        self.sync(applied=5, quality_resets=0, content_resets=5800, thumb_resets=90)
+        self.sync(applied=5, quality_resets=0, content_resets=5800, thumb_resets=90)
+        self.sync(applied=2, seasons_applied=1, quality_resets=0, content_resets=16, thumb_resets=0)
+        h = scheduled_tasks.get_overlay_health()
+        self.assertEqual(h['last']['resets'], 16)
+        self.assertEqual(h['last']['applied'], 3)
+        self.assertFalse(h['loop_suspected'])
+        self.sync(applied=170, quality_resets=2, content_resets=5800, thumb_resets=90)
+        self.sync(applied=170, quality_resets=2, content_resets=5800, thumb_resets=90)
+        self.sync(applied=170, quality_resets=2, content_resets=5800, thumb_resets=90)
+        h = scheduled_tasks.get_overlay_health()
+        self.assertTrue(h['loop_suspected'])
+        self.assertEqual(h['last']['resets'], 5892)
+        self.assertEqual(len(h['syncs']), scheduled_tasks.HEALTH_SYNCS)
