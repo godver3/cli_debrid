@@ -317,7 +317,10 @@ def get_verification_queue():
         formatted_files = []
         for file in unverified_files:
             if file['type'] == 'episode':
-                title = f"{file['title']} - S{file['season_number']:02d}E{file['episode_number']:02d}"
+                s_num, e_num = file['season_number'], file['episode_number']
+                se = (f"S{s_num:02d}E{e_num:02d}" if s_num is not None and e_num is not None
+                      else f"S{s_num if s_num is not None else '?'}E{e_num if e_num is not None else '?'}")
+                title = f"{file['title']} - {se}"
                 if file['episode_title']:
                     title += f" - {file['episode_title']}"
             else:
@@ -335,9 +338,10 @@ def get_verification_queue():
                 'type': file['type']
             })
         
-        # Get basic stats but override unverified count with actual displayed count
+        # Keep the real unverified count; the list itself is capped at 500. Replacing
+        # the count with the number of rows shown made a 10,000-file queue read 500.
         stats = get_verification_stats()
-        stats['unverified'] = len(formatted_files)  # Use actual count of displayed items
+        stats['shown'] = len(formatted_files)
         stats.pop('multiple_attempts', None)  # Hide the multiple attempts stat
         
         return jsonify({

@@ -15,15 +15,13 @@ def async_get_collected_from_plex(collection_type):
     try:
         if collection_type == 'all':
             if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
-                logging.info("Full library scan disabled for now")
-                #run_local_library_scan()
+                return {'success': False, 'error': 'All/Recent are not available in Symlinked/Local mode; use Backfill.'}
             else:
                 get_and_add_all_collected_from_plex()
             message = 'Successfully retrieved and added all collected items from Library'
         elif collection_type == 'recent':
             if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
-                logging.info("Recent library scan disabled for now")
-                #run_recent_local_library_scan()
+                return {'success': False, 'error': 'All/Recent are not available in Symlinked/Local mode; use Backfill.'}
             else:
                 get_and_add_recent_collected_from_plex()
             message = 'Successfully retrieved and added recent collected items from Library'
@@ -232,6 +230,7 @@ def direct_plex_scan():
         return jsonify({'success': False, 'error': str(e)})
 
 @debug_bp.route('/api/plex_scan_progress/<scan_id>')
+@admin_required
 def plex_scan_progress(scan_id):
     """SSE endpoint for tracking Plex scan progress."""
     def generate():
@@ -301,6 +300,7 @@ def plex_scan_progress(scan_id):
     return Response(stream_with_context(generate()), mimetype='text/event-stream')
 
 @debug_bp.route('/api/task_status/<task_id>')
+@admin_required
 def task_status(task_id):
     from routes.extensions import task_queue
 

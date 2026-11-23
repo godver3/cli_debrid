@@ -5,8 +5,11 @@
                 <div class="form-group">
                     <label for="collection_type">Collection Type:</label>
                     <select id="collection_type" name="collection_type" required>
+                        {# All/Recent do nothing in Symlinked/Local mode (the queue adds files as it symlinks them). #}
+                        {% if file_management_mode != 'Symlinked/Local' %}
                         <option value="all">All</option>
                         <option value="recent">Recent</option>
+                        {% endif %}
                         <option value="backfill">Backfill (Update file sizes for already-Collected items)</option>
                     </select>
                 </div>
@@ -65,7 +68,7 @@
         </div>
 <div data-cat="library" class="debug_item">
             <h3>Fix Missing IMDb ID</h3>
-            <p class="description">Add or update the IMDb ID for a media item. Search by Item ID (single row) or TMDB ID (updates all matching rows at once).</p>
+            <p class="description">Add or update the IMDb ID for a media item. Search by Item ID (a movie, or every episode of that episode's show) or TMDB ID (all rows with that TMDB ID).</p>
             <form id="fix-imdb-form" onsubmit="return false;">
                 <div class="form-group">
                     <label for="fix_imdb_search_by">Search by:</label>
@@ -237,13 +240,13 @@
         </div>
 <div data-cat="symlinks" class="debug_item">
             <h3>Duplicate Symlink Targets</h3>
-            <p class="description">Scans TV Shows symlinks for episodes pointing at the same underlying file - usually means a season pack was mismatched and multiple "different" episodes are actually playing identical content. Read-only scan; rescraping fully deletes the affected episode(s) - symlink, source file/debrid download, media server entry - before moving them back to Wanted.</p>
+            <p class="description">Scans every collected episode's symlink (all folders) for episodes pointing at the same underlying file - usually means a season pack was mismatched and multiple "different" episodes are actually playing identical content. Read-only scan; rescraping fully deletes the affected episode(s) - symlink, source file/debrid download, media server entry - before moving them back to Wanted.</p>
             <button type="button" id="scan-duplicate-symlinks-btn">Scan for Duplicates</button>
             <div id="duplicate-symlinks-results" class="results-area" style="margin-top: 15px;"></div>
         </div>
 <div data-cat="symlinks" class="debug_item">
             <h3>Resync Symlinks with New Settings</h3>
-            <p class="description">Resyncs symlinks for collected items. If old/new original paths are provided, it first updates the stored original file paths in the database for matching items. Then, it regenerates symlinks for relevant collected items based on current symlink settings and these (potentially updated) original paths. If no paths are provided, it attempts to resync all collected items.</p>
+            <p class="description">Rebuilds the symlink for every collected item from your current symlink settings (folder layout, naming, base paths). Run it after changing those settings or after Modify Symlink Base Paths. It runs in the background; progress is in the logs.</p>
             <form id="resync-symlinks-form" action="{{ url_for('debug.resync_symlinks_route') }}" method="POST">
                 <button type="submit">Resync Symlinks</button>
                 <div id="resync-symlinks-results" class="results-area" style="margin-top: 15px;"></div>
@@ -251,7 +254,7 @@
         </div>
 <div data-cat="symlinks" class="debug_item">
             <h3>Modify Symlink Base Paths</h3>
-            <p class="description">Update the base paths for symlinks and original file locations in the database. Use carefully!</p>
+            <p class="description">Update the base paths for symlinks and original file locations in the database. Only the database changes: run Resync Symlinks afterwards to rebuild the links on disk. Use carefully!</p>
             <form id="modify-symlink-paths-form">
                 <div class="form-group form-group-horizontal">
                     <label for="current_symlink_base">Current Symlink Base:</label>

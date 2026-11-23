@@ -8,7 +8,7 @@ import os
 from flask import Blueprint, jsonify, redirect, render_template, request, url_for
 
 from routes.models import admin_required
-from utilities.settings import get_all_settings
+from utilities.settings import get_all_settings, get_setting
 
 tool_pages_bp = Blueprint('tool_pages', __name__)
 
@@ -25,6 +25,7 @@ def _card_context():
         'other_cache_files': cache_data.get('other', []),
         'environment_mode': os.environ.get('CLI_DEBRID_ENVIRONMENT_MODE', 'full'),
         'nas_paths': get_nas_paths(),
+        'file_management_mode': get_setting('File Management', 'file_collection_management', 'Plex'),
     }
 
 

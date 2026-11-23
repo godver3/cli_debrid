@@ -134,55 +134,33 @@ def sync_plex_labels():
 @debug_bp.route('/get_available_tasks', methods=['GET'])
 @admin_required
 def get_available_tasks():
-    # Define the task list with display names
-    task_map = [
-        {'id': 'wanted', 'display_name': 'Wanted'},
-        {'id': 'scraping', 'display_name': 'Scraping'},
-        {'id': 'adding', 'display_name': 'Adding'},
-        {'id': 'checking', 'display_name': 'Checking'},
-        {'id': 'sleeping', 'display_name': 'Sleeping'},
-        {'id': 'unreleased', 'display_name': 'Unreleased'},
-        {'id': 'blacklisted', 'display_name': 'Blacklisted'},
-        {'id': 'pending_uncached', 'display_name': 'Pending Uncached'},
-        {'id': 'upgrading', 'display_name': 'Upgrading'},
-        {'id': 'task_plex_full_scan', 'display_name': 'Plex Full Scan'},
-        {'id': 'task_sync_plex_labels', 'display_name': 'Sync Plex Labels'},
-        {'id': 'task_regenerate_labels_full', 'display_name': 'Rebuild Plex Labels (All Items)'},
-        {'id': 'task_regenerate_labels_incremental', 'display_name': 'Rebuild Plex Labels (Never Synced + Last 7 Days)'},
-        {'id': 'task_refresh_release_dates', 'display_name': 'Refresh Release Dates'},
-        {'id': 'task_purge_not_wanted_magnets_file', 'display_name': 'Purge Not Wanted Magnets File'},
-        {'id': 'task_purge_not_wanted_urls_file', 'display_name': 'Purge Not Wanted URLs File'},
-        {'id': 'task_purge_not_wanted_nzbs_files', 'display_name': 'Purge Not Wanted NZBs (segments + GUIDs)'},
-        {'id': 'task_purge_all_not_wanted_files', 'display_name': 'Purge All Not Wanted Lists (magnets, URLs, NZBs)'},
-        {'id': 'task_reset_trakt_auth', 'display_name': 'Reset Trakt Authorization (clears tokens, keeps client ID/secret)'},
-        {'id': 'task_generate_airtime_report', 'display_name': 'Generate Airtime Report'},
-        {'id': 'task_check_service_connectivity', 'display_name': 'Check Service Connectivity'},
-        {'id': 'task_send_notifications', 'display_name': 'Send Notifications'},
-        {'id': 'task_check_trakt_early_releases', 'display_name': 'Check Trakt Early Releases'},
-        {'id': 'task_reconcile_queues', 'display_name': 'Reconcile Queues'},
-        {'id': 'task_check_plex_files', 'display_name': 'Check Plex Files'},
-        {'id': 'task_update_show_ids', 'display_name': 'Update Show IDs'},
-        {'id': 'task_update_show_titles', 'display_name': 'Update Show Titles'},
-        {'id': 'task_get_plex_watch_history', 'display_name': 'Get Plex Watch History'},
-        {'id': 'task_check_database_health', 'display_name': 'Check Database Health'},
-        {'id': 'task_run_library_maintenance', 'display_name': 'Run Library Maintenance'},
-        {'id': 'task_update_movie_ids', 'display_name': 'Update Movie IDs'},
-        {'id': 'task_update_movie_titles', 'display_name': 'Update Movie Titles'},
-        {'id': 'task_verify_symlinked_files', 'display_name': 'Verify Symlinked Files'},
-        {'id': 'task_verify_plex_removals', 'display_name': 'Verify Plex Removals'},
-        {'id': 'task_process_pending_rclone_paths', 'display_name': 'Process Pending Rclone Paths'},
-        {'id': 'task_update_tv_show_status', 'display_name': 'Update TV Show Status'},
-        {'id': 'task_heartbeat', 'display_name': 'Heartbeat'},
-        {'id': 'final_check_queue', 'display_name': 'Final Check Queue'},
-        {'id': 'task_analyze_library', 'display_name': 'Analyze Library'},
-        {'id': 'task_overlay_sync', 'display_name': 'Overlay Sync'},
-        {'id': 'task_overlay_cleanup', 'display_name': 'Overlay State Maintenance (cleanup orphaned DB records)'},
-        {'id': 'task_backfill_nzb_torrent_ids', 'display_name': 'Backfill NZB Torrent IDs'},
-    ]
-    
+    # Built from the task registry, so new tasks show up and removed ones go away.
+    # The old hand-written list had drifted: it offered two tasks that no longer
+    # exist and missed about 25 real ones.
+    from queues.runner.task_registry import SPECS, QUEUE
+    runner = get_program_runner()
+
+    def _runnable(name):
+        if runner is None:
+            return True
+        if name in getattr(runner, 'queue_processing_map', {}):
+            return True
+        return name.startswith('task_') and hasattr(runner, name)
+
+    task_map = []
+    for spec in SPECS.values():
+        if not _runnable(spec.name):
+            continue
+        label = f"Queue: {spec.label}" if spec.kind == QUEUE else spec.label
+        task_map.append({'id': spec.name, 'display_name': label})
+    # Runnable by hand but not scheduled, so not in the registry.
+    for name, label in (('task_generate_airtime_report', 'Generate airtime report'),):
+        if name not in SPECS and _runnable(name):
+            task_map.append({'id': name, 'display_name': label})
+
     # Get content sources from program runner for content source tasks
-    program_runner = ProgramRunner()
-    content_sources = program_runner.get_content_sources()
+    program_runner = runner or ProgramRunner()
+    content_sources = program_runner.get_content_sources() or {}
     
     # Add content source tasks with display names from config
     for source_name, source_config in content_sources.items():

@@ -504,8 +504,12 @@ def truncate_path_components(
     return sanitized
 
 
-def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup: bool = False) -> str:
-    """Get the full path for the symlink based on settings and metadata."""
+def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup: bool = False,
+                     symlink_root: Optional[str] = None) -> str:
+    """Get the full path for the symlink based on settings and metadata.
+
+    symlink_root replaces the configured symlinked_files_path for this call
+    (Tools > Rclone Mount to Symlinks with a different base path)."""
     import json
     try:
         # --- BEGIN Enhanced Logging ---
@@ -522,7 +526,7 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
         logging.debug(f"Input item: type={item.get('type')}, genres={item.get('genres')}, content_source={item.get('content_source')}")
 
         # Get the base symlink path from general File Management settings
-        symlinked_path_base = get_setting('File Management', 'symlinked_files_path')
+        symlinked_path_base = symlink_root or get_setting('File Management', 'symlinked_files_path')
         
         # Check for content source specific custom subfolder
         final_symlinked_path_root = symlinked_path_base # Start with the base path

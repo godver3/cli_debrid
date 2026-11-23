@@ -165,39 +165,6 @@
             });
         }
 
-        function checkProgramStatus() {
-            fetch('/program_operation/api/program_status')
-                .then(response => response.json())
-                .then(data => {
-                    // DISABLED: Allow debug functions while program is running for testing
-                    const isRunning = false; // Hardcoded to false to allow testing
-                    // const isRunning = data.status === 'Running';
-                    const buttons = document.querySelectorAll('button[type="submit"]');
-                    buttons.forEach(button => {
-                        button.disabled = isRunning;
-                        button.style.opacity = isRunning ? '0.5' : '1';
-                        button.style.cursor = isRunning ? 'not-allowed' : 'pointer';
-                    });
-
-                    const runningMessage = document.getElementById('programRunningMessage');
-                    if (isRunning) {
-                        if (!runningMessage) {
-                            const message = document.createElement('div');
-                            message.id = 'programRunningMessage';
-                            message.textContent = 'Program is running. Debug functions are disabled.';
-                            message.style.color = 'red';
-                            message.style.marginBottom = '10px';
-                            document.querySelector('.debug-container').prepend(message);
-                        }
-                    } else if (runningMessage) {
-                        runningMessage.remove();
-                    }
-                })
-                .catch(error => console.error('Error checking program status:', error));
-        }
-
-        checkProgramStatus();
-        setInterval(checkProgramStatus, 5000);
 
         const queueSelect = document.getElementById('queue_select');
         const queueItemsContainer = document.getElementById('queue_items_container');
@@ -212,7 +179,6 @@
         // Bulk Queue Actions: only on the page that has the card (Tools > Queues & tasks).
         if (queueSelect && actionSelect && selectAllBtn && unselectAllBtn) {
         queueSelect.addEventListener('change', function() {
-            console.log('Queue selected:', this.value);
             fetchQueueItems(this.value);
         });
 
@@ -236,24 +202,22 @@
         }
 
         function fetchQueueItems(queue) {
-            console.log('Fetching queue items for:', queue);
             queueItemsContainer.style.display = 'block';
             queueItems.innerHTML = 'Loading...';
 
-            fetch(`/debug/api/bulk_queue_contents`)
+            fetch(`/debug/api/bulk_queue_contents?queue=${encodeURIComponent(queue)}`)
                 .then(response => response.json())
                 .then(data => {
-                    console.log('Received data:', data);
                     const items = data[queue] || [];
-                    console.log('Items for queue:', items);
-                    
+                    const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
                     if (items.length === 0) {
                         queueItems.innerHTML = '<p>No items in this queue.</p>';
                     } else {
                         queueItems.innerHTML = items.map(item => `
                             <div class="queue-item">
-                                <input type="checkbox" name="selected_items" value="${item.id}" id="item_${item.id}">
-                                <label for="item_${item.id}">${item.title} (ID: ${item.id})</label>
+                                <input type="checkbox" name="selected_items" value="${esc(item.id)}" id="item_${esc(item.id)}">
+                                <label for="item_${esc(item.id)}">${esc(item.title)} (ID: ${esc(item.id)})</label>
                             </div>
                         `).join('');
                         addCheckboxListeners();
@@ -407,7 +371,6 @@
         }
 
         // Initial fetch of queue items
-        console.log('Initial queue fetch');
         fetchQueueItems(queueSelect.value);
         } // end Bulk Queue Actions
 
@@ -417,10 +380,7 @@
             
             // Get the rate-limit-info element
             const rateLimitInfoElement = document.getElementById('rate-limit-info');
-            if (!rateLimitInfoElement) {
-                console.error('rate-limit-info element not found!');
-                return;
-            }
+            if (!rateLimitInfoElement) return;
             
             // base.html has its own #rate-limit-info; this card's parts are only on Diagnostics.
             const rlLoading = document.getElementById('rate-limit-loading');
@@ -475,21 +435,6 @@
                 });
         }
 
-        // Ensure rate limit info is displayed on page load
-        document.addEventListener('DOMContentLoaded', function() {
-            console.log('DOM fully loaded, checking rate limit info');
-            
-            // Check if rate limit info is displayed after a short delay
-            setTimeout(function() {
-                const rateLimitInfo = document.getElementById('rate-limit-info');
-                const rlLoading = document.getElementById('rate-limit-loading');
-                if (rateLimitInfo && rlLoading && rlLoading.style.display === 'block') {
-                    console.log('Rate limit info still loading, trying again');
-                    fetchRateLimitInfo();
-                }
-            }, 2000);
-        });
-
         // Fetch rate limit info on page load
         fetchRateLimitInfo();
 
@@ -510,8 +455,6 @@
                     this.disabled = false;
                 }, 1000);
             });
-        } else {
-            console.error('Refresh rate limits button not found!');
         }
 
         // Define pollTaskStatus function once
@@ -523,7 +466,10 @@
                         setTimeout(() => pollTaskStatus(taskId), 2000);  // Poll every 2 seconds
                     } else {
                         Loading.hide();
-                        if (data.status === 'SUCCESS') {
+                        // The task queue reports SUCCESS whenever the function returned, even
+                        // when it returned {success: false, error}; show those as errors.
+                        const failedResult = data.result && typeof data.result === 'object' && data.result.success === false;
+                        if (data.status === 'SUCCESS' && !failedResult) {
                             // Handle data.result appropriately
                             let message = 'Task completed successfully';
                             if (typeof data.result === 'string') {
@@ -540,7 +486,7 @@
                         } else {
                             showPopup({
                                 type: POPUP_TYPES.ERROR,
-                                message: data.result || 'Task failed',
+                                message: (failedResult ? (data.result.error || data.result.message) : data.result) || 'Task failed',
                                 title: 'Error'
                             });
                         }
@@ -660,8 +606,8 @@
             });
         });
 
-        // Fetch available tasks and populate the select element
-        fetch('/debug/get_available_tasks')
+        // Fetch available tasks and populate the select element (Tools page only)
+        if (document.getElementById('task_select')) fetch('/debug/get_available_tasks')
             .then(response => response.json())
             .then(data => {
                 const taskSelect = document.getElementById('task_select');
@@ -765,7 +711,10 @@
                                 Loading.hide();
                                 if (d.success) showPopup({ type: POPUP_TYPES.SUCCESS, title: 'Success', message: d.message });
                                 else showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: d.error || 'Failed' });
-                            }).catch(() => { Loading.hide(); });
+                            }).catch(err => {
+                                Loading.hide();
+                                showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: err.message || 'Failed to start the sync' });
+                            });
                     }
                 });
                 return;
@@ -808,7 +757,7 @@
                             // }
                             // --- END EDIT ---
                         } else {
-                            throw new Error(data.error || 'Failed to run task');
+                            throw new Error(data.error || data.message || 'Failed to run task');
                         }
                     })
                     .catch(error => {
@@ -958,38 +907,15 @@
                     const data = JSON.parse(event.data);
                     let progressHtml = `<p>Status: ${data.status || 'N/A'}</p><p>Message: ${data.message || 'N/A'}</p>`;
 
-                    // Display specific counts if available
-                    progressHtml += `<p>Files Scanned: ${data.total_files_scanned || 0}</p>`;
-                    progressHtml += `<p>Media Files Found: ${data.media_files_found || 0}</p>`;
-                    progressHtml += `<p>Items Processed: ${data.items_processed || 0}</p>`;
-                    progressHtml += `<p>DB Entries Added: ${data.items_added_to_db || 0}</p>`;
-                    progressHtml += `<p>Symlinks Created: ${data.symlinks_created || 0}</p>`;
-                    progressHtml += `<p>Skipped (Duplicates): ${data.skipped_duplicates || 0}</p>`;
-
-                    let errorsHtml = '';
-                    if (data.parser_errors > 0) errorsHtml += `<li>Parser Errors: ${data.parser_errors}</li>`;
-                    if (data.metadata_errors > 0) errorsHtml += `<li>Metadata Errors: ${data.metadata_errors}</li>`;
-                    if (data.db_errors > 0) errorsHtml += `<li>Database Errors: ${data.db_errors}</li>`;
-                    if (data.symlink_errors > 0) errorsHtml += `<li>Symlink Errors: ${data.symlink_errors}</li>`;
-                    if (data.errors && data.errors.length > 0) {
-                         errorsHtml += `<li>General Errors: ${data.errors.length}</li>`;
-                         // Optionally list first few general errors
-                         // data.errors.slice(0, 3).forEach(err => { errorsHtml += `<li style="margin-left: 15px;">- ${err}</li>`; });
+                    // Counters sent by /debug/convert_to_symlinks (they used to be read under
+                    // the Rclone scan's names, so most of them stayed at 0).
+                    if (data.total_items !== undefined) {
+                        progressHtml += `<p>Items: ${data.processed_items || 0} / ${data.total_items}</p>`;
+                        progressHtml += `<p>Symlinks Created: ${data.symlinks_created || 0}</p>`;
+                        progressHtml += `<p>Moved to Wanted (source missing): ${data.items_to_wanted || 0}</p>`;
+                        progressHtml += `<p>Removed (another copy exists): ${data.items_deleted || 0}</p>`;
+                        progressHtml += `<p>Skipped (already symlinked): ${data.items_skipped || 0}</p>`;
                     }
-
-                    if (errorsHtml) {
-                        progressHtml += `<p class="error">Errors Encountered:</p><ul>${errorsHtml}</ul>`;
-                    }
-
-                    // Display Dry Run Preview
-                    if (data.preview && data.preview.length > 0) {
-                        progressHtml += '<h4>Dry Run Preview (First 5):</h4><ul>';
-                        data.preview.forEach(item => {
-                            progressHtml += `<li>${item.original_file} -> ${item.symlink_path || 'Error'} (Title: ${item.fetched_title || 'N/A'})</li>`;
-                        });
-                        progressHtml += '</ul>';
-                    }
-
 
                     targetDiv.innerHTML = progressHtml;
 
@@ -1238,7 +1164,7 @@
                             </div>
                             <div class="stats-item">
                                 <span class="stats-label">Unverified:</span>
-                                <span class="stats-value">${stats.unverified}</span>
+                                <span class="stats-value">${stats.unverified}${stats.shown !== undefined && stats.shown < stats.unverified ? ` (showing first ${stats.shown})` : ''}</span>
                             </div>
                         `;
                         
@@ -1314,7 +1240,7 @@
                     showPopup({
                         type: POPUP_TYPES.ERROR,
                         title: 'Error',
-                        message: `Error starting verification scan: ${data.error}`,
+                        message: `Error starting verification scan: ${data.error || data.message || 'unknown error'}`,
                         autoClose: 5000
                     });
                 }
@@ -1587,38 +1513,15 @@
                     const data = JSON.parse(event.data);
                     let progressHtml = `<p>Status: ${data.status || 'N/A'}</p><p>Message: ${data.message || 'N/A'}</p>`;
 
-                    // Display specific counts if available
-                    progressHtml += `<p>Files Scanned: ${data.total_files_scanned || 0}</p>`;
-                    progressHtml += `<p>Media Files Found: ${data.media_files_found || 0}</p>`;
-                    progressHtml += `<p>Items Processed: ${data.items_processed || 0}</p>`;
-                    progressHtml += `<p>DB Entries Added: ${data.items_added_to_db || 0}</p>`;
-                    progressHtml += `<p>Symlinks Created: ${data.symlinks_created || 0}</p>`;
-                    progressHtml += `<p>Skipped (Duplicates): ${data.skipped_duplicates || 0}</p>`;
-
-                    let errorsHtml = '';
-                    if (data.parser_errors > 0) errorsHtml += `<li>Parser Errors: ${data.parser_errors}</li>`;
-                    if (data.metadata_errors > 0) errorsHtml += `<li>Metadata Errors: ${data.metadata_errors}</li>`;
-                    if (data.db_errors > 0) errorsHtml += `<li>Database Errors: ${data.db_errors}</li>`;
-                    if (data.symlink_errors > 0) errorsHtml += `<li>Symlink Errors: ${data.symlink_errors}</li>`;
-                    if (data.errors && data.errors.length > 0) {
-                         errorsHtml += `<li>General Errors: ${data.errors.length}</li>`;
-                         // Optionally list first few general errors
-                         // data.errors.slice(0, 3).forEach(err => { errorsHtml += `<li style="margin-left: 15px;">- ${err}</li>`; });
+                    // Counters sent by /debug/convert_to_symlinks (they used to be read under
+                    // the Rclone scan's names, so most of them stayed at 0).
+                    if (data.total_items !== undefined) {
+                        progressHtml += `<p>Items: ${data.processed_items || 0} / ${data.total_items}</p>`;
+                        progressHtml += `<p>Symlinks Created: ${data.symlinks_created || 0}</p>`;
+                        progressHtml += `<p>Moved to Wanted (source missing): ${data.items_to_wanted || 0}</p>`;
+                        progressHtml += `<p>Removed (another copy exists): ${data.items_deleted || 0}</p>`;
+                        progressHtml += `<p>Skipped (already symlinked): ${data.items_skipped || 0}</p>`;
                     }
-
-                    if (errorsHtml) {
-                        progressHtml += `<p class="error">Errors Encountered:</p><ul>${errorsHtml}</ul>`;
-                    }
-
-                    // Display Dry Run Preview
-                    if (data.preview && data.preview.length > 0) {
-                        progressHtml += '<h4>Dry Run Preview (First 5):</h4><ul>';
-                        data.preview.forEach(item => {
-                            progressHtml += `<li>${item.original_file} -> ${item.symlink_path || 'Error'} (Title: ${item.fetched_title || 'N/A'})</li>`;
-                        });
-                        progressHtml += '</ul>';
-                    }
-
 
                     targetDiv.innerHTML = progressHtml;
 
@@ -2465,26 +2368,7 @@
         }
         // --- End Handler for Delete Battery DB Form ---
 
-        // --- Resync Symlinks with New Settings Logic ---
-        const resyncSymlinksForm = document.getElementById('resync-symlinks-form');
-        if (resyncSymlinksForm) {
-            resyncSymlinksForm.addEventListener('submit', function(e) {
-                e.preventDefault();
-                const oldOriginalPath = this.elements['old_original_path'].value;
-                const newOriginalPath = this.elements['new_original_path'].value;
-
-                showPopup({
-                    type: POPUP_TYPES.CONFIRM,
-                    message: `Are you sure you want to resync symlinks with new settings? This will update the stored original file paths in the database for matching items. Then, it regenerates symlinks for relevant collected items based on current symlink settings and these (potentially updated) original paths. If no paths are provided, it attempts to resync all collected items.`,
-                    title: 'Confirm Resync',
-                    onConfirm: () => {
-                        Loading.show();
-                        submitForm(this.action, 'POST', new FormData(this));
-                    }
-                });
-            });
-        }
-        // --- End Resync Symlinks with New Settings Logic ---
+        // Resync Symlinks goes through the generic form handler (genericFormIds).
 
         // --- Remove Duplicate Database Items Logic ---
         const removeDuplicatesForm = document.getElementById('remove-duplicates-form');
@@ -3265,6 +3149,7 @@
                     html += `<div><strong>Title:</strong> ${data.title}</div>`;
                     html += `<div><strong>IMDb ID Before:</strong> ${data.imdb_id_before || 'None'}</div>`;
                     html += `<div><strong>IMDb ID After:</strong> ${data.imdb_id_after}</div>`;
+                    if (data.updated_count > 1) html += `<div><strong>Rows updated:</strong> ${data.updated_count} (every episode of the show)</div>`;
                 }
                 html += `</div>`;
                 resultsDiv.innerHTML = html;

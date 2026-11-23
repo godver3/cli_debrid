@@ -182,16 +182,22 @@ def delete_database():
         return jsonify({'success': False, 'error': str(e)})
 
 @debug_bp.route('/api/bulk_queue_contents', methods=['GET'])
+@admin_required
 def get_queue_contents():
     from database import get_db_connection
+    queues = ('Adding', 'Blacklisted', 'Checking', 'Scraping', 'Sleeping', 'Unreleased', 'Wanted', 'Pending Uncached', 'Upgrading')
+    # ?queue= returns just that queue; the card used to download all nine on every switch.
+    wanted = request.args.get('queue')
+    selected = (wanted,) if wanted in queues else queues
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
-        cursor.execute('''
+        cursor.execute(f'''
             SELECT id, title, state, type, season_number, episode_number, year
             FROM media_items
-            WHERE state IN ('Adding', 'Blacklisted', 'Checking', 'Scraping', 'Sleeping', 'Unreleased', 'Wanted', 'Pending Uncached', 'Upgrading')
-        ''')
+            WHERE state IN ({', '.join('?' for _ in selected)})
+            ORDER BY title, season_number, episode_number
+        ''', selected)
         items = cursor.fetchall()
 
         queue_contents = {

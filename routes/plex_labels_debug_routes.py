@@ -4,6 +4,9 @@ API routes for Plex Labels debug utilities
 
 import logging
 from flask import Blueprint, request, jsonify, Response, stream_with_context
+from routes.models import admin_required
+from database.core import get_db_connection
+import re
 from utilities.plex_label_manager import (
     get_labels_for_item,
     remove_label_from_item,
@@ -14,16 +17,13 @@ from utilities.plex_label_manager import (
 )
 from utilities.settings import get_all_settings
 import sqlite3
-import os
 import json
 import time
 
 # Initialize blueprint
 plex_labels_debug_bp = Blueprint('plex_labels_debug', __name__)
 
-# Database path
-DB_CONTENT_DIR = os.environ.get('USER_DB_CONTENT', '/user/db_content')
-DB_PATH = os.path.join(DB_CONTENT_DIR, 'media_items.db')
+_IMDB_ID_RE = re.compile(r'^tt\d+$')
 
 # Built-in labels that are always active (created by core app features)
 # These should NEVER be considered orphaned regardless of content source state
@@ -31,6 +31,7 @@ BUILTIN_LABELS = {'cd-library', 'cd-discover'}
 
 
 @plex_labels_debug_bp.route('/debug/plex-labels/search')
+@admin_required
 def search_by_label():
     """Search for items by label"""
     try:
@@ -41,8 +42,7 @@ def search_by_label():
         # Sanitize the label for search
         sanitized_label = sanitize_label(label)
 
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
+        conn = get_db_connection()
         cursor = conn.cursor()
 
         # Search for items with this label using SQLite JSON functions
@@ -72,6 +72,7 @@ def search_by_label():
 
 
 @plex_labels_debug_bp.route('/debug/plex-labels/bulk-apply-preview')
+@admin_required
 def bulk_apply_preview():
     """Preview bulk label application"""
     try:
@@ -94,7 +95,7 @@ def bulk_apply_preview():
 
         # Count items from this source in Collected state —
         # primary source OR listed in content_sources JSON
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_db_connection()
         cursor = conn.cursor()
 
         cursor.execute('''
@@ -148,6 +149,7 @@ def bulk_apply_preview():
 
 
 @plex_labels_debug_bp.route('/debug/plex-labels/bulk-apply', methods=['POST'])
+@admin_required
 def bulk_apply():
     """Execute bulk label application"""
     conn = None
@@ -169,8 +171,7 @@ def bulk_apply():
 
         # Get items from this source in Collected state —
         # primary source OR listed in content_sources JSON
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
+        conn = get_db_connection()
         cursor = conn.cursor()
 
         cursor.execute('''
@@ -246,6 +247,7 @@ def bulk_apply():
 
 
 @plex_labels_debug_bp.route('/debug/plex-labels/bulk-apply-stream', methods=['POST'])
+@admin_required
 def bulk_apply_stream():
     """Execute bulk label application with streaming progress updates"""
     def generate():
@@ -264,8 +266,7 @@ def bulk_apply_stream():
                 return
 
             # Get items from this source — primary source OR listed in content_sources JSON
-            conn = sqlite3.connect(DB_PATH)
-            conn.row_factory = sqlite3.Row
+            conn = get_db_connection()
             cursor = conn.cursor()
 
             cursor.execute('''
@@ -377,6 +378,7 @@ def bulk_apply_stream():
 
 
 @plex_labels_debug_bp.route('/debug/plex-labels/bulk-remove-stream', methods=['POST'])
+@admin_required
 def bulk_remove_stream():
     """Execute bulk label removal with streaming progress"""
     def generate():
@@ -396,8 +398,7 @@ def bulk_remove_stream():
             sanitized_label = sanitize_label(label)
 
             # Get items with this label using DB-level json_each filtering
-            conn = sqlite3.connect(DB_PATH)
-            conn.row_factory = sqlite3.Row
+            conn = get_db_connection()
             cursor = conn.cursor()
 
             cursor.execute('''
@@ -484,6 +485,7 @@ def bulk_remove_stream():
 
 
 @plex_labels_debug_bp.route('/debug/plex-labels/sync-all-stream', methods=['POST'])
+@admin_required
 def sync_all_stream():
     """Sync all labels from content sources with streaming progress"""
     def generate():
@@ -492,8 +494,7 @@ def sync_all_stream():
         try:
             from utilities.plex_label_manager import sync_labels_to_plex_for_item
 
-            conn = sqlite3.connect(DB_PATH)
-            conn.row_factory = sqlite3.Row
+            conn = get_db_connection()
             cursor = conn.cursor()
 
             # Get movies directly, and one representative episode per show (using MIN(id))
@@ -589,6 +590,7 @@ def sync_all_stream():
 
 
 @plex_labels_debug_bp.route('/debug/plex-labels/cleanup-orphaned-stream', methods=['POST'])
+@admin_required
 def cleanup_orphaned_stream():
     """Cleanup orphaned labels and items from unconfigured sources with streaming progress"""
     def generate():
@@ -608,8 +610,7 @@ def cleanup_orphaned_stream():
                     active_sources.add(source_id.lower())
 
             # PHASE 1: Clean orphaned labels
-            conn = sqlite3.connect(DB_PATH)
-            conn.row_factory = sqlite3.Row
+            conn = get_db_connection()
             cursor = conn.cursor()
 
             cursor.execute('SELECT id, title, plex_labels FROM media_items WHERE plex_labels IS NOT NULL')
@@ -668,8 +669,7 @@ def cleanup_orphaned_stream():
                 yield f"data: {json.dumps(progress_data)}\n\n"
 
             # PHASE 2: Clear orphaned source metadata from items with unconfigured sources
-            conn = sqlite3.connect(DB_PATH)
-            conn.row_factory = sqlite3.Row
+            conn = get_db_connection()
             cursor = conn.cursor()
 
             cursor.execute('''
@@ -766,6 +766,7 @@ def cleanup_orphaned_stream():
 
 
 @plex_labels_debug_bp.route('/debug/plex-labels/bulk-remove-preview')
+@admin_required
 def bulk_remove_preview():
     """Preview bulk label removal"""
     try:
@@ -775,7 +776,7 @@ def bulk_remove_preview():
 
         sanitized_label = sanitize_label(label)
 
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_db_connection()
         cursor = conn.cursor()
 
         # Count items with this label using DB-level json_each filtering
@@ -802,6 +803,7 @@ def bulk_remove_preview():
 
 
 @plex_labels_debug_bp.route('/debug/plex-labels/bulk-remove', methods=['POST'])
+@admin_required
 def bulk_remove():
     """Execute bulk label removal"""
     conn = None
@@ -822,8 +824,7 @@ def bulk_remove():
         sanitized_label = sanitize_label(label)
         logging.info(f"bulk_remove: Starting bulk removal of label: {sanitized_label}")
 
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
+        conn = get_db_connection()
         cursor = conn.cursor()
 
         # Get items with this label using DB-level json_each filtering
@@ -891,6 +892,7 @@ def bulk_remove():
 
 
 @plex_labels_debug_bp.route('/debug/plex-labels/find-orphaned')
+@admin_required
 def find_orphaned():
     """Find orphaned labels and items from unconfigured content sources"""
     try:
@@ -907,8 +909,7 @@ def find_orphaned():
         # Also track ALL configured sources (even if labels disabled) for content_source check
         all_configured_sources = set(source_id.lower() for source_id in content_sources.keys())
 
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
+        conn = get_db_connection()
         cursor = conn.cursor()
 
         # TYPE 1: Find orphaned labels (items with labels from inactive sources)
@@ -986,6 +987,7 @@ def find_orphaned():
 
 
 @plex_labels_debug_bp.route('/debug/plex-labels/cleanup-orphaned', methods=['POST'])
+@admin_required
 def cleanup_orphaned():
     """Remove all orphaned labels and items from unconfigured sources"""
     conn = None
@@ -1008,8 +1010,7 @@ def cleanup_orphaned():
         logging.info(f"cleanup_orphaned: Found {len(active_sources)} active content sources, {len(all_configured_sources)} total configured")
 
         # TYPE 1: Find and remove orphaned labels (labels from inactive sources)
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
+        conn = get_db_connection()
         cursor = conn.cursor()
 
         cursor.execute('''
@@ -1049,8 +1050,7 @@ def cleanup_orphaned():
                         failed_label_removals.append({'item_id': item_id, 'label': label, 'source': source, 'error': str(e)})
 
         # TYPE 2: Clear orphaned source metadata from items with unconfigured sources
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
+        conn = get_db_connection()
         cursor = conn.cursor()
 
         cursor.execute('''
@@ -1135,6 +1135,7 @@ def cleanup_orphaned():
 
 
 @plex_labels_debug_bp.route('/debug/plex-labels/sync-all', methods=['POST'])
+@admin_required
 def sync_all():
     """Sync all labels from content sources"""
     conn = None
@@ -1143,8 +1144,7 @@ def sync_all():
         logging.info("sync_all: Starting sync of all labels")
 
         # Get all collected items
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
+        conn = get_db_connection()
         cursor = conn.cursor()
 
         # Get movies directly, and one representative episode per show (using MIN(id))
@@ -1221,6 +1221,7 @@ def sync_all():
 
 
 @plex_labels_debug_bp.route('/debug/plex-labels/backfill-content-source-detail', methods=['POST'])
+@admin_required
 def backfill_content_source_detail_endpoint():
     """Backfill content_source_detail for items with NULL value"""
     from utilities.plex_label_manager import backfill_content_source_detail
@@ -1253,6 +1254,7 @@ def backfill_content_source_detail_endpoint():
 
 
 @plex_labels_debug_bp.route('/debug/plex-labels/backfill-resolution', methods=['POST'])
+@admin_required
 def backfill_resolution_endpoint():
     """Backfill resolution for Collected items with NULL resolution from stored paths"""
     from queues.run_program import backfill_resolution_from_stored_paths
@@ -1285,6 +1287,7 @@ def backfill_resolution_endpoint():
 
 
 @plex_labels_debug_bp.route('/debug/plex-labels/sources-list')
+@admin_required
 def sources_list():
     """Get list of content sources with Plex labels enabled"""
     try:
@@ -1313,6 +1316,7 @@ def sources_list():
 
 
 @plex_labels_debug_bp.route('/debug/plex-labels/check-config')
+@admin_required
 def check_config():
     """Check content source configuration for debugging red overlay issue"""
     try:
@@ -1341,6 +1345,7 @@ def check_config():
 
 
 @plex_labels_debug_bp.route('/debug/plex-labels/fix-enabled-field', methods=['POST'])
+@admin_required
 def fix_enabled_field():
     """Fix corrupted enabled fields in content sources"""
     try:
@@ -1377,6 +1382,7 @@ def fix_enabled_field():
 
 
 @plex_labels_debug_bp.route('/debug/plex-labels/test-item-lookup/<int:item_id>')
+@admin_required
 def test_item_lookup(item_id):
     """Test Plex item lookup for debugging"""
     try:
@@ -1427,6 +1433,7 @@ def test_item_lookup(item_id):
 
 
 @plex_labels_debug_bp.route('/debug/plex-labels/find-item-by-title')
+@admin_required
 def find_item_by_title():
     """Find items by title search"""
     try:
@@ -1434,8 +1441,7 @@ def find_item_by_title():
         if not title_search:
             return jsonify({'success': False, 'message': 'title parameter is required'}), 400
 
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
+        conn = get_db_connection()
         cursor = conn.cursor()
 
         # Search for items with title containing the search string
@@ -1478,17 +1484,26 @@ def find_item_by_title():
 
 
 @plex_labels_debug_bp.route('/debug/plex-labels/fix-imdb-by-tmdb/<tmdb_id>/<imdb_id>', methods=['POST'])
+@admin_required
 def fix_imdb_id_by_tmdb(tmdb_id, imdb_id):
     """Fix IMDb ID for all items matching a TMDB ID"""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute('SELECT id, title, imdb_id FROM media_items WHERE tmdb_id = ?', (tmdb_id,))
+        if not _IMDB_ID_RE.match(imdb_id or ''):
+            return jsonify({'success': False, 'message': 'IMDb ID must look like tt1234567'}), 400
+        cursor.execute('SELECT id, title, imdb_id, type FROM media_items WHERE tmdb_id = ?', (tmdb_id,))
         rows = cursor.fetchall()
         if not rows:
             cursor.close()
             conn.close()
             return jsonify({'success': False, 'message': f'No items found with TMDB ID {tmdb_id}'}), 404
+        # Movie and TV TMDB IDs are separate number spaces: the same number can be
+        # a movie and an unrelated show.
+        if len({'movie' if r['type'] == 'movie' else 'show' for r in rows}) > 1:
+            cursor.close()
+            conn.close()
+            return jsonify({'success': False, 'message': f'TMDB ID {tmdb_id} matches both a movie and a show; use Item ID instead.'}), 409
         cursor.execute('UPDATE media_items SET imdb_id = ? WHERE tmdb_id = ?', (imdb_id, tmdb_id))
         conn.commit()
         updated = [{'id': r[0], 'title': r[1], 'imdb_id_before': r[2]} for r in rows]
@@ -1506,44 +1521,55 @@ def fix_imdb_id_by_tmdb(tmdb_id, imdb_id):
         return jsonify({'success': False, 'message': str(e)}), 500
 
 
-@plex_labels_debug_bp.route('/debug/plex-labels/fix-imdb/<int:item_id>/<imdb_id>', methods=['POST', 'GET'])
+@plex_labels_debug_bp.route('/debug/plex-labels/fix-imdb/<int:item_id>/<imdb_id>', methods=['POST'])
+@admin_required
 def fix_imdb_id(item_id, imdb_id):
-    """Fix missing IMDb ID for an item"""
+    """Set the IMDb ID of an item. For an episode, every episode of that show
+    gets it (one row alone left the rest of the show on the wrong ID)."""
     try:
         from database.database_reading import get_media_item_by_id
 
-        # Get item from database
-        item_data = get_media_item_by_id(item_id)
+        if not _IMDB_ID_RE.match(imdb_id or ''):
+            return jsonify({'success': False, 'message': 'IMDb ID must look like tt1234567'}), 400
 
+        item_data = get_media_item_by_id(item_id)
         if not item_data:
             return jsonify({
                 'success': False,
                 'message': f'Item {item_id} not found in database'
             }), 404
 
+        old_imdb = item_data.get('imdb_id')
+        if item_data.get('type') == 'episode':
+            if item_data.get('tmdb_id'):
+                where, params = "type = 'episode' AND tmdb_id = ?", [item_data['tmdb_id']]
+            elif old_imdb:
+                where, params = "type = 'episode' AND imdb_id = ?", [old_imdb]
+            else:
+                where, params = ("type = 'episode' AND title = ? AND (imdb_id IS NULL OR imdb_id = '')",
+                                 [item_data.get('title')])
+            where = f"(id = ? OR ({where}))"
+            params = [item_id] + params
+        else:
+            where, params = 'id = ?', [item_id]
+
         logging.info(f"Updating IMDb ID for item {item_id} ({item_data.get('title')}) to {imdb_id}")
-
-        # Update the database
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-
-        cursor.execute('UPDATE media_items SET imdb_id = ? WHERE id = ?', (imdb_id, item_id))
-        conn.commit()
-
-        # Verify the update
-        cursor.execute('SELECT imdb_id FROM media_items WHERE id = ?', (item_id,))
-        row = cursor.fetchone()
-        updated_imdb_id = row[0] if row else None
-
-        cursor.close()
-        conn.close()
+        conn = get_db_connection()
+        try:
+            cur = conn.execute(f'UPDATE media_items SET imdb_id = ? WHERE {where}', [imdb_id] + params)
+            updated_count = cur.rowcount
+            conn.commit()
+            row = conn.execute('SELECT imdb_id FROM media_items WHERE id = ?', (item_id,)).fetchone()
+        finally:
+            conn.close()
 
         return jsonify({
             'success': True,
             'message': f'Updated IMDb ID for item {item_id}',
             'item_id': item_id,
-            'imdb_id_before': item_data.get('imdb_id'),
-            'imdb_id_after': updated_imdb_id,
+            'updated_count': updated_count,
+            'imdb_id_before': old_imdb,
+            'imdb_id_after': row[0] if row else None,
             'title': item_data.get('title')
         })
 
@@ -1553,6 +1579,7 @@ def fix_imdb_id(item_id, imdb_id):
 
 
 @plex_labels_debug_bp.route('/debug/plex-labels/test-plex-search/<imdb_id>')
+@admin_required
 def test_plex_search(imdb_id):
     """Test searching Plex directly by IMDb ID"""
     try:
