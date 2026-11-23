@@ -1131,7 +1131,41 @@ def _reset_deselected_posters(plex_url: str, plex_token: str) -> int:
 
 HEALTH_SYNCS = 6            # recent syncs shown on the Overlays page
 LOOP_SYNCS = 3              # this many syncs in a row ...
-LOOP_RESETS = 25            # ... each resetting at least this many rows
+LOOP_REPEATS = 10           # ... each re-resetting at least this many items
+
+
+def _count_repeat_resets(sync_started: str) -> int:
+    """
+    Items (Plex keys) and seasons the change checks reset during this sync
+    (since sync_started, UTC) that the previous sync had just rendered.
+
+    A real change (new rating, quality upgrade, user picked another poster)
+    almost never hits an overlay an hour after it was made; a re-render loop
+    does it every sync. Plain reset counts can't tell the two apart: the
+    rating refresh finds real changes for days after a stale cache.
+    """
+    conn = _get_db_connection()
+    try:
+        prev = conn.execute(
+            "SELECT created_at, COALESCE(duration_seconds, 0) FROM overlay_activity "
+            "WHERE action_type = 'overlay_sync' ORDER BY id DESC LIMIT 1").fetchone()
+        if not prev:
+            return 0
+        # The previous sync rendered between its start and its log row (+ slack)
+        rendered_from = conn.execute(
+            "SELECT datetime(?, ?)", (prev[0], f'-{int(prev[1]) + 120} seconds')).fetchone()[0]
+        items = conn.execute('''
+            SELECT COUNT(DISTINCT m.ms_item_id)
+            FROM media_overlay_state o JOIN media_items m ON m.id = o.media_item_id
+            WHERE o.status = 'pending' AND o.updated_at >= ? AND o.overlay_applied_at >= ?
+        ''', (sync_started, rendered_from)).fetchone()[0]
+        seasons = conn.execute('''
+            SELECT COUNT(*) FROM season_overlay_state
+            WHERE status = 'pending' AND updated_at >= ? AND overlay_applied_at >= ?
+        ''', (sync_started, rendered_from)).fetchone()[0]
+        return (items or 0) + (seasons or 0)
+    finally:
+        conn.close()
 
 
 def get_overlay_health() -> Dict:
@@ -1141,9 +1175,9 @@ def get_overlay_health() -> Dict:
     Reads the last HEALTH_SYNCS 'overlay_sync' activity rows. 'resets' is the
     number of already-applied rows the change checks (quality, content, poster
     deselected) sent back for a re-render; None for syncs logged before these
-    counts existed. 'loop_suspected' is set when each of the last LOOP_SYNCS
-    syncs reset at least LOOP_RESETS rows: real changes come and go, a loop
-    resets about the same rows every time.
+    counts existed. 'repeats' counts the reset items the previous sync had just
+    rendered (_count_repeat_resets). 'loop_suspected' is set when each of the
+    last LOOP_SYNCS syncs has at least LOOP_REPEATS repeats.
     """
     import json as _json
     conn = _get_db_connection()
@@ -1174,18 +1208,19 @@ def get_overlay_health() -> Dict:
             'quality_resets': st.get('quality_resets'),
             'content_resets': st.get('content_resets'),
             'thumb_resets': st.get('thumb_resets'),
+            'repeats': st.get('repeat_resets'),
         })
 
     recent = syncs[:LOOP_SYNCS]
     loop = (len(recent) == LOOP_SYNCS
-            and all(s['resets'] is not None and s['resets'] >= LOOP_RESETS for s in recent))
+            and all(s['repeats'] is not None and s['repeats'] >= LOOP_REPEATS for s in recent))
     return {
         'success': True,
         'last': syncs[0] if syncs else None,
         'syncs': syncs,
         'loop_suspected': loop,
         'loop_syncs': LOOP_SYNCS,
-        'loop_resets': LOOP_RESETS,
+        'loop_repeats': LOOP_REPEATS,
     }
 
 
@@ -1212,6 +1247,7 @@ def task_overlay_sync(triggered_by: str = 'scheduled'):
 
     logger.info("Starting overlay sync task")
     _sync_start = time.time()
+    _sync_started_utc = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
 
     # Kick off IMDb dataset prefetch in the background so it is warm before
     # the first _fetch_ratings call hits the fallback path.
@@ -1299,6 +1335,16 @@ def task_overlay_sync(triggered_by: str = 'scheduled'):
                 thumb_reset_count = _reset_deselected_posters(plex_url, plex_token) or 0
             except Exception as _te:
                 logger.debug(f"[ThumbCheck] Thumb deselection check failed (non-fatal): {_te}")
+
+        try:
+            repeat_reset_count = _count_repeat_resets(_sync_started_utc)
+        except Exception as _re:
+            logger.debug(f"Repeat-reset count failed (non-fatal): {_re}")
+            repeat_reset_count = None
+        if repeat_reset_count:
+            (logger.warning if repeat_reset_count >= LOOP_REPEATS else logger.info)(
+                f"Overlay change checks reset {repeat_reset_count} item(s) the previous sync "
+                f"had just rendered — a re-render loop if this repeats every sync")
 
         # Step 1.6: One-pass season backfill — register seasons for any shows that
         # are already 'applied' but have no season_overlay_state rows yet.
@@ -1603,7 +1649,7 @@ def task_overlay_sync(triggered_by: str = 'scheduled'):
             # Applied rows the change checks sent back for a re-render. Read by
             # get_overlay_health: high counts on every sync point at a loop.
             'quality_resets': quality_reset_count, 'content_resets': content_reset_count,
-            'thumb_resets': thumb_reset_count,
+            'thumb_resets': thumb_reset_count, 'repeat_resets': repeat_reset_count,
         }
         if failure_details:
             _sync_stats['failures'] = failure_details

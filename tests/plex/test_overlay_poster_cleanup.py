@@ -218,21 +218,48 @@ class OverlayHealthTests(OverlayDbTestBase):
         self.assertIsNone(h['last']['resets'])
         self.assertFalse(h['loop_suspected'])
 
-    def test_loop_needs_every_recent_sync_high(self):
-        self.sync(applied=5, quality_resets=0, content_resets=5800, thumb_resets=90)
-        self.sync(applied=5, quality_resets=0, content_resets=5800, thumb_resets=90)
-        self.sync(applied=2, seasons_applied=1, quality_resets=0, content_resets=16, thumb_resets=0)
+    def test_many_resets_without_repeats_do_not_flag(self):
+        # Rating refresh catching up on a stale cache: real changes every sync
+        for _ in range(3):
+            self.sync(applied=50, quality_resets=0, content_resets=47, thumb_resets=1, repeat_resets=0)
         h = scheduled_tasks.get_overlay_health()
-        self.assertEqual(h['last']['resets'], 16)
-        self.assertEqual(h['last']['applied'], 3)
+        self.assertEqual(h['last']['resets'], 48)
         self.assertFalse(h['loop_suspected'])
-        self.sync(applied=170, quality_resets=2, content_resets=5800, thumb_resets=90)
-        self.sync(applied=170, quality_resets=2, content_resets=5800, thumb_resets=90)
-        self.sync(applied=170, quality_resets=2, content_resets=5800, thumb_resets=90)
+
+    def test_loop_needs_repeats_on_every_recent_sync(self):
+        self.sync(applied=170, content_resets=5800, thumb_resets=90, repeat_resets=170)
+        self.sync(applied=170, content_resets=5800, thumb_resets=90, repeat_resets=170)
+        self.sync(applied=3, seasons_applied=1, content_resets=16, repeat_resets=0)
+        h = scheduled_tasks.get_overlay_health()
+        self.assertEqual(h['last']['applied'], 4)
+        self.assertFalse(h['loop_suspected'])
+        for _ in range(3):
+            self.sync(applied=170, quality_resets=2, content_resets=5800, thumb_resets=90, repeat_resets=170)
         h = scheduled_tasks.get_overlay_health()
         self.assertTrue(h['loop_suspected'])
-        self.assertEqual(h['last']['resets'], 5892)
+        self.assertEqual((h['last']['resets'], h['last']['repeats']), (5892, 170))
         self.assertEqual(len(h['syncs']), scheduled_tasks.HEALTH_SYNCS)
+
+    def test_repeat_resets_counts_items_the_previous_sync_rendered(self):
+        self.execute("INSERT INTO overlay_activity (action_type, triggered_by, result, title, "
+                     "duration_seconds, created_at) VALUES ('overlay_sync', 'scheduled', 'success', 't', 60, "
+                     "datetime('now', '-1 hour'))")
+        # Show 100: two episodes, rendered in the previous sync, reset now -> 1 item
+        for i in (1, 2):
+            self.add_item(i, 'episode', 'tt1', '100', season=1, episode=i)
+            self.execute("INSERT INTO media_overlay_state (media_item_id, status, overlay_applied_at, updated_at) "
+                         "VALUES (?, 'pending', datetime('now', '-61 minutes'), datetime('now'))", (i,))
+        # Movie 200: rendered months ago, reset now (a real change) -> not counted
+        self.add_item(3, 'movie', 'tt3', '200')
+        self.execute("INSERT INTO media_overlay_state (media_item_id, status, overlay_applied_at, updated_at) "
+                     "VALUES (3, 'pending', '2026-01-01 00:00:00', datetime('now'))")
+        # Season rendered in the previous sync, reset now -> counted
+        self.execute("INSERT INTO season_overlay_state (show_ms_item_id, season_ms_item_id, season_number, "
+                     "status, overlay_applied_at, updated_at) VALUES ('100', '101', 1, 'pending', "
+                     "datetime('now', '-62 minutes'), datetime('now'))")
+        started = self.execute("SELECT datetime('now', '-1 minute')")[0][0]
+        self.assertEqual(scheduled_tasks._count_repeat_resets(started), 2)
+
 
 
 class CleanupPermissionTests(PosterCleanupTests):

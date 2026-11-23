@@ -172,7 +172,8 @@ function _renderOverlayHealth(h) {
     document.getElementById('stat-health-resets').textContent = last.resets ?? '-';
     const parts = [];
     if (last.resets != null) {
-        parts.push(`quality ${last.quality_resets ?? 0}, content ${last.content_resets ?? 0}, poster ${last.thumb_resets ?? 0}`);
+        parts.push(`quality ${last.quality_resets ?? 0}, content ${last.content_resets ?? 0}, poster ${last.thumb_resets ?? 0}`
+            + (last.repeats != null ? `; ${last.repeats} of them were rendered by the sync before` : ''));
     }
     const recent = (h.syncs || []).map(s => s.resets == null ? '?' : s.resets).join(' · ');
     document.getElementById('stat-health-resets-item').title =
@@ -182,7 +183,7 @@ function _renderOverlayHealth(h) {
     if (h.loop_suspected) {
         card.style.borderColor = '#f0ad4e';
         note.style.color = '#f0ad4e';
-        note.textContent = `Re-rendering every sync (last ${h.loop_syncs}) — check the logs`;
+        note.textContent = `Re-rendering the same posters every sync (last ${h.loop_syncs}) — check the logs`;
     } else {
         card.style.borderColor = '';
         note.style.color = '#888';
