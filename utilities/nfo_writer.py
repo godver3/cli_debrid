@@ -97,25 +97,31 @@ def _uniqueids(ids: Dict[str, Optional[str]], default: Optional[str]) -> List[st
     return out
 
 
-def build_tvshow_nfo(show: Dict) -> str:
+def build_tvshow_nfo(show: Dict, full: bool = False) -> str:
     """tvshow.nfo for a show: {'title', 'year', 'overview', 'runtime',
-    'premiered', 'status', 'network', 'genres', 'ids': {imdb, tmdb, tvdb}}."""
+    'premiered', 'status', 'network', 'genres', 'ids': {imdb, tmdb, tvdb}}.
+
+    By default only the ids: Plex Series (and Jellyfin's online providers)
+    then supply the show's title, description, artwork, cast and ratings
+    exactly as without NFOs. full=True writes the show details too."""
     ids = {k: (str(v) if v else None) for k, v in (show.get('ids') or {}).items()}
     # The default id is the one cli_debrid numbers episodes by: TVDB when
     # known, else TMDB (Kodi/Plex use it to identify the show).
     default = 'tvdb' if ids.get('tvdb') else 'tmdb' if ids.get('tmdb') else 'imdb'
-    lines = [
-        _tag('title', show.get('title')),
-        _tag('originaltitle', show.get('original_title') or show.get('title')),
-        _tag('sorttitle', show.get('sort_title')),
-        _tag('year', _int(show.get('year'))),
-        _tag('plot', show.get('overview')),
-        _tag('runtime', _int(show.get('runtime'))),
-        _tag('premiered', _date(show.get('premiered'))),
-        _tag('status', _status(show.get('status'))),
-        _tag('studio', show.get('network')),
-    ]
-    lines += [_tag('genre', g) for g in (show.get('genres') or []) if g]
+    lines = []
+    if full:
+        lines += [
+            _tag('title', show.get('title')),
+            _tag('originaltitle', show.get('original_title') or show.get('title')),
+            _tag('sorttitle', show.get('sort_title')),
+            _tag('year', _int(show.get('year'))),
+            _tag('plot', show.get('overview')),
+            _tag('runtime', _int(show.get('runtime'))),
+            _tag('premiered', _date(show.get('premiered'))),
+            _tag('status', _status(show.get('status'))),
+            _tag('studio', show.get('network')),
+        ]
+        lines += [_tag('genre', g) for g in (show.get('genres') or []) if g]
     lines += _uniqueids(ids, default)
     body = '\n'.join(x for x in lines if x)
     return f'{_XML_DECL}\n{MARKER}\n<tvshow>\n{body}\n</tvshow>\n'
@@ -130,22 +136,46 @@ def _status(status) -> Optional[str]:
     return 'Continuing'
 
 
-def build_episode_nfo(episodes: List[Dict], show_title: str) -> str:
+def build_episode_nfo(episodes: List[Dict], show_title: str, plans: Optional[List[Dict]] = None) -> str:
     """One <episodedetails> per episode in the file (multi-episode files get
     several, as Sonarr writes them). Each episode: {'season', 'episode',
-    'title', 'overview', 'aired', 'runtime', 'tvdb_id', 'imdb_id'}."""
+    'title', 'overview', 'aired', 'runtime', 'tvdb_id', 'imdb_id'}.
+
+    plans (utilities/nfo_sources.plan_episodes), one per episode:
+    'minimal' writes only the numbers and ids, so the media server's own
+    agent supplies every detail; 'full' (the default) writes the details,
+    plus thumb/directors/writers/actors/rating when the plan has them."""
+    plans = plans or [{'mode': 'full'}] * len(episodes)
     blocks = []
-    for ep in sorted(episodes, key=lambda e: (e.get('season') or 0, e.get('episode') or 0)):
+    for ep, plan in sorted(zip(episodes, plans), key=lambda x: (x[0].get('season') or 0, x[0].get('episode') or 0)):
         ids = {'tvdb': ep.get('tvdb_id'), 'imdb': ep.get('imdb_id')}
         lines = [
-            _tag('title', ep.get('title')),
-            _tag('showtitle', show_title),
             _tag('season', ep.get('season') if ep.get('season') is not None else None),
             _tag('episode', ep.get('episode') if ep.get('episode') is not None else None),
-            _tag('plot', ep.get('overview')),
-            _tag('aired', _date(ep.get('aired'))),
-            _tag('runtime', _int(ep.get('runtime'))),
         ]
+        if plan.get('mode') != 'minimal':
+            lines = [_tag('title', ep.get('title')), _tag('showtitle', show_title)] + lines + [
+                _tag('plot', ep.get('overview')),
+                _tag('aired', _date(ep.get('aired'))),
+                _tag('runtime', _int(ep.get('runtime'))),
+                _tag('thumb', plan.get('thumb')),
+            ]
+            lines += [_tag('director', d) for d in plan.get('directors') or []]
+            lines += [_tag('credits', w) for w in plan.get('writers') or []]
+            rating = plan.get('rating')
+            if rating and rating.get('value') is not None:
+                lines.append(f'  <ratings>\n    <rating name="{_text(rating.get("name") or "themoviedb")}" max="10" default="true">'
+                             f'\n      <value>{_text(rating["value"])}</value>'
+                             + (f'\n      <votes>{_text(rating["votes"])}</votes>' if rating.get('votes') else '')
+                             + '\n    </rating>\n  </ratings>')
+            for n, a in enumerate(plan.get('actors') or []):
+                parts = [f'    <name>{_text(a["name"])}</name>']
+                if a.get('role'):
+                    parts.append(f'    <role>{_text(a["role"])}</role>')
+                if a.get('thumb'):
+                    parts.append(f'    <thumb>{_text(a["thumb"])}</thumb>')
+                parts.append(f'    <order>{_text(a["order"] if a.get("order") is not None else n)}</order>')
+                lines.append('  <actor>\n' + '\n'.join(parts) + '\n  </actor>')
         lines += _uniqueids({k: (str(v) if v else None) for k, v in ids.items()},
                             'tvdb' if ids['tvdb'] else 'imdb')
         body = '\n'.join(x for x in lines if x is not None)
@@ -366,6 +396,18 @@ def _episode_info(row: Dict, lookup: Dict) -> Dict:
     }
 
 
+def _plans(episodes: List[Dict], show: Dict) -> List[Dict]:
+    if not episodes:
+        return []
+    try:
+        from utilities.nfo_sources import plan_episodes
+        plans = plan_episodes(episodes, (show.get('ids') or {}).get('tmdb'))
+        return [plans.get(i, {'mode': 'full'}) for i in range(len(episodes))]
+    except Exception as e:
+        logging.warning(f"{_LOG} episode details for {show.get('title')}: {e}")
+        return [{'mode': 'full'}] * len(episodes)
+
+
 # ─── writing ─────────────────────────────────────────────────────────────────
 
 def _empty_counts() -> Dict[str, int]:
@@ -394,6 +436,23 @@ def write_show(imdb_id: str, rows: Optional[List[Dict]] = None, prune: bool = Tr
         by_file.setdefault(r['location_on_disk'], []).append(r)
     wanted = {os.path.normpath(p) for p in only_paths} if only_paths else None
 
+    # Which episodes Plex (TMDB numbering) already gets right, and the
+    # details of the ones it doesn't: computed once for the files written
+    todo = [(p, fr) for p, fr in by_file.items() if wanted is None or os.path.normpath(p) in wanted]
+    infos: Dict[str, List[Dict]] = {}
+    flat: List[Dict] = []
+    for path, file_rows in todo:
+        seen, eps = set(), []
+        for r in file_rows:
+            key = (r.get('season_number'), r.get('episode_number'))
+            if key not in seen:
+                seen.add(key)
+                eps.append(_episode_info(r, lookup))
+        infos[path] = eps
+        flat += eps
+    plans_flat = _plans(flat, show)
+    plan_of = {id(ep): plans_flat[i] for i, ep in enumerate(flat)}
+
     folders = set()
     for path, file_rows in by_file.items():
         folder = show_folder(path, root)
@@ -401,13 +460,8 @@ def write_show(imdb_id: str, rows: Optional[List[Dict]] = None, prune: bool = Tr
             folders.add(folder)
         if wanted is not None and os.path.normpath(path) not in wanted:
             continue
-        seen, eps = set(), []
-        for r in file_rows:
-            key = (r.get('season_number'), r.get('episode_number'))
-            if key not in seen:
-                seen.add(key)
-                eps.append(_episode_info(r, lookup))
-        counts[_write(episode_nfo_path(path), build_episode_nfo(eps, title))] += 1
+        eps = infos[path]
+        counts[_write(episode_nfo_path(path), build_episode_nfo(eps, title, [plan_of[id(e)] for e in eps]))] += 1
 
     show_xml = build_tvshow_nfo(show)
     for folder in folders:
