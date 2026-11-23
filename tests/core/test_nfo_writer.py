@@ -58,10 +58,9 @@ class NfoWriterTests(unittest.TestCase):
         self.assertEqual(c['written'], 3)
         show = ET.fromstring(self._read(os.path.join(self.show, 'tvshow.nfo')).split('-->', 1)[1])
         self.assertEqual(show.tag, 'tvshow')
-        self.assertEqual(show.findtext('title'), 'Shetland')
-        self.assertEqual(show.findtext('premiered'), '2013-03-10')
-        self.assertEqual(show.findtext('status'), 'Continuing')
-        self.assertEqual([g.text for g in show.findall('genre')], ['Drama', 'Crime'])
+        # ids only: Plex Series keeps the show's own title, artwork and cast
+        self.assertIsNone(show.find('title'))
+        self.assertIsNone(show.find('plot'))
         ids = {u.get('type'): (u.text, u.get('default')) for u in show.findall('uniqueid')}
         self.assertEqual(ids['tvdb'], ('261109', 'true'))
         self.assertEqual(ids['imdb'], ('tt2396135', None))
@@ -154,6 +153,53 @@ class NfoWriterTests(unittest.TestCase):
     def test_control_characters_are_dropped(self):
         xml = nw.build_episode_nfo([{'season': 1, 'episode': 1, 'title': 'a\x01b'}], 'S')
         self.assertEqual(_parse_episodes(xml)[0].findtext('title'), 'ab')
+
+
+class PlanTests(unittest.TestCase):
+    """Aligned episodes get a minimal NFO; moved ones the right episode's details."""
+    TM = {(5, 3): {'name': 'Gohan the Teacher!', 'air_date': '2014-04-20', 'still_path': '/wrong.jpg'},
+          (6, 1): {'name': "Videl's Crisis? Gohan's Urgent Call-out!", 'air_date': '2014-06-01',
+                   'still_path': '/right.jpg', 'vote_average': 8.1, 'vote_count': 12,
+                   'crew': [{'job': 'Director', 'department': 'Directing', 'name': 'Togo Shoji'},
+                            {'job': 'Screenplay', 'department': 'Writing', 'name': 'W. Riter'}],
+                   'guest_stars': [{'name': 'Some Actor', 'character': 'Videl', 'profile_path': '/p.jpg', 'order': 0}]},
+          (1, 1): {'name': 'Prologue to Battle!', 'air_date': '2009-04-05'}}
+
+    def _plans(self, eps, tm=TM):
+        from utilities import nfo_sources as ns
+        with mock.patch.object(ns, 'tmdb_episodes', return_value=tm), \
+                mock.patch.object(ns, 'tvdb_episode', return_value={'image': 'https://tvdb/img.jpg', 'characters': []}):
+            return ns.plan_episodes(eps, 61709)
+
+    def test_aligned_episode_is_minimal(self):
+        p = self._plans([{'season': 1, 'episode': 1, 'title': 'Prologue to Battle!', 'aired': '2009-04-05'}])
+        self.assertEqual(p[0]['mode'], 'minimal')
+        xml = nw.build_episode_nfo([{'season': 1, 'episode': 1, 'title': 'x', 'tvdb_id': 5}], 'S', [p[0]])
+        ep = _parse_episodes(xml)[0]
+        self.assertIsNone(ep.find('title'))
+        self.assertEqual((ep.findtext('season'), ep.findtext('episode')), ('1', '1'))
+
+    def test_moved_episode_gets_the_right_tmdb_episode_details(self):
+        ep = {'season': 5, 'episode': 3, 'title': "Videl's Crisis? Gohan's Urgent Call-out!", 'aired': '2014-06-01'}
+        plan = self._plans([ep])[0]
+        self.assertEqual(plan['mode'], 'full')
+        self.assertEqual(plan['thumb'], 'https://image.tmdb.org/t/p/original/right.jpg')
+        self.assertEqual(plan['directors'], ['Togo Shoji'])
+        x = _parse_episodes(nw.build_episode_nfo([ep], 'Dragon Ball Kai', [plan]))[0]
+        self.assertEqual(x.findtext('title'), ep['title'])
+        self.assertEqual(x.findtext('thumb'), 'https://image.tmdb.org/t/p/original/right.jpg')
+        self.assertEqual(x.findtext('credits'), 'W. Riter')
+        self.assertEqual(x.find('actor').findtext('role'), 'Videl')
+        self.assertEqual(x.find('ratings').find('rating').findtext('value'), '8.1')
+
+    def test_moved_episode_missing_from_tmdb_uses_tvdb_image(self):
+        plan = self._plans([{'season': 4, 'episode': 21, 'title': 'Peace for the Future!', 'aired': '2011-03-27',
+                             'tvdb_id': 99}])[0]
+        self.assertEqual((plan['mode'], plan['thumb']), ('full', 'https://tvdb/img.jpg'))
+
+    def test_without_tmdb_everything_is_full(self):
+        p = self._plans([{'season': 1, 'episode': 1, 'title': 'Prologue to Battle!'}], tm=None)
+        self.assertEqual(p[0], {'mode': 'full'})
 
 
 class SymlinkHookBatchTests(unittest.TestCase):
