@@ -1075,7 +1075,13 @@ def create_symlink(source_path: str, dest_path: str, media_item_id: int = None, 
             except Exception as e:
                 logging.error(f"Failed to add/update file in verification queue {dest_path} (Media ID: {media_item_id}): {e}", exc_info=True)
                 # Continue even if adding to verification fails for now, as symlink itself is OK.
-    
+        # Episode NFO next to the new link (File Management → write NFO files)
+        try:
+            from utilities.nfo_writer import write_for_symlink
+            write_for_symlink(media_item_id, dest_path)
+        except Exception as e:
+            logging.debug(f"NFO for {dest_path} not written: {e}")
+
     return symlink_ok_or_created
 
 def _get_video_extensions() -> set:
@@ -1454,6 +1460,11 @@ def _cleanup_old_symlink(item: Dict[str, Any], item_identifier: str, source_file
     try:
         os.unlink(old_dest)
         logging.info(f"[UPGRADE] Removed old symlink during upgrade: {old_dest}")
+        try:
+            from utilities.nfo_writer import remove_for_video
+            remove_for_video(old_dest)
+        except Exception as nfo_err:
+            logging.debug(f"[UPGRADE] NFO cleanup for {old_dest} failed: {nfo_err}")
 
         try:
             removed_count = remove_verification_by_media_item_id(item['id'])
