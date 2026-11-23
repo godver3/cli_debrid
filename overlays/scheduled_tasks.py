@@ -2059,7 +2059,8 @@ def _cleanup_overlay_upload_files(metadata_root: str, client, keep_hashes: set,
     planned: a list for a dry run. Files are appended to it as
     {'path', 'bytes', 'kind', 'key'} instead of being deleted.
 
-    Returns {'deleted', 'errors', 'bytes', 'stale_keys', 'item_hashes', 'season_hashes'}.
+    Returns {'deleted', 'errors', 'bytes', 'stale_keys', 'stale_seasons',
+    'item_hashes', 'season_hashes', 'denied', 'denied_example'}.
     """
     import glob as _glob
     from concurrent.futures import ThreadPoolExecutor
@@ -2086,7 +2087,7 @@ def _cleanup_overlay_upload_files(metadata_root: str, client, keep_hashes: set,
     finally:
         conn.close()
 
-    out = {'deleted': 0, 'errors': 0, 'bytes': 0, 'stale_keys': [],
+    out = {'deleted': 0, 'errors': 0, 'bytes': 0, 'stale_keys': [], 'stale_seasons': [],
            'item_hashes': {}, 'season_hashes': {}, 'denied': 0, 'denied_example': None}
     keys = [(k, False) for k in item_keys] + [(k, True) for k in season_keys]
     if not keys:
@@ -2107,8 +2108,8 @@ def _cleanup_overlay_upload_files(metadata_root: str, client, keep_hashes: set,
     for (rk, posters, err), is_season in results:
         if err is not None:
             status = getattr(getattr(err, 'response', None), 'status_code', None)
-            if isinstance(err, _req.exceptions.HTTPError) and status == 404 and not is_season:
-                out['stale_keys'].append(rk)
+            if isinstance(err, _req.exceptions.HTTPError) and status == 404:
+                out['stale_seasons' if is_season else 'stale_keys'].append(rk)
             else:
                 logger.warning(f"Plex poster cleanup: skipping {rk} — poster list unavailable ({err})")
                 out['errors'] += 1
@@ -2203,6 +2204,11 @@ def _record_poster_cleanup(res: Dict, run_started: str) -> None:
                     WHERE season_ms_item_id = ?
                       AND (last_plex_upload_hash IS NULL OR last_plex_upload_hash = '')""",
                 (_suhash, _sms_id))
+        # Seasons Plex no longer has: drop the rows. If the season still exists
+        # under a new key, the sync registers it again (same as the 404 rule
+        # in the DB housekeeping above).
+        for _ssk in res.get('stale_seasons', []):
+            _w.execute('DELETE FROM season_overlay_state WHERE season_ms_item_id = ?', (_ssk,))
         # Plex no longer knows these keys: clear them so the sync re-keys them
         for _sk in res['stale_keys']:
             _ids = [r[0] for r in _w.execute(

@@ -261,3 +261,16 @@ class CleanupPermissionTests(PosterCleanupTests):
             scheduled_tasks._cleanup_overlay_upload_files(
                 self.root, _FakePlex({'100': [_upload('b' * 40)]}), set(), planned=planned)
         self.assertEqual([p['deletable'] for p in planned], [False])
+
+
+class StaleSeasonTests(PosterCleanupTests):
+    def test_season_404_is_stale_not_an_error_and_row_is_dropped(self):
+        self.add_item(1, 'episode', 'tt1', '300', season=1, episode=1)
+        self.execute("INSERT INTO season_overlay_state (show_ms_item_id, season_ms_item_id, season_number, "
+                     "status, overlay_applied_at) VALUES ('300', '301', 1, 'applied', datetime('now'))")
+        res = self.run_cleanup(_FakePlex({'301': _http_error(404)}))
+        self.assertEqual((res['errors'], res['stale_seasons']), (0, ['301']))
+        scheduled_tasks._record_poster_cleanup(res, '2026-11-23 00:00:00')
+        self.assertEqual(self.execute("SELECT COUNT(*) FROM season_overlay_state")[0][0], 0)
+        self.assertEqual(self.execute("SELECT value FROM overlay_sync_state "
+                                      "WHERE key = 'last_poster_cleanup_at'")[0][0], '2026-11-23 00:00:00')
