@@ -62,6 +62,15 @@
     <div id="job" class="muted" style="margin-top:8px"></div>
   </div>
 
+  <div class="card" id="checkCard">
+    <strong>Check a show in Plex</strong>
+    <p class="muted" style="margin:6px 0">Compares every episode file of a show with what Plex shows for that season/episode.</p>
+    <div class="row"><input type="text" id="showQ" placeholder="Show title" style="flex:1;min-width:160px;background:#111;color:#ddd;border:1px solid #333;border-radius:6px;padding:5px 8px">
+      <button type="button" class="btn sec" id="showFind">Find</button></div>
+    <div id="showList" style="margin-top:8px"></div>
+    <div id="checkResult" style="margin-top:8px"></div>
+  </div>
+
   <div class="card" id="plexCard">
     <div class="row"><strong>Plex</strong>
       <button type="button" class="btn sec" id="plexApply">Set up Plex agent</button>
@@ -146,6 +155,39 @@
   $('#plexApply').onclick = plexAction('apply', 'Switch the TV libraries that read the symlinked folder to the NFO agent and refresh them?');
   $('#plexRestore').onclick = plexAction('restore', 'Put the TV libraries back on the agent they had before and refresh them?');
   $('#plexCheck').onclick = () => { $('#plexStatus').textContent = 'Checking…'; load(true); };
+  const OV = {auto: 'Follow the mode', full: 'Always full details', none: 'No NFO files'};
+  function showRow(sh) {
+    return `<tr><td><a href="#" data-imdb="${esc(sh.imdb_id)}" class="pick">${esc(sh.title)}</a></td><td class="muted">${esc(sh.order)}</td>` +
+      `<td class="muted">${sh.files} files</td><td>${sh.gets_nfos ? '<span class="ok">NFO files</span>' : '<span class="muted">no NFO files</span>'}</td></tr>`;
+  }
+  $('#showFind').onclick = () => fetch('/nfo/api/shows?q=' + encodeURIComponent($('#showQ').value)).then(r => r.json()).then(d => {
+    $('#checkResult').innerHTML = '';
+    $('#showList').innerHTML = d.shows.length ? '<table>' + d.shows.map(showRow).join('') + '</table>' : '<span class="muted">No show found.</span>';
+    document.querySelectorAll('.pick').forEach(a => a.onclick = e => { e.preventDefault(); check(a.dataset.imdb, a.textContent); });
+  });
+  $('#showQ').onkeydown = e => { if (e.key === 'Enter') $('#showFind').click(); };
+  function check(imdb, title) {
+    $('#checkResult').innerHTML = `Checking ${esc(title)} in Plex…`;
+    fetch('/nfo/api/check?imdb_id=' + encodeURIComponent(imdb)).then(r => r.json()).then(d => {
+      const r = d.result || {};
+      if (!d.success) { $('#checkResult').innerHTML = `<span class="bad">${esc(d.error)}</span>`; return; }
+      let html = `<div><b>${esc(title)}</b> ${r.plex_show ? '(Plex: ' + esc(r.plex_show) + ')' : ''}</div>`;
+      if (r.error) html += `<div class="warn">${esc(r.error)}</div>`;
+      if (r.library_uses_nfo_agent === false) html += '<div class="bad">The TV library is no longer on the NFO agent; Fix puts it back.</div>';
+      else html += `<div>${r.right}/${r.checked} episodes right` + (r.wrong.length ? `, <span class="bad">${r.wrong.length} wrong</span>` : '') +
+        (r.missing.length ? `, <span class="warn">${r.missing.length} not in Plex</span>` : '') + '</div>';
+      if (r.wrong && r.wrong.length) html += '<table><tr><th>Episode</th><th>Plex shows</th><th>Should be</th><th>NFO</th></tr>' +
+        r.wrong.slice(0, 50).map(w => `<tr><td>${w.episode}</td><td>${esc(w.plex)}</td><td>${esc(w.expected)}</td><td class="muted">${w.nfo}</td></tr>`).join('') + '</table>';
+      if (r.missing && r.missing.length) html += `<div class="muted">Not in Plex yet: ${r.missing.slice(0, 20).map(m => m.episode).join(', ')}${r.missing.length > 20 ? '…' : ''}</div>`;
+      html += `<div class="row" style="margin-top:8px"><label>NFO files for this show: <select id="ovSel">` +
+        Object.entries(OV).map(([k, v]) => `<option value="${k}"${k === r.override ? ' selected' : ''}>${v}</option>`).join('') +
+        `</select></label><button type="button" class="btn" id="fixBtn">Fix: rewrite and refresh in Plex</button><span id="fixMsg" class="muted"></span></div>`;
+      $('#checkResult').innerHTML = html;
+      $('#ovSel').onchange = e => post('/nfo/api/override', {imdb_id: imdb, value: e.target.value}).then(x => { $('#fixMsg').textContent = x.success ? x.message : x.error; });
+      $('#fixBtn').onclick = () => { $('#fixMsg').textContent = 'Working…';
+        post('/nfo/api/fix', {imdb_id: imdb}).then(x => { $('#fixMsg').textContent = x.success ? x.message + ' Check again in a minute.' : x.error; }); };
+    });
+  }
   load(true);
 })();
 </script>

@@ -1,18 +1,12 @@
 """
-Keep a show's chosen episode order in Plex after Plex drops TheTVDB
-(2026-12-03).
+Plex-side episode metadata for shows with a chosen episode order.
 
-Plex numbers shows by TMDB from then on and can no longer follow a TVDB
-DVD/absolute/alternate order. For a show whose order was picked by hand in
-cli_debrid (Show options, or manual assign with a non-default order), the
-symlinks already carry that order's season/episode numbers, so Plex sorts
-the episodes that way. This writes the matching title, summary and air date
-onto each Plex episode and locks those fields, so Plex's TMDB metadata
-can't overwrite them. Shows on the default order are never touched; going
-back to the default unlocks the fields and Plex's own metadata returns.
-
-Runs only when an order is changed (no scheduled task): episodes added to
-Plex later keep Plex's own metadata until the order is set again.
+cli_debrid no longer writes and locks a chosen order's titles onto Plex
+episodes (0.8.0-0.8.6 did, on order change). Without NFO files Plex shows
+its own metadata; with NFO files (Tools -> NFO Files) those carry the order.
+What's left: releasing the locks those versions set (on the show's next
+order change, or when NFO files take a show over) and numbering NFO shows
+by TMDB in Plex. Nothing here runs on a schedule.
 """
 
 import logging
@@ -37,70 +31,13 @@ def shows_with_chosen_order() -> List[Tuple[str, str]]:
         conn.close()
 
 
-def _wanted(seasons: Dict) -> Dict[Tuple[int, int], Dict]:
-    """(season, episode) -> {'title', 'summary', 'date'} from an order's seasons."""
-    out = {}
-    for sn, season in (seasons or {}).items():
-        for en, ep in ((season or {}).get('episodes') or {}).items():
-            try:
-                key = (int(sn), int(en))
-            except (TypeError, ValueError):
-                continue
-            out[key] = {'title': (ep.get('title') or '').strip(),
-                        'summary': (ep.get('overview') or '').strip(),
-                        'date': (ep.get('first_aired') or '')[:10]}
-    return out
-
-
 def _locked(ep) -> set:
     return {f.name for f in getattr(ep, 'fields', None) or [] if getattr(f, 'locked', False)}
 
 
-def _date(ep) -> str:
-    d = getattr(ep, 'originallyAvailableAt', None)
-    return d.strftime('%Y-%m-%d') if d else ''
-
-
-def apply_to_plex_show(show, seasons: Dict) -> Dict[str, int]:
-    """Write the order's metadata onto the Plex show's episodes. Episodes
-    already right (and locked) are skipped."""
-    want = _wanted(seasons)
-    counts = {'updated': 0, 'unchanged': 0, 'not_in_order': 0, 'errors': 0}
-    for ep in show.episodes():
-        key = (getattr(ep, 'seasonNumber', None), getattr(ep, 'index', None))
-        meta = want.get(key) if None not in key else None
-        if meta is None or not meta['title']:
-            counts['not_in_order'] += 1
-            continue
-        locked = _locked(ep)
-        todo = []
-        if (ep.title or '') != meta['title'] or 'title' not in locked:
-            todo.append('title')
-        if meta['summary'] and ((ep.summary or '') != meta['summary'] or 'summary' not in locked):
-            todo.append('summary')
-        if meta['date'] and (_date(ep) != meta['date'] or 'originallyAvailableAt' not in locked):
-            todo.append('originallyAvailableAt')
-        if not todo:
-            counts['unchanged'] += 1
-            continue
-        try:
-            ep.batchEdits()
-            if 'title' in todo:
-                ep.editTitle(meta['title'], locked=True)
-            if 'summary' in todo:
-                ep.editSummary(meta['summary'], locked=True)
-            if 'originallyAvailableAt' in todo:
-                ep.editOriginallyAvailable(meta['date'], locked=True)
-            ep.saveEdits()
-            counts['updated'] += 1
-        except Exception as e:
-            counts['errors'] += 1
-            logging.warning(f"{_LOG} {show.title} S{key[0]:02d}E{key[1]:02d}: edit failed: {e}")
-    return counts
-
-
 def release_plex_show(show) -> int:
-    """Unlock the fields this module locked and let Plex refresh them."""
+    """Unlock the title/summary/date locks 0.8.0-0.8.6 set and let Plex
+    refresh them."""
     n = 0
     for ep in show.episodes():
         locked = _locked(ep) & set(FIELDS)
@@ -138,20 +75,43 @@ def _nfo_mode(imdb_id: str) -> bool:
         return False
 
 
+TMDB_AIRING = 'tmdbAiring'
+
+
+def pin_tmdb_ordering(show) -> bool:
+    """A show whose order the NFO files carry is numbered by TMDB (aired) in
+    Plex: the numbering the NFOs are written against, and the only one Plex
+    has for every show once it drops TheTVDB (2026-12-03). Before that a
+    library or show ordering of TheTVDB would number it differently. True
+    when the ordering was changed."""
+    try:
+        pref = next((p for p in show.preferences() if p.id == 'showOrdering'), None)
+        if pref is None or TMDB_AIRING not in (pref.enumValues or {}) or pref.value == TMDB_AIRING:
+            return False
+        show.editAdvanced(showOrdering=TMDB_AIRING)
+        logging.info(f"{_LOG} {show.title}: Plex episode ordering set to {TMDB_AIRING} (NFO files carry the order)")
+        return True
+    except Exception as e:
+        logging.warning(f"{_LOG} {getattr(show, 'title', '?')}: could not set TMDB ordering: {e}")
+        return False
+
+
 def release_for_nfo(imdb_id: str, plex=None) -> str:
-    """NFO files carry the order's episode details: drop the locks this module
-    set (they would stop Plex from taking the NFO's values) and have Plex
-    re-read the show."""
+    """NFO files carry the order's episode details: number the show by TMDB
+    in Plex, drop the locks this module set (they would stop Plex from taking
+    the NFO's values) and have Plex re-read the show."""
     show, problem = _plex_show(imdb_id, plex)
     if show is None:
         return ''
+    pinned = pin_tmdb_ordering(show)
     n = release_plex_show(show)  # refreshes the show when it unlocked something
     if not n:
         try:
             show.refresh()
         except Exception as e:
             logging.debug(f"{_LOG} {show.title}: refresh: {e}")
-    return f"Plex re-reading {show.title}'s NFO files" + (f" ({n} episode locks released)" if n else '')
+    return (f"Plex re-reading {show.title}'s NFO files" + (f" ({n} episode locks released)" if n else '')
+            + ('; numbered by TMDB in Plex' if pinned else ''))
 
 
 def release_all_for_nfo(plex=None) -> int:
@@ -169,47 +129,38 @@ def release_all_for_nfo(plex=None) -> int:
     return done
 
 
-def lock_new_episodes(imdb_ids) -> Dict[str, str]:
+def pin_new_nfo_shows(imdb_ids) -> Dict[str, str]:
     """Plex just added episodes of these shows (symlink verification found
-    them). For a show on a chosen order whose order isn't carried by NFO
-    files, set and lock the new episodes' titles too: without this only the
-    episodes present at the order change were locked, and every later one
-    showed Plex's (TMDB-numbered) details. Episodes already right are skipped."""
-    from cli_battery.app.episode_order import show_episode_order
+    them). A show whose order NFO files carry and that is new to Plex takes
+    the library's ordering (TheTVDB before 2026-12-03): number it by TMDB
+    like the NFOs expect. Shows without NFO files are left alone."""
     notes = {}
     for imdb_id in sorted({i for i in imdb_ids or () if i}):
         try:
-            order = show_episode_order(imdb_id)
-            if not order or _nfo_mode(imdb_id):
+            if not _nfo_mode(imdb_id):
                 continue
-            notes[imdb_id] = sync_show(imdb_id, order)
+            show, _problem = _plex_show(imdb_id)
+            if show is not None and pin_tmdb_ordering(show):
+                show.refresh()
+                notes[imdb_id] = 'numbered by TMDB in Plex'
         except Exception as e:
-            logging.warning(f"{_LOG} locking new episodes of {imdb_id}: {e}")
+            logging.warning(f"{_LOG} numbering new show {imdb_id} by TMDB: {e}")
     return notes
 
 
 def sync_show(imdb_id: str, order: Optional[str] = None, plex=None) -> str:
-    """Apply (chosen order) or release (default order) one show. Returns a note.
-    With NFO files on, the NFOs carry the order instead: release and refresh."""
-    from cli_battery.app.episode_order import fetch_seasons_for_order, show_episode_order
-    order = order if order is not None else show_episode_order(imdb_id)
+    """After a show's order changed. With NFO files the NFOs carry the order:
+    number the show by TMDB, release old locks and refresh. Without, only
+    release the locks 0.8.0-0.8.6 set, so Plex's own metadata returns.
+    Returns a note ('' when there was nothing to do)."""
     try:
         if _nfo_mode(imdb_id):
             return release_for_nfo(imdb_id, plex)
-        show, problem = _plex_show(imdb_id, plex)
+        show, _problem = _plex_show(imdb_id, plex)
         if show is None:
-            return f'Plex episode titles not updated: {problem}'
-        if not order or order == 'default':
-            n = release_plex_show(show)
-            return f"Plex episode titles unlocked for {n} episodes" if n else ''
-        seasons = fetch_seasons_for_order(imdb_id, order)
-        if not seasons:
-            return f'Plex episode titles not updated: could not fetch the {order} episode list'
-        c = apply_to_plex_show(show, seasons)
-        if c['updated'] or c['errors']:
-            logging.info(f"{_LOG} {show.title} ({order}): {c}")
-        return (f"Plex episode titles set from {order}: {c['updated']} updated, {c['unchanged']} already right"
-                + (f", {c['errors']} failed" if c['errors'] else ''))
+            return ''
+        n = release_plex_show(show)
+        return f"Plex episode titles unlocked for {n} episodes" if n else ''
     except Exception as e:
         logging.error(f"{_LOG} {imdb_id}: {e}", exc_info=True)
         return f'Plex episode titles not updated: {e}'

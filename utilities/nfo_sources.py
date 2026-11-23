@@ -242,10 +242,11 @@ def extras_from_tvdb(rec: Dict) -> Dict:
     }
 
 
-def plan_episodes(episodes: List[Dict], tmdb_id) -> Dict[int, Dict]:
+def plan_episodes(episodes: List[Dict], tmdb_id, force_full: bool = False) -> Dict[int, Dict]:
     """index -> {'mode': 'minimal'|'full', **extras} for a show's episodes
     (dicts from nfo_writer._episode_info). Without TMDB data every episode
-    is 'full' with no extras (cli_debrid's title, description and date)."""
+    is 'full' with no extras (cli_debrid's title, description and date).
+    force_full (a per-show override): every episode gets the full details."""
     tm_eps = tmdb_episodes(tmdb_id)
     plans: Dict[int, Dict] = {}
     for i, ep in enumerate(episodes):
@@ -253,11 +254,11 @@ def plan_episodes(episodes: List[Dict], tmdb_id) -> Dict[int, Dict]:
             plans[i] = {'mode': 'full'}
             continue
         here = tm_eps.get((ep.get('season'), ep.get('episode')))
-        if aligned(ep, here):
+        if aligned(ep, here) and not force_full:
             plans[i] = {'mode': 'minimal'}
             continue
         plan = {'mode': 'full'}
-        match = find_tmdb_match(ep, tm_eps)
+        match = here if aligned(ep, here) else find_tmdb_match(ep, tm_eps)
         if match:
             plan.update(extras_from_tmdb(match))
         if not plan.get('thumb') or not (plan.get('actors') or plan.get('directors')):
@@ -269,3 +270,4 @@ def plan_episodes(episodes: List[Dict], tmdb_id) -> Dict[int, Dict]:
                         plan[k] = tv[k]
         plans[i] = plan
     return plans
+

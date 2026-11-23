@@ -550,16 +550,17 @@ def _run_plex_verification_scan(max_files: int, recent_only: bool, max_attempts:
             except Exception as e:
                 logger.error(f"Error triggering Plex update after failed verification: {str(e)}", exc_info=True)
 
-    # New episodes of shows on a chosen episode order: lock that order's
-    # titles on them too (only the episodes present at the order change were)
-    if verified_shows:
+    # NFO files on: a show new to Plex is numbered by TMDB like its NFOs.
+    # Off: nothing (no Plex edits outside an order change)
+    from utilities.nfo_writer import enabled as _nfo_enabled
+    if verified_shows and _nfo_enabled():
         try:
             import threading
-            from utilities.plex_order_metadata import lock_new_episodes
-            threading.Thread(target=lock_new_episodes, args=(verified_shows,),
-                             name='plex-order-new-episodes', daemon=True).start()
+            from utilities.plex_order_metadata import pin_new_nfo_shows
+            threading.Thread(target=pin_new_nfo_shows, args=(verified_shows,),
+                             name='plex-nfo-new-shows', daemon=True).start()
         except Exception as e:
-            logger.warning(f"Could not start order locking for new episodes: {e}")
+            logger.warning(f"Could not start TMDB numbering for new NFO shows: {e}")
 
     # Log stats
     try:

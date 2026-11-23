@@ -295,13 +295,11 @@ class PreviewOrderChangeTests(unittest.TestCase):
             self.oc.apply_order_change('tt1', 'tvdb:alternate', sync_plex=True)
         return [c.args[1] for c in sync.call_args_list]
 
-    def test_nfo_mode_pins_tmdb_aired_when_plex_has_no_match(self):
-        # A stale ordering from the previous order made Plex number the show
-        # differently from what the NFOs are measured against
-        self.assertEqual(self._apply_plex(True, None, "Plex episode ordering set to 'tmdbAiring'"), [['tmdbAiring']])
-        self.assertEqual(self._apply_plex(True, ['tvdbDvd'], "Plex doesn't offer this ordering"),
-                         [['tvdbDvd'], ['tmdbAiring']])
-        self.assertEqual(self._apply_plex(True, ['tvdbDvd'], "Plex episode ordering set to 'tvdbDvd'"), [['tvdbDvd']])
+    def test_nfo_shows_leave_plex_ordering_to_the_nfo_hand_over(self):
+        # sync_show (plex_order_metadata.release_for_nfo) numbers an NFO show
+        # by TMDB; no TheTVDB ordering is set on it here
+        self.assertEqual(self._apply_plex(True, None, ''), [])
+        self.assertEqual(self._apply_plex(True, ['tvdbDvd'], "Plex episode ordering set to 'tvdbDvd'"), [])
 
     def test_without_nfo_plex_ordering_is_left_as_before(self):
         self.assertEqual(self._apply_plex(False, None, ''), [])

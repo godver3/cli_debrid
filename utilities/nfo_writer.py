@@ -65,12 +65,56 @@ def enabled() -> bool:
     return mode() != 'off' and symlinked_mode()
 
 
+# Per-show override (Tools -> NFO Files -> Check a show):
+#   'auto' (default) follows the mode, 'full' always writes every episode's
+#   details, 'none' never writes NFO files for the show.
+OVERRIDES = ('auto', 'full', 'none')
+_ov_lock = threading.Lock()
+
+
+def _overrides_path() -> str:
+    return os.path.join(os.environ.get('USER_DB_CONTENT', '/user/db_content'), 'nfo_show_overrides.json')
+
+
+def _load_overrides() -> Dict[str, str]:
+    try:
+        import json
+        with open(_overrides_path(), encoding='utf-8') as f:
+            data = json.load(f)
+        return {k: v for k, v in data.items() if v in OVERRIDES} if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def show_override(imdb_id: Optional[str]) -> str:
+    return _load_overrides().get(imdb_id or '', 'auto')
+
+
+def set_show_override(imdb_id: str, value: str) -> None:
+    import json
+    if value not in OVERRIDES:
+        raise ValueError(f'override must be one of {OVERRIDES}')
+    with _ov_lock:
+        data = _load_overrides()
+        if value == 'auto':
+            data.pop(imdb_id, None)
+        else:
+            data[imdb_id] = value
+        tmp = _overrides_path() + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=1)
+        os.replace(tmp, _overrides_path())
+
+
 def wants_show(imdb_id: Optional[str]) -> bool:
     """Does this show get NFO files? 'all': every show; 'changed': shows
     whose episode order isn't the default (the rest look exactly as Plex
-    makes them, as without NFOs)."""
+    makes them, as without NFOs). A per-show override wins."""
     if not imdb_id or not enabled():
         return False
+    override = show_override(imdb_id)
+    if override != 'auto':
+        return override == 'full'
     if mode() == 'all':
         return True
     try:
@@ -187,12 +231,8 @@ def build_episode_nfo(episodes: List[Dict], show_title: str, plans: Optional[Lis
             ]
             lines += [_tag('director', d) for d in plan.get('directors') or []]
             lines += [_tag('credits', w) for w in plan.get('writers') or []]
-            rating = plan.get('rating')
-            if rating and rating.get('value') is not None:
-                lines.append(f'  <ratings>\n    <rating name="{_text(rating.get("name") or "themoviedb")}" max="10" default="true">'
-                             f'\n      <value>{_text(rating["value"])}</value>'
-                             + (f'\n      <votes>{_text(rating["votes"])}</votes>' if rating.get('votes') else '')
-                             + '\n    </rating>\n  </ratings>')
+            # No <ratings>: Plex mixes them up with a custom agent (known issue,
+            # Plex staff on the NFO agent thread); Plex Series supplies ratings
             for n, a in enumerate(plan.get('actors') or []):
                 parts = [f'    <name>{_text(a["name"])}</name>']
                 if a.get('role'):
@@ -428,7 +468,8 @@ def _plans(episodes: List[Dict], show: Dict) -> List[Dict]:
         return []
     try:
         from utilities.nfo_sources import plan_episodes
-        plans = plan_episodes(episodes, (show.get('ids') or {}).get('tmdb'))
+        plans = plan_episodes(episodes, (show.get('ids') or {}).get('tmdb'),
+                              force_full=show.get('force_full', False))
         return [plans.get(i, {'mode': 'full'}) for i in range(len(episodes))]
     except Exception as e:
         logging.warning(f"{_LOG} episode details for {show.get('title')}: {e}")
@@ -462,6 +503,8 @@ def write_show(imdb_id: str, rows: Optional[List[Dict]] = None, prune: bool = Tr
     meta, seasons = _battery(imdb_id)
     lookup = _season_lookup(seasons)
     show = _show_info(meta, rows[0], seasons)
+    show['force_full'] = show_override(imdb_id) == 'full'
+
     title = show['title'] or rows[0].get('title') or ''
 
     by_file: Dict[str, List[Dict]] = {}
