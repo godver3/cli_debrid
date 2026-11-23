@@ -74,6 +74,25 @@ def _pkce_pair():
     return verifier, challenge
 
 
+def _safe_next(target):
+    """Return target only if it is a same-site path, else ''.
+
+    Blocks open redirects: absolute URLs, scheme-relative '//host' and
+    backslash tricks browsers normalise into '//host'.
+    """
+    target = (target or '').strip()
+    if not target.startswith('/') or target.startswith('//'):
+        return ''
+    if '\\' in target or any(ord(c) < 32 for c in target):
+        return ''
+    return target
+
+
+def _linkable(user, sub):
+    """An existing account may be linked only if it isn't bound to another SSO identity."""
+    return user is not None and (not user.oidc_sub or user.oidc_sub == sub)
+
+
 def _callback_uri():
     """Build the redirect_uri for the callback endpoint.
 
@@ -117,7 +136,7 @@ def login():
     # Store in session (short-lived, cleared after callback)
     session['oidc_state'] = state
     session['oidc_verifier'] = verifier
-    session['oidc_next'] = request.args.get('next', '')
+    session['oidc_next'] = _safe_next(request.args.get('next', ''))
 
     params = {
         'response_type': 'code',
@@ -163,7 +182,7 @@ def callback():
         return redirect(url_for('auth.login'))
 
     verifier = session.pop('oidc_verifier', None)
-    next_url = session.pop('oidc_next', '') or url_for('root.root')
+    next_url = _safe_next(session.pop('oidc_next', '')) or url_for('root.root')
 
     meta = _fetch_discovery(cfg['discovery_url'])
     if not meta:
@@ -218,6 +237,9 @@ def callback():
     sub = userinfo.get('sub')
     email = userinfo.get('email', '')
     # Derive a clean username: prefer email prefix over full email/name
+    # Only trust an email for account linking when the provider hasn't said
+    # it's unverified (providers that omit the claim are taken as verified).
+    email_trusted = bool(email) and userinfo.get('email_verified') is not False
     _pref = userinfo.get('preferred_username', '')
     if _pref and '@' in _pref:
         _pref = _pref.split('@')[0]  # e.g. mash2k3@gmail.com -> mash2k3
@@ -236,8 +258,10 @@ def callback():
     user = User.query.filter_by(oidc_sub=sub).first()
 
     # 2. Look up by email (link existing local account)
-    if not user and email:
+    if not user and email_trusted:
         user = User.query.filter_by(email=email).first()
+        if not _linkable(user, sub):
+            user = None
         if user:
             user.oidc_sub = sub
             user.oidc_provider = cfg['provider']
@@ -246,8 +270,14 @@ def callback():
 
     # 3. Look up by preferred_username matching cli_debrid username
     #    Covers the common case where Authentik username == cli_debrid username
-    if not user and preferred_username:
+    # An '@'-derived name drops the domain, so it is only trusted with a
+    # verified email (else admin@anything.example would claim 'admin').
+    pref_from_email = '@' in (userinfo.get('preferred_username') or '') or (
+        not _pref and bool(email))
+    if not user and preferred_username and (email_trusted or not pref_from_email):
         user = User.query.filter_by(username=preferred_username).first()
+        if not _linkable(user, sub):
+            user = None
         if user:
             user.oidc_sub = sub
             user.oidc_provider = cfg['provider']
@@ -258,9 +288,11 @@ def callback():
 
     # 4. Look up by email-prefix (e.g. mash2k3@gmail.com -> mash2k3)
     #    Handles providers where preferred_username is set to the email address
-    if not user and email and '@' in email:
+    if not user and email_trusted and '@' in email:
         email_prefix = email.split('@')[0]
         user = User.query.filter_by(username=email_prefix).first()
+        if not _linkable(user, sub):
+            user = None
         if user:
             user.oidc_sub = sub
             user.oidc_provider = cfg['provider']
@@ -269,7 +301,7 @@ def callback():
             db.session.commit()
             logger.info(f"OIDC: linked SSO to existing account '{user.username}' via email prefix")
 
-    # 3. Auto-provision new user
+    # 5. Auto-provision new user
     if not user:
         if not cfg['auto_provision']:
             logger.warning(f"OIDC: no account for sub={sub}, auto-provision disabled")
@@ -340,7 +372,9 @@ def get_sso_settings():
         'provider': get_setting('SSO', 'provider', 'authentik'),
         'discovery_url': get_setting('SSO', 'discovery_url', ''),
         'client_id': get_setting('SSO', 'client_id', ''),
-        'client_secret': get_setting('SSO', 'client_secret', ''),
+        # Never send the secret back; the form leaves it blank to keep it.
+        'client_secret': '',
+        'client_secret_set': bool(get_setting('SSO', 'client_secret', '')),
         'default_role': get_setting('SSO', 'default_role', 'user'),
         'auto_provision': get_setting('SSO', 'auto_provision', True),
         'redirect_uri_base': get_setting('SSO', 'redirect_uri_base', ''),

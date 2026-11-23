@@ -430,7 +430,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (s.provider)       document.getElementById('sso-provider').value = s.provider;
             if (s.discovery_url)  document.getElementById('sso-discovery-url').value = s.discovery_url;
             if (s.client_id)      document.getElementById('sso-client-id').value = s.client_id;
-            if (s.client_secret)  document.getElementById('sso-client-secret').value = s.client_secret;
+            if (s.client_secret_set) document.getElementById('sso-client-secret').placeholder = '(saved — leave blank to keep)';
             if (s.default_role)   document.getElementById('sso-default-role').value = s.default_role;
             document.getElementById('sso-auto-provision').checked   = s.auto_provision !== false;
             document.getElementById('sso-disable-local-auth').checked = !!s.disable_local_auth;
