@@ -16,7 +16,7 @@ def manual_blacklist():
 
     if request.method == 'POST':
         action = request.form.get('action')
-        imdb_id = request.form.get('imdb_id')
+        imdb_id = (request.form.get('imdb_id') or '').strip()
 
         if not imdb_id:
             return jsonify({'success': False, 'error': 'IMDb ID is required'}), 400
@@ -88,26 +88,34 @@ def manual_blacklist():
                 return jsonify({'success': False, 'error': f'Error adding to blacklist: {str(e)}'}), 500
 
         elif action == 'update_seasons':
+            from database.manual_blacklist import _write_lock
             try:
-                if imdb_id in blacklist:
-                    item = blacklist[imdb_id]
-                    # REVERT: Check against 'episode' type here
-                    if item['media_type'] == 'episode':
-                        all_seasons = request.form.get('all_seasons') == 'on'
+                with _write_lock:
+                    blacklist = get_manual_blacklist()  # re-read under the lock
+                    if imdb_id in blacklist:
+                        item = blacklist[imdb_id]
+                        # REVERT: Check against 'episode' type here
+                        if item['media_type'] == 'episode':
+                            all_seasons = request.form.get('all_seasons') == 'on'
 
-                        if all_seasons:
-                            item['seasons'] = []
+                            if all_seasons:
+                                item['seasons'] = []
+                            else:
+                                selected_seasons = request.form.getlist('seasons')
+                                picked = sorted({int(s) for s in selected_seasons if s.isdigit()})
+                                if not picked:
+                                    # [] means "all seasons"; an empty pick must not
+                                    # silently become a whole-show block.
+                                    return jsonify({'success': False, 'error': 'Pick at least one season, tick All seasons, or remove the show'}), 400
+                                item['seasons'] = picked
+
+                            save_manual_blacklist(blacklist)
+                            return jsonify({'success': True, 'message': 'Successfully updated seasons'})
                         else:
-                            selected_seasons = request.form.getlist('seasons')
-                            item['seasons'] = sorted([int(s) for s in selected_seasons if s.isdigit()])
-
-                        save_manual_blacklist(blacklist)
-                        return jsonify({'success': True, 'message': 'Successfully updated seasons'})
+                            # This branch should technically not be hit for TV shows if 'add' stores them as 'episode'
+                            return jsonify({'success': False, 'error': 'Only items stored as type "episode" can have seasons updated'}), 400
                     else:
-                        # This branch should technically not be hit for TV shows if 'add' stores them as 'episode'
-                        return jsonify({'success': False, 'error': 'Only items stored as type "episode" can have seasons updated'}), 400
-                else:
-                    return jsonify({'success': False, 'error': 'Item not found in blacklist'}), 404
+                        return jsonify({'success': False, 'error': 'Item not found in blacklist'}), 404
             except Exception as e:
                 logging.error(f"Error updating seasons via AJAX: {str(e)}", exc_info=True)
                 return jsonify({'success': False, 'error': str(e)}), 500
