@@ -700,16 +700,17 @@ def migrate_alongside():
     return jsonify({'success': True, 'alongside': on})
 
 
-def _engine_why_down() -> str:
+def _engine_why_down(check_state: bool = True) -> str:
     """Why the engine won't come up ('' while it may): what stops it from
-    starting here, Stop pressed on the Mount page, or supervisord gave up."""
+    starting here, Stop pressed on the Mount page, or supervisord gave up
+    (check_state: off when a sync is about to restart it anyway)."""
     from utilities import builtin_engine
     issues = builtin_engine.problems()
     if issues:
         return "it can't start: " + '; '.join(issues)
     if builtin_engine.stopped_by_user():
         return 'it was stopped from the Mount page (press Start)'
-    if builtin_engine.state() == 'FATAL':
+    if check_state and builtin_engine.state() == 'FATAL':
         return 'it keeps crashing on start (see the cli_debrid log)'
     return ''
 
@@ -726,10 +727,6 @@ def migrate_import():
     if not builtin_engine.wanted():
         return jsonify({'success': False, 'error': "The built-in mount engine isn't running: start it with step 1 "
                                                    "(Start alongside) first, then Import."}), 400
-    why = _engine_why_down()
-    if why:
-        return jsonify({'success': False, 'error': f"The built-in mount engine isn't running: {why}. "
-                                                   f"Fix that on the Mount page, then Import."}), 400
     data_path = (get_setting('Usenet Provider') or {}).get('data_path') or ''
     # Same repair standards as cli_mount: carry its repair settings over.
     copied = bm.climount_repair_settings(data_path)
@@ -740,6 +737,13 @@ def migrate_import():
         copied.pop('plex_url', None)
         copied.pop('plex_token', None)
     backbones = copied.pop(bm.BACKBONES_KEY, None) or {}
+    climount_servers = copied.pop(bm.SERVERS_KEY, None) or []
+    if climount_servers and not _servers((get_setting(SECTION) or {}).get('servers')):
+        # No servers on the Mount page yet: use cli_mount's (with their
+        # backbones), so the engine can start. Servers typed here win.
+        set_setting(SECTION, 'servers', json.dumps(climount_servers))
+        copied['servers'] = f'{len(climount_servers)} server(s) from cli_mount'
+        backbones = {}
     if backbones:
         # cli_mount's backbone names go onto the servers with the same host.
         current = _servers((get_setting(SECTION) or {}).get('servers'))
@@ -748,9 +752,16 @@ def migrate_import():
             set_setting(SECTION, 'servers', json.dumps(updated))
             copied['server_backbones'] = f'{changed} server(s)'
     for key, value in copied.items():
-        if key == 'server_backbones':
+        if key in ('server_backbones', 'servers'):
             continue
         set_setting(SECTION, key, value)
+    # After the copy: cli_mount's servers may be what lets the engine start.
+    why = _engine_why_down(check_state=not copied)
+    if why:
+        if copied:
+            _sync_in_background()
+        return jsonify({'success': False, 'error': f"The built-in mount engine isn't running: {why}. "
+                                                   f"Fix that on the Mount page, then Import."}), 400
     # The sync may restart the engine: it runs in the import thread, which
     # then waits for the engine to answer before importing anything.
     job = bm.start_import(_climount_source(), _engine(), data_path, limit=limit, space=_import_space(),

@@ -277,6 +277,43 @@ class MountRoutesTests(unittest.TestCase):
         self.assertTrue(callable(st.call_args.kwargs['why_down']), 'Import can say why the engine is down')
         self.sync.assert_not_called()
 
+    def test_import_copies_climount_servers_only_when_none_are_set(self):
+        from utilities import builtin_engine as be, builtin_migrate as bm
+        rows = [{'host': 'news.cm', 'port': 563, 'ssl': True, 'username': 'u', 'password': 'secret', 'connections': 30,
+                 'backup': False, 'enabled': True, 'backbone': 'omicron', 'expires': '', 'auto_renew': False}]
+
+        def problems():
+            return [] if mr._servers(self.store['Built-in Mount'].get('servers')) else ['no usenet server set']
+
+        def run():
+            with mock.patch.object(be, 'wanted', return_value=True), \
+                    mock.patch.object(be, 'problems', side_effect=problems), \
+                    mock.patch.object(be, 'stopped_by_user', return_value=False), \
+                    mock.patch.object(bm, 'climount_repair_settings',
+                                      return_value={bm.SERVERS_KEY: rows, bm.BACKBONES_KEY: {'news.mine': 'omicron'}}), \
+                    mock.patch.object(bm, 'start_import', return_value='job1') as st, \
+                    mock.patch.object(mr, '_engine'), mock.patch.object(mr, '_climount_source'), \
+                    mock.patch.object(mr, '_import_space', return_value=None):
+                code, body = self._post(mr.migrate_import, {'limit': 0})
+            return code, body, st
+        # No servers on the Mount page: cli_mount's are used and the engine
+        # can start, so the import goes ahead (the password never comes back).
+        self.store['Built-in Mount']['servers'] = '[]'
+        code, body, st = run()
+        self.assertEqual(code, 200, body)
+        self.assertEqual(json.loads(self.store['Built-in Mount']['servers']), rows)
+        self.assertEqual(body['copied_settings']['servers'], '1 server(s) from cli_mount')
+        self.assertNotIn('secret', json.dumps(body))
+        st.assert_called_once()
+        # Servers already set: kept as they are, only backbones are added.
+        mine = [{'host': 'news.mine', 'port': 563, 'ssl': True, 'username': 'me', 'password': 'p', 'connections': 5}]
+        self.store['Built-in Mount']['servers'] = json.dumps(mine)
+        code, body, st = run()
+        self.assertEqual(code, 200, body)
+        saved = json.loads(self.store['Built-in Mount']['servers'])
+        self.assertEqual([(s['host'], s['backbone']) for s in saved], [('news.mine', 'omicron')])
+        self.assertNotIn('servers', body['copied_settings'])
+
     def test_status_counts_only_jobs_cli_mount_lists(self):
         # cli_mount's meta folder keeps maps of removed jobs (a user had 1093
         # maps for 226 jobs): the page counts what Import will import.

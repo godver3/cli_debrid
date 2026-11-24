@@ -429,6 +429,46 @@ class SpaceTests(unittest.TestCase):
         self.assertEqual([bm._seconds(x) for x in ('10s', '5m', '3d', '1h30m', '', 'junk')], [10, 300, 259200, 5400, None, None])
 
 
+class ServerCopyTests(unittest.TestCase):
+    """cli_mount's / upstream decypharr's usenet servers become Mount page rows."""
+
+    def test_providers_become_mount_rows_in_priority_order(self):
+        import json
+        from utilities.builtin_engine import servers
+        cfg = {'usenet': {'providers': [
+            # upstream decypharr: no plan fields; Go drops false/zero fields
+            {'host': 'block.example', 'port': 119, 'username': 'b', 'password': 'pb', 'backup': True},
+            {'host': 'news.second', 'port': 563, 'username': 's', 'password': 'ps', 'ssl': True,
+             'max_connections': 20, 'priority': 2, 'backbone': 'omicron'},
+            # cli_mount: plan end + auto renew carried as Mount page notes
+            {'host': 'news.first', 'port': 563, 'username': 'f', 'password': 'pf', 'ssl': True,
+             'priority': 1, 'subscription_expiry': '2027-01-31', 'auto_renew': True},
+            {'host': 'News.First', 'port': 563, 'username': 'f', 'password': 'dupe'},  # priority 4 (its place)
+            {'host': '  ', 'port': 563}, 'junk']}}
+        rows = bm.climount_servers(cfg)
+        self.assertEqual([r['host'] for r in rows], ['news.first', 'news.second', 'block.example'],
+                         'priority order, backups last, duplicates and blank hosts dropped')
+        self.assertEqual(rows[0], {'host': 'news.first', 'port': 563, 'ssl': True, 'username': 'f', 'password': 'pf',
+                                   'connections': 10, 'backup': False, 'enabled': True, 'backbone': '',
+                                   'expires': '2027-01-31', 'auto_renew': True})
+        self.assertEqual((rows[1]['connections'], rows[1]['backbone']), (20, 'omicron'))
+        self.assertEqual((rows[2]['ssl'], rows[2]['port'], rows[2]['backup'], rows[2]['expires']), (False, 119, True, ''))
+        # The engine accepts them as they are.
+        got = servers({'servers': json.dumps(rows)})
+        self.assertEqual([(g['host'], g['tls'], g['max_conns'], g['backup']) for g in got],
+                         [('news.first', True, 10, False), ('news.second', True, 20, False),
+                          ('block.example', False, 10, True)])
+
+    def test_repair_settings_carry_the_servers(self):
+        import json
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, 'config.json'), 'w') as f:
+                json.dump({'usenet': {'providers': [{'host': 'news.a', 'password': 'x', 'ssl': True}]}}, f)
+            got = bm.climount_repair_settings(d)
+        self.assertEqual([r['host'] for r in got[bm.SERVERS_KEY]], ['news.a'])
+        self.assertEqual(bm.climount_servers({}), [])
+
+
 class BackboneTests(unittest.TestCase):
     """cli_mount's per-server backbones carry over to the built-in servers."""
 

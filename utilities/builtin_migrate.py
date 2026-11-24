@@ -27,6 +27,7 @@ Nothing is moved or deleted on either side: every step copies.
 """
 
 import base64
+import datetime
 import hashlib
 import logging
 import os
@@ -332,7 +333,9 @@ def _gb(n: int) -> str:
 def climount_repair_settings(data_path: str) -> Dict[str, object]:
     """cli_mount's repair standards as Built-in Mount settings, from its
     config.json when it is visible next to its data (empty when not): the
-    ffprobe check (repair.media_probe_usenet) and the availability samples."""
+    ffprobe check (repair.media_probe_usenet) and the availability samples.
+    Also its usenet servers (under SERVERS_KEY) and backbone names (under
+    BACKBONES_KEY). cli_mount and upstream decypharr share this layout."""
     import json
     for cand in ('config.json', os.path.join('config', 'config.json'), os.path.join('..', 'config', 'config.json')):
         p = os.path.join(data_path or '', cand)
@@ -356,6 +359,9 @@ def climount_repair_settings(data_path: str) -> Dict[str, object]:
         backbones = climount_backbones(cfg)
         if backbones:
             out[BACKBONES_KEY] = backbones
+        rows = climount_servers(cfg)
+        if rows:
+            out[SERVERS_KEY] = rows
         return out
     return {}
 
@@ -363,6 +369,49 @@ def climount_repair_settings(data_path: str) -> Dict[str, object]:
 #: Key of the {host: backbone} map in climount_repair_settings' result; not
 #: a setting itself: apply_backbones puts it on the matching servers.
 BACKBONES_KEY = '_server_backbones'
+
+
+#: Key of cli_mount's usenet servers (Mount page rows) in the same result:
+#: only used when the Mount page has no servers of its own.
+SERVERS_KEY = '_servers'
+
+
+def _int(v, default: int) -> int:
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        return default
+    return n if n > 0 else default
+
+
+def climount_servers(cfg: dict) -> List[dict]:
+    """cli_mount's (or upstream decypharr's) usenet.providers as Mount page
+    server rows: primaries first by priority (lower first), then backups.
+    A duplicate (same host, port and user) keeps the first in that order.
+    Go leaves false/zero fields out of config.json: no "ssl" means plain."""
+    provs = [(i, p) for i, p in enumerate((cfg.get('usenet') or {}).get('providers') or [])
+             if isinstance(p, dict) and str(p.get('host') or '').strip()]
+    # No priority: its place in the list (index + 1), as cli_mount does.
+    provs.sort(key=lambda ip: (ip[1].get('backup') is True, _int(ip[1].get('priority'), ip[0] + 1), ip[0]))
+    out, seen = [], set()
+    for _, p in provs:
+        host = str(p['host']).strip()
+        port = _int(p.get('port'), 563)
+        user = str(p.get('username') or '').strip()
+        if (host.lower(), port, user) in seen:
+            continue
+        seen.add((host.lower(), port, user))
+        expires = str(p.get('subscription_expiry') or '').strip()[:10]
+        try:
+            expires = datetime.date.fromisoformat(expires).isoformat() if expires else ''
+        except ValueError:
+            expires = ''
+        out.append({'host': host, 'port': port, 'ssl': p.get('ssl') is True, 'username': user,
+                    'password': str(p.get('password') or ''), 'connections': _int(p.get('max_connections'), 10),
+                    'backup': p.get('backup') is True, 'enabled': True,
+                    'backbone': str(p.get('backbone') or '').strip(),
+                    'expires': expires, 'auto_renew': p.get('auto_renew') is True})
+    return out
 
 
 def climount_backbones(cfg: dict) -> Dict[str, str]:
