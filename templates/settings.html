@@ -422,7 +422,7 @@
     }
 
     function toggleSectionHandler(e) {
-        if (!e.target.closest('button')) {
+        if (!e.target.closest('button, .vs-menu')) {
             const header = e.currentTarget;
             const section = header.closest('.settings-section');
             const content = header.nextElementSibling;
