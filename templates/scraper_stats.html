@@ -347,15 +347,18 @@
     hits.addEventListener('mouseleave', () => { tip.hidden = true; cursor.setAttribute('visibility', 'hidden'); });
   }
 
+  let trendSeq = 0;
   async function loadTrend() {
+    const seq = ++trendSeq;
     let j;
     try {
       j = await (await fetch(`/statistics/api/scraper_stats/trend?days=${state.days}&kind=${state.kind}`)).json();
       if (!j.success) throw new Error(j.error || 'request failed');
     } catch (e) {
-      $('ss-trend').hidden = true;
+      if (seq === trendSeq) $('ss-trend').hidden = true;
       return;
     }
+    if (seq !== trendSeq) return;  // a newer filter's request owns the chart
     const entries = Object.entries(j.series)
       .map(([name, s]) => ({ name, ...s, total: s.grabs.reduce((a, b) => a + b, 0), fails: s.failed.reduce((a, b) => a + b, 0) }))
       .filter(s => s.total > 0)

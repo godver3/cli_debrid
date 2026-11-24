@@ -45,9 +45,11 @@ def _retarget_version_references(config, old_name, new_name):
     back to their unset value and list/dict entries are dropped."""
     versions = config.get('Scraping', {}).get('versions', {})
     for v_name, v_config in versions.items():
-        if v_name != new_name and isinstance(v_config, dict) and v_config.get('fallback_version') == old_name:
-            v_config['fallback_version'] = new_name or 'None'
-            logging.info(f"Fallback version of '{v_name}' changed from '{old_name}' to '{new_name or 'None'}'")
+        if isinstance(v_config, dict) and v_config.get('fallback_version') == old_name:
+            # The version taking over can't fall back to itself.
+            target = new_name if new_name and v_name != new_name else 'None'
+            v_config['fallback_version'] = target
+            logging.info(f"Fallback version of '{v_name}' changed from '{old_name}' to '{target}'")
 
     for source_id, source_config in (config.get('Content Sources') or {}).items():
         if not isinstance(source_config, dict):
@@ -56,7 +58,8 @@ def _retarget_version_references(config, old_name, new_name):
         if isinstance(source_versions, dict) and old_name in source_versions:
             enabled = source_versions.pop(old_name)
             if new_name:
-                source_versions[new_name] = enabled
+                # A source that already lists the target keeps its own setting.
+                source_versions.setdefault(new_name, enabled)
         elif isinstance(source_versions, list) and old_name in source_versions:
             source_versions.remove(old_name)
             if new_name and new_name not in source_versions:

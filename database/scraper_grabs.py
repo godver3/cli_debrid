@@ -76,6 +76,8 @@ def create_scraper_grabs_table() -> None:
             CREATE INDEX IF NOT EXISTS idx_scraper_grabs_item ON scraper_grabs (item_id);
             CREATE INDEX IF NOT EXISTS idx_scraper_grabs_grabbed ON scraper_grabs (grabbed_at);
             CREATE INDEX IF NOT EXISTS idx_scraper_grabs_instance ON scraper_grabs (scraper_instance);
+            CREATE INDEX IF NOT EXISTS idx_scraper_grabs_hash ON scraper_grabs (info_hash);
+            CREATE INDEX IF NOT EXISTS idx_scraper_grabs_guid ON scraper_grabs (nzb_guid);
         """)
         # Settle a grab the moment its item enters the library, whichever of the
         # many code paths (queues, Plex/local scans, raw SQL) sets the state, so
@@ -258,7 +260,7 @@ def record_grab(
         now = _ts()
         conn = get_db_connection()
         try:
-            if not instance and (info_hash or nzb_guid):
+            if not instance and trigger != 'manual' and (info_hash or nzb_guid):
                 # A reused release (another episode's season pack, a torrent
                 # already in the debrid account) carries no scrape result of its
                 # own: credit the source that grabbed it in the first place.
@@ -533,7 +535,9 @@ def get_scraper_trend(days: Optional[int] = None, kind: Optional[str] = None) ->
 
     today = datetime.now().date()
     if days:
-        start = today - timedelta(days=int(days) - 1)
+        # Same rolling cutoff as the stats table (_filters), so the chart's
+        # totals match it; the first bar is a partial day.
+        start = (datetime.now() - timedelta(days=int(days))).date()
     elif first:
         start = datetime.strptime(first, '%Y-%m-%d').date()
     else:

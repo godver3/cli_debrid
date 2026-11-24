@@ -141,6 +141,10 @@ def test_delete_with_target_moves_items_and_references(client):
     config = client.saved[-1]
     assert list(config['Scraping']['versions']) == ['1080p Remux', '2160p']
     assert config['Scraping']['versions']['1080p Remux']['fallback_version'] == '2160p'
+    # The target fell back to the deleted version: it can't fall back to itself.
+    assert config['Scraping']['versions']['2160p']['fallback_version'] == 'None'
+    # A source that already had the target keeps its own on/off setting.
+    assert config['Content Sources']['Watchlist_1']['versions'] == {'2160p': False}
     assert config['Content Sources']['List_1']['versions'] == ['2160p']
     assert config['Reverse Parser']['default_version'] == '2160p'
     assert config['Reverse Parser']['version_order'] == ['2160p']
