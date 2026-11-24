@@ -125,6 +125,22 @@ class MigrateTests(unittest.TestCase):
         get = lambda s, k, d='': '/media/x/mnt/__all__/' if (s, k) == ('File Management', 'original_files_path') else d
         self.assertEqual(bm.climount_mount_root(get), '/media/x/mnt')
 
+    def test_climount_mount_root_in_direct_mount(self):
+        def getter(mode, original, mounted):
+            values = {('File Management', 'file_collection_management'): mode,
+                      ('File Management', 'original_files_path'): original,
+                      ('Plex', 'mounted_file_location'): mounted}
+            return lambda s, k, d='': values.get((s, k), d)
+        # Direct Mount: its own path wins, even over a stale original files path.
+        self.assertEqual(bm.climount_mount_root(getter('Plex', '/mnt/zurg/__all__', '/mnt/decypharr/__all__')),
+                         '/mnt/decypharr')
+        # Onboarding hides the original files path in Direct Mount, so it's often blank.
+        self.assertEqual(bm.climount_mount_root(getter('Plex', '', '/mnt/decypharr/__all__')), '/mnt/decypharr')
+        # Symlinked/Local: the original files path, else the Direct Mount one.
+        self.assertEqual(bm.climount_mount_root(getter('Symlinked/Local', '/mnt/cm/__all__', '/mnt/x/__all__')), '/mnt/cm')
+        self.assertEqual(bm.climount_mount_root(getter('Symlinked/Local', '', '/mnt/x/__all__')), '/mnt/x')
+        self.assertEqual(bm.climount_mount_root(getter('Plex', '', '')), '')
+
 
 class _Resp:
     def __init__(self, code, body=None, content=b''):

@@ -769,7 +769,12 @@ def compare(engine, climount_root: str, builtin_root: str, sample: int = 10,
 # ---- switch over / back ------------------------------------------------------
 
 def climount_mount_root(get_setting: Callable) -> str:
-    """cli_mount's mount as cli_debrid sees it (File Management's original
-    files path, minus __all__)."""
-    p = (get_setting('File Management', 'original_files_path', '') or '').rstrip('/\\')
+    """cli_mount's mount as cli_debrid sees it, minus __all__. Direct Mount
+    keeps it in Plex → mounted_file_location (onboarding hides the original
+    files path there, so it's often blank); Symlinked/Local in File
+    Management → original_files_path. Either falls back to the other."""
+    original = get_setting('File Management', 'original_files_path', '') or ''
+    mounted = get_setting('Plex', 'mounted_file_location', '') or ''
+    direct = (get_setting('File Management', 'file_collection_management', '') or '') == 'Plex'
+    p = ((mounted or original) if direct else (original or mounted)).rstrip('/\\')
     return p[:-len('__all__')].rstrip('/\\') if p.endswith('__all__') else p
