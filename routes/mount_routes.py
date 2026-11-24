@@ -761,7 +761,7 @@ def migrate_import():
         if copied:
             _sync_in_background()
         return jsonify({'success': False, 'error': f"The built-in mount engine isn't running: {why}. "
-                                                   f"Fix that on the Mount page, then Import."}), 400
+                                                   f"Fix that, then run Import again."}), 400
     # The sync may restart the engine: it runs in the import thread, which
     # then waits for the engine to answer before importing anything.
     job = bm.start_import(_climount_source(), _engine(), data_path, limit=limit, space=_import_space(),

@@ -601,7 +601,7 @@ def _safe(fn: Callable[[], str]) -> str:
 def _engine_down_error(engine, why_down: Optional[Callable[[], str]] = None) -> str:
     why = _safe(why_down) if why_down else ''
     if why:
-        return f"The built-in mount engine isn't running: {why}. Fix that on the Mount page, then run Import again."
+        return f"The built-in mount engine isn't running: {why}. Fix that, then run Import again."
     return (f"The built-in mount engine isn't answering ({_engine_reason(engine)}). Start it with step 1 "
             f"(Start alongside), check the Mount page shows it running, then run Import again.")
 
