@@ -435,8 +435,45 @@
                 });
         }
 
+        // Usenet indexers' daily API-hit and grab counts against their limits.
+        function fetchIndexerQuota() {
+            const el = document.getElementById('indexer-quota-content');
+            if (!el) return;
+            const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+            const RESET_LABELS = {
+                midnight_local: 'resets at midnight',
+                midnight_utc: 'resets at midnight UTC',
+                rolling_24h: 'last 24 hours',
+            };
+            function row(label, used, limit) {
+                if (!limit) {
+                    return `<div class="rl-bar-row"><span style="font-size:10px;color:var(--text3);width:36px;flex-shrink:0;font-family:var(--sans)">${label}</span>` +
+                        `<span class="rl-text">${used} <span style="color:var(--text3)">· no limit set</span></span></div>`;
+                }
+                const pct = Math.min(100, Math.round(used / limit * 100));
+                const cls = pct < 30 ? 'low' : pct < 70 ? 'mid' : 'high';
+                return `<div class="rl-bar-row"><span style="font-size:10px;color:var(--text3);width:36px;flex-shrink:0;font-family:var(--sans)">${label}</span>` +
+                    `<div class="rl-bar-bg"><div class="rl-bar-fill ${cls}" style="width:${pct}%"></div></div>` +
+                    `<span class="rl-text">${used} / ${limit}</span></div>`;
+            }
+            fetch('/debug/api/indexer_quota_info')
+                .then(r => r.json())
+                .then(data => {
+                    const indexers = (data && data.indexers) || [];
+                    if (!indexers.length) { el.innerHTML = ''; return; }
+                    el.innerHTML =
+                        '<div class="rl-domain-header" style="font-size:12px;font-weight:600;color:var(--text2);margin:12px 0 4px">Usenet indexers (per day):</div>' +
+                        indexers.map(ix => `<div class="rl-item domain-rate-limit">` +
+                            `<h5 class="rl-domain">${esc(ix.name)} <span style="font-weight:400;color:var(--text3);font-size:11px">${esc(RESET_LABELS[ix.reset] || ix.reset)}</span></h5>` +
+                            row('API', ix.api.used, ix.api.limit) + row('Grabs', ix.grab.used, ix.grab.limit) +
+                            `</div>`).join('');
+                })
+                .catch(() => { el.innerHTML = ''; });
+        }
+
         // Fetch rate limit info on page load
         fetchRateLimitInfo();
+        fetchIndexerQuota();
 
         // Add event listener for the refresh button
         const refreshRateLimitsButton = document.getElementById('refresh-rate-limits');
@@ -448,6 +485,7 @@
                 
                 // Call the fetch function
                 fetchRateLimitInfo();
+                fetchIndexerQuota();
                 
                 // Reset button after a short delay
                 setTimeout(() => {

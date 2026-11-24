@@ -606,3 +606,24 @@ def get_rate_limit_info():
         }
     
     return jsonify(rate_limit_info)
+
+
+@debug_bp.route('/api/indexer_quota_info')
+@admin_required
+def get_indexer_quota_info():
+    """Daily API-hit and grab counts for each Newznab indexer, with its limits
+    (0 = no limit set) and when the count resets."""
+    try:
+        from usenet.indexer_quota import summary
+        from utilities.settings import get_setting
+        scrapers = get_setting('Scrapers') or {}
+        indexers = [
+            {'name': name, 'api': info['api'], 'grab': info['grab'],
+             'reset': info['reset'], 'resets_at': info.get('resets_at')}
+            for name, info in sorted(summary().items())
+            if (scrapers.get(name) or {}).get('enabled')
+        ]
+        return jsonify({'indexers': indexers})
+    except Exception as e:
+        logging.error(f"Error getting indexer quota info: {e}")
+        return jsonify({'indexers': [], 'error': str(e)}), 500
