@@ -298,11 +298,11 @@ def delete_item():
                         try:
                             if os.path.exists(item['location_on_disk']):
                                 os.remove(item['location_on_disk'])
-                                logging.info(f"Delete item: Removed file from disk {item['location_on_disk']} (Plex mode).")
+                                logging.info(f"Delete item: Removed file from disk {item['location_on_disk']} (Direct Mount).")
                         except Exception as e:
                             logging.error(f"Error deleting file at {item['location_on_disk']}: {str(e)}")
                     else:
-                        logging.info(f"Delete item: Skipped file deletion for {item['location_on_disk']} due to limited environment mode (Plex mode).")
+                        logging.info(f"Delete item: Skipped file deletion for {item['location_on_disk']} due to limited environment mode (Direct Mount).")
 
                 # Allow time for file system operations to complete
                 sleep(1)

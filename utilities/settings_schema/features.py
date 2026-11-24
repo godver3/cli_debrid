@@ -148,7 +148,7 @@ SECTIONS = {
         "tab": "Additional Settings",
         "enable_subtitles": {
             "type": "boolean",
-            "description": "Download subtitles when an item is collected. Symlinked/Local writes a sidecar file; Plex mode uploads to the Plex item. Movies and TV shows.",
+            "description": "Download subtitles when an item is collected. Symlinked/Local writes a sidecar file; Direct Mount uploads to the Plex item. Movies and TV shows.",
             "default": False
         },
         "apply_to_movies": {
@@ -228,7 +228,7 @@ SECTIONS = {
         },
         "probe_for_embedded_subtitles": {
             "type": "boolean",
-            "description": "Skip languages the file already has as an embedded (non-forced) subtitle track; if all are embedded, the search and Bazarr notification are skipped. Reuses the add-time ffprobe playability check's header read when that's on, otherwise reads the file header once. Requires ffprobe. In Plex mode only the add-time check's result is used.",
+            "description": "Skip languages the file already has as an embedded (non-forced) subtitle track; if all are embedded, the search and Bazarr notification are skipped. Reuses the add-time ffprobe playability check's header read when that's on, otherwise reads the file header once. Requires ffprobe. In Direct Mount only the add-time check's result is used.",
             "default": False
         }
     },
@@ -484,7 +484,7 @@ SECTIONS = {
         "tab": "Additional Settings",
         "tags_list": {
             "type": "list",
-            "description": "Global tag list for Plex mode NZB folder routing. Tags are embedded in NZB filenames so cli_mount can route items to virtual folders.",
+            "description": "Global tag list for Direct Mount NZB folder routing. Tags are embedded in NZB filenames so cli_mount can route items to virtual folders.",
             "default": []
         }
     },

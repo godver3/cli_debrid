@@ -94,7 +94,7 @@ def queue_plex_removal_for_item(item_db_data, file_management, item_id):
             cache_plex_removal(item_db_data['title'], item_db_data['filled_by_file'])
         elif item_db_data['type'] == 'episode':
             cache_plex_removal(item_db_data['title'], item_db_data['filled_by_file'], item_db_data.get('episode_title'))
-        logging.info(f"Rescrape: Queued Plex removal for item {item_id} (Plex mode).")
+        logging.info(f"Rescrape: Queued Plex removal for item {item_id} (Direct Mount).")
     elif file_management == 'Symlinked/Local' and item_db_data.get('location_on_disk'):
         # Path for symlinked items should be location_on_disk, which is the symlink path
         path_to_remove = item_db_data['location_on_disk']

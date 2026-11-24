@@ -107,7 +107,7 @@ document.addEventListener('DOMContentLoaded', function() {
             plexDescription.style.display = 'block';
             localDescription.style.display = 'none';
             if (originalFilesPathLabel) {
-                originalFilesPathLabel.textContent = 'Mount Path (optional in Plex mode):';
+                originalFilesPathLabel.textContent = 'Mount Path (optional in Direct Mount):';
             }
         } else {
             plexFields.classList.remove('active');

@@ -140,7 +140,7 @@ class DeletionManager:
             else:
                 logging.warning(f"[DELETION_MANAGER] Symlinked/Local mode configured but symlink directory not found: {self.symlink_dir}")
         else:
-            logging.debug(f"[DELETION_MANAGER] Plex mode - symlink operations disabled")
+            logging.debug(f"[DELETION_MANAGER] Direct Mount - symlink operations disabled")
 
         # Media Server Type (stored in File Management section)
         media_server_raw = get_setting('File Management', 'media_server_type', 'plex')

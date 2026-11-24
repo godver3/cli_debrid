@@ -48,11 +48,11 @@ def rescrape_item():
                     try:
                         if os.path.exists(item['location_on_disk']):
                             os.remove(item['location_on_disk'])
-                            logging.info(f"Rescrape: Deleted file {item['location_on_disk']} for item {item_id} (Plex mode).")
+                            logging.info(f"Rescrape: Deleted file {item['location_on_disk']} for item {item_id} (Direct Mount).")
                     except Exception as e:
                         logging.error(f"Error deleting file at {item['location_on_disk']}: {str(e)}")
                 else:
-                    logging.info(f"Rescrape: Skipped file deletion for {item['location_on_disk']} due to limited environment mode (Plex mode).")
+                    logging.info(f"Rescrape: Skipped file deletion for {item['location_on_disk']} due to limited environment mode (Direct Mount).")
 
             time.sleep(1) # Allow time for filesystem operations
 
@@ -71,7 +71,7 @@ def rescrape_item():
                     cache_plex_removal(item['title'], item['filled_by_file'], item.get('episode_title'))
                     logging.info(f"Rescrape: Queued Plex removal via cache for episode {item.get('episode_title')} of {item['title']} (item {item_id}), path: {item['filled_by_file']}.")
             else:
-                logging.warning(f"Rescrape: Missing 'filled_by_file' for item {item_id} (Plex mode), cannot queue Plex removal.")
+                logging.warning(f"Rescrape: Missing 'filled_by_file' for item {item_id} (Direct Mount), cannot queue Plex removal.")
 
         elif file_management == 'Symlinked/Local' and (item['state'] == 'Collected' or item['state'] == 'Upgrading'):
             symlink_path_for_plex = None

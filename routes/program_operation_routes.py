@@ -400,7 +400,7 @@ def check_service_connectivity():
         from utilities.silo_functions import silo_config, test_connection as silo_test
         ok, message = silo_test(*silo_config())
         if ok:
-            logging.debug("Silo connectivity check passed (Plex mode)")
+            logging.debug("Silo connectivity check passed (Direct Mount)")
         else:
             logging.error(f"Silo check failed: {message}")
             services_reachable = False

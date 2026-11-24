@@ -377,7 +377,7 @@ def update_settings():
 
             # Check if user is changing TO Plex mode (not already on Plex)
             if new_mode == 'Plex' and old_mode != 'Plex':
-                logging.info("DEBUG User is switching TO Plex mode - validation will be required")
+                logging.info("DEBUG User is switching TO Direct Mount - validation will be required")
                 should_validate_plex = True
 
         # Check if Plex library settings are being actively changed

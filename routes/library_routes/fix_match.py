@@ -419,7 +419,7 @@ def fix_match_apply():
             if is_silo_selected():
                 rematch_note = 'Media server rematch skipped - Silo matches files itself'
             elif not is_plex:
-                rematch_note = 'Media server rematch skipped - not in Plex mode'
+                rematch_note = 'Media server rematch skipped - not in Direct Mount'
             elif not plex_configured:
                 rematch_note = 'Media server rematch skipped - Plex is not configured'
             elif not rating_key:

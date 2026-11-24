@@ -152,7 +152,7 @@
             <h3>3. Your library</h3>
             <label for="file_collection_management" class="onboarding-label">File Collection Management:</label>
             <select id="file_collection_management" name="file_collection_management" required class="onboarding-input">
-                <option value="Plex" {% if settings.get('File Management', {}).get('file_collection_management', '') == 'Plex' %}selected{% endif %}>Plex</option>
+                <option value="Plex" {% if settings.get('File Management', {}).get('file_collection_management', '') == 'Plex' %}selected{% endif %}>Direct Mount</option>
                 <option value="Symlinked/Local" {% if settings.get('File Management', {}).get('file_collection_management', '') == 'Symlinked/Local' %}selected{% endif %} {% if is_windows and not allow_windows_symlinks %}disabled{% endif %}>Symlinked/Local</option>
             </select>
 
@@ -164,12 +164,12 @@
             </div>
 
             <div id="windows-symlink-warning" class="windows-warning" {% if allow_windows_symlinks %}style="display: none;"{% endif %}>
-                <strong>Note:</strong> Symlinked/Local is off on Windows because Plex for Windows skips symlinked files, so they never show up in Plex. Use Plex below. Turn on the override only for Jellyfin or Emby.
+                <strong>Note:</strong> Symlinked/Local is off on Windows because Plex for Windows skips symlinked files, so they never show up in Plex. Use Direct Mount below. Turn on the override only for Jellyfin or Emby.
             </div>
             {% endif %}
 
             <div id="plex-description" class="settings-description">
-                Plex reads straight from your mount, and cli_debrid uses Plex to track what's in your library. Plex only.
+                Your media server (Plex or Silo) reads straight from your mount, and cli_debrid asks it what's in your library.
                 {% if is_windows %}With the built-in mount, point your Plex libraries at <code>M:\Movies</code> and <code>M:\TV Shows</code>.{% endif %}
             </div>
             <div id="local-description" class="settings-description" style="display: none;">
@@ -181,7 +181,7 @@
                     <i class="fas fa-chevron-down toggle-icon"></i>
                 </div>
                 <div class="advice-content">
-                    If you are starting fresh - I recommend using a Symlinked library if you are on Linux, otherwise you will need to use a Plex Library (especially if you are watching Anime content).<br><br>
+                    If you are starting fresh - I recommend using a Symlinked library if you are on Linux, otherwise you will need to use Direct Mount (especially if you are watching Anime content).<br><br>
                     If you already have an rclone mounted library in Plex and are not having issues - continue using it.<br><br>
                     If you are having issues with an rclone mounted library (items not scanning in, Anime not recognized by Plex) consider either starting a new Symlinked library or converting your library to Symlinks (done later in Step 5)
                 </div>

@@ -126,7 +126,7 @@
                             {% set is_disallowed = is_windows and choice == 'Symlinked/Local' and not allow_windows_symlinks %}
                             <option value="{{ choice }}" 
                                     {% if current_value == choice %}selected{% endif %} 
-                                    {% if is_disallowed and current_value != 'Symlinked/Local' %}disabled{% endif %}>{{ choice }}</option>
+                                    {% if is_disallowed and current_value != 'Symlinked/Local' %}disabled{% endif %}>{{ (value.choice_labels or {}).get(choice, choice) }}</option>
                         {% endfor %}
                     </select>
                     {% if key == 'file_collection_management' and is_windows and not allow_windows_symlinks %}
@@ -269,7 +269,7 @@
                        value="{{ settings.get('Debug', {}).get('silo_api_key', '') }}" class="settings-input"
                        data-section="Debug" data-key="silo_api_key"
                        autocomplete="new-password">
-                <p class="settings-description">An admin API key (starts with sa_), from Silo's Settings → API Keys. Silo's libraries must point at the folders cli_debrid fills: the symlink folder's Movies/TV Shows in Symlinked/Local mode, the mount's folders in Plex mode. If Silo sees them at a different path, name each Silo library folder the same as the folder here.</p>
+                <p class="settings-description">An admin API key (starts with sa_), from Silo's Settings → API Keys. Silo's libraries must point at the folders cli_debrid fills: the symlink folder's Movies/TV Shows in Symlinked/Local mode, the mount's folders in Direct Mount. If Silo sees them at a different path, name each Silo library folder the same as the folder here.</p>
             </div>
         </div>
     </div>
@@ -671,7 +671,7 @@
             <input type="checkbox" id="usenet_provider-ffprobe_all_nzbs" name="Usenet Provider.ffprobe_all_nzbs"
                    data-section="Usenet Provider" data-key="ffprobe_all_nzbs"
                    {% if settings.get('Usenet Provider', {}).get('ffprobe_all_nzbs') %}checked{% endif %}>
-            <p class="settings-description">Before collecting an NZB file, probe it with ffprobe to confirm it's actually playable, on top of the existing missing-article/segment health check. Works in both Symlinked/Local and Plex mode — in Plex mode it runs the moment the file is found on the mount, before cli_debrid tells Plex about it, so a confirmed-broken file is rejected and re-scraped before it ever shows up in Plex. Requires ffprobe to be installed. This will slow down how long it takes NZB items to reach Collected.</p>
+            <p class="settings-description">Before collecting an NZB file, probe it with ffprobe to confirm it's actually playable, on top of the existing missing-article/segment health check. Works in both Symlinked/Local and Direct Mount — in Direct Mount it runs the moment the file is found on the mount, before cli_debrid tells Plex about it, so a confirmed-broken file is rejected and re-scraped before it ever shows up in Plex. Requires ffprobe to be installed. This will slow down how long it takes NZB items to reach Collected.</p>
         </div>
         {% if settings.get('File Management', {}).get('file_collection_management', '') != 'Symlinked/Local' %}
         <div class="settings-form-group">

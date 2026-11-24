@@ -998,7 +998,7 @@ def get_and_add_all_collected_from_plex(bypass=False, backfill=False):
                     logging.info(f"[BACKFILL_FS] Stripped __all__ from mount path, using: {mount_path}")
 
                 use_filesystem_first = True
-                logging.info(f"[BACKFILL_FS] Using filesystem-first approach for Plex mode with mount: {mount_path}")
+                logging.info(f"[BACKFILL_FS] Using filesystem-first approach for Direct Mount with mount: {mount_path}")
             else:
                 logging.info(f"[BACKFILL_PLEX] No valid mount configured (path: '{mount_path}'), will use Plex API")
 
@@ -1277,7 +1277,7 @@ def get_and_add_all_collected_from_plex(bypass=False, backfill=False):
         try:
             from utilities.silo_functions import is_silo_library_mode, get_collected_from_silo
             if is_silo_library_mode():
-                logging.info("Plex mode is run with Silo: reading Silo's catalog instead of Plex.")
+                logging.info("Direct Mount is run with Silo: reading Silo's catalog instead of Plex.")
                 collected_content = get_collected_from_silo()
             else:
                 collected_content = asyncio.run(run_get_collected_from_plex(bypass=bypass, fetch_sizes=backfill))
