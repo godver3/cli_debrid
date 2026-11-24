@@ -50,25 +50,51 @@
 
   // One compact row per connection: icon, name, type (plus subscription expiry
   // or indexer usage when known), and status as a dot with a short label.
+  // Scraper and source names arrive as "Type (instance_id)" / "Display (source_id)".
+  // Show the instance as the name and the part before it as the type, so a card
+  // reads "NZBGeek_1 / Newznab" instead of repeating "Newznab (NZBGeek_1)".
+  function splitName(group, name) {
+    const m = /^(.*\S)\s+\(([^()]+)\)$/.exec(name);
+    if (!m) return { label: name, type: null };
+    if (group === 'scraper') return { label: m[2], type: m[1] };
+    if (group === 'source') return { label: m[1], type: null };
+    return { label: name, type: null };
+  }
+
+  // "Expires Oct 26, 2026", flagged when it has passed or is within 14 days.
+  function expiryHtml(dateStr, autoRenew) {
+    const d = new Date(dateStr + 'T00:00:00');
+    if (isNaN(d)) return `<i class="fa-regular fa-calendar"></i> expires ${esc(dateStr)}`;
+    const days = Math.round((d - new Date(new Date().toDateString())) / 86400000);
+    const shown = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    if (autoRenew) return `<i class="fa-regular fa-calendar"></i> renews ${esc(shown)}`;
+    if (days < 0) return `<span class="conn-expired"><i class="fa-solid fa-circle-exclamation"></i> expired ${esc(shown)}</span>`;
+    if (days <= 14) return `<span class="conn-expiring"><i class="fa-regular fa-calendar"></i> expires ${esc(shown)} (${days}d)</span>`;
+    return `<i class="fa-regular fa-calendar"></i> expires ${esc(shown)}`;
+  }
+
   function buildTngCard(entry) {
     const { name, group, status, expiryDate, autoRenew, usage } = entry;
-    const type = getType(group, entry.service, name);
+    const split = splitName(group, name);
+    const type = split.type || getType(group, entry.service, name);
     const dotCls = status || 'checking';
     const statusLabel = status === 'online' ? 'Online' : status === 'offline' ? 'Offline' : 'Checking';
     const iconHtml = group === 'source' ? SOURCE_SVG
       : group === 'scraper' ? SCRAPER_SVG
       : `<i class="${getTngIcon(name)}"></i>`;
     const extras = [];
-    if (expiryDate) extras.push(`<i class="fa-regular fa-calendar"></i> expires ${esc(expiryDate)}${autoRenew ? ' (auto-renews)' : ''}`);
+    if (expiryDate) extras.push(expiryHtml(expiryDate, autoRenew));
     if (usage) extras.push(`<i class="fa-solid fa-gauge"></i> ${esc(usage)}`);
     return `<div class="tng-card compact ${dotCls}" title="${esc(name)}">
-      <div class="conn-icon">${iconHtml}</div>
-      <div class="conn-info">
-        <div class="conn-name">${esc(name)}</div>
-        <div class="conn-type">${esc(type)}</div>
-        ${extras.map(x => `<div class="conn-extra">${x}</div>`).join('')}
+      <div class="conn-row">
+        <div class="conn-icon">${iconHtml}</div>
+        <div class="conn-info">
+          <div class="conn-name">${esc(split.label)}</div>
+          <div class="conn-type">${esc(type)}</div>
+        </div>
+        <div class="conn-status"><span class="status-dot ${dotCls}"></span><span class="status-text ${dotCls}">${statusLabel}</span></div>
       </div>
-      <div class="conn-status"><span class="status-dot ${dotCls}"></span><span class="status-text ${dotCls}">${statusLabel}</span></div>
+      ${extras.length ? `<div class="conn-extras">${extras.map(x => `<div class="conn-extra">${x}</div>`).join('')}</div>` : ''}
     </div>`;
   }
 
