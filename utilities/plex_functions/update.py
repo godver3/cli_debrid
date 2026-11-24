@@ -45,6 +45,13 @@ def plex_update_item(item: Dict[str, Any]) -> bool:
                 return True
             return jellyfin_update_item(item)
 
+        from utilities.direct_mount import unconfigured_server
+        missing = unconfigured_server()
+        if missing:
+            logger.warning(f"{missing} is the media server but its URL or API key is not set; "
+                           f"no scan for {item_display}")
+            return False
+
         # Check for Jellyfin configuration first - if available, use Jellyfin instead
         jellyfin_url = get_setting('Debug', 'emby_jellyfin_url', default='').strip()
         jellyfin_token = get_setting('Debug', 'emby_jellyfin_token', default='').strip()

@@ -506,20 +506,38 @@ def _profile_id(url: str, key: str) -> Optional[str]:
     return _profile_cache['id']
 
 
+# find_file_id's whole-catalog lookup (file name -> media file id), reused for a while
+_FILE_ID_MAP_TTL = 600
+_file_id_map: Dict[str, Any] = {'at': 0.0, 'map': None}
+
+
+def _file_ids_by_name(library: Dict[str, List[Dict[str, Any]]]) -> Dict[str, str]:
+    return {os.path.basename(e.get('location') or '').lower(): str(e['media_file_id'])
+            for e in library['movies'] + library['episodes'] if e.get('location') and e.get('media_file_id')}
+
+
 def find_file_id(local_path: str) -> Optional[str]:
     """Silo's media file id for a file (by file name): what Silo added in the
-    last week first, then the whole catalog. None when Silo doesn't list it."""
+    last week first, then the whole catalog (read once and reused for
+    _FILE_ID_MAP_TTL seconds). None when Silo doesn't list it."""
     name = os.path.basename(local_path or '').lower()
     if not name:
         return None
-    for read in (lambda: get_recent_from_silo(hours=7 * 24), get_collected_from_silo):
-        library = read()
-        if library is None:
-            return None
-        for entry in library['movies'] + library['episodes']:
-            if os.path.basename(entry.get('location') or '').lower() == name and entry.get('media_file_id'):
-                return str(entry['media_file_id'])
-    return None
+    recent = get_recent_from_silo(hours=7 * 24)
+    if recent is None:
+        return None
+    found = _file_ids_by_name(recent).get(name)
+    if found:
+        return found
+    cached = _file_id_map['map']
+    if cached is not None and time.time() - _file_id_map['at'] < _FILE_ID_MAP_TTL:
+        return cached.get(name)
+    library = get_collected_from_silo()
+    if library is None:
+        return None
+    ids = _file_ids_by_name(library)
+    _file_id_map.update(at=time.time(), map=ids)
+    return ids.get(name)
 
 
 def upload_subtitle(local_path: str, content: bytes, lang_code: str, fmt: str = 'srt',

@@ -32,6 +32,16 @@ _lib_lock = threading.Lock()
 RECENT_HOURS = 48
 _PAGE = 200
 
+# File names whose extension marks a file (anything else is a folder, since
+# release folders are full of dots: "Show.S01E01.1080p.WEB-DL.x264-GRP")
+_FILE_EXTS = {'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.mpg', '.mpeg', '.ts',
+              '.m2ts', '.iso', '.strm', '.srt', '.ass', '.ssa', '.sub', '.idx', '.vtt', '.sup', '.nfo'}
+
+# find_item_id's whole-library lookup (file name -> item id), reused for a while
+_ID_MAP_TTL = 600
+_id_map: Dict[str, Any] = {'at': 0.0, 'map': None}
+_id_map_lock = threading.Lock()
+
 
 def config(get=None) -> Tuple[str, str]:
     get = get or get_setting
@@ -145,6 +155,17 @@ def _refresh_libraries(ids: List[str]) -> bool:
     return accepted
 
 
+def _is_file_path(local_path: str) -> bool:
+    """Whether `local_path` names a file (else a folder). Asks the filesystem
+    while the path exists; a removed one counts as a file only with a media or
+    subtitle extension."""
+    if os.path.isdir(local_path):
+        return False
+    if os.path.lexists(local_path):
+        return True
+    return os.path.splitext(local_path)[1].lower() in _FILE_EXTS
+
+
 def scan_path(local_path: str, item_type: str = '', removed: bool = False) -> bool:
     """Ask the server to scan the folder of `local_path` (a file or folder in
     cli_debrid's view). A release in the mount's all-folder is scanned through
@@ -159,7 +180,7 @@ def scan_path(local_path: str, item_type: str = '', removed: bool = False) -> bo
         return False
     server_path = to_server_path(local_path, libraries)
     if server_path:
-        folder = server_path if not os.path.splitext(server_path)[1] else server_path.rsplit('/', 1)[0]
+        folder = server_path.rsplit('/', 1)[0] if _is_file_path(local_path) else server_path
         ok, status = _post_media_updated(folder, 'Deleted' if removed else 'Created')
         if ok:
             logging.info(f'[Jellyfin/Emby] Scan accepted for {folder}')
@@ -248,6 +269,8 @@ def _read_items(hours: Optional[int] = None) -> Optional[Dict[str, List[Dict[str
                 r = session.get(f'{url}/Users/{user}/Items', headers=headers, timeout=60, params={
                     'IncludeItemTypes': 'Movie,Episode', 'Recursive': 'true', 'Fields': fields,
                     'SortBy': 'DateCreated', 'SortOrder': 'Descending',
+                    # placeholders for episodes the server knows of but has no file for
+                    'IsMissing': 'false',
                     'StartIndex': start, 'Limit': _PAGE})
                 r.raise_for_status()
                 page = (r.json() or {}).get('Items') or []
@@ -273,16 +296,33 @@ def _read_items(hours: Optional[int] = None) -> Optional[Dict[str, List[Dict[str
         logging.error(f'[Jellyfin/Emby] Library listing failed: {e}')
         return None
     movies, episodes = [], []
-    for it in raw:
-        if it.get('Type') == 'Movie':
-            entry = _process_emby_movie(it)
-            if entry:
-                movies.append(entry)
-        elif it.get('Type') == 'Episode':
-            entry = _process_emby_episode(it, shows.get(it.get('SeriesId')) or {'Name': it.get('SeriesName')})
-            if entry:
-                episodes.append(entry)
+    for item in raw:
+        for it in _versions(item):
+            if it.get('Type') == 'Movie':
+                entry = _process_emby_movie(it)
+                if entry:
+                    movies.append(entry)
+            elif it.get('Type') == 'Episode':
+                entry = _process_emby_episode(it, shows.get(it.get('SeriesId')) or {'Name': it.get('SeriesName')})
+                if entry:
+                    episodes.append(entry)
     return _localize({'movies': movies, 'episodes': episodes})
+
+
+def _versions(item: dict) -> List[dict]:
+    """One copy of the item per file. A movie or episode with several versions
+    (grouped by the server, or merged by hand) lists every file in MediaSources;
+    reading only the first would make the full scan drop the others' rows."""
+    sources = [s for s in item.get('MediaSources') or [] if s.get('Path')]
+    if len(sources) < 2:
+        return [item]
+    seen, out = set(), []
+    for src in sources:
+        if src['Path'] in seen:
+            continue
+        seen.add(src['Path'])
+        out.append({**item, 'MediaSources': [src], 'Path': src['Path']})
+    return out
 
 
 def get_recent_items(hours: int = RECENT_HOURS) -> Optional[Dict[str, List[Dict[str, Any]]]]:
@@ -347,20 +387,34 @@ def collect_from_jellyfin(items: List[Dict[str, Any]]) -> Optional[Tuple[int, in
 # Subtitles
 # ---------------------------------------------------------------------------
 
+def _ids_by_name(library: Dict[str, List[Dict[str, Any]]]) -> Dict[str, str]:
+    return {os.path.basename(e.get('location') or '').lower(): str(e['ratingKey'])
+            for e in library['movies'] + library['episodes'] if e.get('location') and e.get('ratingKey')}
+
+
 def find_item_id(local_path: str) -> Optional[str]:
     """The server's item id for a file (by file name): recent additions first,
-    then the whole library. None when it doesn't list the file."""
+    then the whole library (read once and reused for _ID_MAP_TTL seconds).
+    None when it doesn't list the file."""
     name = os.path.basename(local_path or '').lower()
     if not name:
         return None
-    for read in (lambda: get_recent_items(hours=7 * 24), get_all_items):
-        library = read()
-        if library is None:
-            return None
-        for entry in library['movies'] + library['episodes']:
-            if os.path.basename(entry.get('location') or '').lower() == name and entry.get('ratingKey'):
-                return str(entry['ratingKey'])
-    return None
+    recent = get_recent_items(hours=7 * 24)
+    if recent is None:
+        return None
+    found = _ids_by_name(recent).get(name)
+    if found:
+        return found
+    with _id_map_lock:
+        if _id_map['map'] is not None and time.time() - _id_map['at'] < _ID_MAP_TTL:
+            return _id_map['map'].get(name)
+    library = get_all_items()
+    if library is None:
+        return None
+    ids = _ids_by_name(library)
+    with _id_map_lock:
+        _id_map.update(at=time.time(), map=ids)
+    return ids.get(name)
 
 
 def upload_subtitle(local_path: str, content: bytes, lang_code: str, fmt: str = 'srt',

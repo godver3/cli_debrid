@@ -339,6 +339,13 @@ def remove_file_from_plex(item_title, item_path, episode_title=None):
         if is_jellyfin_direct():
             return jellyfin_remove_file(item_title, item_path, episode_title)
 
+        from utilities.direct_mount import unconfigured_server
+        missing = unconfigured_server()
+        if missing:
+            logger.warning(f"{missing} is the media server but its URL or API key is not set; "
+                           f"{item_title} not removed from it")
+            return False
+
         # Check for Jellyfin configuration first - if available, use Jellyfin instead
         jellyfin_url = get_setting('Debug', 'emby_jellyfin_url', default='').strip()
         jellyfin_token = get_setting('Debug', 'emby_jellyfin_token', default='').strip()

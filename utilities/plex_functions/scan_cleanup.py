@@ -242,6 +242,14 @@ def scan_and_empty_plex_trash(paths: list = None, section_type: str = None, empt
         result['success'] = not result['errors']
         return result
 
+    from utilities.direct_mount import unconfigured_server
+    missing = unconfigured_server()
+    if missing:
+        logger.warning(f"{missing} is the media server but its URL or API key is not set; nothing scanned")
+        result['errors'].append(f'{missing} URL or API key not set')
+        result['success'] = False
+        return result
+
     try:
         # Check for Jellyfin configuration first
         jellyfin_url = get_setting('Debug', 'emby_jellyfin_url', default='').strip()

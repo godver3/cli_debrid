@@ -15,7 +15,7 @@
             <input type="checkbox" id="additional-enable_subtitles" name="Subtitle Settings.enable_subtitles"
                    data-section="Subtitle Settings" data-key="enable_subtitles"
                    {% if settings.get('Subtitle Settings', {}).get('enable_subtitles') %}checked{% endif %}>
-            <p class="settings-description">Download subtitles when an item is collected. Works in both modes: Symlinked/Local writes a sidecar file next to the library file; Direct Mount uploads the subtitle to the Plex item (the mount is read-only). Adds a few seconds per file. Manage and search subtitles under Tools → Subtitle Manager.</p>
+            <p class="settings-description">Download subtitles when an item is collected. Works in both modes: Symlinked/Local writes a sidecar file next to the library file. In Direct Mount, Plex gets the subtitle uploaded to its item (the mount is read-only); Jellyfin, Emby and Silo get a sidecar file when the mount accepts one, else an upload (Jellyfin and Silo only). Adds a few seconds per file. Manage and search subtitles under Tools → Subtitle Manager.</p>
         </div>
 
         <!-- Hidden settings - no longer used with simplified downsub system -->

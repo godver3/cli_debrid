@@ -2,8 +2,9 @@
 
 File Management.plex_mode_media_server picks it: 'plex' (default), 'silo' or
 'jellyfin' (Jellyfin or Emby; both speak the same API). Plex-only features
-(labels, overlays, collections, Plex watch history, reported issues, subtitle
-upload to the Plex item) are off unless it is Plex.
+(labels, collections, Plex watch history, reported issues, subtitle upload to
+the Plex item) are off unless it is Plex. Overlays work with Plex and
+Jellyfin/Emby, not Silo.
 """
 from typing import Optional
 
@@ -40,3 +41,17 @@ def is_direct_mount_without_plex(get=None) -> bool:
 
 def server_label(get=None) -> str:
     return {'plex': 'Plex', 'silo': 'Silo', 'jellyfin': 'Jellyfin/Emby'}.get(direct_mount_server(get) or '', 'Plex')
+
+
+def unconfigured_server(get=None) -> Optional[str]:
+    """The name of the media server picked instead of Plex (Silo in either
+    mode, or Jellyfin/Emby in Direct Mount) when its URL or key is missing, else
+    None. Scans and removals then do nothing rather than fall through to a Plex
+    or Jellyfin connection left over from before."""
+    from utilities.silo_functions import is_silo_mode, is_silo_selected
+    if is_silo_selected(get):
+        return None if is_silo_mode(get) else 'Silo'
+    if is_direct_mount_jellyfin(get):
+        from utilities.jellyfin_direct import is_jellyfin_direct
+        return None if is_jellyfin_direct(get) else 'Jellyfin/Emby'
+    return None

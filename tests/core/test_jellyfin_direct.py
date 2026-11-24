@@ -22,6 +22,16 @@ def getter(overrides=None):
     return lambda section, key=None, default=None: values.get((section, key), default)
 
 
+@pytest.fixture(autouse=True)
+def _fresh_lookup_caches():
+    from utilities import silo_functions as silo
+    jd._id_map.update(at=0.0, map=None)
+    silo._file_id_map.update(at=0.0, map=None)
+    yield
+    jd._id_map.update(at=0.0, map=None)
+    silo._file_id_map.update(at=0.0, map=None)
+
+
 @pytest.fixture
 def settings(monkeypatch):
     def apply(overrides=None):
@@ -452,3 +462,113 @@ def test_refused_uploads_say_why(settings, monkeypatch, caplog, status, expect):
     with caplog.at_level('WARNING'):
         assert jd.upload_subtitle('/mnt/x/a.mkv', b'abc', 'eng', item_id='1') is False
     assert expect in caplog.text
+
+
+# --- review fixes 2026-11-24 ------------------------------------------------------------------
+
+@pytest.mark.parametrize('local,expected', [
+    # a release folder full of dots is a folder, not a file with extension ".x264-GRP"
+    ('/mnt/clid/TV Shows/Show.S01E01.1080p.WEB-DL.x264-GRP', '/media/clid/TV Shows/Show.S01E01.1080p.WEB-DL.x264-GRP'),
+    ('/mnt/clid/TV Shows/Show Name (2020)', '/media/clid/TV Shows/Show Name (2020)'),
+    ('/mnt/clid/TV Shows/Show.S01E01.1080p.WEB-DL.x264-GRP/ep.mkv', '/media/clid/TV Shows/Show.S01E01.1080p.WEB-DL.x264-GRP'),
+])
+def test_scan_of_a_gone_path_goes_to_its_release_folder_not_the_library(settings, monkeypatch, local, expected):
+    monkeypatch.setattr(jd, 'get_libraries', lambda *a, **k: LIBS)
+    calls = []
+    monkeypatch.setattr(jd, '_request', lambda m, p, *a, **k: calls.append(k['json']) or Resp(204))
+    assert jd.scan_path(local, 'episode', removed=True)
+    assert calls[0]['Updates'][0]['Path'] == expected
+
+
+def test_scan_asks_the_filesystem_whether_the_path_is_a_folder(settings, tmp_path, monkeypatch):
+    base = tmp_path / 'clid'
+    rel = base / 'Movies' / 'Movie.2020.1080p.BluRay.x264-GRP'
+    rel.mkdir(parents=True)
+    (rel / 'movie.mkv').write_bytes(b'')
+    libs = [{'id': 'm', 'name': 'Movies', 'type': 'movies', 'paths': ['/media/Movies']}]
+    settings({('Plex', 'mounted_file_location'): f'{base}/__all__'})
+    monkeypatch.setattr(jd, 'get_libraries', lambda *a, **k: libs)
+    calls = []
+    monkeypatch.setattr(jd, '_request', lambda m, p, *a, **k: calls.append(k['json']['Updates'][0]['Path']) or Resp(204))
+    jd.scan_path(str(rel), 'movie')
+    jd.scan_path(str(rel / 'movie.mkv'), 'movie')
+    assert calls == ['/media/Movies/Movie.2020.1080p.BluRay.x264-GRP'] * 2
+
+
+def test_every_version_of_an_item_is_read(settings, monkeypatch):
+    monkeypatch.setattr(jd, 'get_libraries', lambda *a, **k: LIBS)
+    items = [{'Type': 'Movie', 'Id': 'm1', 'Name': 'Film', 'DateCreated': _iso(1),
+              'MediaSources': [{'Path': '/media/clid/Movies/A/film.1080p.mkv'},
+                               {'Path': '/media/clid/Movies/B/film.2160p.mkv'},
+                               {'Path': '/media/clid/Movies/B/film.2160p.mkv'}]}]
+    session = FakeSession(items, [])
+    monkeypatch.setattr(jd.requests, 'Session', lambda: session)
+    lib = jd.get_all_items()
+    assert sorted(m['location'] for m in lib['movies']) == [
+        '/mnt/clid/Movies/A/film.1080p.mkv', '/mnt/clid/Movies/B/film.2160p.mkv']
+    assert {m['ratingKey'] for m in lib['movies']} == {'m1'}
+
+
+def test_library_read_leaves_out_missing_episodes(settings, monkeypatch):
+    monkeypatch.setattr(jd, 'get_libraries', lambda *a, **k: LIBS)
+    seen = []
+
+    class S(FakeSession):
+        def get(self, url, headers=None, params=None, timeout=None):
+            if params and 'StartIndex' in params:
+                seen.append(params)
+            return super().get(url, headers, params, timeout)
+    monkeypatch.setattr(jd.requests, 'Session', lambda: S([], []))
+    jd.get_all_items()
+    assert seen and all(p['IsMissing'] == 'false' for p in seen)
+
+
+def test_find_item_id_reuses_the_whole_library_read(settings, monkeypatch):
+    reads = []
+    full = {'movies': [{'location': '/mnt/clid/Movies/A/old.mkv', 'ratingKey': 'i1'}], 'episodes': []}
+    monkeypatch.setattr(jd, 'get_recent_items', lambda hours=48: {'movies': [], 'episodes': []})
+    monkeypatch.setattr(jd, 'get_all_items', lambda: reads.append(1) or full)
+    assert jd.find_item_id('/x/OLD.mkv') == 'i1'
+    assert jd.find_item_id('/x/other.mkv') is None
+    assert jd.find_item_id('/x/old.mkv') == 'i1'
+    assert len(reads) == 1
+
+
+def test_silo_find_file_id_reuses_the_whole_catalog_read(monkeypatch):
+    from utilities import silo_functions as silo
+    reads = []
+    lib = {'movies': [{'location': '/mnt/clid/Movies/R/Rel.mkv', 'media_file_id': 'f9'}], 'episodes': []}
+    monkeypatch.setattr(silo, 'get_recent_from_silo', lambda hours=48: {'movies': [], 'episodes': []})
+    monkeypatch.setattr(silo, 'get_collected_from_silo', lambda added_after=None: reads.append(1) or lib)
+    assert silo.find_file_id('/a/rel.mkv') == 'f9'
+    assert silo.find_file_id('/a/nope.mkv') is None
+    assert len(reads) == 1
+
+
+@pytest.mark.parametrize('overrides,expected', [
+    ({}, None),
+    ({('Debug', 'emby_jellyfin_token'): ''}, 'Jellyfin/Emby'),
+    ({('File Management', 'plex_mode_media_server'): 'silo'}, 'Silo'),
+    ({('File Management', 'plex_mode_media_server'): 'silo', ('Debug', 'silo_url'): 'http://s',
+      ('Debug', 'silo_api_key'): 'k'}, None),
+    ({('File Management', 'plex_mode_media_server'): 'plex', ('Debug', 'emby_jellyfin_token'): ''}, None),
+])
+def test_unconfigured_server(overrides, expected):
+    assert direct_mount.unconfigured_server(getter(overrides)) == expected
+
+
+def test_unconfigured_jellyfin_never_falls_through_to_plex(settings, monkeypatch):
+    import database  # noqa: F401  (app import order)
+    from utilities.plex_functions import update, removal, scan_cleanup
+    from utilities import silo_functions as silo
+    g = settings({('Debug', 'emby_jellyfin_token'): '',
+                  ('Plex', 'url'): 'http://old-plex', ('Plex', 'token'): 't'})
+    monkeypatch.setattr(silo, 'get_setting', g)
+    for mod in (update, removal, scan_cleanup):
+        monkeypatch.setattr(mod, 'get_setting', g, raising=False)
+    with mock.patch('requests.get') as get, mock.patch('requests.post') as post, \
+            mock.patch('plexapi.server.PlexServer') as plex:
+        assert update.plex_update_item({'title': 'X', 'location_on_disk': '/mnt/clid/Movies/X/x.mkv'}) is False
+        assert removal.remove_file_from_plex('X', '/mnt/clid/Movies/X/x.mkv') is False
+        assert scan_cleanup.scan_and_empty_plex_trash(['/mnt/clid/Movies/X'], 'movie')['success'] is False
+    get.assert_not_called(); post.assert_not_called(); plex.assert_not_called()
