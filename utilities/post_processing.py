@@ -503,12 +503,15 @@ def handle_state_change(item: Dict[str, Any]) -> None:
                 file_path = fresh_item.get('location_on_disk')
                 if not file_path:
                     logging.warning("No location_on_disk found for item, skipping subtitle download")
-                elif get_setting('File Management', 'file_collection_management') == 'Plex' and _silo_selected():
-                    logging.info("Subtitles: Direct Mount run with Silo keeps files on the read-only mount, "
-                                 "and uploading to Silo isn't supported yet; skipping")
-                elif _direct_mount_jellyfin():
-                    logging.info("Subtitles: Direct Mount run with Jellyfin/Emby keeps files on the read-only mount, "
-                                 "and uploading to Jellyfin/Emby isn't supported yet; skipping")
+                elif _direct_mount_jellyfin() or (
+                        get_setting('File Management', 'file_collection_management') == 'Plex' and _silo_selected()):
+                    # Direct Mount run with Jellyfin/Emby or Silo: a sidecar next to
+                    # the file when the mount takes it (then a folder rescan), else an
+                    # upload through the server's API (downsub.save_subtitles decides)
+                    logging.info("Running subtitle downloader (Direct Mount, "
+                                 f"{'Jellyfin/Emby' if _direct_mount_jellyfin() else 'Silo'}).")
+                    from .downsub import main as downsub_main
+                    downsub_main(file_path, item=dict(fresh_item))
                 elif get_setting('File Management', 'file_collection_management') == 'Plex':
                     # Plex mode: media is on a read-only debrid/usenet mount, so a
                     # sidecar .srt can't be written next to it. Download subtitles

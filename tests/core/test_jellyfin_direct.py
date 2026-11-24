@@ -253,3 +253,202 @@ def test_connection_names_jellyfin_and_emby(settings, monkeypatch):
     assert jd.test_connection() == (True, 'box (Emby 4.10.2.0)')
     monkeypatch.setattr(jd, '_request', lambda *a, **k: Resp(401, {}))
     assert jd.test_connection()[0] is False
+
+
+# --- Symlinked/Local's library read (get_collected_from_emby) ---------------------------------
+
+class LibSession(FakeSession):
+    """Answers like current Jellyfin: libraries only from /Library/VirtualFolders."""
+    def __init__(self, virtual_folders, items_by_parent):
+        super().__init__([], [])
+        self.vf, self.by_parent, self.user_param = virtual_folders, items_by_parent, None
+
+    def get(self, url, headers=None, params=None, timeout=None):
+        if url.endswith('/Users'):
+            return Resp(200, [{'Id': 'viewer', 'Policy': {'IsAdministrator': False}},
+                              {'Id': 'admin', 'Policy': {'IsAdministrator': True}}])
+        if url.endswith('/Library/VirtualFolders'):
+            return Resp(200, self.vf)
+        self.user_param = url.split('/Users/')[1].split('/')[0]
+        if params.get('IncludeItemTypes') == 'CollectionFolder':
+            return Resp(200, {'Items': []})  # what current Jellyfin answers
+        return Resp(200, {'Items': self.by_parent.get(params.get('ParentId'), [])})
+
+
+def test_symlink_mode_library_read_finds_libraries_on_current_jellyfin(monkeypatch):
+    import database  # noqa: F401
+    from utilities import emby_functions as ef
+    monkeypatch.setattr(ef, 'get_setting', getter())
+    vf = [{'Name': 'Films', 'CollectionType': 'movies', 'ItemId': 'L1', 'Locations': ['/m']},
+          {'Name': 'Series', 'CollectionType': 'tvshows', 'ItemId': 'L2', 'Locations': ['/t']},
+          {'Name': 'Music', 'CollectionType': 'music', 'ItemId': 'L3', 'Locations': ['/a']}]
+    movie = {'Type': 'Movie', 'Id': 'm', 'Name': 'Film', 'ProviderIds': {'Imdb': 'tt1'}, 'Path': '/m/F/f.mkv'}
+    show = {'Type': 'Series', 'Id': 's', 'Name': 'Show', 'ProviderIds': {'IMDB': 'tt9'}}
+    ep = {'Type': 'Episode', 'Id': 'e', 'Name': 'Pilot', 'ParentIndexNumber': 1, 'IndexNumber': 1, 'Path': '/t/S/e.mkv'}
+    session = LibSession(vf, {'L1': [movie], 'L2': [show], 's': [ep]})
+    monkeypatch.setattr(ef.requests, 'Session', lambda: session)
+    lib = ef.get_collected_from_emby(bypass=True)
+    assert [m['imdb_id'] for m in lib['movies']] == ['tt1']
+    assert [(e['title'], e['imdb_id']) for e in lib['episodes']] == [('Show', 'tt9')]
+    assert session.user_param == 'admin'  # an administrator, not the first listed user
+
+
+# --- subtitles in Direct Mount ----------------------------------------------------------------------
+
+class _Lang:
+    ietf, alpha3 = 'en', 'eng'
+
+    def __str__(self):
+        return 'en'
+
+
+class _Sub:
+    language = _Lang()
+    content = b'1\n00:00:01,000 --> 00:00:02,000\nhi\n'
+
+
+def _ctx(tmp_path, name='Rel.mkv'):
+    from pathlib import Path
+    video = mock.Mock()
+    return {'original_path': Path(tmp_path) / name, 'rating_key': None, 'video': video,
+            'item': {'id': 1, 'type': 'movie', 'title': 'Film'}}
+
+
+@pytest.fixture
+def downsub(settings, monkeypatch):
+    import database  # noqa: F401
+    from utilities import downsub as ds
+    monkeypatch.setattr(ds, '_final_format', lambda sub: ('srt', '.srt'))
+    monkeypatch.setattr(ds, '_mark_release_match', lambda *a: None)
+    monkeypatch.setattr(ds, '_record_history', lambda ctx, sub, lang, fmt, via, path, source: ctx.setdefault('via', []).append(via))
+    return ds
+
+
+def test_writable_folder_gets_a_sidecar_and_a_rescan(downsub, tmp_path, monkeypatch):
+    ctx = _ctx(tmp_path)
+    with mock.patch.object(jd, 'pick_up_sidecar', return_value=True) as rescan, \
+            mock.patch.object(jd, 'upload_subtitle') as up:
+        assert downsub.save_subtitles(ctx, [_Sub()]) == 1
+    assert (tmp_path / 'Rel.en.srt').read_bytes() == _Sub.content
+    assert ctx['via'] == ['sidecar']
+    rescan.assert_called_once()
+    up.assert_not_called()
+
+
+def test_read_only_folder_uploads_through_the_api(downsub, tmp_path, monkeypatch):
+    ctx = _ctx(tmp_path)
+    monkeypatch.setattr(downsub.os, 'access', lambda p, mode: False)
+    with mock.patch.object(jd, 'find_item_id', return_value='abc') as find, \
+            mock.patch.object(jd, 'upload_subtitle', return_value=True) as up, \
+            mock.patch.object(jd, 'pick_up_sidecar') as rescan:
+        assert downsub.save_subtitles(ctx, [_Sub(), _Sub()]) == 2
+    find.assert_called_once()  # looked up once per file, not per subtitle
+    assert up.call_args.kwargs['item_id'] == 'abc' and up.call_args.args[2] == 'eng'
+    assert ctx['via'] == ['jellyfin', 'jellyfin']
+    rescan.assert_not_called()
+
+
+def test_failed_upload_falls_back_to_cli_mount_injection(downsub, tmp_path, monkeypatch):
+    ctx = _ctx(tmp_path)
+    monkeypatch.setattr(downsub.os, 'access', lambda p, mode: False)
+    client = mock.Mock()
+    client.inject_sidecar_file.return_value = True
+    with mock.patch.object(jd, 'find_item_id', return_value=None), \
+            mock.patch.object(jd, 'pick_up_sidecar', return_value=True) as rescan, \
+            mock.patch('utilities.builtin_engine.selected', return_value=False), \
+            mock.patch('usenet.climount_client.get_climount_client', return_value=client):
+        assert downsub.save_subtitles(ctx, [_Sub()]) == 1
+    assert ctx['via'] == ['cli_mount']
+    rescan.assert_called_once()
+
+
+def test_upload_subtitle_posts_base64(settings, monkeypatch):
+    calls = []
+    monkeypatch.setattr(jd, '_request', lambda m, p, *a, **k: calls.append((m, p, k)) or Resp(204))
+    assert jd.upload_subtitle('/mnt/clid/Movies/R/r.mkv', b'abc', 'eng', 'srt', item_id='42')
+    (m, p, k), = calls
+    assert (m, p) == ('POST', '/Videos/42/Subtitles')
+    assert k['json'] == {'Language': 'eng', 'Format': 'srt', 'IsForced': False, 'IsHearingImpaired': False, 'Data': 'YWJj'}
+
+
+# --- Silo subtitles in Direct Mount ------------------------------------------------------------------
+
+SILO = {('File Management', 'plex_mode_media_server'): 'silo',
+        ('Debug', 'silo_url'): 'http://silo:8090', ('Debug', 'silo_api_key'): 'sa_key'}
+
+
+def test_silo_upload_is_a_multipart_form_as_an_admin_profile(monkeypatch):
+    from utilities import silo_functions as silo
+    monkeypatch.setattr(silo, 'get_setting', getter(SILO))
+    silo._profile_cache.update(key=None, id=None)
+    monkeypatch.setattr(silo, 'primary_profile_id', lambda url, key: 'prof1')
+    calls = []
+    monkeypatch.setattr(silo, '_request', lambda m, p, *a, **k: calls.append((m, p, k)) or Resp(200, {'subtitle': {}}))
+    assert silo.upload_subtitle('/mnt/clid/Movies/R/Rel.mkv', b'abc', 'eng', 'srt', file_id='f9', release_name='Rel.WEB')
+    (m, p, k), = calls
+    assert (m, p) == ('POST', '/api/v2/subtitles/upload')
+    assert k['headers_extra'] == {'X-Profile-Id': 'prof1'}
+    assert k['data'] == {'media_file_id': 'f9', 'language': 'eng', 'release_name': 'Rel.WEB'}
+    assert k['files']['file'][:2] == ('Rel.eng.srt', b'abc')
+
+
+def test_silo_file_id_comes_from_the_catalog(monkeypatch):
+    from utilities import silo_functions as silo
+    lib = {'movies': [{'location': '/mnt/clid/Movies/R/Rel.mkv', 'media_file_id': 'f9'}], 'episodes': []}
+    monkeypatch.setattr(silo, 'get_recent_from_silo', lambda hours=48: {'movies': [], 'episodes': []})
+    monkeypatch.setattr(silo, 'get_collected_from_silo', lambda added_after=None: lib)
+    assert silo.find_file_id('/other/view/REL.MKV') == 'f9'
+    assert silo.find_file_id('/x/missing.mkv') is None
+
+
+def test_read_only_folder_uploads_to_silo(downsub, tmp_path, monkeypatch):
+    from utilities import silo_functions as silo
+    g = getter(SILO)
+    for mod in (direct_mount, silo):
+        monkeypatch.setattr(mod, 'get_setting', g)
+    ctx = _ctx(tmp_path)
+    monkeypatch.setattr(downsub.os, 'access', lambda p, mode: False)
+    with mock.patch.object(silo, 'find_file_id', return_value='f9'), \
+            mock.patch.object(silo, 'upload_subtitle', return_value=True) as up, \
+            mock.patch.object(jd, 'upload_subtitle') as jf_up:
+        assert downsub.save_subtitles(ctx, [_Sub()]) == 1
+    assert up.call_args.kwargs['file_id'] == 'f9'
+    assert ctx['via'] == ['silo']
+    jf_up.assert_not_called()
+
+
+def test_plex_direct_mount_still_uploads_to_plex(downsub, tmp_path, monkeypatch):
+    from utilities import silo_functions as silo
+    g = getter({('File Management', 'plex_mode_media_server'): 'plex'})
+    for mod in (direct_mount, silo, jd):
+        monkeypatch.setattr(mod, 'get_setting', g)
+    ctx = dict(_ctx(tmp_path), rating_key='77')
+    monkeypatch.setattr(downsub.os, 'access', lambda p, mode: False)
+    with mock.patch.object(downsub, 'upload_subtitle_to_plex', return_value=True) as plex_up:
+        assert downsub.save_subtitles(ctx, [_Sub()]) == 1
+    assert plex_up.call_args.args[0] == '77' and ctx['via'] == ['plex']
+
+
+def test_sidecar_pickup_rescans_and_refreshes_the_item(settings, monkeypatch):
+    calls = []
+    monkeypatch.setattr(jd, 'scan_path', lambda p, t='': calls.append(('scan', p)) or True)
+    monkeypatch.setattr(jd, 'find_item_id', lambda p: '120')
+    monkeypatch.setattr(jd, '_request', lambda m, p, *a, **k: calls.append((m, p, k['params'])) or Resp(204))
+    assert jd.pick_up_sidecar('/mnt/clid/TV Shows/R/e.mkv', 'episode')
+    assert calls[0] == ('scan', '/mnt/clid/TV Shows/R/e.mkv')
+    method, path, params = calls[1]
+    assert (method, path) == ('POST', '/Items/120/Refresh')
+    assert params['ImageRefreshMode'] == 'Default'  # Emby answers 400 to 'None'
+
+
+@pytest.mark.parametrize('status,expect', [
+    (404, 'takes no subtitle uploads (Emby)'),
+    (500, 'Save subtitles into media folders'),
+])
+def test_refused_uploads_say_why(settings, monkeypatch, caplog, status, expect):
+    r = Resp(status)
+    r.text = ''
+    monkeypatch.setattr(jd, '_request', lambda *a, **k: r)
+    with caplog.at_level('WARNING'):
+        assert jd.upload_subtitle('/mnt/x/a.mkv', b'abc', 'eng', item_id='1') is False
+    assert expect in caplog.text

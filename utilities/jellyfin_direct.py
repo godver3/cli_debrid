@@ -341,3 +341,85 @@ def collect_from_jellyfin(items: List[Dict[str, Any]]) -> Optional[Tuple[int, in
     finally:
         conn.close()
     return found, len(ids) - still
+
+
+# ---------------------------------------------------------------------------
+# Subtitles
+# ---------------------------------------------------------------------------
+
+def find_item_id(local_path: str) -> Optional[str]:
+    """The server's item id for a file (by file name): recent additions first,
+    then the whole library. None when it doesn't list the file."""
+    name = os.path.basename(local_path or '').lower()
+    if not name:
+        return None
+    for read in (lambda: get_recent_items(hours=7 * 24), get_all_items):
+        library = read()
+        if library is None:
+            return None
+        for entry in library['movies'] + library['episodes']:
+            if os.path.basename(entry.get('location') or '').lower() == name and entry.get('ratingKey'):
+                return str(entry['ratingKey'])
+    return None
+
+
+def upload_subtitle(local_path: str, content: bytes, lang_code: str, fmt: str = 'srt',
+                    item_id: Optional[str] = None) -> bool:
+    """Add a subtitle to the server's item for `local_path` through its API
+    (POST /Videos/{id}/Subtitles), for a read-only mount where no sidecar file
+    can be written. True when the server took it."""
+    import base64
+    data = content if isinstance(content, bytes) else (content or '').encode('utf-8')
+    if not data:
+        return False
+    item_id = item_id or find_item_id(local_path)
+    if not item_id:
+        logging.warning(f'[Jellyfin/Emby subs] {os.path.basename(local_path)} is not in the library yet; subtitle not uploaded')
+        return False
+    body = {'Language': lang_code, 'Format': fmt, 'IsForced': False, 'IsHearingImpaired': False,
+            'Data': base64.b64encode(data).decode('ascii')}
+    try:
+        r = _request('POST', f'/Videos/{item_id}/Subtitles', json=body, timeout=60)
+    except requests.RequestException as e:
+        logging.warning(f'[Jellyfin/Emby subs] upload for {os.path.basename(local_path)} failed: {e}')
+        return False
+    if r.status_code in (200, 204):
+        logging.info(f'[Jellyfin/Emby subs] uploaded {lang_code} subtitle to item {item_id}')
+        return True
+    name = os.path.basename(local_path)
+    if r.status_code == 404:
+        # Emby has no subtitle upload endpoint
+        logging.warning(f'[Jellyfin/Emby subs] {name}: this server takes no subtitle uploads (Emby); '
+                        f'subtitles reach it as sidecar files when the mount accepts them')
+    elif r.status_code == 500:
+        # Jellyfin saves an uploaded subtitle next to the video by default,
+        # which fails on a read-only mount
+        logging.warning(f'[Jellyfin/Emby subs] {name}: upload refused (HTTP 500). On a read-only mount, turn off '
+                        f'"Save subtitles into media folders" in the Jellyfin library\'s settings so Jellyfin '
+                        f'keeps uploaded subtitles in its own data folder')
+    else:
+        logging.warning(f'[Jellyfin/Emby subs] upload for {name} refused: HTTP {r.status_code} {(r.text or "")[:200]}')
+    return False
+
+
+def pick_up_sidecar(local_path: str, item_type: str = '') -> bool:
+    """A sidecar was written next to the file: rescan its folder and refresh the
+    item, so the server lists it (the mount sends no file-change events, and a
+    folder scan alone doesn't make Emby re-read an item it already has)."""
+    scanned = scan_path(local_path, item_type)
+    item_id = find_item_id(local_path)
+    if not item_id:
+        return scanned
+    try:
+        r = _request('POST', f'/Items/{item_id}/Refresh',
+                     # Emby refuses ImageRefreshMode=None (HTTP 400); Default works on both
+                     params={'Recursive': 'false', 'MetadataRefreshMode': 'Default', 'ImageRefreshMode': 'Default',
+                             'ReplaceAllMetadata': 'false', 'ReplaceAllImages': 'false'})
+    except requests.RequestException as e:
+        logging.warning(f'[Jellyfin/Emby subs] refresh of item {item_id} failed: {e}')
+        return scanned
+    if r.status_code in (200, 204):
+        logging.info(f'[Jellyfin/Emby subs] refreshed item {item_id} to pick up its new subtitle file')
+        return True
+    logging.warning(f'[Jellyfin/Emby subs] refresh of item {item_id} refused (HTTP {r.status_code})')
+    return scanned

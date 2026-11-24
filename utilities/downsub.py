@@ -1054,6 +1054,32 @@ def _mark_release_match(sub, video, content):
     return None
 
 
+def _direct_mount_subtitle_server():
+    """Direct Mount run with Jellyfin/Emby or Silo: how to reach that server for
+    subtitles ({name, label, find, upload, rescan}), else None (Plex,
+    Symlinked/Local, or the server isn't configured)."""
+    try:
+        from utilities.direct_mount import direct_mount_server
+        which = direct_mount_server()
+        if which == 'jellyfin':
+            from utilities import jellyfin_direct as jd
+            if jd.is_jellyfin_direct():
+                return {'name': 'jellyfin', 'label': 'Jellyfin/Emby', 'find': jd.find_item_id,
+                        'upload': lambda path, content, lang, fmt, fid, release: jd.upload_subtitle(
+                            path, content, lang, fmt, item_id=fid),
+                        'rescan': jd.pick_up_sidecar}
+        if which == 'silo':
+            from utilities import silo_functions as silo
+            if silo.is_silo_mode():
+                return {'name': 'silo', 'label': 'Silo', 'find': silo.find_file_id,
+                        'upload': lambda path, content, lang, fmt, fid, release: silo.upload_subtitle(
+                            path, content, lang, fmt, file_id=fid, release_name=release),
+                        'rescan': silo.pick_up_sidecar}
+    except Exception as e:
+        logging.debug(f"[subs] Direct Mount server lookup failed: {e}")
+    return None
+
+
 def save_subtitles(ctx, subs, source='auto'):
     """Save downloaded subtitles next to the file (sidecar), to Plex (read-only
     mount) or through cli_mount, and record each in the subtitle history.
@@ -1071,7 +1097,14 @@ def save_subtitles(ctx, subs, source='auto'):
     #       → upload to Plex via API keyed on rating_key (storage-agnostic;
     #         works the same for zurg/nzbdav/climount/future backends).
     can_write_sidecar = os.access(str(symlink_dir), os.W_OK)
-    use_plex_upload = (not can_write_sidecar) and bool(rating_key)
+    # Direct Mount run with Jellyfin/Emby or Silo: sidecars when the folder
+    # takes them (then a folder rescan so the server lists them), else an
+    # upload through its API, else cli_mount injection below
+    server = _direct_mount_subtitle_server()
+    use_plex_upload = (not can_write_sidecar) and bool(rating_key) and server is None
+    use_server_upload = (not can_write_sidecar) and server is not None
+    server_file_id = None
+    server_uploaded = 0
     saved = 0
     for sub in subtitles[video]:
         lang = getattr(sub.language, 'ietf', None) or str(sub.language)
@@ -1082,6 +1115,17 @@ def save_subtitles(ctx, subs, source='auto'):
         if not content:
             continue
         ctx['_sync_note'] = _mark_release_match(sub, ctx['video'], content)
+        if use_server_upload:
+            lang3 = getattr(sub.language, 'alpha3', None) or lang
+            if server_file_id is None:
+                server_file_id = server['find'](str(original_path)) or ''
+            if server_file_id and server['upload'](str(original_path), content, lang3, fmt, server_file_id,
+                                                   getattr(sub, 'release_info', None)):
+                saved += 1
+                server_uploaded += 1
+                _record_history(ctx, sub, lang, fmt, server['name'], None, source)
+                continue
+            # not uploaded: try cli_mount injection below
         if use_plex_upload:
             lang3 = getattr(sub.language, 'alpha3', None) or lang
             if upload_subtitle_to_plex(rating_key, content, lang3, fmt=fmt):
@@ -1144,8 +1188,16 @@ def save_subtitles(ctx, subs, source='auto'):
                     logging.warning(f"[subs] {base_name}: cli_mount sidecar injection failed for {lang}")
             except Exception as _dce:
                 logging.warning(f"[subs] {base_name}: media dir not writable, no Plex ratingKey, cli_mount injection failed: {_dce}")
-    logging.info(f"[subs] {_label_of(ctx.get('item'), original_path)}: saved {saved}/{len(subtitles[video])} "
-                 f"({'uploaded to Plex' if use_plex_upload else 'sidecar file' if can_write_sidecar else 'cli_mount sidecar'})")
+    if server is not None and saved > server_uploaded:
+        # Sidecar files (written or injected): rescan the folder so the server lists them
+        try:
+            server['rescan'](str(original_path), (ctx.get('item') or {}).get('type') or '')
+        except Exception as e:
+            logging.warning(f"[subs] {server['label']} rescan after saving subtitles failed: {e}")
+    how = ('uploaded to Plex' if use_plex_upload else
+           f"uploaded to {server['label']}" if use_server_upload and server_uploaded == saved else
+           'sidecar file' if can_write_sidecar else 'cli_mount sidecar')
+    logging.info(f"[subs] {_label_of(ctx.get('item'), original_path)}: saved {saved}/{len(subtitles[video])} ({how})")
     return saved
 
 

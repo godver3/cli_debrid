@@ -466,49 +466,42 @@ def get_collected_from_emby(progress_callback=None, bypass=False) -> Optional[Di
                 logging.error("No active users found on Emby/Jellyfin server.")
                 if progress_callback: progress_callback('error', 'No active users found.')
                 return None
-            user_id = users[0]['Id'] # Use the first active user
+            # An administrator sees every library; the first listed user may not
+            admins = [u for u in users if (u.get('Policy') or {}).get('IsAdministrator')]
+            user_id = (admins or users)[0]['Id']
             logging.info(f"Using Emby/Jellyfin User ID: {user_id}")
 
-            # 2. Get Libraries (Media Folders represent the roots)
+            # 2. Get Libraries. /Library/VirtualFolders lists every library with its
+            # id and CollectionType on Jellyfin and Emby. The old query
+            # (/Users/{id}/Items?IncludeItemTypes=CollectionFolder) returns no
+            # libraries on current Jellyfin, so this read found nothing at all.
             if progress_callback: progress_callback('scanning', 'Retrieving library sections...')
-            libs_response = session.get(f"{emby_url}/Library/MediaFolders", headers=headers, timeout=30)
-            libs_response.raise_for_status()
-            # The actual library items (like 'Movies', 'TV Shows') are often under '/Users/{userId}/Items' with no ParentId
-            # Let's fetch top-level items to find CollectionFolders which represent libraries
-            root_items_response = session.get(f"{emby_url}/Users/{user_id}/Items", headers=headers, params={'IncludeItemTypes': 'CollectionFolder'}, timeout=30)
-            root_items_response.raise_for_status()
-            library_folders = root_items_response.json().get('Items', [])
+            library_folders = []
+            vf_response = session.get(f"{emby_url}/Library/VirtualFolders", headers=headers, timeout=30)
+            if vf_response.status_code == 200:
+                for folder in vf_response.json() or []:
+                    lib_id = folder.get('ItemId') or folder.get('Id')
+                    if lib_id:
+                        library_folders.append({'Id': lib_id, 'Name': folder.get('Name') or '',
+                                                'CollectionType': (folder.get('CollectionType') or '').lower()})
+            if not library_folders:
+                root_items_response = session.get(f"{emby_url}/Users/{user_id}/Items", headers=headers,
+                                                  params={'IncludeItemTypes': 'CollectionFolder'}, timeout=30)
+                root_items_response.raise_for_status()
+                library_folders = root_items_response.json().get('Items', [])
 
             libraries_by_id = {lib['Id']: lib for lib in library_folders}
-            libraries_by_name = {lib['Name']: lib['Id'] for lib in library_folders}
-            
-            # 3. Filter Libraries
+
+            # 3. Movie and TV libraries (by CollectionType, else by name)
             target_movie_lib_ids = set()
             target_show_lib_ids = set()
-
-            if bypass:
-                for lib_id, lib_data in libraries_by_id.items():
-                    # Guess type based on common names, as CollectionFolder doesn't have a strict type
-                    name_lower = lib_data.get('Name', '').lower()
-                    # Check CollectionType if available (more reliable)
-                    collection_type = lib_data.get('CollectionType') 
-                    if collection_type == 'movies' or 'movie' in name_lower:
-                         target_movie_lib_ids.add(lib_id)
-                    elif collection_type == 'tvshows' or 'tv' in name_lower or 'show' in name_lower:
-                         target_show_lib_ids.add(lib_id)
-            else:
-                 # TODO: Add settings keys for Emby/Jellyfin libraries if needed
-                 # movie_lib_names = get_setting('Emby', 'movie_libraries', '').split(',')
-                 # show_lib_names = get_setting('Emby', 'shows_libraries', '').split(',')
-                 # For now, assume bypass=True logic or implement setting retrieval
-                 logging.warning("Bypassing library settings (or settings not implemented yet). Scanning all detected Movie/TV libraries.")
-                 for lib_id, lib_data in libraries_by_id.items():
-                    name_lower = lib_data.get('Name', '').lower()
-                    collection_type = lib_data.get('CollectionType')
-                    if collection_type == 'movies' or 'movie' in name_lower:
-                         target_movie_lib_ids.add(lib_id)
-                    elif collection_type == 'tvshows' or 'tv' in name_lower or 'show' in name_lower:
-                         target_show_lib_ids.add(lib_id)
+            for lib_id, lib_data in libraries_by_id.items():
+                name_lower = lib_data.get('Name', '').lower()
+                collection_type = (lib_data.get('CollectionType') or '').lower()
+                if collection_type == 'movies' or (not collection_type and 'movie' in name_lower):
+                    target_movie_lib_ids.add(lib_id)
+                elif collection_type == 'tvshows' or (not collection_type and ('tv' in name_lower or 'show' in name_lower)):
+                    target_show_lib_ids.add(lib_id)
 
             logging.info(f"Movie libraries to process: {[libraries_by_id[lid]['Name'] for lid in target_movie_lib_ids]}")
             logging.info(f"TV Show libraries to process: {[libraries_by_id[lid]['Name'] for lid in target_show_lib_ids]}")

@@ -343,6 +343,7 @@ def get_collected_from_silo(added_after: Optional[str] = None) -> Optional[Dict[
                 continue
             common = {'addedAt': _epoch(it.get('added_at')), 'guid': it.get('content_id'),
                       'ratingKey': it.get('content_id'), 'type': it.get('type'),
+                      'media_file_id': v.get('file_id'),
                       'location': from_silo_path(v['file_path'], libraries, base)}
             if it.get('type') == 'movie':
                 movies.append({**common, 'title': it.get('title'), 'year': it.get('year'),
@@ -489,3 +490,73 @@ def collect_from_silo(items: List[Dict[str, Any]]) -> Optional[Tuple[int, int]]:
     finally:
         conn.close()
     return found, len(ids) - still
+
+
+# ---------------------------------------------------------------------------
+# Subtitles (Direct Mount run with Silo)
+# ---------------------------------------------------------------------------
+
+_profile_cache: Dict[str, Any] = {'key': None, 'id': None}
+
+
+def _profile_id(url: str, key: str) -> Optional[str]:
+    """An admin's primary profile, cached: user-level endpoints act as a profile."""
+    if _profile_cache['key'] != (url, key):
+        _profile_cache.update(key=(url, key), id=primary_profile_id(url, key))
+    return _profile_cache['id']
+
+
+def find_file_id(local_path: str) -> Optional[str]:
+    """Silo's media file id for a file (by file name): what Silo added in the
+    last week first, then the whole catalog. None when Silo doesn't list it."""
+    name = os.path.basename(local_path or '').lower()
+    if not name:
+        return None
+    for read in (lambda: get_recent_from_silo(hours=7 * 24), get_collected_from_silo):
+        library = read()
+        if library is None:
+            return None
+        for entry in library['movies'] + library['episodes']:
+            if os.path.basename(entry.get('location') or '').lower() == name and entry.get('media_file_id'):
+                return str(entry['media_file_id'])
+    return None
+
+
+def upload_subtitle(local_path: str, content: bytes, lang_code: str, fmt: str = 'srt',
+                    file_id: Optional[str] = None, release_name: Optional[str] = None) -> bool:
+    """Store a subtitle for the file in Silo (POST /api/v2/subtitles/upload),
+    for a read-only mount where no sidecar file can be written. Silo keeps the
+    subtitle itself. True when Silo took it."""
+    data = content if isinstance(content, bytes) else (content or '').encode('utf-8')
+    if not data:
+        return False
+    url, key = silo_config()
+    if not url or not key:
+        return False
+    file_id = file_id or find_file_id(local_path)
+    if not file_id:
+        logging.warning(f'[Silo subs] {os.path.basename(local_path)} is not in Silo yet; subtitle not uploaded')
+        return False
+    try:
+        profile = _profile_id(url, key)
+        stem = os.path.splitext(os.path.basename(local_path))[0]
+        form = {'media_file_id': file_id, 'language': lang_code}
+        if release_name:
+            form['release_name'] = release_name
+        r = _request('POST', '/api/v2/subtitles/upload', url, key,
+                     headers_extra={'X-Profile-Id': profile} if profile else None,
+                     data=form, files={'file': (f'{stem}.{lang_code}.{fmt}', data, 'application/octet-stream')},
+                     timeout=60)
+    except requests.RequestException as e:
+        logging.warning(f'[Silo subs] upload for {os.path.basename(local_path)} failed: {e}')
+        return False
+    if r.status_code in (200, 201):
+        logging.info(f'[Silo subs] uploaded {lang_code} subtitle to file {file_id}')
+        return True
+    logging.warning(f'[Silo subs] upload for {os.path.basename(local_path)} refused (HTTP {r.status_code}): {_problem(r)}')
+    return False
+
+
+def pick_up_sidecar(local_path: str, item_type: str = '') -> bool:
+    """A sidecar was written next to the file: rescan its folder so Silo lists it."""
+    return scan_path(local_path, item_type)
