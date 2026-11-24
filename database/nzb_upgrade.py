@@ -24,6 +24,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional, Tuple
 
 from utilities.settings import load_config
+from utilities.hdr_tags import hdr_tags_mean_hdr
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +153,7 @@ def _parse_items(items: List[ET.Element], instance: str) -> List[Dict]:
             'episode': ptt.get('episodes', [None])[0] if ptt.get('episodes') else None,
             'episodes': ptt.get('episodes', []),
             'hdr': ptt.get('hdr', []),
-            'is_hdr': bool(ptt.get('hdr')),
+            'is_hdr': hdr_tags_mean_hdr(ptt.get('hdr')),  # 'SDR' is not HDR
             'trash': ptt.get('trash', False),
             'original_title': title,
         }

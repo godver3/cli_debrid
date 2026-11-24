@@ -8,6 +8,7 @@ import xml.etree.ElementTree as ET
 from collections import Counter
 from concurrent.futures import as_completed
 from utilities.log_context import ContextThreadPoolExecutor
+from utilities.hdr_tags import hdr_tags_mean_hdr
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import List, Dict, Any, Optional
@@ -724,7 +725,7 @@ def _parse_newznab_xml(xml_text: str, instance: str) -> List[Dict[str, Any]]:
             'episode': ptt.get('episodes', [None])[0] if ptt.get('episodes') else None,
             'episodes': ptt.get('episodes', []),
             'hdr': ptt.get('hdr', []),
-            'is_hdr': bool(ptt.get('hdr')),
+            'is_hdr': hdr_tags_mean_hdr(ptt.get('hdr')),  # 'SDR' is not HDR
             'trash': ptt.get('trash', False),
             'original_title': title,
             'newznab_imdb': result_imdb,
