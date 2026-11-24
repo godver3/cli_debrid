@@ -314,7 +314,7 @@ jobs:
 
           version = os.environ['VERSION']
           stable = os.environ['REF_NAME'] == 'main'
-          title = f"cli_debrid {version} ({'stable' if stable else 'dev'})"
+          title = f"Clyde {version} ({'stable' if stable else 'dev'})"
           color = 5763719 if stable else 16753920
           url = f"{os.environ['SERVER_URL']}/{os.environ['REPO']}/releases/tag/v{version}"
           notes = open(f"release-notes/{version}.md", encoding='utf-8').read().strip()
@@ -362,7 +362,7 @@ jobs:
                   embed.update(title=title, url=url)
               else:
                   embed['title'] = f"{title} ({i}/{len(chunks)})"
-              body = json.dumps({'username': 'cli_debrid releases', 'embeds': [embed],
+              body = json.dumps({'username': 'Clyde releases', 'embeds': [embed],
                                  'allowed_mentions': {'parse': []}}).encode()
               req = urllib.request.Request(os.environ['WEBHOOK'], data=body,
                                            headers={'Content-Type': 'application/json',

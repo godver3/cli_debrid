@@ -219,7 +219,7 @@
       renderCurrent(d);
       $('sm-d-history').innerHTML = d.history.length
         ? `<table class="sm-table"><tbody>${d.history.map((h) => historyRow(h, false)).join('')}</tbody></table>`
-        : '<span class="sm-muted">Nothing downloaded by cli_debrid yet.</span>';
+        : '<span class="sm-muted">Nothing downloaded by Clyde yet.</span>';
     } catch (e) {
       $('sm-d-title').textContent = 'Could not load item';
       $('sm-d-sub').textContent = e.message;

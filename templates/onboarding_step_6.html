@@ -3,7 +3,7 @@
 {% block content %}
 <div class="onboarding-container">
     <h2 class="onboarding-title">Step 6: Review &amp; Start</h2>
-    <p class="ob-section-intro">Here's what you set up. The checks below test each connection, so you can fix anything before cli_debrid starts working.</p>
+    <p class="ob-section-intro">Here's what you set up. The checks below test each connection, so you can fix anything before Clyde starts working.</p>
 
     <div class="ob-section">
         <h3>Your setup</h3>
@@ -26,7 +26,7 @@
 
     <div class="ob-section" id="ob-overlays">
         <h3>Poster overlays <span style="font-weight:400;color:#888;font-size:.8em">(optional)</span></h3>
-        <p class="ob-section-intro">cli_debrid can draw ratings on your Plex posters. The <b>Simple</b> layout puts the Rotten Tomatoes critics and audience scores and the IMDb rating along the bottom of each poster. You can change it, or build your own, on the <a href="/overlays" target="_blank" rel="noopener">Overlays</a> page any time.</p>
+        <p class="ob-section-intro">Clyde can draw ratings on your Plex posters. The <b>Simple</b> layout puts the Rotten Tomatoes critics and audience scores and the IMDb rating along the bottom of each poster. You can change it, or build your own, on the <a href="/overlays" target="_blank" rel="noopener">Overlays</a> page any time.</p>
         <div class="ob-ov-wrap">
             <div class="ob-ov-poster" aria-label="Preview of the Simple overlay">
                 <div class="ob-ov-art"><span>Your poster</span></div>
@@ -151,7 +151,7 @@ startBtn.addEventListener('click', () => {
             type: POPUP_TYPES.CONFIRM,
             title: 'Some checks failed',
             message: 'These checks failed:<ul>' + failing.map(c => `<li>${escapeHtml(c.name)}</li>`).join('') +
-                '</ul>cli_debrid may not work until they are fixed. Start anyway?',
+                '</ul>Clyde may not work until they are fixed. Start anyway?',
             confirmText: 'Start anyway',
             cancelText: 'Cancel',
             onConfirm: completeAndStart,

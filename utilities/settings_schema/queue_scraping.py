@@ -161,7 +161,7 @@ SECTIONS = {
         },
         "enable_seadex_priority": {
             "type": "boolean",
-            "description": "For anime, prefer the release SeaDex (releases.moe) has confirmed as best for that title over cli-debrid's own scoring. Only applies to items detected as anime, and only within versions whose Anime Filter Mode is not 'Non-Anime Only'. Requires an internet connection to releases.moe and api.ani.zip during scraping.",
+            "description": "For anime, prefer the release SeaDex (releases.moe) has confirmed as best for that title over Clyde's own scoring. Only applies to items detected as anime, and only within versions whose Anime Filter Mode is not 'Non-Anime Only'. Requires an internet connection to releases.moe and api.ani.zip during scraping.",
             "default": False
         },
         "trakt_early_releases": {

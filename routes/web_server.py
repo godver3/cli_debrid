@@ -98,13 +98,13 @@ def inject_logo_selection():
     
     # Define logo mappings based on selection
     logo_paths = {
-        'Default': 'white-icon-32x32.png',  # Default is the white icon
+        'Default': 'clyde-mark-white.svg',
         'Plex-Inspired': 'plex-icon-32x32.png',
         'Color Icon': 'color-icon-32x32.png'  # Newly added color icon
     }
     
     # Get the appropriate logo path or default to white icon if selection not found
-    logo_path = logo_paths.get(logo_selection, 'white-icon-32x32.png')
+    logo_path = logo_paths.get(logo_selection, 'clyde-mark-white.svg')
     
     return dict(logo_path=logo_path)
 
@@ -296,11 +296,11 @@ def manifest():
     
     # Create the manifest JSON
     manifest_data = {
-        "name": "cli_debrid",
-        "short_name": "cli_debrid",
+        "name": "Clyde",
+        "short_name": "Clyde",
         "icons": icons,
-        "theme_color": "#007bff",
-        "background_color": "#ffffff",
+        "theme_color": "#0F1724",
+        "background_color": "#0F1724",
         "display": "standalone"
     }
     

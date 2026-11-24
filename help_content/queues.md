@@ -18,7 +18,7 @@ This page provides a real-time view of the application's background task queues,
 
 **Queue Sections:**
 
-*   **`Upgrading`:** Items that are being considered for Upgrading. They have been collected and now for 24 hours cli_debrid will try to find upgrades once an hour.
+*   **`Upgrading`:** Items that are being considered for Upgrading. They have been collected and now for 24 hours Clyde will try to find upgrades once an hour.
 *   **`Wanted`:** Items identified from your lists that need to be downloaded but haven't been processed by the scraper yet. Shows the time the item was last scraped. If within 24 hours of scraping items will remain in the `Wanted` queue.
 *   **`Scraping`:** Items actively being searched for download sources (torrents/magnets).
 *   **`Adding`:** Items for which a source has been found and are being added to your debrid service.
@@ -28,7 +28,7 @@ This page provides a real-time view of the application's background task queues,
     *   Filenames (toggleable) show the specific file being processed.
 *   **`Final Scrape`:** Items for which initial scraping attempts failed. These items wait for a configured delay (defined in settings) before one last search attempt is automatically triggered. Shows when the item entered this waiting period. If the final search is successful, the item moves to `Adding`. If it fails again, the item is typically moved to `Blacklisted`.
 *   **`Pending Uncached`:** Items associated with uncached torrents that would take your account over its limit wait in the Pending Uncached queue until your download limit returns to normal.
-*   **`Sleeping`:** Items that cli_debrid failed to find. Shows a "Wake Count" indicating how many times the item has been retried.
+*   **`Sleeping`:** Items that Clyde failed to find. Shows a "Wake Count" indicating how many times the item has been retried.
 *   **`Unreleased`:** Items identified but waiting for their release date before processing continues. Displays the relevant release date(s). Items requiring a physical release will indicate this.
 *   **`Blacklisted`:** Items that have been explicitly marked to be ignored by the application.
 

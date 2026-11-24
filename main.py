@@ -2163,7 +2163,7 @@ def main():
            Version:                      
     """)
     print(f"             {version}\n") 
-    print(f"cli_debrid is initialized.")
+    print(f"Clyde is initialized.")
     port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
     print(f"The web UI is available at http://localhost:{port}")
     print("Use the web UI to control the program.")
@@ -2320,7 +2320,7 @@ if __name__ == "__main__":
             except Exception as e_listeners:
                 logging.error(f"Failed to set up initial scheduler listeners in __main__: {e_listeners}", exc_info=True)
             
-            print("\ncli_debrid Python environment initialized.")
+            print("\nClyde Python environment initialized.")
 
             def run_flask():
                 if not start_server(): 

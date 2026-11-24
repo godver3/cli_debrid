@@ -1037,7 +1037,7 @@ Rules:
 - The notification will be delivered via the user's configured external channels (Discord, Telegram, etc.)
 
 ## Base URL for links
-{"The public URL of this cli_debrid instance is: " + _public_url if _public_url else "The public URL is not configured — use relative paths only (e.g. /library/movie/12345)."}
+{"The public URL of this Clyde instance is: " + _public_url if _public_url else "The public URL is not configured — use relative paths only (e.g. /library/movie/12345)."}
 - ALWAYS format ANY link as markdown: [Label](url) — never output a bare URL
 - When asked for a link, always respond with a clickable markdown link immediately — do not output the raw URL
 - NEVER use localhost, 127.0.0.1, or any IP address in links — always use the public URL above or a relative path

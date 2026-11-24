@@ -92,7 +92,7 @@
             box.innerHTML = '';
             groups.forEach((g) => box.appendChild(groupBox(g, { unavailable: !inFile.has(g.id) })));
             const meta = [];
-            if (fileData.app_version) meta.push(`Made with cli_debrid ${fileData.app_version}`);
+            if (fileData.app_version) meta.push(`Made with Clyde ${fileData.app_version}`);
             if (fileData.exported_at) meta.push(`on ${String(fileData.exported_at).replace('T', ' ')}`);
             $('stFileMeta').textContent = meta.join(' ');
             $('stImportStep').hidden = false;

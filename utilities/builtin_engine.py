@@ -611,7 +611,7 @@ def stopped_by_user() -> bool:
 def user_stop() -> str:
     os.makedirs(_config_dir(), exist_ok=True)
     with open(_stop_flag(), 'w') as f:
-        f.write('stopped from the cli_debrid UI\n')
+        f.write('stopped from the Clyde UI\n')
     if state() in ('RUNNING', 'STARTING', 'BACKOFF'):
         control('stop')
     return 'stopped'

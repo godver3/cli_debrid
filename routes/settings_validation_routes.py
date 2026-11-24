@@ -412,7 +412,7 @@ def check_mount_path(path):
     if not path:
         return False, "Path cannot be empty", False
     if not os.path.exists(path):
-        return False, ("Path does not exist inside cli_debrid. Check that the mount is running and "
+        return False, ("Path does not exist inside Clyde. Check that the mount is running and "
                        "that your docker volumes map it to this path"), False
     if not os.path.isdir(path):
         return False, "Path exists but is not a folder", False
@@ -421,7 +421,7 @@ def check_mount_path(path):
     except OSError as e:
         return False, f"Path exists but cannot be read: {e}", False
     if '__all__' in entries and os.path.basename(path.rstrip('/')) != '__all__':
-        return True, (f"This folder has an __all__ subfolder. Point cli_debrid at "
+        return True, (f"This folder has an __all__ subfolder. Point Clyde at "
                       f"{os.path.join(path, '__all__')} instead"), True
     if not entries:
         return True, ("Path exists but is empty. Is the mount running? "
@@ -570,7 +570,7 @@ def validate_onboarding_settings():
             blocking=not tvdb_key)
     if not tvdb_key and not trakt_client_id:
         add('Metadata', False, 'Add a TVDB API key (recommended) or Trakt credentials. '
-            'cli_debrid needs one of them to look up shows and movies')
+            'Clyde needs one of them to look up shows and movies')
     if tmdb_key:
         add('TMDB', *validate_tmdb_api_key(tmdb_key))
     else:

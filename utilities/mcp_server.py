@@ -20,9 +20,9 @@ from collections import deque
 from typing import Any, Dict, List, Optional
 
 PROTOCOL_VERSIONS = ('2025-06-18', '2025-03-26', '2024-11-05')
-SERVER_NAME = 'cli_debrid'
+SERVER_NAME = 'clyde'
 INSTRUCTIONS = (
-    "Read-only access to a cli_debrid install (media automation: watchlists -> scrapers -> debrid/usenet -> "
+    "Read-only access to a Clyde (formerly cli_debrid) install (media automation: watchlists -> scrapers -> debrid/usenet -> "
     "library/symlinks -> Plex/Jellyfin). Start with get_overview. Use explain_setting/list_settings to explain "
     "settings, search_logs/recent_errors to diagnose problems, lookup_item to follow one movie or episode. "
     "To help report a bug, use prepare_issue_report; for how a feature works, get_help. "
@@ -331,11 +331,11 @@ def tool_get_help(topic: str = '') -> dict:
 REPORT_TIPS = [
     'Say what you did, what you expected and what happened instead; for one movie/episode, give its title (and S/E).',
     'Include the time it happened (with timezone) so the matching log lines can be found.',
-    'Attach logs: Logs page -> "Share cli_debrid Logs" (and the Mount tab\'s share button if streaming or playback '
+    'Attach logs: Logs page -> "Share Clyde Logs" (and the Mount tab\'s share button if streaming or playback '
     'is involved). Sharing uploads the redacted logs plus a settings snapshot to paste.c-net.org and gives a link '
     'to paste into the report. This assistant cannot upload anything itself.',
     'Share soon after it happens: the shared logs are the most recent lines. For mount/playback problems turn on '
-    'Mount page -> Advanced -> Debug logging, reproduce, then share (cli_debrid\'s own log already includes debug lines).',
+    'Mount page -> Advanced -> Debug logging, reproduce, then share (Clyde\'s own log already includes debug lines).',
     'Never paste API keys, tokens or passwords; the shared logs and this report already mask them.',
     f'Ask in Discord ({DISCORD_URL}) first for setup questions; file bugs at {ISSUES_URL}.',
 ]
@@ -359,7 +359,7 @@ def tool_prepare_issue_report(description: str = '', item: str = '') -> dict:
         '**What happened**\n' + (description or '<describe the problem>') + '\n\n'
         '**Expected**\n<what you expected>\n\n'
         '**When**\n<date/time and timezone>\n\n'
-        f"**Version / setup**\ncli_debrid {out['overview'].get('version')}, "
+        f"**Version / setup**\nClyde {out['overview'].get('version')}, "
         f"{out['overview'].get('library_mode')}, media server {out['overview'].get('media_server')}, "
         f"debrid {out['overview'].get('debrid_provider') or 'none'}, usenet {out['overview'].get('usenet_provider') or 'none'}\n\n"
         '**Logs**\n<link from Logs page -> Share>')
@@ -389,7 +389,7 @@ TOOLS: Dict[str, Dict[str, Any]] = {
         'schema': _obj({'section': {'type': 'string'}, 'key': {'type': 'string'}}, ['section', 'key'])},
     'search_logs': {
         'fn': tool_search_logs,
-        'description': 'Search recent log lines (case-insensitive text match). source "app" = cli_debrid, '
+        'description': 'Search recent log lines (case-insensitive text match). source "app" = Clyde, '
                        '"mount" = the built-in mount engine. level is the minimum level.',
         'schema': _obj({'query': {'type': 'string'},
                         'level': {'type': 'string', 'enum': ['all', 'debug', 'info', 'warning', 'error']},
@@ -414,7 +414,7 @@ TOOLS: Dict[str, Dict[str, Any]] = {
         'schema': _obj({})},
     'get_help': {
         'fn': tool_get_help,
-        'description': "cli_debrid's built-in help pages (what each page and feature does, tips). Without topic: "
+        'description': "Clyde's built-in help pages (what each page and feature does, tips). Without topic: "
                        'the list of topics. Use it to explain features and suggest fixes.',
         'schema': _obj({'topic': {'type': 'string', 'description': 'e.g. "queues", "debrid_manager", "logs_logs"'}})},
     'prepare_issue_report': {

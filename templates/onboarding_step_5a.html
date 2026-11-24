@@ -7,12 +7,12 @@
 {% block content %}
 <div class="onboarding-container">
     <h2 class="onboarding-title">Optional: Subtitles</h2>
-    <p class="ob-section-intro">cli_debrid can find subtitles for everything it collects, so you don't need Bazarr. This step is optional: skip it and you can turn subtitles on later in <b>Settings → Subtitles</b>.</p>
+    <p class="ob-section-intro">Clyde can find subtitles for everything it collects, so you don't need Bazarr. This step is optional: skip it and you can turn subtitles on later in <b>Settings → Subtitles</b>.</p>
 
     <div class="ob-section">
         <h3>How it works</h3>
         <ul class="ob-sub-list">
-            <li><b>When an item is collected</b>, cli_debrid searches the subtitle providers for each language you pick.</li>
+            <li><b>When an item is collected</b>, Clyde searches the subtitle providers for each language you pick.</li>
             <li><b>It picks the subtitle made for your exact file</b> first (an OpenSubtitles file-hash match, so it's in sync), then one for the same release group, then the same Blu-ray or streaming source. A subtitle for a different episode or movie is never used.</li>
             <li><b>Languages the file already has</b> as an embedded text track can be skipped (Settings → Subtitles → <i>Probe for embedded subtitles</i>).</li>
             {% if subs.plex_mode %}
@@ -28,7 +28,7 @@
     </div>
 
     <div class="ob-section">
-        <h3>Do you want cli_debrid to handle subtitles?</h3>
+        <h3>Do you want Clyde to handle subtitles?</h3>
         <div class="ob-choice-row">
             <label class="ob-choice">
                 <input type="radio" name="subs_enable" value="on" {% if subs.enabled %}checked{% endif %}>
@@ -46,7 +46,7 @@
             <input type="text" id="subs_languages" class="onboarding-input" autocomplete="off" value="{{ subs.languages }}">
 
             <h4 class="ob-sub-h">OpenSubtitles.com <span class="ob-sub-tag">recommended</span></h4>
-            <div class="settings-description">The largest catalog, and the only one with file-hash matches. Searching works without an account, but <b>downloading needs a free login</b>: sign up at <a href="https://www.opensubtitles.com/en/users/sign_up" target="_blank" rel="noopener">opensubtitles.com</a>. A free account can download about 20 subtitles a day; cli_debrid pauses it when that runs out and uses the other providers.</div>
+            <div class="settings-description">The largest catalog, and the only one with file-hash matches. Searching works without an account, but <b>downloading needs a free login</b>: sign up at <a href="https://www.opensubtitles.com/en/users/sign_up" target="_blank" rel="noopener">opensubtitles.com</a>. A free account can download about 20 subtitles a day; Clyde pauses it when that runs out and uses the other providers.</div>
             <label for="os_username" class="onboarding-label">Username:</label>
             <input type="text" id="os_username" class="onboarding-input" autocomplete="off" value="{{ subs.os_username }}">
             <label for="os_password" class="onboarding-label">Password:</label>

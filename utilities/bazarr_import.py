@@ -130,10 +130,10 @@ def fetch_plan(url, api_key):
     if skipped_langs:
         not_carried.append('languages: ' + ', '.join(str(x) for x in skipped_langs))
     if flags:
-        not_carried.append(', '.join(sorted(flags)) + ' (cli_debrid picks the best match per language)')
+        not_carried.append(', '.join(sorted(flags)) + ' (Clyde picks the best match per language)')
     if g.get('minimum_score') or g.get('minimum_score_movie'):
         not_carried.append(f"minimum scores {g.get('minimum_score')}%/{g.get('minimum_score_movie')}% "
-                           '(cli_debrid requires the right episode/movie; hash and release matches rank first)')
+                           '(Clyde requires the right episode/movie; hash and release matches rank first)')
     if g.get('upgrade_subs'):
         not_carried.append('subtitle upgrades')
     if len(profiles) > len(used):

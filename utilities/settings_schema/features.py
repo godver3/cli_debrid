@@ -339,7 +339,7 @@ SECTIONS = {
         "tab": "Additional Settings",
         "enabled": {
             "type": "boolean",
-            "description": "Enable Radarr/Sonarr API spoofing for Bazarr subtitle integration. When enabled, cli_debrid will expose API endpoints that allow Bazarr to connect as if this were Radarr/Sonarr.",
+            "description": "Enable Radarr/Sonarr API spoofing for Bazarr subtitle integration. When enabled, Clyde will expose API endpoints that allow Bazarr to connect as if this were Radarr/Sonarr.",
             "default": False
         },
         "api_key": {
@@ -410,7 +410,7 @@ SECTIONS = {
         },
         "enable_habit_tracking": {
             "type": "boolean",
-            "description": "Phase 5 — Habit Learning & Automation: Records significant actions you take in cli_debrid (manually triggering content sources, upgrade scans, library adds, program start/stop) to a local ai_habits table. The AI analyses these patterns and proactively suggests automations — for example, if you trigger the same content source every morning it will suggest scheduling it, or if you frequently add items manually it will suggest adding a Trakt list. When disabled, no actions are recorded and the AI will not make automation suggestions. Previously recorded habit data is kept but ignored.",
+            "description": "Phase 5 — Habit Learning & Automation: Records significant actions you take in Clyde (manually triggering content sources, upgrade scans, library adds, program start/stop) to a local ai_habits table. The AI analyses these patterns and proactively suggests automations — for example, if you trigger the same content source every morning it will suggest scheduling it, or if you frequently add items manually it will suggest adding a Trakt list. When disabled, no actions are recorded and the AI will not make automation suggestions. Previously recorded habit data is kept but ignored.",
             "default": True
         },
         "share_full_config": {
@@ -450,12 +450,12 @@ SECTIONS = {
         },
         "textless_posters": {
             "type": "boolean",
-            "description": "When enabled, cli_debrid will fetch a language-neutral (textless) poster from TMDB as the base image. Use the Title Logo badge in the layout editor to add the title as a transparent clearlogo PNG. Note: Not all titles have textless posters on TMDB — the standard English poster is used as fallback.",
+            "description": "When enabled, Clyde will fetch a language-neutral (textless) poster from TMDB as the base image. Use the Title Logo badge in the layout editor to add the title as a transparent clearlogo PNG. Note: Not all titles have textless posters on TMDB — the standard English poster is used as fallback.",
             "default": False
         },
         "plex_data_path": {
             "type": "string",
-            "description": "Path to the Plex Media Server data directory, the folder that contains Plex's Metadata folder (e.g. /config/Library/Application Support/Plex Media Server). Required for the poster cleanup task to delete old uploaded overlay versions directly from the filesystem. Only uploaded posters Plex reports as not selected, on items cli_debrid overlaid, are deleted.",
+            "description": "Path to the Plex Media Server data directory, the folder that contains Plex's Metadata folder (e.g. /config/Library/Application Support/Plex Media Server). Required for the poster cleanup task to delete old uploaded overlay versions directly from the filesystem. Only uploaded posters Plex reports as not selected, on items Clyde overlaid, are deleted.",
             "default": ""
         },
         "overlay_content_check_interval_days": {

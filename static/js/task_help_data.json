@@ -81,17 +81,17 @@
       "runs": "On by default. Needs cli_mount."
     },
     "task_sync_cli_mount_changes": {
-      "description": "Pulls changes from cli_mount (renamed folders, new provider IDs, magnets, file names) into the cli_debrid database so both agree on where each file lives. The first run does a full sync and pauses the queue until it's done.",
+      "description": "Pulls changes from cli_mount (renamed folders, new provider IDs, magnets, file names) into the Clyde database so both agree on where each file lives. The first run does a full sync and pauses the queue until it's done.",
       "action": "Fetch the changes from cli_mount since the last sync.",
       "runs": "On by default. Does nothing unless cli_mount is set up."
     },
     "task_push_pending_climount_tags": {
-      "description": "Sends tags you changed in cli_debrid (for example with Database → Assign Tags) to cli_mount. Sync cli_mount Changes only brings changes the other way, so without this a tag edited only in cli_debrid would never reach cli_mount.",
+      "description": "Sends tags you changed in Clyde (for example with Database → Assign Tags) to cli_mount. Sync cli_mount Changes only brings changes the other way, so without this a tag edited only in Clyde would never reach cli_mount.",
       "action": "Push the changed tags to cli_mount.",
       "runs": "On by default. Does nothing unless cli_mount is set up."
     },
     "task_scan_mount_for_external_adds": {
-      "description": "Imports content that showed up on the debrid mount without cli_debrid putting it there, such as torrents added through DMM or the provider's website. New folders go through the same symlink pipeline as Zurg's library-update webhook. The first run only records what's already on the mount, so turning this on doesn't import your whole existing library. Leftovers from cli_debrid's own rejected grabs are skipped.",
+      "description": "Imports content that showed up on the debrid mount without Clyde putting it there, such as torrents added through DMM or the provider's website. New folders go through the same symlink pipeline as Zurg's library-update webhook. The first run only records what's already on the mount, so turning this on doesn't import your whole existing library. Leftovers from Clyde's own rejected grabs are skipped.",
       "action": "Scan the mount and import new external content.",
       "runs": "Symlinked/Local mode only, when File Management → Scan Mount for External Adds is on. Zurg users don't need it."
     },
@@ -101,7 +101,7 @@
       "runs": "Off by default. Run it once. Needs cli_mount as the usenet provider."
     },
     "task_check_service_connectivity": {
-      "description": "Checks that the services cli_debrid depends on are reachable: your debrid service or usenet provider, Plex or Jellyfin/Emby, and the mount and symlink folders in Symlinked/Local mode. If one is down, the queue pauses and resumes on its own once it's back. If Trakt is set up, its login is checked and refreshed too, but a Trakt problem never pauses the queue.",
+      "description": "Checks that the services Clyde depends on are reachable: your debrid service or usenet provider, Plex or Jellyfin/Emby, and the mount and symlink folders in Symlinked/Local mode. If one is down, the queue pauses and resumes on its own once it's back. If Trakt is set up, its login is checked and refreshed too, but a Trakt problem never pauses the queue.",
       "action": "Check every required service and pause or resume the queue.",
       "runs": "Always on."
     },
@@ -196,7 +196,7 @@
       "runs": "Symlinked/Local mode, when a Plex or Jellyfin/Emby server is set up for symlinks."
     },
     "task_verify_plex_removals": {
-      "description": "After cli_debrid removes a file, checks that its title is gone from Plex. Items still listed get more tries with growing waits (1 minute up to 30 minutes) and are marked failed after the max attempts (Plex Removal Max Attempts, default 5).",
+      "description": "After Clyde removes a file, checks that its title is gone from Plex. Items still listed get more tries with growing waits (1 minute up to 30 minutes) and are marked failed after the max attempts (Plex Removal Max Attempts, default 5).",
       "action": "Check that removed files are gone from Plex.",
       "runs": "On by default. Does nothing without a Plex server set up."
     },

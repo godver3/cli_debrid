@@ -192,7 +192,7 @@ _SPECS = [
     TaskSpec('task_verify_symlinked_files', 'Verify symlinks are in the media server', 'media_server', 2 * HOUR,
              default=_verify_symlinks_default,
              controlled_by='On in Symlinked/Local mode when a media server is configured'),
-    TaskSpec('task_scan_mount_for_external_adds', 'Pick up files added outside cli_debrid', 'media_server', 900,
+    TaskSpec('task_scan_mount_for_external_adds', 'Pick up files added outside Clyde', 'media_server', 900,
              default=_external_adds_default,
              controlled_by='Settings → Required → File Management (Scan mount for external adds)'),
     TaskSpec('task_sync_library_metadata', 'Sync library metadata', 'media_server', DAY),

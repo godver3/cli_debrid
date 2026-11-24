@@ -361,7 +361,7 @@ def test_notification():
                 if not notification_config.get('bot_token') or not notification_config.get('chat_id'):
                     return jsonify({'success': False, 'error': 'Missing Telegram configuration'}), 400
                 
-                content = f"<b>Test Notification</b>\n\nThis is a test message from CLI Debrid. If you're seeing this, your Telegram notifications are working correctly!"
+                content = f"<b>Test Notification</b>\n\nThis is a test message from Clyde. If you're seeing this, your Telegram notifications are working correctly!"
                 send_telegram_notification(
                     notification_config['bot_token'],
                     notification_config['chat_id'],
@@ -373,7 +373,7 @@ def test_notification():
                 if not notification_config.get('webhook_url'):
                     return jsonify({'success': False, 'error': 'Missing Discord webhook URL'}), 400
                 
-                content = "**Test Notification**\n\nThis is a test message from CLI Debrid. If you're seeing this, your Discord notifications are working correctly!"
+                content = "**Test Notification**\n\nThis is a test message from Clyde. If you're seeing this, your Discord notifications are working correctly!"
                 send_discord_notification(
                     notification_config['webhook_url'],
                     content
@@ -384,7 +384,7 @@ def test_notification():
                 if not notification_config.get('host') or not notification_config.get('topic'):
                     return jsonify({'success': False, 'error': 'Missing NTFY configuration'}), 400
                 
-                content = "Test Notification\n\nThis is a test message from CLI Debrid. If you're seeing this, your NTFY notifications are working correctly!"
+                content = "Test Notification\n\nThis is a test message from Clyde. If you're seeing this, your NTFY notifications are working correctly!"
                 send_ntfy_notification(
                     notification_config['host'],
                     notification_config.get('api_key', ''),
@@ -406,7 +406,7 @@ def test_notification():
                 <html>
                 <body>
                 <h2>Test Notification</h2>
-                <p>This is a test message from CLI Debrid. If you're seeing this, your Email notifications are working correctly!</p>
+                <p>This is a test message from Clyde. If you're seeing this, your Email notifications are working correctly!</p>
                 </body>
                 </html>
                 """

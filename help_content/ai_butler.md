@@ -1,6 +1,6 @@
 ### AI Butler Help
 
-The AI Butler is a floating chat assistant powered by your self-hosted OpenClaw instance. It has live access to your cli_debrid data — queues, library, settings, health stats, and watch history — and can answer questions, diagnose issues, suggest fixes, and take actions on your behalf.
+The AI Butler is a floating chat assistant powered by your self-hosted OpenClaw instance. It has live access to your Clyde data — queues, library, settings, health stats, and watch history — and can answer questions, diagnose issues, suggest fixes, and take actions on your behalf.
 
 ---
 
@@ -149,7 +149,7 @@ Then open `http://127.0.0.1:18789/` in your browser.
 
 **Enable Required HTTP Endpoints**
 
-Before cli_debrid can communicate with OpenClaw, two HTTP endpoints must be enabled in the OpenClaw dashboard. Without these, the connection will fail silently.
+Before Clyde can communicate with OpenClaw, two HTTP endpoints must be enabled in the OpenClaw dashboard. Without these, the connection will fail silently.
 
 1.  Open the OpenClaw dashboard (`http://your-openclaw-url/`)
 2.  Go to **Settings → Infrastructure → Gateway HTTP API → Gateway HTTP Endpoints**
@@ -157,22 +157,22 @@ Before cli_debrid can communicate with OpenClaw, two HTTP endpoints must be enab
 4.  Enable **Responses**
 5.  Save the changes
 
-These endpoints expose the OpenAI-compatible API that cli_debrid uses to send and receive messages.
+These endpoints expose the OpenAI-compatible API that Clyde uses to send and receive messages.
 
-**Install the cli_debrid Skill**
+**Install the Clyde Skill**
 
-The skill file tells OpenClaw how to call back into cli_debrid's tool API so it can check queue status, search your library, trigger tasks, and more.
+The skill file tells OpenClaw how to call back into Clyde's tool API so it can check queue status, search your library, trigger tasks, and more.
 
 1.  Go to **Settings → Additional Settings → AI Assistant**
 2.  Click **Download OpenClaw Skill File**
 3.  Drop the downloaded `cli_debrid_skill.md` into your OpenClaw workspace directory (default: `~/.openclaw/workspace/` or the `workspace/` folder in your Docker volume)
 
-The skill file is pre-filled with your cli_debrid URL and bearer token.
+The skill file is pre-filled with your Clyde URL and bearer token.
 
-**Connect cli_debrid to OpenClaw**
+**Connect Clyde to OpenClaw**
 
 1.  Open the AI Butler settings cog in the chat header
-2.  Set **OpenClaw URL** to the URL OpenClaw is listening on (must be reachable from inside the cli_debrid container)
+2.  Set **OpenClaw URL** to the URL OpenClaw is listening on (must be reachable from inside the Clyde container)
 3.  Set **Bearer Token** to match the token configured in OpenClaw
 4.  Set **Agent ID** to `main` (or the ID of the agent you configured)
 5.  Set **Display Name** to your agent's name (found in its `IDENTITY.md` file in the workspace)
@@ -182,8 +182,8 @@ The skill file is pre-filled with your cli_debrid URL and bearer token.
 
 **Important Notes**
 
-*   The OpenClaw URL must be reachable from **inside the cli_debrid Docker container**, not just from your browser. If you use a reverse proxy or Tailscale, use the internal/container-reachable address.
-*   OpenClaw handles all AI provider credentials — cli_debrid never sees your API keys.
+*   The OpenClaw URL must be reachable from **inside the Clyde Docker container**, not just from your browser. If you use a reverse proxy or Tailscale, use the internal/container-reachable address.
+*   OpenClaw handles all AI provider credentials — Clyde never sees your API keys.
 *   Session memory is scoped per session ID. Starting a new session (+) clears the AI's memory of your conversation but does not affect your library or settings.
 *   The AI cannot delete media items or modify the database directly. It can trigger program actions (start/stop queue, run tasks, scan library) but these are the same actions available in the UI.
 

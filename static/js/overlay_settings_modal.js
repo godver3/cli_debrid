@@ -279,7 +279,7 @@
             'This will replace ALL posters in your library with clean originals from TMDB.\n\n' +
             '• Any foreign overlays (Kometa, PMM, etc.) will be removed\n' +
             '• Custom posters you have set manually will also be overwritten\n' +
-            '• cli_debrid overlays will NOT be re-applied automatically\n' +
+            '• Clyde overlays will NOT be re-applied automatically\n' +
             '  — use Generate All on the overlay page when ready\n\n' +
             'Continue?';
         showPopup({

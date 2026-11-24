@@ -13,7 +13,7 @@
         {%- endfor %}
     }}
     </script>
-    <title>cli_debrid - {% block title %}{% endblock %}</title>
+    <title>Clyde - {% block title %}{% endblock %}</title>
     
     <!-- Force browsers to refresh favicon -->
     <meta http-equiv="cache-control" content="no-cache, no-store, must-revalidate" />
@@ -25,7 +25,7 @@
     <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='plex-icon-32x32.png') }}">
     <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='plex-icon-16x16.png') }}">
     <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='plex-favicon-192x192.png') }}">
-    {% elif logo_path.startswith('default') %}
+    {% elif logo_path.startswith('clyde') %}
     <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='icon-32x32.png') }}">
     <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='icon-16x16.png') }}">
     <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='apple-touch-icon.png') }}">
@@ -35,12 +35,12 @@
     <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='color-favicon-192x192.png') }}">
     {% endif %}
     <link rel="manifest" href="{{ url_for('static', filename='site.webmanifest') }}">
-    <link rel="mask-icon" href="{{ url_for('static', filename='safari-pinned-tab.svg') }}" color="#007bff">
+    <link rel="mask-icon" href="{{ url_for('static', filename='safari-pinned-tab.svg') }}" color="#0F1724">
     
     <!-- Meta tags -->
-    <meta name="msapplication-TileColor" content="#007bff">
+    <meta name="msapplication-TileColor" content="#0F1724">
     <meta name="msapplication-TileImage" content="{{ url_for('static', filename='mstile-144x144.png') }}">
-    <meta name="theme-color" content="#007bff">
+    <meta name="theme-color" content="#0F1724">
     
     <!-- Prevent FOUC by hiding page until theme is applied -->
     <style>
@@ -166,10 +166,10 @@
             <div class="st-nav-left">
                 <a class="st-nav-brand" href="{{ url_for('root.root') }}">
                     <div class="st-nav-brand-icon">
-                        <img src="{{ url_for('static', filename=logo_path) }}" alt="cli_debrid">
+                        <img src="{{ url_for('static', filename=logo_path) }}" alt="Clyde">
                     </div>
                     <div>
-                        <div class="st-nav-brand-name">cli_debrid</div>
+                        <div class="st-nav-brand-name">Clyde</div>
                         <div class="st-nav-brand-ver">v{{ get_version_with_branch() }}</div>
                     </div>
                 </a>
@@ -505,9 +505,9 @@
     <header>
         <div class="header-content">
             <a href="{{ url_for('root.root') }}" style="text-decoration: none; color: inherit; display: flex; align-items: center;">
-                <img src="{{ url_for('static', filename=logo_path) }}" alt="cli_debrid icon" class="header-icon">
+                <img src="{{ url_for('static', filename=logo_path) }}" alt="Clyde icon" class="header-icon">
                 <div class="title-version">
-                    <h1>cli_debrid</h1>
+                    <h1>Clyde</h1>
                     {% set version_str = get_version_with_branch() %}
                     {% set evil = version_str.count('6') >= 3 %}
                     <div class="version-container">
@@ -916,13 +916,13 @@
     <div id="supportModal" class="modal" style="display: none;">
         <div class="modal-content support-modal">
             <div class="modal-header">
-                <h2>Support cli_debrid</h2>
+                <h2>Support Clyde</h2>
                 <span class="close" id="supportModalClose">&times;</span>
             </div>
             <div class="modal-body">
                 <div class="support-modal-content">
                     <div style="text-align: center; margin-left: 150px; margin-right: 150px; text-align: left;">
-                    <p>cli_debrid is a labor of love that requires significant time and resources to develop and maintain. I love supporting this project and have committed countless hours to it. Any support is appreciated!</p>
+                    <p>Clyde is a labor of love that requires significant time and resources to develop and maintain. I love supporting this project and have committed countless hours to it. Any support is appreciated!</p>
                     <p>Your support helps cover these costs and enables:</p>
                     <ul>
                         <li>Faster development of new features</li>
@@ -1088,7 +1088,7 @@
                         Enable Textless / Clean Posters
                     </label>
                     <p class="overlay-setting-description">
-                        When enabled, cli_debrid will fetch a language-neutral (textless) poster from TMDB
+                        When enabled, Clyde will fetch a language-neutral (textless) poster from TMDB
                         as the base image — these posters have no baked-in title text so the title logo
                         badge can render it cleanly at your chosen position.
                         Use the <strong>Title Logo</strong> badge in the layout editor to add the show or movie
@@ -1105,7 +1105,7 @@
                         Enable Textless / Clean Posters
                     </label>
                     <p class="overlay-setting-description">
-                        When enabled, cli_debrid will fetch a language-neutral (textless) poster from TMDB
+                        When enabled, Clyde will fetch a language-neutral (textless) poster from TMDB
                         as the base image — these posters have no baked-in title text so the title logo
                         badge can render it cleanly at your chosen position.
                         Use the <strong>Title Logo</strong> badge in the layout editor to add the show or movie
@@ -1122,7 +1122,7 @@
                         Enable Textless / Clean Posters
                     </label>
                     <p class="overlay-setting-description">
-                        When enabled, cli_debrid will fetch a language-neutral (textless) poster from TMDB
+                        When enabled, Clyde will fetch a language-neutral (textless) poster from TMDB
                         as the base image — these posters have no baked-in title text so the title logo
                         badge can render it cleanly at your chosen position.
                         Use the <strong>Title Logo</strong> badge in the layout editor to add the show or movie
@@ -1136,7 +1136,7 @@
                 <div class="overlay-setting-group">
                     <label for="overlaySettingsMediaDataPath">Media Server Data Path</label>
                     <input type="text" id="overlaySettingsMediaDataPath" class="overlay-setting-input" placeholder="/config/Library/Application Support/Plex Media Server">
-                    <p class="overlay-setting-description">The Plex Media Server data folder, the one that contains Plex's <code>Metadata</code> folder, as cli_debrid's container sees it. Required for the poster cleanup task to delete old overlay versions Plex no longer uses.</p>
+                    <p class="overlay-setting-description">The Plex Media Server data folder, the one that contains Plex's <code>Metadata</code> folder, as Clyde's container sees it. Required for the poster cleanup task to delete old overlay versions Plex no longer uses.</p>
                 </div>
 
                 <div class="overlay-setting-group">

@@ -83,7 +83,7 @@ SECTIONS = {
                 "api_limit_per_day": {
                     "type": "string",
                     "default": "",
-                    "description": "Optional: API hits (searches) this indexer allows per day. Leave blank for no limit. When reached, cli_debrid stops searching this indexer until the limit resets. Set it a little under your real limit if other apps use the same API key."
+                    "description": "Optional: API hits (searches) this indexer allows per day. Leave blank for no limit. When reached, Clyde stops searching this indexer until the limit resets. Set it a little under your real limit if other apps use the same API key."
                 },
                 "grab_limit_per_day": {
                     "type": "string",

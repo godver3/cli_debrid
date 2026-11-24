@@ -145,7 +145,7 @@ async function loadStats() {
         breakdown.style.color = prob ? '#f0ad4e' : '#888';
         if (prob?.kind === 'permission') {
             breakdown.textContent = `${prob.count} old poster(s) couldn't be deleted — click 👁 for the fix`;
-            breakdown.title = "cli_debrid has no write access to Plex's folders. The preview (eye button) shows the command that fixes it.";
+            breakdown.title = "Clyde has no write access to Plex's folders. The preview (eye button) shows the command that fixes it.";
         } else if (prob?.kind === 'path') {
             breakdown.textContent = "Cleanup off: Plex data path has no Metadata folder";
             breakdown.title = prob.suggestion
@@ -229,7 +229,7 @@ async function previewOverlayCleanup(e) {
         lines.push(`${d.records_would_remove} overlay record(s) would be removed and ${d.records_would_reset} reset for retry.`);
         if (d.not_deletable) {
             const cmd = `sudo find "${d.metadata_path}" -type d -exec setfacl -m u:${d.run_as_uid}:rwx,d:u:${d.run_as_uid}:rwx {} +`;
-            lines.push(`<span style="color:#f0ad4e;"><strong>${d.not_deletable}</strong> of these can't be deleted: cli_debrid runs as uid ${d.run_as_uid} and has no write access to Plex's folders (Plex owns them).</span> `
+            lines.push(`<span style="color:#f0ad4e;"><strong>${d.not_deletable}</strong> of these can't be deleted: Clyde runs as uid ${d.run_as_uid} and has no write access to Plex's folders (Plex owns them).</span> `
                 + `To fix it on a Linux host, run once (folders Plex creates later inherit it):`
                 + `<div style="text-align:left;font-family:monospace;font-size:11px;user-select:all;background:rgba(0,0,0,.25);padding:6px;margin-top:4px;word-break:break-all;">${_escHtml(cmd)}</div>`
                 + `<span style="font-size:11px;color:#888;">The path is the one on the host; if your container mounts Plex's folder somewhere else, use the host path.</span>`);

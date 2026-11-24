@@ -673,7 +673,7 @@ document.addEventListener('DOMContentLoaded', function() {
             placeholder: 'http://192.168.1.50:3000',
         },
         zurg: {
-            url: 'Zurg 2.0\'s address, e.g. http://192.168.1.50:9999. cli_debrid uses its SABnzbd-compatible API.',
+            url: 'Zurg 2.0\'s address, e.g. http://192.168.1.50:9999. Clyde uses its SABnzbd-compatible API.',
             token: 'The SABnzbd API key from your Zurg config.',
             placeholder: 'http://192.168.1.50:9999',
         },
@@ -719,19 +719,19 @@ document.addEventListener('DOMContentLoaded', function() {
     const SCHEMA_DEFAULT_PATH = '/mnt/zurg/__all__';
     const IS_WINDOWS = !!TPL_ONBOARDING_STEP_2.is_windows;
     const MOUNT_HINTS = IS_WINDOWS ? {
-        builtin: ['The built-in mount runs on this PC (drive M:, needs WinFsp) and streams your debrid account and usenet downloads itself, no other mount tool needed. cli_debrid reads its files from the mount\'s \\__all__ folder.', BUILTIN_ALL],
+        builtin: ['The built-in mount runs on this PC (drive M:, needs WinFsp) and streams your debrid account and usenet downloads itself, no other mount tool needed. Clyde reads its files from the mount\'s \\__all__ folder.', BUILTIN_ALL],
         climount: ['cli_mount\'s mount as this PC sees it (a drive letter or mapped network drive), plus \\__all__. Debrid and usenet files both show up there.', 'Z:\\__all__'],
         decypharr: ['Decypharr\'s mount folder for your debrid service as this PC sees it, ending in \\__all__.', 'Z:\\__all__'],
         zurg: ['Your rclone mount of Zurg (rclone mount on Windows also uses WinFsp), ending in \\__all__.', 'Z:\\__all__'],
         nzbdav: ['Your rclone mount of NzbDAV\'s WebDAV share.', 'Z:\\'],
         other: ['The drive or folder where your debrid/usenet files appear on this PC.', ''],
     } : {
-        builtin: ['The built-in mount runs in this container and streams your debrid account and usenet downloads itself, no other mount tool needed. cli_debrid reads its files from its mount path plus /__all__.', BUILTIN_ALL],
-        climount: ['cli_mount\'s mount path as cli_debrid sees it, plus /__all__. Debrid and usenet files both show up there.', '/mnt/cli_mount/__all__'],
+        builtin: ['The built-in mount runs in this container and streams your debrid account and usenet downloads itself, no other mount tool needed. Clyde reads its files from its mount path plus /__all__.', BUILTIN_ALL],
+        climount: ['cli_mount\'s mount path as Clyde sees it, plus /__all__. Debrid and usenet files both show up there.', '/mnt/cli_mount/__all__'],
         decypharr: ['Decypharr\'s mount folder for your debrid service, ending in /__all__.', '/mnt/decypharr/__all__'],
         zurg: ['Your rclone mount of Zurg, ending in /__all__.', '/mnt/zurg/__all__'],
         nzbdav: ['Your rclone mount of NzbDAV\'s WebDAV share.', '/mnt/nzbdav'],
-        other: ['The folder where your debrid/usenet files appear inside cli_debrid\'s container.', ''],
+        other: ['The folder where your debrid/usenet files appear inside Clyde\'s container.', ''],
     };
 
     function toolForBackend(backend) {

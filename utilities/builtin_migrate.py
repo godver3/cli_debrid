@@ -658,7 +658,7 @@ def _run_import(job_id, source, engine, data_path, limit, space=None, prepare=No
         if not os.path.isdir(mdir):
             _set(job_id, status='error', complete=True,
                  error=f"cli_mount's metadata folder isn't visible here ({mdir}). Bind cli_mount's appdata into "
-                       f"cli_debrid and set Usenet Provider → cli_mount Data Path.")
+                       f"Clyde and set Usenet Provider → cli_mount Data Path.")
             return
         entries = list(source.iter_library_nzbs())
         if limit:
@@ -818,7 +818,7 @@ def _run_export(job_id, engine, target, limit):
             except IdNotKept as exc:
                 _log(job_id, str(exc))
                 _set(job_id, status='error', complete=True,
-                     error="This cli_mount doesn't keep job ids yet, so cli_debrid's records wouldn't match. "
+                     error="This cli_mount doesn't keep job ids yet, so Clyde's records wouldn't match. "
                            "Update cli_mount (needs the 'id' field of /api/add) and run Copy back again; "
                            "remove the one job it just added from cli_mount first.")
                 return

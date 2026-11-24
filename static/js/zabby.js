@@ -1,13 +1,13 @@
 // Zabby was here.
 //
-// A small thank-you left by Zabby (github.com/zab1996), who worked on cli_debrid and
+// A small thank-you left by Zabby (github.com/zab1996), who worked on Clyde and
 // cli_mount from August 2026: a note in the browser console for whoever opens dev
 // tools, and a toast for whoever knows the Konami code (up up down down left right
 // left right b a). Harmless, self-contained, and safe to delete.
 (function () {
     'use strict';
 
-    var CREDIT = 'Helped build cli_debrid & cli_mount \u00b7 since August 2026';
+    var CREDIT = 'Helped build Clyde & cli_mount \u00b7 since August 2026';
 
     try {
         console.log(

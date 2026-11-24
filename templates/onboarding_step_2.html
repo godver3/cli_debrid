@@ -13,7 +13,7 @@
         <!-- 1. Debrid and/or usenet -->
         <div class="ob-section">
             <h3>1. Where your media comes from</h3>
-            <p class="ob-section-intro">cli_debrid needs a debrid service, a usenet provider, or both. Pick the ones you use.</p>
+            <p class="ob-section-intro">Clyde needs a debrid service, a usenet provider, or both. Pick the ones you use.</p>
             <div class="ob-choice-row">
                 <label class="ob-choice">
                     <input type="checkbox" id="use_debrid" name="use_debrid" {% if use_debrid or not use_usenet %}checked{% endif %}>
@@ -48,11 +48,11 @@
                 <div id="builtin-note" style="display:none;">
                 <div class="settings-description">
                     {% if is_windows %}
-                    cli_debrid runs its own mount engine on this PC, no separate app needed.
+                    Clyde runs its own mount engine on this PC, no separate app needed.
                     It also streams your debrid account (if you added one above), so you don't need Zurg, rclone or cli_mount.
                     It needs <a href="https://winfsp.dev" target="_blank" rel="noopener">WinFsp</a> installed, and shows your files as drive <code>M:</code>.
                     {% else %}
-                    cli_debrid runs its own mount engine in this container, no separate app needed.
+                    Clyde runs its own mount engine in this container, no separate app needed.
                     It also streams your debrid account (if you added one above), so you don't need Zurg, rclone or cli_mount.
                     The container needs <code>devices: [/dev/fuse]</code> and <code>cap_add: [SYS_ADMIN]</code>,
                     and its mount path (default <code>/mnt/clid</code>) bound with rshared propagation so Plex sees it.
@@ -100,7 +100,7 @@
         <div class="ob-section">
             <h3>2. Your mount</h3>
             <div class="ob-callout">
-                <b>cli_debrid doesn't download or store files.</b> A mount tool shows your debrid/usenet files as a normal folder, and both cli_debrid and your media server read from that folder. Set one up first if you haven't:
+                <b>Clyde doesn't download or store files.</b> A mount tool shows your debrid/usenet files as a normal folder, and both Clyde and your media server read from that folder. Set one up first if you haven't:
                 <a href="https://godver3.github.io/cli_docs/getting-started/mount/" target="_blank" rel="noopener">mount setup guide</a>.
             </div>
             <label for="mount_tool" class="onboarding-label">Mount tool:</label>
@@ -116,7 +116,7 @@
                 {% if is_windows %}
                 <b>The built-in mount can't run on this PC yet:</b>
                 <ul>{% for p in builtin_host_problems %}<li>{{ p }}</li>{% endfor %}</ul>
-                Fix that and restart cli_debrid, or pick another mount tool.
+                Fix that and restart Clyde, or pick another mount tool.
                 {% else %}
                 <b>The built-in mount can't run in this container yet:</b>
                 <ul>{% for p in builtin_host_problems %}<li>{{ p }}</li>{% endfor %}</ul>
@@ -132,14 +132,14 @@
             <div class="ob-test-result" data-result="mount"></div>
             <div class="advice-section">
                 <div class="advice-header">
-                    💡 cli_debrid can't see the path?
+                    💡 Clyde can't see the path?
                     <i class="fas fa-chevron-down toggle-icon"></i>
                 </div>
                 <div class="advice-content">
                     {% if is_windows %}
-                    The path is checked on this PC, so use the drive letter or folder your mount tool shows in Explorer (the built-in mount uses <code>M:\__all__</code>). If the mount runs on another machine, map it as a network drive first. cli_debrid and Plex must see the files at exactly the same path.
+                    The path is checked on this PC, so use the drive letter or folder your mount tool shows in Explorer (the built-in mount uses <code>M:\__all__</code>). If the mount runs on another machine, map it as a network drive first. Clyde and Plex must see the files at exactly the same path.
                     {% else %}
-                    The path is checked from inside cli_debrid's container, so it has to be mapped in your docker-compose.yml. cli_debrid and your media server must see the mount (and the symlink folder) at exactly the same path. The easiest way is to pass<br><br>
+                    The path is checked from inside Clyde's container, so it has to be mapped in your docker-compose.yml. Clyde and your media server must see the mount (and the symlink folder) at exactly the same path. The easiest way is to pass<br><br>
                     <code style="background: #1a1a1a; padding: 8px; border-radius: 4px; display: block;">/mnt:/mnt</code><br>
                     into both containers.
                     {% endif %}
@@ -169,11 +169,11 @@
             {% endif %}
 
             <div id="plex-description" class="settings-description">
-                Your media server (Plex, Silo, Jellyfin or Emby) reads straight from your mount, and cli_debrid asks it what's in your library.
+                Your media server (Plex, Silo, Jellyfin or Emby) reads straight from your mount, and Clyde asks it what's in your library.
                 {% if is_windows %}With the built-in mount, point your Plex libraries at <code>M:\Movies</code> and <code>M:\TV Shows</code>.{% endif %}
             </div>
             <div id="local-description" class="settings-description" style="display: none;">
-                cli_debrid makes a tidy folder of symlinks pointing into your mount, and your media server scans that folder. Works with Plex, Jellyfin and Emby.
+                Clyde makes a tidy folder of symlinks pointing into your mount, and your media server scans that folder. Works with Plex, Jellyfin and Emby.
             </div>
             <div class="advice-section">
                 <div class="advice-header">
@@ -270,11 +270,11 @@
             <!-- Local/Symlinked-specific fields -->
             <div id="local-fields" class="conditional-fields">
                 <label for="symlinked_files_path" class="onboarding-label">Symlinked Files Path:</label>
-                <div class="settings-description">Where cli_debrid puts its symlinks. It creates Movies and TV Shows folders inside. Point your media server's libraries at those folders.</div>
+                <div class="settings-description">Where Clyde puts its symlinks. It creates Movies and TV Shows folders inside. Point your media server's libraries at those folders.</div>
                 <input type="text" id="symlinked_files_path" name="symlinked_files_path" class="onboarding-input" value="{{ settings.get('File Management', {}).get('symlinked_files_path', '/mnt/symlinked') }}">
 
                 <label class="onboarding-label">Media Server (Optional):</label>
-                <div class="settings-description">Lets cli_debrid start a library scan when new files are added.</div>
+                <div class="settings-description">Lets Clyde start a library scan when new files are added.</div>
                 <select id="symlink_media_server" name="symlink_media_server" class="onboarding-input">
                     <option value="none">None</option>
                     <option value="plex" {% if settings.get('File Management', {}).get('plex_url_for_symlink') %}selected{% endif %}>Plex</option>
@@ -320,7 +320,7 @@
         <!-- 4. Metadata -->
         <div class="ob-section">
             <h3>4. Metadata</h3>
-            <p class="ob-section-intro">cli_debrid looks up shows, seasons, episodes and release dates. Both keys are free.</p>
+            <p class="ob-section-intro">Clyde looks up shows, seasons, episodes and release dates. Both keys are free.</p>
             <label for="tvdb_api_key" class="onboarding-label">TVDB API Key (required unless you use Trakt):</label>
             <div class="settings-description">Create one at <a href="https://thetvdb.com/api-information" target="_blank" rel="noopener">thetvdb.com/api-information</a>.</div>
             <div class="ob-inline">
@@ -339,9 +339,9 @@
 
             <details class="ob-details" {% if settings.get('Trakt', {}).get('client_id') and not settings.get('TVDB', {}).get('api_key') %}open{% endif %}>
                 <summary>Use Trakt instead (optional)</summary>
-                <p class="settings-description">Without a TVDB key, cli_debrid looks shows and movies up on Trakt instead. Trakt is also needed for Trakt-based content sources. Create an application at <a href="https://trakt.tv/oauth/applications/" target="_blank" style="color: #3498db;">Trakt Applications</a>. All you need to add is a <b>Name</b>, and the <b>Redirect URI</b> which is:</p>
+                <p class="settings-description">Without a TVDB key, Clyde looks shows and movies up on Trakt instead. Trakt is also needed for Trakt-based content sources. Create an application at <a href="https://trakt.tv/oauth/applications/" target="_blank" style="color: #3498db;">Trakt Applications</a>. All you need to add is a <b>Name</b>, and the <b>Redirect URI</b> which is:</p>
                 <code><b>urn:ietf:wg:oauth:2.0:oob</b></code><br>
-                <p class="settings-description">Trakt may warn that this redirect URI is insecure. cli_debrid signs in with a device code and never uses it, so the warning can be ignored.</p>
+                <p class="settings-description">Trakt may warn that this redirect URI is insecure. Clyde signs in with a device code and never uses it, so the warning can be ignored.</p>
 
                 <label for="trakt_client_id" class="onboarding-label"><br>Trakt Client ID:</label>
                 <input type="text" id="trakt_client_id" name="trakt_client_id" class="onboarding-input" value="{{ settings.get('Trakt', {}).get('client_id', '') }}">

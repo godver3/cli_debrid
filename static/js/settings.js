@@ -1095,7 +1095,7 @@ export function updateSettings() {
             let successMessage;
             if (data.requires_restart) {
                 const reasons = data.restart_reasons ? data.restart_reasons.join(', ') : 'critical settings';
-                successMessage = `Settings saved successfully.<br><br><strong>⚠️ Restart Required</strong><br>Changes to ${reasons} require restarting CLI Debrid to take effect.`;
+                successMessage = `Settings saved successfully.<br><br><strong>⚠️ Restart Required</strong><br>Changes to ${reasons} require restarting Clyde to take effect.`;
             } else {
                 successMessage = 'Settings saved successfully.<br>Program runner restarted if running.';
             }

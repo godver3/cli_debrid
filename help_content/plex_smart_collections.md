@@ -21,7 +21,7 @@ One shared design applies to all enabled smart collections. Options: **Plex Defa
 
 **Eyebrow Text** — Small text displayed above the collection title (e.g. `PLEX`, `SMART`). Leave blank to hide.
 
-**Poster Icon** — Defaults to the CLI Debrid icon. Click **Choose icon from library** to select any overlay logo.
+**Poster Icon** — Defaults to the Clyde icon. Click **Choose icon from library** to select any overlay logo.
 
 **Card Overlay Opacity** — Darkness of the gradient fade at the bottom of each card thumbnail. 0% = no fade, 100% = fully dark. Default 60%.
 

@@ -323,7 +323,7 @@
     'delete database':                       { icon:'fa-solid fa-bomb', danger:true },
     /* Diagnostics */
     'current rate limit state':     { icon:'fa-solid fa-gauge-high', desc:'Requests used against each site\'s rate limit.' },
-    'plex token status':            { icon:'fa-solid fa-key', desc:'Whether each Plex token cli_debrid holds is still valid.' },
+    'plex token status':            { icon:'fa-solid fa-key', desc:'Whether each Plex token Clyde holds is still valid.' },
     'personal trakt token status':  { icon:'fa-solid fa-key', desc:'Whether your Trakt sign-in is still valid.' },
     'torrent tracking':             { icon:'fa-solid fa-clock-rotate-left' },
     'api summary':                  { icon:'fa-solid fa-chart-column' },

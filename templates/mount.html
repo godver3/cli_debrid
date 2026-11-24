@@ -84,7 +84,7 @@
 {% block content %}
 <div class="mnt">
   <h2>Built-in Mount</h2>
-  <p class="sub">cli_debrid's own usenet mount: status, servers and cache. Changes here restart only the mount engine, not cli_debrid.</p>
+  <p class="sub">Clyde's own usenet mount: status, servers and cache. Changes here restart only the mount engine, not Clyde.</p>
 
   {% if not selected %}
   <div class="warn">The built-in mount isn't your usenet backend right now. Choose <strong>Built-in mount (internal)</strong> under Settings → Required → Usenet Mount to use it. You can still edit these settings first.</div>
@@ -154,7 +154,7 @@
   </div>
 
   <div class="pane" data-pane="migrate" hidden>
-    <p class="sub" style="margin-top:0">Move your cli_mount library to the built-in mount without downloading anything: jobs keep their IDs, folders and file names, so cli_debrid's records, your symlinks and Plex keep working. Every step copies: cli_mount is never changed, so you can switch back at any time, and jobs added in the meantime can be copied back to it.</p>
+    <p class="sub" style="margin-top:0">Move your cli_mount library to the built-in mount without downloading anything: jobs keep their IDs, folders and file names, so Clyde's records, your symlinks and Plex keep working. Every step copies: cli_mount is never changed, so you can switch back at any time, and jobs added in the meantime can be copied back to it.</p>
     <div id="mgStatus" class="card"><div class="body">Loading…</div></div>
     <div class="card"><h3>1. Run the built-in mount alongside cli_mount</h3><div class="body">
       <p class="d" style="color:#8f8f8f;font-size:13px;margin-top:0">It mounts on its own path (Settings tab → Mount path, e.g. /mnt/clid) while cli_mount keeps serving. Before you start, every line in the checklist above should be ticked except the built-in mount itself. No usenet servers set yet? Import copies cli_mount's.</p>

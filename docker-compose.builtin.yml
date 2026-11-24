@@ -1,8 +1,8 @@
-# cli_debrid with its built-in mount: one container, nothing else to set up.
+# Clyde with its built-in mount: one container, nothing else to set up.
 #
 # The built-in mount streams your debrid account (Real-Debrid, AllDebrid,
 # TorBox, Premiumize, Debrid-Link, HighWay) and your Usenet server from
-# inside cli_debrid. Linux with Docker Engine. Then:
+# inside Clyde. Linux with Docker Engine. Then:
 #
 #   docker compose -f docker-compose.builtin.yml up -d
 #
@@ -30,7 +30,7 @@ services:
       - ./cli_debrid/logs:/user/logs
       - ./cli_debrid/cache:/user/cache            # the mount's download cache (50 GB by default; Mount page → Disk cache)
       - /mnt/clid:/mnt/clid:rshared              # the mount; rshared lets the host and Plex see it
-      - /mnt/symlinks:/mnt/symlinks              # Symlink mode only: where cli_debrid writes symlinks
+      - /mnt/symlinks:/mnt/symlinks              # Symlink mode only: where Clyde writes symlinks
     # The built-in mount is a FUSE filesystem: these three let it mount.
     devices:
       - /dev/fuse:/dev/fuse:rwm
@@ -58,5 +58,5 @@ services:
   #     - PLEX_CLAIM=claim-xxxx                # from https://plex.tv/claim, first start only
   #   volumes:
   #     - ./plex/config:/config
-  #     - /mnt/clid:/mnt/clid:rslave           # rslave: sees the mount, and sees it again after cli_debrid restarts
+  #     - /mnt/clid:/mnt/clid:rslave           # rslave: sees the mount, and sees it again after Clyde restarts
   #     - /mnt/symlinks:/mnt/symlinks

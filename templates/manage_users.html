@@ -209,7 +209,7 @@
   <!-- API Token -->
   <div class="mu-card">
     <div class="mu-section-title">API Token</div>
-    <p style="color:var(--mu-text2);margin:0 0 .75rem">Use this token to access cli_debrid endpoints externally (OpenClaw, homepage widgets, etc.).</p>
+    <p style="color:var(--mu-text2);margin:0 0 .75rem">Use this token to access Clyde endpoints externally (OpenClaw, homepage widgets, etc.).</p>
     <div class="mu-token-row">
       <input type="text" id="api-token-display" class="mu-input" value="{{ current_user.api_token or '' }}" readonly style="font-family:monospace;flex:1;min-width:260px">
       <button type="button" id="copy-api-token-btn" class="mu-btn mu-btn-copy">Copy</button>
@@ -237,11 +237,11 @@
         </div>
         <div class="mu-sso-row">
           <label class="mu-sso-label">Discovery URL</label>
-          <input type="text" id="sso-discovery-url" class="mu-input" placeholder="https://auth.example.com/application/o/cli-debrid/.well-known/openid-configuration">
+          <input type="text" id="sso-discovery-url" class="mu-input" placeholder="https://auth.example.com/application/o/clyde/.well-known/openid-configuration">
         </div>
         <div class="mu-sso-row">
           <label class="mu-sso-label">Client ID</label>
-          <input type="text" id="sso-client-id" class="mu-input" placeholder="cli-debrid">
+          <input type="text" id="sso-client-id" class="mu-input" placeholder="clyde">
         </div>
         <div class="mu-sso-row">
           <label class="mu-sso-label">Client Secret</label>

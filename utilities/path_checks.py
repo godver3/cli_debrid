@@ -107,7 +107,7 @@ def host_mapping(path: str, label: str, need_shared: bool = False, entries: Opti
         return None
     m = covering_mount(path, entries, skip_fuse=need_shared)
     if m is None or m['mount_point'] == '/':
-        return False, (f"{path} is not mapped to a folder on the host: it lives inside cli_debrid's container, so "
+        return False, (f"{path} is not mapped to a folder on the host: it lives inside Clyde's container, so "
                        f"your media server can't see it and it's lost when the container is recreated. Add "
                        f"`- {path}:{path}{':rshared' if need_shared else ''}` to cli_debrid's volumes in docker-compose."), False
     if need_shared and m['propagation'] != 'shared':
@@ -253,7 +253,7 @@ def silo_sees_symlinks(server: Dict, symlinks: str, folder_names: Optional[Set[s
             elif os.path.basename(marker) in seen:
                 rows.append((label, (True, f"Silo sees {local} at {root}", False)))
             else:
-                rows.append((label, (False, f"Silo's folder {root} isn't cli_debrid's {local}. Give Silo the symlink "
+                rows.append((label, (False, f"Silo's folder {root} isn't Clyde's {local}. Give Silo the symlink "
                                             f"folder and point this library at the matching folder inside it.", False)))
     if not rows:
         names = ', '.join(f"{lib.get('name')} ({', '.join(lib.get('paths') or [])})" for lib in libraries) or 'none'
@@ -302,7 +302,7 @@ def server_sees_mount(server: Dict, path: str) -> Result:
         return True, f"Couldn't ask {name} what it sees in {path}; check by hand that it has the same folder", True
     if local & seen:
         return True, f"{name} sees the mount at {path}", False
-    return False, (f"{name} sees {'nothing' if not seen else 'different files'} at {path}, but cli_debrid sees "
+    return False, (f"{name} sees {'nothing' if not seen else 'different files'} at {path}, but Clyde sees "
                    f"{len(local)} item(s). Give {name} the mount at the same path (Docker: `- {path}:{path}:rslave`)."), False
 
 

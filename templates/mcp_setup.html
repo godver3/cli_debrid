@@ -18,7 +18,7 @@
 {% block content %}
 <div class="mcp">
   <h2>AI Assistant (MCP)</h2>
-  <p class="sub">Connect Claude (Desktop or Code) or another MCP-capable AI assistant to cli_debrid, so it can explain your settings, read your logs and help troubleshoot. It is <strong>read-only</strong>: the assistant can look, never change anything. API keys, tokens and passwords are masked in everything it sees.</p>
+  <p class="sub">Connect Claude (Desktop or Code) or another MCP-capable AI assistant to Clyde, so it can explain your settings, read your logs and help troubleshoot. It is <strong>read-only</strong>: the assistant can look, never change anything. API keys, tokens and passwords are masked in everything it sees.</p>
 
   <div class="card">
     <div class="row">
@@ -36,7 +36,7 @@
     <pre id="mcpToken">••••••••</pre>
     <div style="margin-top:10px"><strong>Claude Code</strong> (run in a terminal)<pre id="mcpCC"></pre></div>
     <div style="margin-top:10px"><strong>Claude Desktop / other clients</strong> (MCP config JSON)<pre id="mcpJson"></pre></div>
-    <p class="muted">The URL must be reachable from where the assistant runs. Behind a reverse proxy, use your public cli_debrid address with <code>/mcp</code>.</p>
+    <p class="muted">The URL must be reachable from where the assistant runs. Behind a reverse proxy, use your public Clyde address with <code>/mcp</code>.</p>
   </div>
 
   <div class="card">
@@ -44,7 +44,7 @@
     <ul>
       <li><code>get_overview</code>: version, running state, library mode, providers, connection health, item counts</li>
       <li><code>list_settings</code> / <code>explain_setting</code>: every setting with its value and description</li>
-      <li><code>search_logs</code> / <code>recent_errors</code>: cli_debrid and built-in mount logs</li>
+      <li><code>search_logs</code> / <code>recent_errors</code>: Clyde and built-in mount logs</li>
       <li><code>queue_status</code>, <code>mount_status</code>, <code>connection_health</code></li>
       <li><code>lookup_item</code>: one movie or episode's state, release, file and related log lines</li>
     </ul>

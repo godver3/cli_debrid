@@ -2246,7 +2246,7 @@ def _cleanup_overlay_upload_files(metadata_root: str, client, keep_hashes: set,
     if out['denied']:
         logger.warning(
             f"Plex poster cleanup: {out['denied']} file(s) not deleted, no write access "
-            f"(cli_debrid runs as uid {_uid()}, e.g. '{out['denied_example']}'). "
+            f"(Clyde runs as uid {_uid()}, e.g. '{out['denied_example']}'). "
             f"Plex owns its Metadata folders; give this uid write access to them, "
             f"e.g. setfacl on the host (see the Overlays cleanup preview).")
     return out

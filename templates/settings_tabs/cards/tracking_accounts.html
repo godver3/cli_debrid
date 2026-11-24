@@ -63,7 +63,7 @@
             </div>
             <div class="settings-subheader"><h5>Scrob</h5></div>
             <p class="settings-description">Scrob is an optional self-hosted Trakt alternative (<a href="https://github.com/ellite/scrob" target="_blank">ellite/scrob</a>) used for Scrob-based content sources (Lists, Collection, Special Lists). Enter your instance's base URL and an API key from <b>Settings → Connections → API Key</b> in the Scrob UI. This connection is shared by every Scrob content source below — no need to re-enter it per source.</p>
-            <p class="settings-description">The API key covers everything needed to sync content <i>into</i> cli_debrid. Username and password are optional and only used so cli_debrid can also remove items from Scrob when you delete them from your library — Scrob's API only allows deletions from a logged-in session, not an API key. Leave these blank if you don't need that.</p>
+            <p class="settings-description">The API key covers everything needed to sync content <i>into</i> Clyde. Username and password are optional and only used so Clyde can also remove items from Scrob when you delete them from your library — Scrob's API only allows deletions from a logged-in session, not an API key. Leave these blank if you don't need that.</p>
             {% for key, value in settings_schema['Scrob'].items() %}
                 {% if key != 'tab' %}
                 <div class="settings-form-group">

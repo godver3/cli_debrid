@@ -91,7 +91,7 @@
         {% endwith %}
 
         <div class="info-note">
-            On each startup, the cli_debrid will:
+            On each startup, Clyde will:
             <ul class="info-list" style="margin-top: 10px;">
                 <li>Synchronize with your Plex library to maintain an up-to-date collection status</li>
                 <li>Gather all wanted items from your configured content sources</li>
@@ -103,7 +103,7 @@
             {% if management_type == 'Symlinked/Local' %}
             <ul class="info-list" style="margin-top: 10px;">
                 <li>Files will appear in your rclone mount at <span class="var-value">{{ settings.get('File Management', {}).get('original_files_path') }}</span></li>
-                <li>cli_debrid will create organized symlinks in <span class="var-value">{{ settings.get('File Management', {}).get('symlinked_files_path') }}</span></li>
+                <li>Clyde will create organized symlinks in <span class="var-value">{{ settings.get('File Management', {}).get('symlinked_files_path') }}</span></li>
                 <li>Movies and TV Shows will be automatically sorted into their respective folders</li>
                 <li>Plex will be notified to scan the new content into your library</li>
             </ul>
@@ -123,7 +123,7 @@
         <h4>Direct Mount Library Setup</h4>
         {% with management_type = settings.get('File Management', {}).get('file_collection_management', 'Plex'), plex_url = settings.get('Plex', {}).get('url'), plex_token = settings.get('Plex', {}).get('token') %}
         {% if management_type == 'Symlinked/Local' %}
-        <p>You can continue to use your existing Plex library as is. cli_debrid will create a symlink folder and content that you will need to point Plex to.</p>
+        <p>You can continue to use your existing Plex library as is. Clyde will create a symlink folder and content that you will need to point Plex to.</p>
         <div class="setup-note" style="margin-top: 10px; margin-bottom: 20px;">
             ⚠️ Note: Items will still appear in your rclone mount, so Plex will scan both new symlinks and rclone mount items.
             It is recommended to disable scanning of items in the rclone mount location.
@@ -152,7 +152,7 @@
         <div class="info-note">
             <p style="margin-top: 15px;">Here's how it works:</p>
             <ul class="info-list" style="margin-top: 10px;">
-                <li>First, scan your existing Plex libraries to build the cli_debrid collection database.</li>
+                <li>First, scan your existing Plex libraries to build the Clyde collection database.</li>
                 <li>New content will be downloaded directly to your mount at <span class="var-value">{{ settings.get('Plex', {}).get('mounted_file_location') }}</span></li>
                 <li>Plex will automatically detect and scan the new content (if configured)</li>
                 <li>Your existing library structure and organization remains unchanged</li>
@@ -315,8 +315,8 @@
             </div>
             {% endif %}
 
-            <div class="setup-note" style="margin-top: 20px;">⚠️ Ensure that you use a new symlink location for your cli_debrid library.</div>
-            <div class="setup-note">Once scanned, this will allow cli_debrid to avoid redownloading items that already exist in your current symlink library.</div>
+            <div class="setup-note" style="margin-top: 20px;">⚠️ Ensure that you use a new symlink location for your Clyde library.</div>
+            <div class="setup-note">Once scanned, this will allow Clyde to avoid redownloading items that already exist in your current symlink library.</div>
             <div class="setup-note">You can adjust these settings at any time through the Settings menu.</div>
         {% endif %}
         {% endwith %}
