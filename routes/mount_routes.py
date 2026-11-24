@@ -637,11 +637,19 @@ def migrate_status():
         metas = 0
     root = bm.climount_mount_root(get_setting)
     space = None
+    listed = None  # jobs cli_mount lists now: what Import imports
     if metas:
+        try:
+            listed = [e.get('info_hash') or '' for e in _climount_source().iter_library_nzbs()]
+        except Exception as exc:
+            logging.debug(f'[mount] cli_mount job list failed: {exc}')
         try:
             sp = _import_space()
             sizes = bm.meta_sizes(mdir)
-            space = bm.space_plan(sorted(sizes), sizes, sp['data_dir'], sp['cache_dir'], sp['cache_left'])
+            # The metadata folder keeps maps of jobs cli_mount has since
+            # removed; Import skips those, so only listed jobs are counted.
+            ids = [i for i in listed if i in sizes] if listed is not None else sorted(sizes)
+            space = bm.space_plan(ids, sizes, sp['data_dir'], sp['cache_dir'], sp['cache_left'])
         except Exception as exc:
             logging.debug(f'[mount] import space estimate failed: {exc}')
     return jsonify({
@@ -651,7 +659,7 @@ def migrate_status():
         'alongside': bool((get_setting('Built-in Mount') or {}).get('run_alongside')),
         'engine_state': builtin_engine.state(),
         'problems': builtin_engine.problems(),
-        'meta_dir': mdir, 'metas': metas,
+        'meta_dir': mdir, 'metas': metas, 'listed': None if listed is None else len(listed),
         'climount_root': root,
         'climount_root_mounted': bool(root) and _fuse_mounted(root),
         'builtin_root': _engine().mount_path,

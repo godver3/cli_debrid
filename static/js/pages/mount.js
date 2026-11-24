@@ -604,7 +604,11 @@
     const ok = (b, t, f) => '<div>' + (b ? '<span class="ok">✔</span> ' + t : '<span class="no">✘</span> ' + f) + '</div>';
     $('#mgStatus .body').innerHTML =
       ok(mg.provider === 'climount' || mg.provider === 'builtin', 'Usenet backend: ' + esc(mg.provider), 'Usenet backend is ' + esc(mg.provider) + ' (migration is from cli_mount)') +
-      ok(mg.metas > 0, mg.metas + " cli_mount job maps found in " + esc(mg.meta_dir), "cli_mount's metadata isn't visible at " + esc(mg.meta_dir) + ': bind cli_mount\'s appdata into this container and set Settings → Usenet Mount → cli_mount Data Path') +
+      ok(mg.metas > 0, (mg.listed != null
+          ? mg.listed + ' job(s) listed by cli_mount; ' + mg.metas + ' job maps in ' + esc(mg.meta_dir) +
+            (mg.metas > mg.listed ? ' (maps of jobs cli_mount has since removed are left out)' : '')
+          : mg.metas + " cli_mount job maps found in " + esc(mg.meta_dir) + " (cli_mount didn't answer: Import imports only the jobs it lists)"),
+        "cli_mount's metadata isn't visible at " + esc(mg.meta_dir) + ': bind cli_mount\'s appdata into this container and set Settings → Usenet Mount → cli_mount Data Path') +
       ok(!!mg.climount_root, "cli_mount's mount: " + esc(mg.climount_root) + (mg.climount_root_mounted ? ' (mounted)' : ' (not mounted)'), "cli_mount's mount path isn't known (File Management → original files path)") +
       ok(mg.engine_state === 'RUNNING', 'Built-in mount running at ' + esc(mg.builtin_root), 'Built-in mount is ' + esc(mg.engine_state) + (mg.problems.length ? ': ' + esc(mg.problems.join('; ')) : '')) +
       (mg.debrid_needed ? ok(!!(mg.debrid.synced_at && mg.debrid.complete),
