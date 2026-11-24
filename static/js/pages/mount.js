@@ -617,6 +617,9 @@
                          : "cli_mount's mount path isn't known (File Management → original files path)") +
       ok(!(mg.host_problems || []).length, 'This container can mount (FUSE, SYS_ADMIN, AppArmor)',
         "This container can't mount yet: " + esc((mg.host_problems || []).join('; ')) + '. Change the container, recreate it, then come back here.') +
+      (mg.switch_reach ? ok(mg.switch_reach.ok,
+        'For Switch: ' + esc(mg.switch_reach.bind) + ' is bound with rshared, so Plex will see the built-in mount at ' + esc(mg.climount_root),
+        'For Switch: ' + esc(mg.switch_reach.problem)) : '') +
       ok(mg.servers_set > 0 || mg.climount_servers > 0,
         mg.servers_set > 0 ? mg.servers_set + ' usenet server(s) set in the Settings tab'
                            : "No usenet servers set here yet: Import copies cli_mount's " + mg.climount_servers + ' first',

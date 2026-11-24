@@ -84,5 +84,67 @@ class HostChecksTests(unittest.TestCase):
             self.assertIs(be._cap_bounded(21, f.name), want, caps)
 
 
+ROOT = '1001 900 0:50 / / rw,relatime {root} - overlay overlay rw,lowerdir=/x'
+MNT = '1010 1001 259:3 /home/u/mnt /mnt rw,relatime {opt} - ext4 /dev/nvme0n1p3 rw'
+FUSE = '1020 1010 0:60 / /mnt/decypharr rw,nosuid,nodev,relatime {opt} - fuse.decypharr decypharr rw,user_id=0'
+
+
+class MountReachTests(unittest.TestCase):
+    """After Switch the engine mounts on cli_mount's path: only a bind with
+    shared propagation (rshared) lets the host and Plex see that mount.
+    Checked on Docker 2026-11-24 with a real mount: default and rslave, the
+    host saw nothing; rshared, the host saw it."""
+
+    def _reach(self, *lines, path='/mnt/decypharr', container=True):
+        with tempfile.NamedTemporaryFile('w', delete=False) as f:
+            f.write('\n'.join(lines) + '\n')
+        self.addCleanup(os.unlink, f.name)
+        with mock.patch.object(be, 'IS_WINDOWS', False), mock.patch.object(be, '_in_container', return_value=container):
+            return be.mount_reaches_host(path, f.name)
+
+    def test_bind_options(self):
+        # docker -v /home/u/mnt:/mnt with no option, :rslave and :rshared
+        self.assertEqual(self._reach(ROOT.format(root=''), MNT.format(opt='')), {'ok': False, 'bind': '/mnt'})
+        self.assertEqual(self._reach(ROOT.format(root='master:1'), MNT.format(opt='master:2')),
+                         {'ok': False, 'bind': '/mnt'})
+        self.assertEqual(self._reach(ROOT.format(root='shared:1 master:1'), MNT.format(opt='shared:2 master:2')),
+                         {'ok': True, 'bind': '/mnt'})
+
+    def test_fuse_mount_on_the_path_is_looked_through(self):
+        # cli_mount's own mount sits on the path: the bind under it decides.
+        r = self._reach(ROOT.format(root=''), MNT.format(opt=''), FUSE.format(opt='master:3'))
+        self.assertEqual(r, {'ok': False, 'bind': '/mnt'})
+        r = self._reach(ROOT.format(root='shared:1'), MNT.format(opt='shared:2'), FUSE.format(opt='shared:3'))
+        self.assertEqual(r, {'ok': True, 'bind': '/mnt'})
+
+    def test_container_root_never_reaches_the_host(self):
+        # With an rshared bind Docker marks the root shared too, but its peer
+        # is the image layer, not anywhere Plex looks.
+        r = self._reach(ROOT.format(root='shared:1'), MNT.format(opt='shared:2'), path='/opt/media')
+        self.assertEqual(r, {'ok': False, 'bind': '/'})
+
+    def test_longest_bind_wins_and_escaped_paths(self):
+        lines = (ROOT.format(root=''), MNT.format(opt=''),
+                 '1030 1010 259:3 /data/My\\040Media /mnt/My\\040Media rw shared:9 - ext4 /dev/x rw')
+        self.assertEqual(self._reach(*lines, path='/mnt/My Media/decypharr'), {'ok': True, 'bind': '/mnt/My Media'})
+        self.assertEqual(self._reach(*lines, path='/mnt/Other'), {'ok': False, 'bind': '/mnt'})
+
+    def test_unknown_outside_a_container(self):
+        self.assertIsNone(self._reach(ROOT.format(root=''), MNT.format(opt=''), container=False))
+        with mock.patch.object(be, 'IS_WINDOWS', False), mock.patch.object(be, '_in_container', return_value=True):
+            self.assertIsNone(be.mount_reaches_host('/mnt/x', '/nonexistent/mountinfo'))
+
+    def test_problem_text_names_the_bind_to_change(self):
+        with mock.patch.object(be, 'mount_reaches_host', return_value={'ok': False, 'bind': '/mnt'}):
+            msg = be.mount_reach_problem('/mnt/decypharr')
+        self.assertIn('/mnt:/mnt:rshared', msg)
+        self.assertIn('recreate the cli_debrid container', msg)
+        with mock.patch.object(be, 'mount_reaches_host', return_value={'ok': False, 'bind': '/'}):
+            self.assertIn('/mnt/decypharr:/mnt/decypharr:rshared', be.mount_reach_problem('/mnt/decypharr'))
+        for ok in ({'ok': True, 'bind': '/mnt'}, None):
+            with mock.patch.object(be, 'mount_reaches_host', return_value=ok):
+                self.assertEqual(be.mount_reach_problem('/mnt/decypharr'), '')
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -22,6 +22,7 @@ import sys
 import tempfile
 import threading
 import time
+from typing import Optional
 
 IS_WINDOWS = sys.platform == 'win32'
 PROGRAM = 'mount_engine'
@@ -641,6 +642,58 @@ def _windows_fuse_mounted(path: str) -> bool:
     except Exception:
         return False
     return bool(ok) and fs_name.value.upper().startswith('FUSE')
+
+
+def _unescape_mount(p: str) -> str:
+    return p.replace('\\040', ' ').replace('\\011', '\t').replace('\\012', '\n').replace('\\134', '\\')
+
+
+def mount_reaches_host(path: str, mountinfo_path: str = '/proc/self/mountinfo') -> Optional[dict]:
+    """Would a mount the engine makes at path, inside this container, be
+    seen by the host and other containers (Plex)? Only when the bind that
+    holds path has shared propagation (`rshared`); `rslave`, the default
+    private, or no bind at all keep it inside the container.
+    {'ok': bool, 'bind': mount point holding path ('/' = not bound in)};
+    None when it can't be told (not in a container, Windows, unreadable)."""
+    if IS_WINDOWS or not _in_container():
+        return None
+    target = os.path.normpath(os.path.abspath(path or '/'))
+    try:
+        with open(mountinfo_path) as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return None
+    best = None  # (mount point, optional fields); the last of equals is on top
+    for line in lines:
+        left, _, right = line.partition(' - ')
+        parts = left.split()
+        if len(parts) < 6 or (right.split() or [''])[0].startswith('fuse'):
+            continue  # FUSE mounts (cli_mount's, the engine's own) sit on the bind
+        mnt = _unescape_mount(parts[4]).rstrip('/') or '/'
+        if mnt == '/' or target == mnt or target.startswith(mnt + '/'):
+            if best is None or len(mnt) >= len(best[0]):
+                best = (mnt, parts[6:])
+    if best is None:
+        return None
+    # The container's own root never reaches the host where Plex looks (with
+    # an rshared bind present Docker marks it shared too, but its peer is the
+    # image layer under /var/lib/docker).
+    return {'ok': best[0] != '/' and any(f.startswith('shared:') for f in best[1]), 'bind': best[0]}
+
+
+def mount_reach_problem(path: str) -> str:
+    """'' when a mount at path reaches the host (or that can't be told),
+    else what to change in the container."""
+    r = mount_reaches_host(path)
+    if not r or r['ok']:
+        return ''
+    if r['bind'] == '/':
+        return (f"{path} isn't bound in from the host, so Plex and the host won't see the built-in mount there: "
+                f"bind it in with `rshared` (e.g. `- {path}:{path}:rshared`) and recreate the cli_debrid container")
+    return (f"{path} is inside the bind {r['bind']}, which doesn't share mounts with the host (it needs `rshared`; "
+            f"`rslave` or no option keeps the built-in mount inside the container), so Plex wouldn't see it: "
+            f"change that bind to `{r['bind']}:{r['bind']}:rshared` (compose long syntax: `bind: propagation: rshared`) "
+            f"and recreate the cli_debrid container")
 
 
 def fuse_mounted(path: str) -> bool:

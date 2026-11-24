@@ -59,6 +59,11 @@ class MountRoutesTests(unittest.TestCase):
         s = mock.patch.object(mr, '_sync_in_background')
         self.sync = s.start()
         self.addCleanup(s.stop)
+        # Switch reads the container's mount table; tests don't depend on where they run.
+        from utilities import builtin_engine as be
+        r = mock.patch.object(be, 'mount_reach_problem', return_value='')
+        r.start()
+        self.addCleanup(r.stop)
 
     def save(self, payload):
         with Flask(__name__).test_request_context(json=payload):
@@ -181,6 +186,17 @@ class MountRoutesTests(unittest.TestCase):
         self.store['File Management'] = {'original_files_path': '/mnt/climount/__all__'}
         return mock.patch.multiple(mr, _debrid_needed=mock.Mock(return_value=debrid_needed),
                                    _debrid_status=mock.Mock(return_value=debrid_status))
+
+    def test_switch_refuses_when_plex_would_not_see_the_mount(self):
+        from utilities import builtin_engine as be
+        self.store['Usenet Provider']['provider'] = 'climount'
+        self.store['File Management'] = {'original_files_path': '/mnt/decypharr/__all__'}
+        with mock.patch.object(be, 'mount_reach_problem', return_value='/mnt/decypharr is inside the bind /mnt, '
+                               'which doesn\'t share mounts with the host'):
+            code, body = self._post(mr.migrate_switch)
+        self.assertEqual(code, 409)
+        self.assertIn("doesn't share mounts with the host", body['error'])
+        self.assertEqual(self.store['Usenet Provider']['provider'], 'climount', 'nothing switched')
 
     def test_switch_waits_for_the_debrid_mirror(self):
         with self._switch_ready(True, {'synced_at': 1.0, 'complete': False, 'pending': 120}), \

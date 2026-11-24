@@ -658,9 +658,13 @@ def migrate_status():
         climount_servers = len(bm.climount_repair_settings(data_path).get(bm.SERVERS_KEY) or [])
     except Exception:
         climount_servers = 0
+    reach = builtin_engine.mount_reaches_host(root) if root else None
     return jsonify({
         'space': space,
         'host_problems': builtin_engine.host_problems(),
+        # After Switch the engine mounts on cli_mount's path: can Plex see it?
+        'switch_reach': None if reach is None else {'ok': reach['ok'], 'bind': reach['bind'],
+                                                     'problem': builtin_engine.mount_reach_problem(root)},
         'servers_set': len(builtin_engine.server_rows(get_setting(SECTION) or {})),
         'climount_servers': climount_servers,
         'provider': (up.get('provider') or 'climount'),
@@ -815,6 +819,12 @@ def migrate_switch():
     root = bm.climount_mount_root(get_setting)
     if not root:
         return jsonify({'success': False, 'error': "cli_mount's mount path isn't known (File Management → original files path)."}), 400
+    from utilities import builtin_engine
+    reach = builtin_engine.mount_reach_problem(root)
+    if reach:
+        # The engine would mount where only this container sees it: Plex's
+        # library would go empty. Fixing it means recreating the container.
+        return jsonify({'success': False, 'error': f'Not yet: {reach}. Then switch.'}), 409
     if _fuse_mounted(root):
         if _dead_mount(root):
             return jsonify({'success': False, 'error': (
