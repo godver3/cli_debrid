@@ -1,67 +1,169 @@
 // Page script for templates/settings_tabs/scraping.html.
-// Define handler functions outside
-const addVersionHandler = function(event) {
-    event.preventDefault();
-    showAddVersionPopup();
-};
-
-const defaultVersionHandler = function(event) {
-    event.preventDefault();
-    showAddDefaultVersionConfirmation();
-};
-
-const separateVersionsHandler = function(event) {
-    event.preventDefault();
-    showSeparateVersionsConfirmation();
-};
-
-const importVersionsHandler = function(event) {
-    event.preventDefault();
-    showImportConfirmation();
-};
-
 function initializeScrapingFunctionality() {
-    initializeAddVersionButton();
     initializeVersionButtons();
     initializeFilterButtons();
     initializeImportButton();
-    initializeDefaultVersionButton();
-    initializeSeparateVersionsButton();
+    initializeVersionMenus();
+    document.querySelectorAll('.version-card').forEach(updateVersionSummary);
 }
 
-function initializeAddVersionButton() {
-    const addButton = document.querySelector('#add-version-btn');
-    if (addButton) {
-        addButton.removeEventListener('click', addVersionHandler);
-        addButton.addEventListener('click', addVersionHandler);
-    } else {
-        console.error('Add version button not found');
-    }
-}
+// "Add Version" menu entries.
+const ADD_VERSION_ACTIONS = {
+    blank: () => showAddVersionPopup(),
+    default: () => showAddDefaultVersionConfirmation(),
+    pair: () => showSeparateVersionsConfirmation(),
+    import: () => showImportVersionsDialog(),
+};
 
 function initializeImportButton() {
+    // Only exists in onboarding, which has its own copy of this flow.
     const importButton = document.querySelector('#import-default-versions-btn');
-    if (importButton) {
-        importButton.removeEventListener('click', importVersionsHandler);
-        importButton.addEventListener('click', importVersionsHandler);
-    }
-    // Button intentionally hidden in settings page, only exists in onboarding
-}
-
-function initializeDefaultVersionButton() {
-    const addDefaultButton = document.querySelector('#add-default-version-btn');
-    if (addDefaultButton) {
-        addDefaultButton.removeEventListener('click', defaultVersionHandler);
-        addDefaultButton.addEventListener('click', defaultVersionHandler);
+    if (importButton && !importButton._importBound) {
+        importButton._importBound = true;
+        importButton.addEventListener('click', event => {
+            event.preventDefault();
+            showImportConfirmation();
+        });
     }
 }
 
-function initializeSeparateVersionsButton() {
-    const addSeparateButton = document.querySelector('#add-separate-versions-btn');
-    if (addSeparateButton) {
-        addSeparateButton.removeEventListener('click', separateVersionsHandler);
-        addSeparateButton.addEventListener('click', separateVersionsHandler);
+// ---- Menus (Add Version, and each version's ⋯ actions) ---------------------
+// One set of document listeners, added once: the tab's HTML is replaced after
+// add/rename/delete, and listeners on the old elements would go with it.
+
+function closeVersionMenus(except) {
+    document.querySelectorAll('.vs-menu').forEach(menu => {
+        if (menu === except) return;
+        const items = menu.querySelector('.vs-menu-items');
+        const toggle = menu.querySelector('.vs-menu-toggle');
+        if (items) items.hidden = true;
+        if (toggle) toggle.setAttribute('aria-expanded', 'false');
+    });
+}
+
+// Menus are position: fixed (cards clip overflow), so place them under their
+// button, right-aligned and kept on screen.
+function placeVersionMenu(toggle, items) {
+    const rect = toggle.getBoundingClientRect();
+    const width = items.offsetWidth;
+    const height = items.offsetHeight;
+    const left = Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8));
+    const below = rect.bottom + 4;
+    const top = below + height > window.innerHeight - 8 ? Math.max(8, rect.top - height - 4) : below;
+    items.style.left = `${left}px`;
+    items.style.top = `${top}px`;
+}
+
+function initializeVersionMenus() {
+    if (document._versionMenusBound) return;
+    document._versionMenusBound = true;
+
+    document.addEventListener('click', event => {
+        const toggle = event.target.closest('.vs-menu-toggle');
+        if (toggle) {
+            event.preventDefault();
+            const menu = toggle.closest('.vs-menu');
+            const items = menu.querySelector('.vs-menu-items');
+            const opening = items.hidden;
+            closeVersionMenus(menu);
+            items.hidden = !opening;
+            toggle.setAttribute('aria-expanded', String(opening));
+            if (opening) {
+                placeVersionMenu(toggle, items);
+                items.querySelector('[role="menuitem"]')?.focus({preventScroll: true});
+            }
+            return;
+        }
+        const addItem = event.target.closest('[data-add-action]');
+        if (addItem) {
+            event.preventDefault();
+            closeVersionMenus();
+            ADD_VERSION_ACTIONS[addItem.dataset.addAction]?.();
+            return;
+        }
+        if (!event.target.closest('.vs-menu-items')) closeVersionMenus();
+    });
+
+    // A fixed menu would stay put while the page moves under it.
+    window.addEventListener('scroll', () => closeVersionMenus(), true);
+    window.addEventListener('resize', () => closeVersionMenus());
+
+    document.addEventListener('keydown', event => {
+        if (event.key !== 'Escape') return;
+        const open = document.querySelector('.vs-menu-items:not([hidden])');
+        if (!open) return;
+        const toggle = open.closest('.vs-menu').querySelector('.vs-menu-toggle');
+        closeVersionMenus();
+        toggle?.focus();
+    });
+
+    // Keep each card's summary line and filter counts current while editing.
+    const refresh = event => {
+        const card = event.target.closest?.('.version-card');
+        if (card) setTimeout(() => updateVersionSummary(card), 0);
+    };
+    document.addEventListener('input', refresh);
+    document.addEventListener('change', refresh);
+    document.addEventListener('click', refresh);
+}
+
+// ---- Summary line on each version card -------------------------------------
+
+const RESOLUTION_SIGNS = {'<=': '≤', '==': '=', '>=': '≥'};
+
+function versionInput(card, key) {
+    return card.querySelector(`[name$=".${key}"]`);
+}
+
+function formatGb(value) {
+    const n = parseFloat(value);
+    return Number.isFinite(n) ? `${+n.toFixed(2)} GB` : null;
+}
+
+function versionSummaryParts(card) {
+    const parts = [];
+    const resolution = versionInput(card, 'max_resolution')?.value;
+    if (resolution) {
+        const wanted = versionInput(card, 'resolution_wanted')?.value;
+        parts.push(`${RESOLUTION_SIGNS[wanted] || ''} ${resolution}`.trim());
     }
+    if (versionInput(card, 'enable_hdr')?.checked) parts.push('HDR');
+
+    const minSize = parseFloat(versionInput(card, 'min_size_gb')?.value);
+    const maxSize = formatGb(versionInput(card, 'max_size_gb')?.value);
+    const hasMin = Number.isFinite(minSize) && minSize > 0.01;
+    if (hasMin && maxSize) parts.push(`${+minSize.toFixed(2)}–${maxSize}`);
+    else if (hasMin) parts.push(`≥ ${formatGb(minSize)}`);
+    else if (maxSize) parts.push(`≤ ${maxSize}`);
+
+    const anime = versionInput(card, 'anime_filter_mode')?.value;
+    if (anime === 'Anime Only') parts.push('anime only');
+    else if (anime === 'Non-Anime Only') parts.push('no anime');
+
+    const fallback = versionInput(card, 'fallback_version')?.value;
+    if (fallback && fallback !== 'None') parts.push(`fallback: ${fallback}`);
+    return parts;
+}
+
+function updateVersionSummary(card) {
+    const summary = card.querySelector('.vs-summary');
+    if (summary) {
+        summary.replaceChildren(...versionSummaryParts(card).map(text => {
+            const chip = document.createElement('span');
+            chip.className = 'vs-chip';
+            chip.textContent = text;
+            return chip;
+        }));
+    }
+    card.querySelectorAll('.vs-count[data-count-for]').forEach(counter => {
+        let count = 0;
+        counter.dataset.countFor.split(' ').forEach(type => {
+            card.querySelectorAll(`.filter-list[data-filter-type="${type}"] .filter-term`).forEach(input => {
+                if (input.value.trim()) count += 1;
+            });
+        });
+        counter.textContent = count ? String(count) : '';
+    });
 }
 
 function showImportConfirmation() {
@@ -186,30 +288,24 @@ function doImportVersions(file, conflictAction) {
         });
 }
 
-// Wire up Import button and hidden file input
-(function() {
-    const importBtn = document.getElementById('import-versions-btn');
-    const fileInput = document.getElementById('import-versions-file');
-    if (importBtn) {
-        importBtn.addEventListener('click', showImportVersionsDialog);
-    }
-    if (fileInput) {
-        fileInput.addEventListener('change', function() {
-            const file = this.files[0];
-            if (!file) return;
-            this.value = '';
-            window.showPopup({
-                type: POPUP_TYPES.CONFIRM,
-                title: 'Conflict Resolution',
-                message: 'If a version with the same name already exists, what should happen?\n\n• <b>Rename</b> — import with "(imported)" suffix\n• <b>Overwrite</b> — replace the existing version\n\nClick Cancel to skip duplicates.',
-                confirmText: 'Rename',
-                cancelText: 'Overwrite',
-                onConfirm: () => doImportVersions(file, 'rename'),
-                onCancel: () => doImportVersions(file, 'overwrite')
-            });
-        });
-    }
-})();
+// Hidden file input for "Import from file". Listened for on the document: the
+// tab's HTML (input included) is replaced after add/rename/delete.
+document.addEventListener('change', function(event) {
+    const fileInput = event.target;
+    if (fileInput.id !== 'import-versions-file') return;
+    const file = fileInput.files[0];
+    if (!file) return;
+    fileInput.value = '';
+    window.showPopup({
+        type: POPUP_TYPES.CONFIRM,
+        title: 'Conflict Resolution',
+        message: 'If a version with the same name already exists, what should happen?\n\n• <b>Rename</b> — import with "(imported)" suffix\n• <b>Overwrite</b> — replace the existing version\n\nClick Cancel to skip duplicates.',
+        confirmText: 'Rename',
+        cancelText: 'Overwrite',
+        onConfirm: () => doImportVersions(file, 'rename'),
+        onCancel: () => doImportVersions(file, 'overwrite')
+    });
+});
 
 function showAddVersionPopup() {
     window.showPopup({
@@ -268,31 +364,20 @@ function addVersion(versionName) {
 }
 
 function initializeVersionButtons() {
-    const buttons = {
-        '.export-version-btn': exportVersion,
-        '.rename-version-btn': renameVersion,
-        '.duplicate-version-btn': duplicateVersion,
-        '.delete-version-btn': deleteVersion
+    const handlers = {
+        export: exportVersion,
+        rename: renameVersion,
+        duplicate: duplicateVersion,
+        delete: deleteVersion,
     };
-
-    for (const [selector, handler] of Object.entries(buttons)) {
-        document.querySelectorAll(selector).forEach(btn => {
-            // Store the handler function as a property on the button element
-            const wrappedHandler = function() {
-                const versionId = this.getAttribute('data-version-id');
-                handler(versionId);
-            };
-            
-            // Remove old handler if it exists
-            if (btn._versionHandler) {
-                btn.removeEventListener('click', btn._versionHandler);
-            }
-            
-            // Store and add new handler
-            btn._versionHandler = wrappedHandler;
-            btn.addEventListener('click', wrappedHandler);
-        });
-    }
+    document.querySelectorAll('[data-version-action]').forEach(btn => {
+        if (btn._versionHandler) btn.removeEventListener('click', btn._versionHandler);
+        btn._versionHandler = function() {
+            closeVersionMenus();
+            handlers[this.dataset.versionAction]?.(this.dataset.versionId);
+        };
+        btn.addEventListener('click', btn._versionHandler);
+    });
 }
 
 function renameVersion(versionId) {
@@ -537,7 +622,7 @@ function initializeFilterButtons() {
 }
 
 function addFilterItem(version, filterType) {
-    const list = document.querySelector(`.filter-list[data-version="${version}"][data-filter-type="${filterType}"]`);
+    const list = document.querySelector(`.filter-list[data-version="${CSS.escape(version)}"][data-filter-type="${filterType}"]`);
     const newItem = document.createElement('div');
     newItem.className = 'filter-item';
 
