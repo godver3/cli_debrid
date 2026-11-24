@@ -5848,47 +5848,24 @@ body[data-theme="tangerine"] .settings-form-group:has(input[type="checkbox"]) .s
 }
 
 .vs-group {
-    border: 1px solid #2e2e2e;
-    border-radius: 8px;
-    margin-bottom: 10px;
-    background: #1a1a1a;
+    border-top: 1px solid #2e2e2e;
+    padding-top: 6px;
+    margin-bottom: 14px;
 }
-.vs-group > summary {
+.vs-group:first-child {
+    border-top: 0;
+    padding-top: 0;
+}
+.version-card .vs-group-title {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 10px 14px;
-    color: #e0e0e0;
+    margin: 8px 0 4px;
+    color: #e8601c;
+    font-size: 12px;
     font-weight: 600;
-    font-size: 14px;
-    cursor: pointer;
-    list-style: none;
-    user-select: none;
-}
-.vs-group > summary::-webkit-details-marker {
-    display: none;
-}
-.vs-group > summary::before {
-    content: '';
-    width: 6px;
-    height: 6px;
-    border-right: 2px solid #888;
-    border-bottom: 2px solid #888;
-    transform: rotate(-45deg);
-    transition: transform 0.15s;
-}
-.vs-group[open] > summary::before {
-    transform: rotate(45deg);
-}
-.vs-group > summary:hover {
-    color: #fff;
-}
-.vs-group > :not(summary) {
-    margin-left: 14px;
-    margin-right: 14px;
-}
-.vs-group > :last-child {
-    margin-bottom: 14px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
 }
 .vs-group-description {
     margin-top: 0;
@@ -5908,10 +5885,6 @@ body[data-theme="tangerine"] .settings-form-group:has(input[type="checkbox"]) .s
 }
 
 @media (max-width: 768px) {
-    .vs-group > :not(summary) {
-        margin-left: 10px;
-        margin-right: 10px;
-    }
     .version-card .version-header-left h4 {
         flex-basis: 100%;
         white-space: normal !important;

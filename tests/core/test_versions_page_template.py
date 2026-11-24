@@ -2,7 +2,7 @@
 
 settings.js saves a version by collecting every named input inside its card, so
 a setting the template drops, or renders twice, would be lost or overwritten on
-the next save. The page groups settings into sections; this checks the grouping
+the next save. The page groups settings under headings; this checks the grouping
 still renders each one.
 """
 import os
@@ -60,7 +60,7 @@ def test_settings_land_in_their_groups(version_config):
 
     def group(name):
         start = html.index(f'data-group="{name}"')
-        return html[start:html.index('</details>', start)]
+        return html[start:html.index('</section>', start)]
 
     assert 'versions.1080p.max_resolution"' in group('quality')
     assert 'versions.1080p.similarity_threshold"' in group('matching')

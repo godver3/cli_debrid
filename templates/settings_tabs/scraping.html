@@ -326,18 +326,18 @@
         {% set ns = namespace(any=false) %}
         {% for key in keys %}{% if key in config %}{% set ns.any = true %}{% endif %}{% endfor %}
         {% if ns.any %}
-        <details class="vs-group" data-group="{{ group_id }}"{% if group_id == 'quality' %} open{% endif %}>
-            <summary>{{ title }}</summary>
+        <section class="vs-group" data-group="{{ group_id }}">
+            <h5 class="vs-group-title">{{ title }}</h5>
             <p class="settings-description vs-group-description">{{ description }}</p>
             <div class="vs-group-body{% if group_id == 'ranking' %} vs-grid{% endif %}">
                 {% for key in keys %}{% if key in config %}{{ version_field(version, key, config[key]) }}{% endif %}{% endfor %}
             </div>
-        </details>
+        </section>
         {% endif %}
         {% endfor %}
 
-        <details class="vs-group" data-group="fallback">
-            <summary>Retries &amp; fallback</summary>
+        <section class="vs-group" data-group="fallback">
+            <h5 class="vs-group-title">Retries &amp; fallback</h5>
             <div class="vs-group-body">
                 {% if 'wake_count' in config %}{{ version_field(version, 'wake_count', config['wake_count']) }}{% endif %}
                 <div class="settings-form-group">
@@ -379,10 +379,10 @@
                     <p class="settings-description">With Fallback at Scrape Time: number of failed scrapes before the fallback is tried. 0 or 1 = on the first failure.</p>
                 </div>
             </div>
-        </details>
+        </section>
 
-        <details class="vs-group" data-group="filters">
-            <summary>Filters <span class="vs-count" data-count-for="filter_in filter_out"></span></summary>
+        <section class="vs-group" data-group="filters">
+            <h5 class="vs-group-title">Filters <span class="vs-count" data-count-for="filter_in filter_out"></span></h5>
             <div class="filter-section">
                 <div class="vs-subhead">
                     <span class="vs-subhead-label">Filter In <span class="vs-count" data-count-for="filter_in"></span><small>only keep results with these terms</small></span>
@@ -423,10 +423,10 @@
                     {% endfor %}
                 </div>
             </div>
-        </details>
+        </section>
 
-        <details class="vs-group" data-group="preferred">
-            <summary>Preferred filters <span class="vs-count" data-count-for="preferred_filter_in preferred_filter_out"></span></summary>
+        <section class="vs-group" data-group="preferred">
+            <h5 class="vs-group-title">Preferred filters <span class="vs-count" data-count-for="preferred_filter_in preferred_filter_out"></span></h5>
             <p class="settings-description vs-group-description">Each term's weight sets how much it moves the score.</p>
             <div class="preferred-filter-section">
                 <div class="vs-subhead">
@@ -464,10 +464,10 @@
                     {% endfor %}
                 </div>
             </div>
-        </details>
+        </section>
 
-        <details class="vs-group" data-group="scrapers">
-            <summary>Scraper priorities</summary>
+        <section class="vs-group" data-group="scrapers">
+            <h5 class="vs-group-title">Scraper priorities</h5>
             <div class="settings-form-group">
                 <label class="settings-title">
                     <input type="checkbox"
@@ -504,7 +504,7 @@
                     {% endfor %}
                 </div>
             </div>
-        </details>
+        </section>
 
         {% set other = namespace(keys=[]) %}
         {% for key in config.keys() %}
@@ -513,12 +513,12 @@
             {% endif %}
         {% endfor %}
         {% if other.keys %}
-        <details class="vs-group" data-group="other">
-            <summary>Other</summary>
+        <section class="vs-group" data-group="other">
+            <h5 class="vs-group-title">Other</h5>
             <div class="vs-group-body">
                 {% for key in other.keys %}{{ version_field(version, key, config[key]) }}{% endfor %}
             </div>
-        </details>
+        </section>
         {% endif %}
     </div>
 </div>
