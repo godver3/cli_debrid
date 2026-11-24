@@ -38,3 +38,15 @@ def test_titles_containing_sample_as_part_of_a_word_are_kept(lls):
     primary = f"{FOLDER}/The.Sampler.2020.1080p.mkv"
     other = f"{FOLDER}/The.Sampler.2020.720p.mkv"
     assert lls._additional_video_files([primary, other], primary) == [other]
+
+
+def test_real_trailer_park_boys_names_from_the_2026_11_23_add(lls):
+    # A show with "trailer" in its title: its real files must stay, both sample
+    # naming styles (".sample.mkv" and a "sample-" prefix) must go.
+    folder = "/mnt/__all__/trailer.park.boys.s10e10.1080p.webrip.x264-deflate"
+    primary = f"{folder}/trailer.park.boys.s10e10.1080p.webrip.x264-deflate.mkv"
+    found = [primary,
+             f"{folder}/trailer.park.boys.s10e10.1080p.webrip.x264-deflate.sample.mkv",
+             f"{folder}/sample-trailer.park.boys.s11e10.1080p.webrip.x264-morose.mkv",
+             f"{folder}/Trailer.Park.Boys.S10E10.1080p.WEBRip.x264-DEFLATE.REPACK.mkv"]
+    assert lls._additional_video_files(found, primary) == [found[3]]
