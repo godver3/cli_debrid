@@ -270,6 +270,39 @@ class TestRecordAndOutcomes(_DbCase):
         sg.record_grab({'id': 1}, {}, trigger='manual', release_title='X')
         self.assertEqual(self.rows(1)[0]['scraper_instance'], 'Manual')
 
+    def test_reused_pack_inherits_the_source_that_grabbed_it(self):
+        # Episode 1 scraped the pack; episode 2 reused it from the debrid
+        # account, with a stand-in result that has only a title.
+        for item_id in (1, 2):
+            self.set_item(item_id, 'Adding')
+        sg.record_grab({'id': 1}, self.result('Show S01', instance='Zilean_1', indexer='DMM'))
+        sg.record_grab({'id': 2}, {'title': 'Show S01'}, kind='torrent', info_hash='shows01h')
+        row = self.rows(2)[0]
+        self.assertEqual((row['scraper_instance'], row['indexer'], row['scraper_type']),
+                         ('Zilean_1', 'DMM', 'Torrentio'))
+
+    def test_reused_release_without_a_known_grab_stays_unknown(self):
+        self.set_item(1, 'Adding')
+        sg.record_grab({'id': 1}, {'title': 'Old pack'}, kind='torrent', info_hash='neverseen')
+        self.assertEqual(self.rows(1)[0]['scraper_instance'], 'Unknown')
+
+    def test_startup_backfills_unknown_grabs_of_a_known_release(self):
+        for item_id in (1, 2, 3):
+            self.set_item(item_id, 'Adding')
+        sg.record_grab({'id': 1}, self.result('Pack', instance='Jackett_1', indexer='1337x'))
+        conn = get_db_connection()
+        # As logged before the fix: no source, same hash; and one that predates
+        # any known grab of its release, which has nothing to inherit.
+        conn.execute("INSERT INTO scraper_grabs (grabbed_at, item_id, scraper_instance, info_hash) "
+                     "VALUES ('2026-11-01', 2, 'Unknown', 'packh')")
+        conn.execute("INSERT INTO scraper_grabs (grabbed_at, item_id, scraper_instance, info_hash) "
+                     "VALUES ('2026-11-01', 3, 'Unknown', 'otherh')")
+        conn.commit()
+        conn.close()
+        sg.create_scraper_grabs_table()
+        self.assertEqual((self.rows(2)[0]['scraper_instance'], self.rows(2)[0]['indexer']), ('Jackett_1', '1337x'))
+        self.assertEqual(self.rows(3)[0]['scraper_instance'], 'Unknown')
+
     def test_never_raises(self):
         with mock.patch.object(sg, 'get_db_connection', side_effect=RuntimeError('db down')):
             self.assertIsNone(sg.record_grab({'id': 1}, self.result('A')))
