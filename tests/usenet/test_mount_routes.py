@@ -247,6 +247,27 @@ class MountRoutesTests(unittest.TestCase):
         self.assertEqual((code, body['job']), (200, 'abc'))
         st.assert_called_once()
 
+    def test_import_needs_the_engine_and_syncs_inside_the_import(self):
+        from utilities import builtin_engine as be, builtin_migrate as bm
+        self.store['Usenet Provider']['provider'] = 'climount'
+        with mock.patch.object(be, 'wanted', return_value=False), \
+                mock.patch.object(bm, 'start_import') as st:
+            code, body = self._post(mr.migrate_import, {'limit': 0})
+        self.assertEqual(code, 400)
+        self.assertIn('Start alongside', body['error'])
+        st.assert_not_called()
+        # Copied settings: the sync runs in the import thread (prepare), so
+        # the import waits for an engine restart instead of racing it.
+        with mock.patch.object(be, 'wanted', return_value=True), \
+                mock.patch.object(bm, 'climount_repair_settings', return_value={'plex_prewarm': True}), \
+                mock.patch.object(bm, 'start_import', return_value='job1') as st, \
+                mock.patch.object(mr, '_engine'), mock.patch.object(mr, '_climount_source'), \
+                mock.patch.object(mr, '_import_space', return_value=None):
+            code, body = self._post(mr.migrate_import, {'limit': 0})
+        self.assertEqual((code, body['job']), (200, 'job1'))
+        self.assertIs(st.call_args.kwargs['prepare'], mr._sync_now)
+        self.sync.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -115,6 +115,7 @@ class BuiltinClient(UnsupportedFeaturesMixin):
         self.download_folder = up.get('download_folder', '')
         self.last_missing_segments = False
         self.last_failed_job_id = ''
+        self.last_error = ''  # why the last _call got no answer
 
     # ---- plumbing --------------------------------------------------------
 
@@ -139,11 +140,13 @@ class BuiltinClient(UnsupportedFeaturesMixin):
         return h
 
     def _call(self, method: str, path: str, timeout: float = 15, **kw) -> Tuple[Optional[int], Any]:
-        """(status, json) for an engine call; (None, None) when unreachable."""
+        """(status, json) for an engine call; (None, None) when unreachable,
+        with the reason in self.last_error."""
         try:
             r = requests.request(method, f'{self.base_url}{path}', headers=self._headers(), timeout=timeout, **kw)
         except Exception as exc:
             logging.debug(f'{_LOG} {method} {path} failed: {exc}')
+            self.last_error = str(exc)
             return None, None
         try:
             body = r.json() if r.content else None

@@ -277,24 +277,28 @@ def _refresh_debrid_plans():
             _plans.update(at=time.time(), data=data, running=False)
 
 
+def _sync_now():
+    """Apply the saved settings to the engine (restarts it when its config
+    changed) and wait for that to finish."""
+    with _sync_lock:
+        _last_sync['running'] = True
+        try:
+            from usenet import reset_usenet_client
+            from usenet.builtin_client import reset_builtin_client
+            from utilities import builtin_engine
+            reset_builtin_client()
+            reset_usenet_client()
+            _last_sync['result'] = builtin_engine.sync()
+            logging.info(f"Built-in mount engine (Mount page save): {_last_sync['result']}")
+        except Exception as exc:
+            _last_sync['result'] = f'sync failed: {exc}'
+            logging.warning(f'Built-in mount engine sync failed: {exc}')
+        finally:
+            _last_sync['running'] = False
+
+
 def _sync_in_background():
-    def run():
-        with _sync_lock:
-            _last_sync['running'] = True
-            try:
-                from usenet import reset_usenet_client
-                from usenet.builtin_client import reset_builtin_client
-                from utilities import builtin_engine
-                reset_builtin_client()
-                reset_usenet_client()
-                _last_sync['result'] = builtin_engine.sync()
-                logging.info(f"Built-in mount engine (Mount page save): {_last_sync['result']}")
-            except Exception as exc:
-                _last_sync['result'] = f'sync failed: {exc}'
-                logging.warning(f'Built-in mount engine sync failed: {exc}')
-            finally:
-                _last_sync['running'] = False
-    threading.Thread(target=run, name='builtin-engine-sync', daemon=True).start()
+    threading.Thread(target=_sync_now, name='builtin-engine-sync', daemon=True).start()
 
 
 @mount_bp.route('/')
@@ -696,6 +700,10 @@ def migrate_import():
         limit = max(0, int((request.get_json(silent=True) or {}).get('limit') or 0))
     except (TypeError, ValueError):
         return jsonify({'success': False, 'error': 'Jobs to import must be a whole number (0 = all).'}), 400
+    from utilities import builtin_engine
+    if not builtin_engine.wanted():
+        return jsonify({'success': False, 'error': "The built-in mount engine isn't running: start it with step 1 "
+                                                   "(Start alongside) first, then Import."}), 400
     data_path = (get_setting('Usenet Provider') or {}).get('data_path') or ''
     # Same repair standards as cli_mount: carry its repair settings over.
     copied = bm.climount_repair_settings(data_path)
@@ -717,9 +725,10 @@ def migrate_import():
         if key == 'server_backbones':
             continue
         set_setting(SECTION, key, value)
-    if copied:
-        _sync_in_background()
-    job = bm.start_import(_climount_source(), _engine(), data_path, limit=limit, space=_import_space())
+    # The sync may restart the engine: it runs in the import thread, which
+    # then waits for the engine to answer before importing anything.
+    job = bm.start_import(_climount_source(), _engine(), data_path, limit=limit, space=_import_space(),
+                          prepare=_sync_now if copied else None)
     shown = {k: ('(set)' if k in SECRET_KEYS else v) for k, v in copied.items()}
     return jsonify({'success': True, 'job': job, 'copied_settings': shown})
 
