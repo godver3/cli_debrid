@@ -507,6 +507,52 @@ def get_scraper_stats(days: Optional[int] = None, kind: Optional[str] = None) ->
     return {'scrapers': out, 'tracking_since': first}
 
 
+def get_scraper_trend(days: Optional[int] = None, kind: Optional[str] = None) -> Dict[str, Any]:
+    """Grabs and failed grabs per scraper per day, oldest day first.
+
+    Every day in the range is listed, including days with no grabs, so each
+    scraper's series lines up with `days`. With no range, it runs from the first
+    grab in the log.
+    """
+    conn = get_db_connection()
+    try:
+        where, params = _filters(days, kind)
+        rows = conn.execute(
+            f"""SELECT COALESCE(g.scraper_instance, 'Unknown') AS instance,
+                       substr(g.grabbed_at, 1, 10) AS day,
+                       COUNT(*) AS grabs,
+                       SUM(g.outcome = 'failed') AS failed
+                FROM scraper_grabs g
+                {where}
+                GROUP BY instance, day""",
+            params,
+        ).fetchall()
+        first = conn.execute("SELECT MIN(substr(grabbed_at, 1, 10)) FROM scraper_grabs").fetchone()[0]
+    finally:
+        conn.close()
+
+    today = datetime.now().date()
+    if days:
+        start = today - timedelta(days=int(days) - 1)
+    elif first:
+        start = datetime.strptime(first, '%Y-%m-%d').date()
+    else:
+        start = today
+    span = (today - start).days + 1
+    day_list = [(start + timedelta(days=i)).isoformat() for i in range(max(span, 1))]
+    index = {d: i for i, d in enumerate(day_list)}
+
+    series: Dict[str, Dict[str, List[int]]] = {}
+    for r in rows:
+        i = index.get(r['day'])
+        if i is None:
+            continue
+        s = series.setdefault(r['instance'], {'grabs': [0] * len(day_list), 'failed': [0] * len(day_list)})
+        s['grabs'][i] = r['grabs'] or 0
+        s['failed'][i] = r['failed'] or 0
+    return {'days': day_list, 'series': series}
+
+
 def _with_rates(row: Dict[str, Any]) -> Dict[str, Any]:
     settled = row['grabs'] - row['pending']
     row['success_rate'] = round(100.0 * row['ever_collected'] / settled, 1) if settled else None

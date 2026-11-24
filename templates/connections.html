@@ -113,6 +113,22 @@ body.tangerine-theme #tng-connections .mini-btn:hover{background:var(--surface3)
 body.tangerine-theme #tng-connections .tng-empty{text-align:center;padding:3rem;color:var(--text3);font-size:13px;}
 
 @keyframes tng-pulse{0%,100%{opacity:1}50%{opacity:.4}}
+/* Compact cards: one row each, denser grid */
+body.tangerine-theme #tng-connections .conn-grid{grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:6px;}
+body.tangerine-theme #tng-connections .tng-card.compact{flex-direction:row;align-items:center;gap:10px;padding:8px 10px 8px 12px;cursor:default;}
+body.tangerine-theme #tng-connections .tng-card.compact:hover{transform:none;}
+body.tangerine-theme #tng-connections .tng-card.compact .conn-icon{width:24px;height:24px;font-size:11px;border-radius:5px;}
+body.tangerine-theme #tng-connections .tng-card.compact .conn-icon svg{width:12px!important;height:12px!important;}
+body.tangerine-theme #tng-connections .tng-card.compact .conn-info{flex:1;min-width:0;}
+body.tangerine-theme #tng-connections .tng-card.compact .conn-name{white-space:normal;overflow-wrap:anywhere;line-height:1.3;}
+body.tangerine-theme #tng-connections .tng-card.compact .conn-type{color:#777;}
+body.tangerine-theme #tng-connections .tng-card.compact .conn-extra{font-size:11px;color:#888;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+body.tangerine-theme #tng-connections .tng-card.compact .conn-extra i{width:12px;margin-right:3px;}
+body.tangerine-theme #tng-connections .tng-card.compact .conn-status{display:flex;align-items:center;gap:5px;flex-shrink:0;}
+body.tangerine-theme #tng-connections .tng-card.compact .status-text{font-size:11px;font-weight:600;}
+body.tangerine-theme #tng-connections .tng-card.compact .status-text.online{color:#4ade80;font-weight:500;}
+body.tangerine-theme #tng-connections .tng-card.compact .status-text.offline{color:#f87171;}
+body.tangerine-theme #tng-connections .tng-card.compact .status-text.checking{color:#fbbf24;}
 @media(max-width:600px){body.tangerine-theme #tng-connections .conn-grid{grid-template-columns:1fr;}}
 </style>
 <style>

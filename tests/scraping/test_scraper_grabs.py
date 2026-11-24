@@ -362,6 +362,29 @@ class TestAggregation(_DbCase):
         t = sg.get_scraper_stats()['scrapers'][0]
         self.assertEqual((t['removed'], t['in_library'], t['success_rate']), (1, 0, 100.0))
 
+    def test_trend_lists_every_day_with_grabs_and_failures(self):
+        from datetime import date, timedelta
+        today = date.today()
+        three_days_ago = (today - timedelta(days=3)).isoformat()
+        self.set_item(1, 'Adding')
+        sg.record_grab({'id': 1}, self.result('A'))
+        self.set_item(2, 'Adding')
+        sg.record_grab({'id': 2}, self.result('B'))
+        sg.mark_current_grab(2, 'failed', 'dead')
+        conn = get_db_connection()
+        conn.execute("UPDATE scraper_grabs SET grabbed_at = ? WHERE item_id = 2", (three_days_ago + ' 12:00:00',))
+        conn.commit()
+        conn.close()
+
+        trend = sg.get_scraper_trend(days=7)
+        self.assertEqual(len(trend['days']), 7)
+        self.assertEqual(trend['days'][-1], today.isoformat())
+        t = trend['series']['Torrentio']
+        self.assertEqual(t['grabs'], [0, 0, 0, 1, 0, 0, 1])
+        self.assertEqual(t['failed'], [0, 0, 0, 1, 0, 0, 0])
+        # Without a range it starts at the first grab.
+        self.assertEqual(sg.get_scraper_trend()['days'][0], three_days_ago)
+
     def test_recent_grabs_filter(self):
         self.set_item(1, 'Adding')
         sg.record_grab({'id': 1, 'title': 'Show'}, self.result('A', indexer='1337x'))
