@@ -59,6 +59,11 @@ class MountRoutesTests(unittest.TestCase):
         s = mock.patch.object(mr, '_sync_in_background')
         self.sync = s.start()
         self.addCleanup(s.stop)
+        # Switch reads the container's mount table; tests don't depend on where they run.
+        from utilities import builtin_engine as be
+        r = mock.patch.object(be, 'mount_reach_problem', return_value='')
+        r.start()
+        self.addCleanup(r.stop)
 
     def save(self, payload):
         with Flask(__name__).test_request_context(json=payload):
@@ -182,6 +187,17 @@ class MountRoutesTests(unittest.TestCase):
         return mock.patch.multiple(mr, _debrid_needed=mock.Mock(return_value=debrid_needed),
                                    _debrid_status=mock.Mock(return_value=debrid_status))
 
+    def test_switch_refuses_when_plex_would_not_see_the_mount(self):
+        from utilities import builtin_engine as be
+        self.store['Usenet Provider']['provider'] = 'climount'
+        self.store['File Management'] = {'original_files_path': '/mnt/decypharr/__all__'}
+        with mock.patch.object(be, 'mount_reach_problem', return_value='/mnt/decypharr is inside the bind /mnt, '
+                               'which doesn\'t share mounts with the host'):
+            code, body = self._post(mr.migrate_switch)
+        self.assertEqual(code, 409)
+        self.assertIn("doesn't share mounts with the host", body['error'])
+        self.assertEqual(self.store['Usenet Provider']['provider'], 'climount', 'nothing switched')
+
     def test_switch_waits_for_the_debrid_mirror(self):
         with self._switch_ready(True, {'synced_at': 1.0, 'complete': False, 'pending': 120}), \
                 mock.patch.object(mr, '_fuse_mounted', return_value=False):
@@ -256,9 +272,17 @@ class MountRoutesTests(unittest.TestCase):
         self.assertEqual(code, 400)
         self.assertIn('Start alongside', body['error'])
         st.assert_not_called()
+        # Running alongside but it can't start (no servers): say so at once.
+        with mock.patch.object(be, 'wanted', return_value=True), \
+                mock.patch.object(be, 'problems', return_value=['no usenet server set (Mount page → Usenet servers)']), \
+                mock.patch.object(bm, 'start_import') as st:
+            code, body = self._post(mr.migrate_import, {'limit': 0})
+        self.assertEqual(code, 400)
+        self.assertIn("can't start: no usenet server set", body['error'])
+        st.assert_not_called()
         # Copied settings: the sync runs in the import thread (prepare), so
         # the import waits for an engine restart instead of racing it.
-        with mock.patch.object(be, 'wanted', return_value=True), \
+        with mock.patch.object(be, 'wanted', return_value=True), mock.patch.object(mr, '_engine_why_down', return_value=''), \
                 mock.patch.object(bm, 'climount_repair_settings', return_value={'plex_prewarm': True}), \
                 mock.patch.object(bm, 'start_import', return_value='job1') as st, \
                 mock.patch.object(mr, '_engine'), mock.patch.object(mr, '_climount_source'), \
@@ -266,7 +290,45 @@ class MountRoutesTests(unittest.TestCase):
             code, body = self._post(mr.migrate_import, {'limit': 0})
         self.assertEqual((code, body['job']), (200, 'job1'))
         self.assertIs(st.call_args.kwargs['prepare'], mr._sync_now)
+        self.assertTrue(callable(st.call_args.kwargs['why_down']), 'Import can say why the engine is down')
         self.sync.assert_not_called()
+
+    def test_import_copies_climount_servers_only_when_none_are_set(self):
+        from utilities import builtin_engine as be, builtin_migrate as bm
+        rows = [{'host': 'news.cm', 'port': 563, 'ssl': True, 'username': 'u', 'password': 'secret', 'connections': 30,
+                 'backup': False, 'enabled': True, 'backbone': 'omicron', 'expires': '', 'auto_renew': False}]
+
+        def problems():
+            return [] if mr._servers(self.store['Built-in Mount'].get('servers')) else ['no usenet server set']
+
+        def run():
+            with mock.patch.object(be, 'wanted', return_value=True), \
+                    mock.patch.object(be, 'problems', side_effect=problems), \
+                    mock.patch.object(be, 'stopped_by_user', return_value=False), \
+                    mock.patch.object(bm, 'climount_repair_settings',
+                                      return_value={bm.SERVERS_KEY: rows, bm.BACKBONES_KEY: {'news.mine': 'omicron'}}), \
+                    mock.patch.object(bm, 'start_import', return_value='job1') as st, \
+                    mock.patch.object(mr, '_engine'), mock.patch.object(mr, '_climount_source'), \
+                    mock.patch.object(mr, '_import_space', return_value=None):
+                code, body = self._post(mr.migrate_import, {'limit': 0})
+            return code, body, st
+        # No servers on the Mount page: cli_mount's are used and the engine
+        # can start, so the import goes ahead (the password never comes back).
+        self.store['Built-in Mount']['servers'] = '[]'
+        code, body, st = run()
+        self.assertEqual(code, 200, body)
+        self.assertEqual(json.loads(self.store['Built-in Mount']['servers']), rows)
+        self.assertEqual(body['copied_settings']['servers'], '1 server(s) from cli_mount')
+        self.assertNotIn('secret', json.dumps(body))
+        st.assert_called_once()
+        # Servers already set: kept as they are, only backbones are added.
+        mine = [{'host': 'news.mine', 'port': 563, 'ssl': True, 'username': 'me', 'password': 'p', 'connections': 5}]
+        self.store['Built-in Mount']['servers'] = json.dumps(mine)
+        code, body, st = run()
+        self.assertEqual(code, 200, body)
+        saved = json.loads(self.store['Built-in Mount']['servers'])
+        self.assertEqual([(s['host'], s['backbone']) for s in saved], [('news.mine', 'omicron')])
+        self.assertNotIn('servers', body['copied_settings'])
 
     def test_status_counts_only_jobs_cli_mount_lists(self):
         # cli_mount's meta folder keeps maps of removed jobs (a user had 1093
@@ -287,11 +349,18 @@ class MountRoutesTests(unittest.TestCase):
                     mock.patch.object(mr, '_import_space', return_value={'data_dir': d, 'cache_dir': '', 'cache_left': 0}), \
                     mock.patch.object(be, 'state', return_value='RUNNING'), \
                     mock.patch.object(be, 'problems', return_value=[]), \
+                    mock.patch.object(be, 'host_problems', return_value=['the container lacks SYS_ADMIN']), \
                     mock.patch.object(mr, '_debrid_needed', return_value=False), \
                     mock.patch.object(mr, '_debrid_status', return_value={}), \
                     Flask(__name__).test_request_context():
+                with open(os.path.join(d, 'config.json'), 'w') as f:
+                    json.dump({'usenet': {'providers': [{'host': 'news.a'}, {'host': 'news.b'}]}}, f)
+                self.store['Built-in Mount']['servers'] = '[]'
                 body = mr.migrate_status().get_json()
         self.assertEqual((body['metas'], body['listed'], body['space']['jobs']), (5, 2, 2))
+        # Checklist: container can't mount; no servers here, 2 to copy.
+        self.assertEqual((body['host_problems'], body['servers_set'], body['climount_servers']),
+                         (['the container lacks SYS_ADMIN'], 0, 2))
 
 
 if __name__ == '__main__':

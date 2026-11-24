@@ -604,13 +604,32 @@
     const ok = (b, t, f) => '<div>' + (b ? '<span class="ok">✔</span> ' + t : '<span class="no">✘</span> ' + f) + '</div>';
     $('#mgStatus .body').innerHTML =
       ok(mg.provider === 'climount' || mg.provider === 'builtin', 'Usenet backend: ' + esc(mg.provider), 'Usenet backend is ' + esc(mg.provider) + ' (migration is from cli_mount)') +
+      ok(mg.listed != null, 'cli_mount answers at ' + esc(mg.climount_url),
+        "cli_mount doesn't answer at " + esc(mg.climount_url || '(no URL)') + ': check Settings → Usenet Provider (URL and API token) and that cli_mount is running') +
       ok(mg.metas > 0, (mg.listed != null
           ? mg.listed + ' job(s) listed by cli_mount; ' + mg.metas + ' job maps in ' + esc(mg.meta_dir) +
             (mg.metas > mg.listed ? ' (maps of jobs cli_mount has since removed are left out)' : '')
           : mg.metas + " cli_mount job maps found in " + esc(mg.meta_dir) + " (cli_mount didn't answer: Import imports only the jobs it lists)"),
         "cli_mount's metadata isn't visible at " + esc(mg.meta_dir) + ': bind cli_mount\'s appdata into this container and set Settings → Usenet Mount → cli_mount Data Path') +
-      ok(!!mg.climount_root, "cli_mount's mount: " + esc(mg.climount_root) + (mg.climount_root_mounted ? ' (mounted)' : ' (not mounted)'), "cli_mount's mount path isn't known (File Management → original files path)") +
-      ok(mg.engine_state === 'RUNNING', 'Built-in mount running at ' + esc(mg.builtin_root), 'Built-in mount is ' + esc(mg.engine_state) + (mg.problems.length ? ': ' + esc(mg.problems.join('; ')) : '')) +
+      ok(!!mg.climount_root && mg.climount_root_mounted, "cli_mount's mount: " + esc(mg.climount_root) + ' (mounted)',
+        mg.climount_root ? "cli_mount's mount isn't visible at " + esc(mg.climount_root) + ' in this container: bind it in with rslave (e.g. `' +
+                           esc(mg.climount_root) + ':' + esc(mg.climount_root) + ':rslave`) and check File Management → original files path. Compare and Switch need it'
+                         : "cli_mount's mount path isn't known (File Management → original files path)") +
+      ok(!(mg.host_problems || []).length, 'This container can mount (FUSE, SYS_ADMIN, AppArmor)',
+        "This container can't mount yet: " + esc((mg.host_problems || []).join('; ')) + '. Change the container, recreate it, then come back here.') +
+      (mg.switch_reach ? ok(mg.switch_reach.ok,
+        'For Switch: ' + esc(mg.switch_reach.bind) + ' is bound with rshared, so Plex will see the built-in mount at ' + esc(mg.climount_root),
+        'For Switch: ' + esc(mg.switch_reach.problem)) : '') +
+      ok(mg.servers_set > 0 || mg.climount_servers > 0,
+        mg.servers_set > 0 ? mg.servers_set + ' usenet server(s) set in the Settings tab'
+                           : "No usenet servers set here yet: Import copies cli_mount's " + mg.climount_servers + ' first',
+        "No usenet servers: add them in the Settings tab (cli_mount's config.json isn't visible to copy them from)") +
+      ok(mg.engine_state === 'RUNNING', 'Built-in mount running at ' + esc(mg.builtin_root),
+        'Built-in mount is ' + esc(mg.engine_state) + (function () {
+          // Container and server problems have their own lines above.
+          const rest = (mg.problems || []).filter(p => !(mg.host_problems || []).includes(p) && !/usenet server/.test(p));
+          return rest.length ? ': ' + esc(rest.join('; ')) : (mg.alongside ? '' : ' (use step 1)');
+        })()) +
       (mg.debrid_needed ? ok(!!(mg.debrid.synced_at && mg.debrid.complete),
         'Debrid account(s) mirrored on the built-in mount' + (mg.debrid.held_removals ? ' (' + mg.debrid.held_removals + ' removal(s) on hold, see the log)' : ''),
         mg.debrid.synced_at ? 'Debrid: ' + (mg.debrid.pending || 0) + ' torrent(s) still being added' + (mg.debrid.errors ? ' (' + mg.debrid.errors + ' error(s) in the last pass)' : '')

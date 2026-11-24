@@ -27,6 +27,7 @@ Nothing is moved or deleted on either side: every step copies.
 """
 
 import base64
+import datetime
 import hashlib
 import logging
 import os
@@ -332,7 +333,9 @@ def _gb(n: int) -> str:
 def climount_repair_settings(data_path: str) -> Dict[str, object]:
     """cli_mount's repair standards as Built-in Mount settings, from its
     config.json when it is visible next to its data (empty when not): the
-    ffprobe check (repair.media_probe_usenet) and the availability samples."""
+    ffprobe check (repair.media_probe_usenet) and the availability samples.
+    Also its usenet servers (under SERVERS_KEY) and backbone names (under
+    BACKBONES_KEY). cli_mount and upstream decypharr share this layout."""
     import json
     for cand in ('config.json', os.path.join('config', 'config.json'), os.path.join('..', 'config', 'config.json')):
         p = os.path.join(data_path or '', cand)
@@ -356,6 +359,9 @@ def climount_repair_settings(data_path: str) -> Dict[str, object]:
         backbones = climount_backbones(cfg)
         if backbones:
             out[BACKBONES_KEY] = backbones
+        rows = climount_servers(cfg)
+        if rows:
+            out[SERVERS_KEY] = rows
         return out
     return {}
 
@@ -363,6 +369,49 @@ def climount_repair_settings(data_path: str) -> Dict[str, object]:
 #: Key of the {host: backbone} map in climount_repair_settings' result; not
 #: a setting itself: apply_backbones puts it on the matching servers.
 BACKBONES_KEY = '_server_backbones'
+
+
+#: Key of cli_mount's usenet servers (Mount page rows) in the same result:
+#: only used when the Mount page has no servers of its own.
+SERVERS_KEY = '_servers'
+
+
+def _int(v, default: int) -> int:
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        return default
+    return n if n > 0 else default
+
+
+def climount_servers(cfg: dict) -> List[dict]:
+    """cli_mount's (or upstream decypharr's) usenet.providers as Mount page
+    server rows: primaries first by priority (lower first), then backups.
+    A duplicate (same host, port and user) keeps the first in that order.
+    Go leaves false/zero fields out of config.json: no "ssl" means plain."""
+    provs = [(i, p) for i, p in enumerate((cfg.get('usenet') or {}).get('providers') or [])
+             if isinstance(p, dict) and str(p.get('host') or '').strip()]
+    # No priority: its place in the list (index + 1), as cli_mount does.
+    provs.sort(key=lambda ip: (ip[1].get('backup') is True, _int(ip[1].get('priority'), ip[0] + 1), ip[0]))
+    out, seen = [], set()
+    for _, p in provs:
+        host = str(p['host']).strip()
+        port = _int(p.get('port'), 563)
+        user = str(p.get('username') or '').strip()
+        if (host.lower(), port, user) in seen:
+            continue
+        seen.add((host.lower(), port, user))
+        expires = str(p.get('subscription_expiry') or '').strip()[:10]
+        try:
+            expires = datetime.date.fromisoformat(expires).isoformat() if expires else ''
+        except ValueError:
+            expires = ''
+        out.append({'host': host, 'port': port, 'ssl': p.get('ssl') is True, 'username': user,
+                    'password': str(p.get('password') or ''), 'connections': _int(p.get('max_connections'), 10),
+                    'backup': p.get('backup') is True, 'enabled': True,
+                    'backbone': str(p.get('backbone') or '').strip(),
+                    'expires': expires, 'auto_renew': p.get('auto_renew') is True})
+    return out
 
 
 def climount_backbones(cfg: dict) -> Dict[str, str]:
@@ -497,17 +546,20 @@ def cancel(job_id: str) -> bool:
 
 
 def start_import(source, engine, data_path: str, limit: int = 0, space: Optional[dict] = None,
-                 prepare: Optional[Callable[[], object]] = None) -> str:
+                 prepare: Optional[Callable[[], object]] = None,
+                 why_down: Optional[Callable[[], str]] = None) -> str:
     """Import cli_mount's library into the engine in the background.
     source: a CliMountClient; engine: a BuiltinClient. space: {'data_dir',
     'cache_dir', 'cache_left'} turns on the disk-space check. prepare: run
     first, in the import thread (the engine settings sync, which may restart
-    the engine: the import then waits for it to answer again)."""
+    the engine: the import then waits for it to answer again). why_down:
+    returns why the engine can't come up (no servers, crashed...), or ''
+    while it may still start: a reason ends the wait at once.)"""
     job_id = uuid.uuid4().hex[:12]
     with _lock:
         _jobs[job_id] = {'kind': 'import', 'status': 'starting', 'total': 0, 'done': 0, 'imported': 0,
                          'already': 0, 'failed': 0, 'skipped_files': 0, 'complete': False, 'log': [], 'error': None}
-    threading.Thread(target=_run_import, args=(job_id, source, engine, data_path, limit, space, prepare),
+    threading.Thread(target=_run_import, args=(job_id, source, engine, data_path, limit, space, prepare, why_down),
                      name='builtin-migrate', daemon=True).start()
     return job_id
 
@@ -523,20 +575,33 @@ def _engine_reason(engine) -> str:
     return getattr(engine, 'last_error', '') or 'no answer'
 
 
-def wait_for_engine(engine, timeout: Optional[float] = None, cancelled: Callable[[], bool] = lambda: False) -> bool:
+def wait_for_engine(engine, timeout: Optional[float] = None, cancelled: Callable[[], bool] = lambda: False,
+                    why_down: Optional[Callable[[], str]] = None) -> bool:
     """True once the engine answers HTTP at all (any status code), within
-    timeout seconds (default ENGINE_WAIT)."""
+    timeout seconds (default ENGINE_WAIT). Gives up early when why_down
+    names a reason it won't come up."""
     deadline = time.monotonic() + (ENGINE_WAIT if timeout is None else timeout)
     while True:
         code, _ = engine._call('GET', '/status', timeout=5)
         if code is not None:
             return True
-        if cancelled() or time.monotonic() >= deadline:
+        if cancelled() or time.monotonic() >= deadline or (why_down and _safe(why_down)):
             return False
         time.sleep(ENGINE_POLL)
 
 
-def _engine_down_error(engine) -> str:
+def _safe(fn: Callable[[], str]) -> str:
+    try:
+        return fn() or ''
+    except Exception as exc:
+        logging.debug(f'[builtin migrate] engine diagnosis failed: {exc}')
+        return ''
+
+
+def _engine_down_error(engine, why_down: Optional[Callable[[], str]] = None) -> str:
+    why = _safe(why_down) if why_down else ''
+    if why:
+        return f"The built-in mount engine isn't running: {why}. Fix that, then run Import again."
     return (f"The built-in mount engine isn't answering ({_engine_reason(engine)}). Start it with step 1 "
             f"(Start alongside), check the Mount page shows it running, then run Import again.")
 
@@ -583,7 +648,7 @@ def import_one(engine, entry: dict, mdir: str) -> Tuple[str, str, int]:
     return 'failed', f'{folder}: engine said {code}: {err or "no details"}', len(meta['skipped'])
 
 
-def _run_import(job_id, source, engine, data_path, limit, space=None, prepare=None):
+def _run_import(job_id, source, engine, data_path, limit, space=None, prepare=None, why_down=None):
     cancelled = lambda: bool(status(job_id).get('cancel'))  # noqa: E731
     try:
         if prepare:
@@ -614,14 +679,14 @@ def _run_import(job_id, source, engine, data_path, limit, space=None, prepare=No
                            f"but only {_gb(plan['room'])} can be used on the disk holding {space['data_dir']}. "
                            f"Free up space, or import at most {plan['fits_jobs']} job(s) for now (Jobs to import).")
                 return
-        _set(job_id, status='waiting for the engine')
-        if not wait_for_engine(engine, cancelled=cancelled):
+        _set(job_id, status='waiting for the engine', total=len(entries))
+        if not wait_for_engine(engine, cancelled=cancelled, why_down=why_down):
             if cancelled():
                 _set(job_id, status='cancelled', complete=True)
             else:
-                _set(job_id, status='error', complete=True, error=_engine_down_error(engine))
+                _set(job_id, status='error', complete=True, error=_engine_down_error(engine, why_down))
             return
-        _set(job_id, status='running', total=len(entries))
+        _set(job_id, status='running')
         _log(job_id, f'{len(entries)} job(s) listed by cli_mount; metadata from {mdir}')
         for n, e in enumerate(entries):
             if status(job_id).get('cancel'):
@@ -640,7 +705,7 @@ def _run_import(job_id, source, engine, data_path, limit, space=None, prepare=No
             if outcome == 'unreachable':
                 # Restarted or crashed mid-run: wait for it once, then retry
                 # this job. Still down: stop instead of failing every job left.
-                if wait_for_engine(engine, cancelled=cancelled):
+                if wait_for_engine(engine, cancelled=cancelled, why_down=why_down):
                     outcome, msg, skipped = import_one(engine, e, mdir)
                 if outcome == 'unreachable':
                     if cancelled():
@@ -648,7 +713,7 @@ def _run_import(job_id, source, engine, data_path, limit, space=None, prepare=No
                         return
                     st = status(job_id)
                     _set(job_id, status='error', complete=True,
-                         error=f"Stopped after {n} job(s) ({st['imported']} imported): " + _engine_down_error(engine)
+                         error=f"Stopped after {n} job(s) ({st['imported']} imported): " + _engine_down_error(engine, why_down)
                                + ' Jobs imported so far stay.')
                     return
             _add(job_id, outcome)

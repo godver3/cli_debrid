@@ -157,11 +157,11 @@
     <p class="sub" style="margin-top:0">Move your cli_mount library to the built-in mount without downloading anything: jobs keep their IDs, folders and file names, so cli_debrid's records, your symlinks and Plex keep working. Every step copies: cli_mount is never changed, so you can switch back at any time, and jobs added in the meantime can be copied back to it.</p>
     <div id="mgStatus" class="card"><div class="body">Loading…</div></div>
     <div class="card"><h3>1. Run the built-in mount alongside cli_mount</h3><div class="body">
-      <p class="d" style="color:#8f8f8f;font-size:13px;margin-top:0">It mounts on its own path (Settings tab → Mount path, e.g. /mnt/clid) while cli_mount keeps serving. Set your usenet servers in the Settings tab first.</p>
+      <p class="d" style="color:#8f8f8f;font-size:13px;margin-top:0">It mounts on its own path (Settings tab → Mount path, e.g. /mnt/clid) while cli_mount keeps serving. Before you start, every line in the checklist above should be ticked except the built-in mount itself. No usenet servers set yet? Import copies cli_mount's.</p>
       <button class="btn" id="mgAlong">Start alongside</button> <span class="msg" id="mgAlongMsg"></span>
     </div></div>
     <div class="card"><h3>2. Import cli_mount's library</h3><div class="body">
-      <p class="d" style="color:#8f8f8f;font-size:13px;margin-top:0">Reads cli_mount's job list and its saved file maps (no usenet traffic). Safe to run again: jobs already imported are skipped. Encrypted archives can't be imported.</p>
+      <p class="d" style="color:#8f8f8f;font-size:13px;margin-top:0">Reads cli_mount's job list and its saved file maps (no usenet traffic). Safe to run again: jobs already imported are skipped. Encrypted archives can't be imported. With no usenet servers set on this page yet, cli_mount's are copied over first.</p>
       <div class="f" style="margin-bottom:8px"><label for="mgLimit" style="font-weight:600;font-size:13px">Jobs to import</label>
         <input type="number" id="mgLimit" min="0" step="1" value="0" style="width:120px;background:#111;border:1px solid #3d3d3d;color:#eee;border-radius:5px;padding:6px 8px">
         <span style="color:#8f8f8f;font-size:12px">0 = all. Start with a few hundred to try it; running Import again carries on and skips jobs already imported.</span></div>

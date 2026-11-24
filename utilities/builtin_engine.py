@@ -22,6 +22,7 @@ import sys
 import tempfile
 import threading
 import time
+from typing import Optional
 
 IS_WINDOWS = sys.platform == 'win32'
 PROGRAM = 'mount_engine'
@@ -85,17 +86,66 @@ def wanted(settings: dict = None) -> bool:
     return selected(s) or alongside(s)
 
 
+# What a container needs to mount, as one line for the messages below.
+CONTAINER_FUSE_SETUP = ('`devices: [/dev/fuse]`, `cap_add: [SYS_ADMIN]` and '
+                        '`security_opt: [apparmor:unconfined]`')
+_CAP_SYS_ADMIN = 21
+
+
+def _in_container() -> bool:
+    return (os.path.exists('/.dockerenv') or os.path.exists('/run/.containerenv')
+            or bool(os.environ.get('container')))
+
+
+def _cap_bounded(bit: int, status_path: str = '/proc/self/status'):
+    """True/False: the capability is in this process's bounding set (what
+    `cap_add` grants a container); None when it can't be read."""
+    try:
+        with open(status_path) as f:
+            for line in f:
+                if line.startswith('CapBnd:'):
+                    return bool(int(line.split()[1], 16) >> bit & 1)
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def _apparmor_profile() -> str:
+    """This process's AppArmor profile, e.g. 'docker-default (enforce)' or
+    'unconfined'; '' without AppArmor."""
+    for p in ('/proc/self/attr/apparmor/current', '/proc/self/attr/current'):
+        try:
+            with open(p) as f:
+                return f.read().strip('\x00\n ')
+        except OSError:
+            continue
+    return ''
+
+
 def host_problems() -> list:
     """Reasons this container/machine can't run the engine at all (no
-    settings involved): missing binary, /dev/fuse or WinFsp."""
+    settings involved): missing binary, /dev/fuse or WinFsp, and in a
+    container the two things a mount also needs: SYS_ADMIN, and an AppArmor
+    profile that allows mounting (Docker's default denies every mount, even
+    with SYS_ADMIN). Each says what to add to the container."""
     out = []
     if not (os.path.isfile(ENGINE_BIN) if IS_WINDOWS else os.access(ENGINE_BIN, os.X_OK)):
         out.append(f'engine binary missing ({ENGINE_BIN}); this build has no built-in mount')
     if IS_WINDOWS:
         if not any(os.path.exists(p) for p in _WINFSP_DLLS):
             out.append('WinFsp is not installed: get it from https://winfsp.dev (the built-in mount uses it on Windows)')
-    elif not os.path.exists('/dev/fuse'):
-        out.append('/dev/fuse is not available: add `devices: [/dev/fuse]` and `cap_add: [SYS_ADMIN]` to the container')
+        return out
+    # One line per container: the first missing piece, with the whole fix.
+    if not os.path.exists('/dev/fuse'):
+        out.append(f'/dev/fuse is not available: give the cli_debrid container {CONTAINER_FUSE_SETUP}')
+    elif _in_container():
+        profile = _apparmor_profile()
+        if _cap_bounded(_CAP_SYS_ADMIN) is False:
+            out.append(f'the container lacks SYS_ADMIN, which mounting needs: give the cli_debrid container '
+                       f'{CONTAINER_FUSE_SETUP}')
+        elif profile.startswith('docker-default') and '(enforce)' in profile:
+            out.append("Docker's default AppArmor profile blocks mounting: add "
+                       "`security_opt: [apparmor:unconfined]` to the cli_debrid container")
     return out
 
 
@@ -592,6 +642,58 @@ def _windows_fuse_mounted(path: str) -> bool:
     except Exception:
         return False
     return bool(ok) and fs_name.value.upper().startswith('FUSE')
+
+
+def _unescape_mount(p: str) -> str:
+    return p.replace('\\040', ' ').replace('\\011', '\t').replace('\\012', '\n').replace('\\134', '\\')
+
+
+def mount_reaches_host(path: str, mountinfo_path: str = '/proc/self/mountinfo') -> Optional[dict]:
+    """Would a mount the engine makes at path, inside this container, be
+    seen by the host and other containers (Plex)? Only when the bind that
+    holds path has shared propagation (`rshared`); `rslave`, the default
+    private, or no bind at all keep it inside the container.
+    {'ok': bool, 'bind': mount point holding path ('/' = not bound in)};
+    None when it can't be told (not in a container, Windows, unreadable)."""
+    if IS_WINDOWS or not _in_container():
+        return None
+    target = os.path.normpath(os.path.abspath(path or '/'))
+    try:
+        with open(mountinfo_path) as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return None
+    best = None  # (mount point, optional fields); the last of equals is on top
+    for line in lines:
+        left, _, right = line.partition(' - ')
+        parts = left.split()
+        if len(parts) < 6 or (right.split() or [''])[0].startswith('fuse'):
+            continue  # FUSE mounts (cli_mount's, the engine's own) sit on the bind
+        mnt = _unescape_mount(parts[4]).rstrip('/') or '/'
+        if mnt == '/' or target == mnt or target.startswith(mnt + '/'):
+            if best is None or len(mnt) >= len(best[0]):
+                best = (mnt, parts[6:])
+    if best is None:
+        return None
+    # The container's own root never reaches the host where Plex looks (with
+    # an rshared bind present Docker marks it shared too, but its peer is the
+    # image layer under /var/lib/docker).
+    return {'ok': best[0] != '/' and any(f.startswith('shared:') for f in best[1]), 'bind': best[0]}
+
+
+def mount_reach_problem(path: str) -> str:
+    """'' when a mount at path reaches the host (or that can't be told),
+    else what to change in the container."""
+    r = mount_reaches_host(path)
+    if not r or r['ok']:
+        return ''
+    if r['bind'] == '/':
+        return (f"{path} isn't bound in from the host, so Plex and the host won't see the built-in mount there: "
+                f"bind it in with `rshared` (e.g. `- {path}:{path}:rshared`) and recreate the cli_debrid container")
+    return (f"{path} is inside the bind {r['bind']}, which doesn't share mounts with the host (it needs `rshared`; "
+            f"`rslave` or no option keeps the built-in mount inside the container), so Plex wouldn't see it: "
+            f"change that bind to `{r['bind']}:{r['bind']}:rshared` (compose long syntax: `bind: propagation: rshared`) "
+            f"and recreate the cli_debrid container")
 
 
 def fuse_mounted(path: str) -> bool:

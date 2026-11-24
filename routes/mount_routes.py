@@ -638,11 +638,11 @@ def migrate_status():
     root = bm.climount_mount_root(get_setting)
     space = None
     listed = None  # jobs cli_mount lists now: what Import imports
+    try:
+        listed = [e.get('info_hash') or '' for e in _climount_source().iter_library_nzbs()]
+    except Exception as exc:
+        logging.debug(f'[mount] cli_mount job list failed: {exc}')
     if metas:
-        try:
-            listed = [e.get('info_hash') or '' for e in _climount_source().iter_library_nzbs()]
-        except Exception as exc:
-            logging.debug(f'[mount] cli_mount job list failed: {exc}')
         try:
             sp = _import_space()
             sizes = bm.meta_sizes(mdir)
@@ -652,8 +652,21 @@ def migrate_status():
             space = bm.space_plan(ids, sizes, sp['data_dir'], sp['cache_dir'], sp['cache_left'])
         except Exception as exc:
             logging.debug(f'[mount] import space estimate failed: {exc}')
+    # Pre-flight checklist for the page: can this container mount at all,
+    # and where the usenet servers will come from.
+    try:
+        climount_servers = len(bm.climount_repair_settings(data_path).get(bm.SERVERS_KEY) or [])
+    except Exception:
+        climount_servers = 0
+    reach = builtin_engine.mount_reaches_host(root) if root else None
     return jsonify({
         'space': space,
+        'host_problems': builtin_engine.host_problems(),
+        # After Switch the engine mounts on cli_mount's path: can Plex see it?
+        'switch_reach': None if reach is None else {'ok': reach['ok'], 'bind': reach['bind'],
+                                                     'problem': builtin_engine.mount_reach_problem(root)},
+        'servers_set': len(builtin_engine.server_rows(get_setting(SECTION) or {})),
+        'climount_servers': climount_servers,
         'provider': (up.get('provider') or 'climount'),
         'climount_url': up.get('url') or '',
         'alongside': bool((get_setting('Built-in Mount') or {}).get('run_alongside')),
@@ -700,6 +713,21 @@ def migrate_alongside():
     return jsonify({'success': True, 'alongside': on})
 
 
+def _engine_why_down(check_state: bool = True) -> str:
+    """Why the engine won't come up ('' while it may): what stops it from
+    starting here, Stop pressed on the Mount page, or supervisord gave up
+    (check_state: off when a sync is about to restart it anyway)."""
+    from utilities import builtin_engine
+    issues = builtin_engine.problems()
+    if issues:
+        return "it can't start: " + '; '.join(issues)
+    if builtin_engine.stopped_by_user():
+        return 'it was stopped from the Mount page (press Start)'
+    if check_state and builtin_engine.state() == 'FATAL':
+        return 'it keeps crashing on start (see the cli_debrid log)'
+    return ''
+
+
 @mount_bp.route('/api/migrate/import', methods=['POST'])
 @admin_required
 def migrate_import():
@@ -722,6 +750,13 @@ def migrate_import():
         copied.pop('plex_url', None)
         copied.pop('plex_token', None)
     backbones = copied.pop(bm.BACKBONES_KEY, None) or {}
+    climount_servers = copied.pop(bm.SERVERS_KEY, None) or []
+    if climount_servers and not _servers((get_setting(SECTION) or {}).get('servers')):
+        # No servers on the Mount page yet: use cli_mount's (with their
+        # backbones), so the engine can start. Servers typed here win.
+        set_setting(SECTION, 'servers', json.dumps(climount_servers))
+        copied['servers'] = f'{len(climount_servers)} server(s) from cli_mount'
+        backbones = {}
     if backbones:
         # cli_mount's backbone names go onto the servers with the same host.
         current = _servers((get_setting(SECTION) or {}).get('servers'))
@@ -730,13 +765,20 @@ def migrate_import():
             set_setting(SECTION, 'servers', json.dumps(updated))
             copied['server_backbones'] = f'{changed} server(s)'
     for key, value in copied.items():
-        if key == 'server_backbones':
+        if key in ('server_backbones', 'servers'):
             continue
         set_setting(SECTION, key, value)
+    # After the copy: cli_mount's servers may be what lets the engine start.
+    why = _engine_why_down(check_state=not copied)
+    if why:
+        if copied:
+            _sync_in_background()
+        return jsonify({'success': False, 'error': f"The built-in mount engine isn't running: {why}. "
+                                                   f"Fix that, then run Import again."}), 400
     # The sync may restart the engine: it runs in the import thread, which
     # then waits for the engine to answer before importing anything.
     job = bm.start_import(_climount_source(), _engine(), data_path, limit=limit, space=_import_space(),
-                          prepare=_sync_now if copied else None)
+                          prepare=_sync_now if copied else None, why_down=_engine_why_down)
     shown = {k: ('(set)' if k in SECRET_KEYS else v) for k, v in copied.items()}
     return jsonify({'success': True, 'job': job, 'copied_settings': shown})
 
@@ -777,6 +819,12 @@ def migrate_switch():
     root = bm.climount_mount_root(get_setting)
     if not root:
         return jsonify({'success': False, 'error': "cli_mount's mount path isn't known (File Management → original files path)."}), 400
+    from utilities import builtin_engine
+    reach = builtin_engine.mount_reach_problem(root)
+    if reach:
+        # The engine would mount where only this container sees it: Plex's
+        # library would go empty. Fixing it means recreating the container.
+        return jsonify({'success': False, 'error': f'Not yet: {reach}. Then switch.'}), 409
     if _fuse_mounted(root):
         if _dead_mount(root):
             return jsonify({'success': False, 'error': (
