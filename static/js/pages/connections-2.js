@@ -7,9 +7,17 @@
 
   const SECTION_LABELS = {
     system:  'System Connections',
-    scraper: 'Scraper Connections',
+    torrent: 'Torrent Scrapers',
+    usenet:  'Usenet Indexers',
     source:  'Content Source Connections',
   };
+
+  // Usenet indexers carry extra lines (expiry, daily usage), so they get their
+  // own section instead of sharing rows with the shorter torrent scraper cards.
+  function sectionOf(entry) {
+    if (entry.group !== 'scraper') return entry.group;
+    return /^newznab\b/i.test(entry.name) ? 'usenet' : 'torrent';
+  }
 
   const TYPE_MAP = {
     system:  { cli_battery:'Internal', plex:'Media Server', jellyfin:'Media Server', silo:'Media Server', 'mounted-files':'File System', 'phalanx-db':'Database' },
@@ -148,8 +156,8 @@
       return;
     }
 
-    const groups = { system: [], scraper: [], source: [] };
-    allCards().forEach(e => { if (groups[e.group]) groups[e.group].push(e); });
+    const groups = { system: [], torrent: [], usenet: [], source: [] };
+    allCards().forEach(e => { const g = sectionOf(e); if (groups[g]) groups[g].push(e); });
 
     let html = '';
     for (const [group, entries] of Object.entries(groups)) {
