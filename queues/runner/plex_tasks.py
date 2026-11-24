@@ -149,9 +149,11 @@ class PlexTasks:
         except Exception as e_work:
             logging.debug(f"Plex file check: work pre-check failed ({e_work}); continuing.")
 
-        # Plex mode run with Silo: no Plex connection (handled after the ffprobe gate below)
-        from utilities.silo_functions import is_silo_library_mode
-        silo_library = is_silo_library_mode()
+        # Direct Mount run with Silo or Jellyfin/Emby: no Plex connection
+        # (handled after the ffprobe gate below)
+        from utilities.direct_mount import direct_mount_server
+        library_server = direct_mount_server() if direct_mount_server() in ('silo', 'jellyfin') else None
+        silo_library = library_server is not None
 
         # Use centralized Plex connection setup if possible or ensure proper error handling
         plex = None
@@ -317,7 +319,7 @@ class PlexTasks:
             return False
 
         if silo_library:
-            return self._silo_check_files(items, plex_file_location, _ffprobe_gate_or_reject)
+            return self._server_check_files(items, plex_file_location, _ffprobe_gate_or_reject, library_server)
 
         # Check if Plex library checks are disabled (file discovery only)
         if get_setting('Plex', 'disable_plex_library_checks', default=False):
@@ -1425,12 +1427,22 @@ class PlexTasks:
     SILO_COLLECT_AFTER_TICKS = 3
 
     def _silo_check_files(self, items, base_path, ffprobe_gate):
-        """task_check_plex_files for Plex mode run with Silo. A file found on the
-        mount (and through the same ffprobe gate) gets its folder scanned in Silo;
-        then the found items are collected from Silo's catalog. One Silo hasn't
+        """task_check_plex_files for Direct Mount run with Silo."""
+        return self._server_check_files(items, base_path, ffprobe_gate, 'silo')
+
+    def _server_check_files(self, items, base_path, ffprobe_gate, server):
+        """task_check_plex_files for Direct Mount run with Silo or Jellyfin/Emby
+        (`server` 'silo' or 'jellyfin'). A file found on the mount (and through
+        the same ffprobe gate) gets its folder scanned in the server; then the
+        found items are collected from its library. One the server hasn't
         listed after SILO_COLLECT_AFTER_TICKS passes is collected with its mount
         path. With library checks disabled, found files are collected at once."""
-        from utilities.silo_functions import scan_path, collect_from_silo
+        if server == 'jellyfin':
+            from utilities.jellyfin_direct import scan_path, collect_from_jellyfin as collect_from_server
+            label = 'Jellyfin/Emby'
+        else:
+            from utilities.silo_functions import scan_path, collect_from_silo as collect_from_server
+            label = 'Silo'
         checks_off = get_setting('Plex', 'disable_plex_library_checks', default=False)
         found, scanned = [], set()
         for row in items:
@@ -1451,12 +1463,12 @@ class PlexTasks:
                 scanned.add(folder)
                 scan_path(folder, item.get('type') or '')
         if not found:
-            logging.info(f"Silo file check: {len(items)} Checking item(s), none found on the mount yet")
+            logging.info(f"{label} file check: {len(items)} Checking item(s), none found on the mount yet")
             return
         if not checks_off:
-            result = collect_from_silo([i for i, _, _ in found])
+            result = collect_from_server([i for i, _, _ in found])
             if result is not None:
-                logging.info(f"Silo file check: Silo has {result[0]} of {len(found)} found file(s); "
+                logging.info(f"{label} file check: {label} has {result[0]} of {len(found)} found file(s); "
                              f"{result[1]} item(s) collected")
         # Items Silo just collected are done: drop their tick count, so a later
         # re-check of the same file (repair) waits for Silo again
@@ -1474,8 +1486,8 @@ class PlexTasks:
                 collected += 1
                 self.plex_scan_tick_counts.pop(cache_key, None)
         if collected:
-            logging.info(f"Silo file check: {collected} item(s) collected with their mount path "
-                         f"({'library checks disabled' if checks_off else 'Silo did not list them'})")
+            logging.info(f"{label} file check: {collected} item(s) collected with their mount path "
+                         f"({'library checks disabled' if checks_off else f'{label} did not list them'})")
 
     @staticmethod
     def _ids_still_checking(ids):
@@ -1518,8 +1530,12 @@ class PlexTasks:
         logging.info("[TASK] Running media server removal verification task.")
 
         from utilities.silo_functions import is_silo_selected
+        from utilities.direct_mount import is_direct_mount_jellyfin
         if is_silo_selected():
             logging.debug("[VERIFY] Silo is the media server: removals are rescans, nothing to check in Plex.")
+            return
+        if is_direct_mount_jellyfin():
+            logging.debug("[VERIFY] Direct Mount runs with Jellyfin/Emby: removals are rescans, nothing to check in Plex.")
             return
 
         # Determine Plex connection details based on settings

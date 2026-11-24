@@ -99,6 +99,9 @@ def api_reconcile():
         plex_total = 0
 
         _media_server = get_setting('File Management', 'media_server_type', 'plex')
+        from utilities.direct_mount import is_direct_mount_jellyfin
+        if is_direct_mount_jellyfin():
+            _media_server = 'jellyfin'  # Direct Mount run with Jellyfin/Emby (only file names are compared)
 
         from utilities.silo_functions import is_silo_selected
         if is_silo_selected():

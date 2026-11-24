@@ -20,6 +20,10 @@ def is_jellyfin_mode() -> bool:
     """
     fcm = get_setting('File Management', 'file_collection_management', 'Plex')
     mst = get_setting('File Management', 'media_server_type', 'plex')
+    if fcm == 'Plex':
+        # Direct Mount run with Jellyfin/Emby: posters go through the same API
+        from utilities.direct_mount import is_direct_mount_jellyfin
+        return is_direct_mount_jellyfin()
     return fcm == 'Symlinked/Local' and mst == 'jellyfin'
 
 

@@ -77,7 +77,12 @@ def _save_required_settings(form):
     if is_symlink:
         file_management['media_server_type'] = media_server if media_server in ('jellyfin', 'silo') else 'plex'
     else:
-        file_management['plex_mode_media_server'] = 'silo' if form.get('plex_mode_media_server') == 'silo' else 'plex'
+        picked = form.get('plex_mode_media_server')
+        file_management['plex_mode_media_server'] = picked if picked in ('silo', 'jellyfin') else 'plex'
+        if file_management['plex_mode_media_server'] == 'jellyfin':
+            debug_cfg = config.setdefault('Debug', {})
+            debug_cfg['emby_jellyfin_url'] = form.get('plex_jellyfin_url', '').strip().rstrip('/')
+            debug_cfg['emby_jellyfin_token'] = form.get('plex_jellyfin_token', '').strip()
         if file_management['plex_mode_media_server'] == 'silo':
             debug_cfg = config.setdefault('Debug', {})
             debug_cfg['silo_url'] = form.get('plex_silo_url', '').strip().rstrip('/')
@@ -818,7 +823,7 @@ def _onboarding_summary(config):
         else:
             media_server = 'None'
     else:
-        media_server = 'Silo' if file_management.get('plex_mode_media_server') == 'silo' else 'Plex'
+        media_server = {'silo': 'Silo', 'jellyfin': 'Jellyfin / Emby'}.get(file_management.get('plex_mode_media_server'), 'Plex')
     if config.get('TVDB', {}).get('api_key'):
         metadata = 'TVDB' + (' + TMDB' if config.get('TMDB', {}).get('api_key') else '')
     elif config.get('Trakt', {}).get('client_id'):
@@ -962,6 +967,10 @@ def onboarding_health():
         from utilities.silo_functions import test_connection
         add('Silo', *test_connection(config.get('Debug', {}).get('silo_url', ''),
                                      config.get('Debug', {}).get('silo_api_key', '')))
+    elif file_management.get('plex_mode_media_server') == 'jellyfin':
+        from utilities.jellyfin_direct import test_connection as jellyfin_test
+        add('Jellyfin / Emby', *jellyfin_test(config.get('Debug', {}).get('emby_jellyfin_url', ''),
+                                             config.get('Debug', {}).get('emby_jellyfin_token', '')))
     else:
         plex = config.get('Plex', {})
         add('Plex', *validate_plex_settings(plex.get('url', ''), plex.get('token', '')))

@@ -24,7 +24,8 @@ def _media_server() -> str:
         return 'Silo'
     mode = get_setting('File Management', 'file_collection_management', 'Plex')
     if mode == 'Plex':
-        return 'Plex'
+        from utilities.direct_mount import is_direct_mount_jellyfin
+        return 'Jellyfin/Emby' if is_direct_mount_jellyfin() else 'Plex'
     kind = (get_setting('File Management', 'media_server_type', 'plex') or 'plex').lower()
     if kind == 'jellyfin' and get_setting('Debug', 'emby_jellyfin_url', ''):
         return 'Jellyfin/Emby'

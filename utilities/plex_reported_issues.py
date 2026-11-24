@@ -64,8 +64,9 @@ IN_PROGRESS_STATES = ('Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 'P
 def _plex_credentials() -> Tuple[str, str]:
     """(url, token) of the Plex server cli_debrid manages files for, or ('', '')."""
     from utilities.silo_functions import is_silo_selected
-    if is_silo_selected():
-        return '', ''  # Silo is the media server: no Plex reports to read
+    from utilities.direct_mount import is_direct_mount_jellyfin
+    if is_silo_selected() or is_direct_mount_jellyfin():
+        return '', ''  # Silo or Jellyfin/Emby is the media server: no Plex reports to read
     if get_setting('File Management', 'file_collection_management') == 'Plex':
         url = get_setting('Plex', 'url', '')
         token = get_setting('Plex', 'token', '')

@@ -11,6 +11,11 @@ def _silo_selected():
     return is_silo_selected()
 
 
+def _direct_mount_jellyfin():
+    from utilities.direct_mount import is_direct_mount_jellyfin
+    return is_direct_mount_jellyfin()
+
+
 def _is_recollection(item, min_gap_seconds=60):
     """True when the row was collected before (repair, upgrade): original_collected_at is
     preserved across re-collections while collected_at is reset."""
@@ -501,6 +506,9 @@ def handle_state_change(item: Dict[str, Any]) -> None:
                 elif get_setting('File Management', 'file_collection_management') == 'Plex' and _silo_selected():
                     logging.info("Subtitles: Direct Mount run with Silo keeps files on the read-only mount, "
                                  "and uploading to Silo isn't supported yet; skipping")
+                elif _direct_mount_jellyfin():
+                    logging.info("Subtitles: Direct Mount run with Jellyfin/Emby keeps files on the read-only mount, "
+                                 "and uploading to Jellyfin/Emby isn't supported yet; skipping")
                 elif get_setting('File Management', 'file_collection_management') == 'Plex':
                     # Plex mode: media is on a read-only debrid/usenet mount, so a
                     # sidecar .srt can't be written next to it. Download subtitles

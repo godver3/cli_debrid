@@ -33,6 +33,18 @@ def plex_update_item(item: Dict[str, Any]) -> bool:
                     return True
             return silo_update_item(item)
 
+        # Direct Mount run with Jellyfin/Emby: scan through its library folders
+        # (paths translated, all-folder releases via the mirrored folder), with
+        # the same one-scan-per-folder cooldown as Plex and Silo
+        from utilities.jellyfin_direct import is_jellyfin_direct, update_item as jellyfin_update_item
+        if is_jellyfin_direct():
+            path = item.get('full_path') or item.get('location_on_disk') or item.get('location') or ''
+            folder = path if os.path.isdir(path) else os.path.dirname(path)
+            if folder and not claim_plex_mode_scan(os.path.abspath(folder)):
+                logger.debug(f"Skipping Jellyfin/Emby scan of {folder}: scanned under {PLEX_MODE_SCAN_COOLDOWN}s ago")
+                return True
+            return jellyfin_update_item(item)
+
         # Check for Jellyfin configuration first - if available, use Jellyfin instead
         jellyfin_url = get_setting('Debug', 'emby_jellyfin_url', default='').strip()
         jellyfin_token = get_setting('Debug', 'emby_jellyfin_token', default='').strip()

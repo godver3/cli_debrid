@@ -125,9 +125,15 @@ def _external_adds_default(get):
     return _fm(get) == 'Symlinked/Local' and bool(get('File Management', 'scan_mount_for_external_adds', False))
 
 
+def _direct_mount_jellyfin(get):
+    """Direct Mount run with Jellyfin/Emby."""
+    from utilities.direct_mount import direct_mount_server
+    return direct_mount_server(get) == 'jellyfin'
+
+
 def _plex_mode(get):
     """Plex is the media server: Plex-only tasks (collections, box sets)."""
-    if _silo(get):
+    if _silo(get) or _direct_mount_jellyfin(get):
         return False
     return not (_fm(get) == 'Symlinked/Local' and get('File Management', 'media_server_type', '') == 'jellyfin')
 
@@ -149,8 +155,9 @@ def _overlays(get):
 
 
 def _watch_history_default(get):
-    # Plex's watch history; Plex mode run with Silo has no Plex to read
-    return bool(get('Debug', 'do_not_add_plex_watch_history_items_to_queue', False)) and _silo(get) != 'library'
+    # Plex's watch history; Direct Mount run with Silo or Jellyfin/Emby has no Plex to read
+    return (bool(get('Debug', 'do_not_add_plex_watch_history_items_to_queue', False))
+            and _silo(get) != 'library' and not _direct_mount_jellyfin(get))
 
 
 # ---- the table -----------------------------------------------------------------

@@ -500,6 +500,10 @@ def validate_onboarding_settings():
         from utilities.silo_functions import test_connection
         add('Silo Connection', *test_connection(settings_data.get('plex_silo_url', ''),
                                                 settings_data.get('plex_silo_api_key', '')))
+    elif management_type in ('plex_direct', 'plex_symlink', 'Plex') and settings_data.get('plex_mode_media_server') == 'jellyfin':
+        from utilities.jellyfin_direct import test_connection as jellyfin_test
+        add('Jellyfin / Emby Connection', *jellyfin_test(settings_data.get('plex_jellyfin_url', '').strip().rstrip('/'),
+                                                        settings_data.get('plex_jellyfin_token', '').strip()))
     elif management_type in ('plex_direct', 'plex_symlink', 'Plex'):
         plex_valid, plex_message = validate_plex_settings(settings_data.get('plex_url', ''),
                                                           settings_data.get('plex_token', ''))

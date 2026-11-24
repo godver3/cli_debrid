@@ -248,8 +248,9 @@ def _reset_battery_seasons(imdb_id: str) -> None:
 def _plex_server():
     import plexapi.server
     from utilities.silo_functions import is_silo_selected
-    if is_silo_selected():
-        return None  # Silo is the media server: no Plex to sync, even with an old Plex URL set
+    from utilities.direct_mount import is_direct_mount_jellyfin
+    if is_silo_selected() or is_direct_mount_jellyfin():
+        return None  # Silo or Jellyfin/Emby is the media server: no Plex to sync, even with an old Plex URL set
     if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
         url = get_setting('File Management', 'plex_url_for_symlink', default='')
         token = get_setting('File Management', 'plex_token_for_symlink', default='')

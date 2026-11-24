@@ -334,6 +334,11 @@ def remove_file_from_plex(item_title, item_path, episode_title=None):
         if is_silo_mode():
             return remove_file_from_silo(item_title, item_path, episode_title)
 
+        # Direct Mount run with Jellyfin/Emby: rescan the file's folder through its libraries
+        from utilities.jellyfin_direct import is_jellyfin_direct, remove_file as jellyfin_remove_file
+        if is_jellyfin_direct():
+            return jellyfin_remove_file(item_title, item_path, episode_title)
+
         # Check for Jellyfin configuration first - if available, use Jellyfin instead
         jellyfin_url = get_setting('Debug', 'emby_jellyfin_url', default='').strip()
         jellyfin_token = get_setting('Debug', 'emby_jellyfin_token', default='').strip()

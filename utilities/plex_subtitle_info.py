@@ -46,8 +46,11 @@ def server():
     from utilities.silo_functions import is_silo_selected
     mode = get_setting('File Management', 'file_collection_management', 'Plex')
     want = 'plex'
+    from utilities.direct_mount import is_direct_mount_jellyfin
     if is_silo_selected():
         want = 'silo'
+    elif is_direct_mount_jellyfin():
+        want = 'jellyfin'
     elif mode != 'Plex':
         want = (get_setting('File Management', 'media_server_type', 'plex') or 'plex').lower()
     if want == 'silo':

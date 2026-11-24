@@ -199,8 +199,9 @@
                         data-section="File Management" data-key="plex_mode_media_server">
                     <option value="plex" {% if settings.get('File Management', {}).get('plex_mode_media_server', 'plex') == 'plex' %}selected{% endif %}>Plex</option>
                     <option value="silo" {% if settings.get('File Management', {}).get('plex_mode_media_server', 'plex') == 'silo' %}selected{% endif %}>Silo</option>
+                    <option value="jellyfin" {% if settings.get('File Management', {}).get('plex_mode_media_server', 'plex') == 'jellyfin' %}selected{% endif %}>Jellyfin / Emby</option>
                 </select>
-                <p class="settings-description">The server that reads the mount and tracks your library. Silo works like Plex here: point its libraries at the mount's folders, and cli_debrid asks Silo what it has. Silo's URL and API key go in the fields that appear below.</p>
+                <p class="settings-description">The server that reads the mount and tracks your library. Silo, Jellyfin and Emby work like Plex here: point their libraries at the mount's Movies and TV Shows folders, and cli_debrid asks the server what it has. Its URL and API key go in the fields that appear below.</p>
             </div>
             {% for key, value in settings_schema['Plex'].items() %}
                 {% if key != 'tab' %}
@@ -828,8 +829,8 @@ function updateMediaServerSettings() {
 }
 
 // Silo's URL/key fields: shown for Silo in Symlinked/Local (Media Server Type) or in
-// Plex mode (its Media Server). In Plex mode with Silo, Plex's own connection
-// and library fields are hidden.
+// Direct Mount (its Media Server). In Direct Mount with Silo or Jellyfin/Emby,
+// Plex's own connection and library fields are hidden.
 function updateSiloSettings() {
     const fm = document.querySelector('select[name="File Management.file_collection_management"]');
     const ms = document.getElementById('media-server-type');
@@ -837,9 +838,14 @@ function updateSiloSettings() {
     const fmv = fm ? fm.value : '';
     const symlinkSilo = fmv === 'Symlinked/Local' && ms && ms.value === 'silo';
     const plexSilo = fmv === 'Plex' && pms && pms.value === 'silo';
+    const plexJellyfin = fmv === 'Plex' && pms && pms.value === 'jellyfin';
     const silo = document.getElementById('silo-settings-in-file-management');
     if (silo) silo.style.display = (symlinkSilo || plexSilo) ? 'block' : 'none';
-    document.querySelectorAll('.plex-server-only').forEach(el => { el.style.display = plexSilo ? 'none' : ''; });
+    // Direct Mount with Jellyfin/Emby: its URL/token fields (Symlinked/Local
+    // shows them through Media Server Type, handled by updateMediaServerSettings)
+    const jellyfin = document.getElementById('jellyfin-settings-in-file-management');
+    if (jellyfin && fmv === 'Plex') jellyfin.style.display = plexJellyfin ? 'block' : 'none';
+    document.querySelectorAll('.plex-server-only').forEach(el => { el.style.display = (plexSilo || plexJellyfin) ? 'none' : ''; });
 }
 window.updateSiloSettings = updateSiloSettings;
 

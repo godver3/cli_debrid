@@ -52,6 +52,13 @@ def cache_plex_removal(item_title: str, item_path: str, episode_title: Optional[
             remove_file_from_silo(item_title, item_path, episode_title)
     except Exception as e:
         logging.warning(f"Silo rescan for {item_title} ({item_path}) failed: {e}")
+    # Same for Direct Mount run with Jellyfin/Emby
+    try:
+        from utilities.jellyfin_direct import is_jellyfin_direct, remove_file as jellyfin_remove_file
+        if is_jellyfin_direct() and os.path.isabs(item_path) and not os.path.lexists(item_path):
+            jellyfin_remove_file(item_title, item_path, episode_title)
+    except Exception as e:
+        logging.warning(f"Jellyfin/Emby rescan for {item_title} ({item_path}) failed: {e}")
 
     # Check if caching is enabled
     if not get_setting('Debug', 'enable_plex_removal_caching', default=True):

@@ -141,107 +141,41 @@ def get_libraries(force: bool = False, url: str = None, key: str = None) -> List
     return items
 
 
-def _norm(path: str) -> str:
-    p = (path or '').replace('\\', '/')
-    while '//' in p:
-        p = p.replace('//', '/')
-    return p.rstrip('/') or '/'
+# Path translation is shared with Jellyfin/Emby (utilities/media_server_paths.py);
+# these wrappers keep Silo's names and use Silo's base folder.
+from utilities import media_server_paths as _paths
 
-
-def _under(path: str, root: str) -> bool:
-    return path == root or path.startswith(root.rstrip('/') + '/')
+_norm = _paths.norm
+_under = _paths.under
 
 
 def to_silo_path(local_path: str, libraries: Optional[List[dict]] = None) -> Optional[str]:
-    """The path Silo knows `local_path` by, or None when no library holds it.
-
-    Same path when Silo sees the folders where cli_debrid does. Otherwise the
-    part below the symlink folder is moved onto a library root: a root named
-    like the first folder under it (/mnt/symlinked/Movies/X → /media/Movies/X),
-    or a root named like the symlink folder itself (/mnt/symlinked/... →
-    /data/symlinked/...)."""
+    """The path Silo knows `local_path` by, or None when no library holds it
+    (see media_server_paths.to_server_path)."""
     if libraries is None:
         libraries = get_libraries()
-    p = _norm(local_path)
-    roots = [_norm(r) for lib in libraries for r in lib.get('paths') or []]
-    for root in roots:
-        if _under(p, root):
-            return p
-    base = _norm(local_base())
-    if base == '/' or not _under(p, base):
-        return None
-    rel = p[len(base):].lstrip('/')
-    first, _, rest = rel.partition('/')
-    for root in roots:
-        name = root.rsplit('/', 1)[-1]
-        if first and name == first:
-            return f'{root}/{rest}' if rest else root
-    for root in roots:
-        if root.rsplit('/', 1)[-1] == base.rsplit('/', 1)[-1]:
-            return f'{root}/{rel}' if rel else root
-    return None
+    return _paths.to_server_path(local_path, libraries, local_base())
 
 
 def from_silo_path(silo_path: str, libraries: List[dict], symlink_base: str = None) -> str:
     """The path cli_debrid knows a Silo file path by: the reverse of
     to_silo_path. Unchanged when it exists here as is (same paths)."""
-    p = _norm(silo_path)
-    if os.path.lexists(p):
-        return p
-    if symlink_base is None:
-        symlink_base = local_base()
-    base = _norm(symlink_base)
-    if base == '/':
-        return p
-    candidates = []
-    for lib in libraries:
-        for r in lib.get('paths') or []:
-            root = _norm(r)
-            if not _under(p, root):
-                continue
-            rest = p[len(root):].lstrip('/')
-            name = root.rsplit('/', 1)[-1]
-            candidates.append(f'{base}/{name}/{rest}' if rest else f'{base}/{name}')
-            if name == base.rsplit('/', 1)[-1]:
-                candidates.append(f'{base}/{rest}' if rest else base)
-    for c in candidates:
-        if os.path.lexists(c):
-            return c
-    return candidates[0] if candidates else p
+    return _paths.from_server_path(silo_path, libraries, local_base() if symlink_base is None else symlink_base)
 
 
 def _owning_library(silo_path: str, libraries: List[dict]) -> Tuple[Optional[dict], str]:
     """(library, root) of the deepest library root holding silo_path."""
-    best, best_root = None, ''
-    for lib in libraries:
-        for r in lib.get('paths') or []:
-            root = _norm(r)
-            if _under(silo_path, root) and len(root) > len(best_root):
-                best, best_root = lib, root
-    return best, best_root
+    return _paths.owning_library(silo_path, libraries)
 
 
 def _mirrored_silo_path(local_path: str, libraries: List[dict]) -> Optional[str]:
     """Silo's path for a file or folder in the mount's all-folder, through the
     library folder that mirrors it (as Plex mode's own scan does)."""
-    from utilities.plex_functions.sections_scan import _mirrored_library_path
-    base = local_base()
-    roots = {}
-    for lib in libraries:
-        for r in lib.get('paths') or []:
-            roots[from_silo_path(r, libraries, base).rstrip('/')] = _norm(r)
-    directory = local_path if os.path.isdir(local_path) else os.path.dirname(local_path)
-    mirrored = _mirrored_library_path(os.path.abspath(directory), list(roots))
-    if not mirrored:
-        return None
-    if directory != local_path:
-        mirrored = os.path.join(mirrored, os.path.basename(local_path))
-    return to_silo_path(mirrored, libraries)
+    return _paths.mirrored_server_path(local_path, libraries, local_base())
 
 
 def _library_ids_for_type(libraries: List[dict], item_type: str) -> List[str]:
-    want = 'movies' if item_type == 'movie' else 'series'
-    return [str(l['id']) for l in libraries if (l.get('type') or '') in (want, 'mixed')]
+    return _paths.library_ids_for_type(libraries, item_type, movie_types=('movies',), show_types=('series',))
 
 
 # ---------------------------------------------------------------------------

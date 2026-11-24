@@ -177,7 +177,10 @@ def plex_is_scanning() -> Optional[bool]:
     coalesced, so it counts as idle and the scans-accepted limit decides.
     """
     from utilities.silo_functions import is_silo_library_mode
-    if is_silo_library_mode():
+    from utilities.direct_mount import is_direct_mount_jellyfin
+    if is_silo_library_mode() or is_direct_mount_jellyfin():
+        # Silo and Jellyfin/Emby report no Plex-style scan state; their scans
+        # are coalesced, so they count as idle and the scans-accepted limit decides.
         return False
     now = time.time()
     with _scanning_lock:
@@ -248,6 +251,10 @@ def collect_from_plex(items: List[Dict[str, Any]]) -> Optional[Tuple[int, int]]:
     from utilities.silo_functions import is_silo_library_mode, collect_from_silo
     if is_silo_library_mode():
         return collect_from_silo(items)
+    from utilities.direct_mount import is_direct_mount_jellyfin
+    if is_direct_mount_jellyfin():
+        from utilities.jellyfin_direct import collect_from_jellyfin
+        return collect_from_jellyfin(items)
     entries = []
     found_files = 0
     show_cache: Dict[str, Optional[Dict[str, Any]]] = {}

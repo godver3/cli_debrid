@@ -323,8 +323,11 @@ def _extract_ids(provider_ids: Optional[Dict[str, str]]) -> tuple[Optional[str],
     imdb_id = None
     tmdb_id = None
     if provider_ids:
-        imdb_id = provider_ids.get('Imdb')
-        tmdb_id = provider_ids.get('Tmdb')
+        # Key case varies: Jellyfin sends 'Imdb'/'Tmdb' everywhere, Emby sends
+        # 'Imdb' on movies but 'IMDB' on series and episodes.
+        by_lower = {str(k).lower(): v for k, v in provider_ids.items() if v}
+        imdb_id = by_lower.get('imdb')
+        tmdb_id = by_lower.get('tmdb')
     return imdb_id, tmdb_id
 
 # Helper function to fetch items from Emby/Jellyfin API

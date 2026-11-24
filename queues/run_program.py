@@ -1048,9 +1048,10 @@ def get_and_add_all_collected_from_plex(bypass=False, backfill=False):
                     data_source = 'filesystem'  # Mark that we used filesystem scan
 
                     # Per-item fallback: Check for items with missing size/resolution and get from Plex
-                    # (not when Plex mode is run with Silo: there is no Plex to ask)
+                    # (not when Direct Mount runs with Silo or Jellyfin/Emby: there is no Plex to ask)
                     from utilities.silo_functions import is_silo_library_mode as _silo_lib
-                    if mode == 'Plex' and backfill and not _silo_lib():
+                    from utilities.direct_mount import is_direct_mount_without_plex as _no_plex
+                    if mode == 'Plex' and backfill and not _no_plex():
                         items_needing_plex = []
                         for item in filesystem_items:
                             # Check if size or resolution is missing
@@ -1276,9 +1277,14 @@ def get_and_add_all_collected_from_plex(bypass=False, backfill=False):
             logging.info("Getting all collected content from Plex...")
         try:
             from utilities.silo_functions import is_silo_library_mode, get_collected_from_silo
+            from utilities.direct_mount import is_direct_mount_jellyfin
             if is_silo_library_mode():
                 logging.info("Direct Mount is run with Silo: reading Silo's catalog instead of Plex.")
                 collected_content = get_collected_from_silo()
+            elif is_direct_mount_jellyfin():
+                logging.info("Direct Mount is run with Jellyfin/Emby: reading its library instead of Plex.")
+                from utilities.jellyfin_direct import get_all_items
+                collected_content = get_all_items()
             else:
                 collected_content = asyncio.run(run_get_collected_from_plex(bypass=bypass, fetch_sizes=backfill))
         except Exception as e:
@@ -1490,8 +1496,12 @@ def get_and_add_recent_collected_from_plex():
 
     try:
         from utilities.silo_functions import is_silo_library_mode, get_recent_from_silo
+        from utilities.direct_mount import is_direct_mount_jellyfin
         if mode == 'Plex' and is_silo_library_mode():
             collected_content = get_recent_from_silo()
+        elif mode == 'Plex' and is_direct_mount_jellyfin():
+            from utilities.jellyfin_direct import get_recent_items
+            collected_content = get_recent_items()
         elif mode == 'Plex':
             collected_content = asyncio.run(run_get_recent_from_plex())
         elif mode == 'Zurg':

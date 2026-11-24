@@ -1440,9 +1440,10 @@ def api_check_system():
         'phalanx_db_status': check_phalanx_db_connection,
     }
     from utilities.silo_functions import is_silo_selected
+    from utilities.direct_mount import is_direct_mount_jellyfin
     if is_silo_selected():
         tasks['silo_status'] = check_silo_connection
-    elif jellyfin_url and jellyfin_token:
+    elif is_direct_mount_jellyfin() or (jellyfin_url and jellyfin_token):
         tasks['jellyfin_status'] = check_jellyfin_connection
     else:
         tasks['plex_status'] = check_plex_connection

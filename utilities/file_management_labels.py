@@ -2,7 +2,7 @@
 
 The stored value of File Management.file_collection_management stays 'Plex' or
 'Symlinked/Local' (configs, code and checks everywhere compare against them).
-'Plex' is shown as "Direct Mount": the media server (Plex or Silo) reads the
+'Plex' is shown as "Direct Mount": the media server (Plex, Silo, Jellyfin or Emby) reads the
 mount directly, instead of a symlink folder.
 """
 
