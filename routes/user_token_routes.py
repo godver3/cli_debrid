@@ -152,7 +152,7 @@ def initiate_user_plex_auth():
             'X-Plex-Device': 'Browser (User Auth)',
         }
 
-        response = requests.post('https://plex.tv/api/v2/pins', headers=headers, json={'strong': True})
+        response = requests.post('https://plex.tv/api/v2/pins', headers=headers, json={'strong': True}, timeout=15)
         response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
 
         pin_data = response.json()
@@ -200,7 +200,7 @@ def check_user_plex_pin():
             'X-Plex-Client-Identifier': client_id
         }
 
-        response = requests.get(f'https://plex.tv/api/v2/pins/{pin_id}', headers=headers)
+        response = requests.get(f'https://plex.tv/api/v2/pins/{pin_id}', headers=headers, timeout=15)
 
         if response.status_code == 200:
             pin_data = response.json()
@@ -209,7 +209,8 @@ def check_user_plex_pin():
                 # Pin authorized! Now get the username associated with this token
                 user_info_response = requests.get(
                     'https://plex.tv/api/v2/user',
-                    headers={**headers, 'X-Plex-Token': auth_token}
+                    headers={**headers, 'X-Plex-Token': auth_token},
+                    timeout=15,
                 )
                 if user_info_response.status_code == 200:
                     user_data = user_info_response.json()

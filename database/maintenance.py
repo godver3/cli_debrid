@@ -106,7 +106,7 @@ def update_show_ids():
                                                 import requests
                                                 tmdb_url = f"https://api.themoviedb.org/3/tv/{tmdb_id}/external_ids?api_key={tmdb_api_key}"
                                                 try:
-                                                    tmdb_response = requests.get(tmdb_url)
+                                                    tmdb_response = requests.get(tmdb_url, timeout=15)
                                                     if tmdb_response.status_code == 200:
                                                         tmdb_data = tmdb_response.json()
                                                         logging.debug(f"Full TMDB response: {tmdb_data}")
@@ -384,7 +384,7 @@ def update_movie_ids():
                                                 import requests
                                                 tmdb_url = f"https://api.themoviedb.org/3/movie/{tmdb_id}/external_ids?api_key={tmdb_api_key}"
                                                 try:
-                                                    tmdb_response = requests.get(tmdb_url)
+                                                    tmdb_response = requests.get(tmdb_url, timeout=15)
                                                     if tmdb_response.status_code == 200:
                                                         tmdb_data = tmdb_response.json()
                                                         logging.debug(f"Full TMDB response: {tmdb_data}")

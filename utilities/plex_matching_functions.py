@@ -174,7 +174,7 @@ def force_match_with_tmdb(db_title: str, db_year: Optional[str], tmdb_id: str,
                         logging.info(f"Files in item belong to different TMDB IDs ({db_tmdb_ids}). Initiating split.")
                         # Split the item
                         split_url = f"{baseurl}/library/metadata/{plex_rating_key}/split"
-                        response = requests.put(split_url, headers=headers)
+                        response = requests.put(split_url, headers=headers, timeout=30)
 
                         if response.status_code == 200:
                             logging.info("Successfully initiated split operation. Waiting...")

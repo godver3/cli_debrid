@@ -65,16 +65,6 @@ print(f"USER_LOGS: {os.environ['USER_LOGS']}")
 print(f"USER_DB_CONTENT: {os.environ['USER_DB_CONTENT']}")
 print(f"ENVIRONMENT_MODE: {os.environ['CLI_DEBRID_ENVIRONMENT_MODE']}")
 
-import logging
-import shutil
-import signal
-import time
-from utilities.settings import get_setting
-import subprocess
-import threading
-from logging_config import stop_global_profiling, start_global_profiling
-import babelfish
-
 # Global variables
 global_program_runner_instance = None
 
@@ -2241,15 +2231,6 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    # Supervisor attributes
-    # Using function attributes for state to keep them local to main() context
-    if not hasattr(main, 'last_supervisor_check_time'):
-        main.last_supervisor_check_time = 0
-    if not hasattr(main, 'supervisor_resume_attempts'):
-        main.supervisor_resume_attempts = 0
-    SUPERVISOR_CHECK_INTERVAL = 300 # 5 minutes
-    SUPERVISOR_MAX_RESUME_ATTEMPTS = 3 
-
     # Prepare MemProbe timing
     if not hasattr(main, 'last_memprobe_time'):
         main.last_memprobe_time = 0.0
@@ -2287,78 +2268,6 @@ def main():
             except Exception:
                 pass
             # ────────────────────────────────────────────────────────
-
-            # Supervisor Logic
-            # No 'global' keyword needed here to access the module-level variable
-            if global_program_runner_instance and global_program_runner_instance.is_running() and False:
-                if global_program_runner_instance.queue_paused and global_program_runner_instance.pause_info.get("error_type"):
-                    current_time = time.time()
-                    if current_time - main.last_supervisor_check_time > SUPERVISOR_CHECK_INTERVAL:
-                        main.last_supervisor_check_time = current_time
-                        logging.info("[Supervisor] ProgramRunner is paused. Verifying pause conditions.")
-                        
-                        pause_error_type = global_program_runner_instance.pause_info.get("error_type")
-                        pause_reason_str = global_program_runner_instance.pause_info.get("reason_string", "Unknown reason")
-                        should_attempt_resume = False
-
-                        if pause_error_type == "CONNECTION_ERROR":
-                            logging.info(f"[Supervisor] Pause due to {pause_error_type}. Re-checking service connectivity...")
-                            from routes.program_operation_routes import check_service_connectivity # Import locally
-                            connectivity_ok, failed_services = check_service_connectivity()
-                            if connectivity_ok:
-                                logging.info("[Supervisor] Connectivity restored.")
-                                should_attempt_resume = True
-                            else:
-                                logging.info(f"[Supervisor] Connectivity issues persist: {failed_services}")
-                        
-                        elif pause_error_type == "DB_HEALTH":
-                            logging.info(f"[Supervisor] Pause due to {pause_error_type}. Re-checking database health...")
-                            if verify_database_health(): # verify_database_health is in main.py
-                                logging.info("[Supervisor] Database health is OK.")
-                                global_program_runner_instance.db_health_pause_info = None  # lift the hold resume_queue honours
-                                should_attempt_resume = True
-                            else:
-                                logging.info("[Supervisor] Database health issues persist.")
-
-                        elif pause_error_type == "SYSTEM_SCHEDULED":
-                            logging.info(f"[Supervisor] Pause due to {pause_error_type}. Re-checking system pause schedule...")
-                            if not global_program_runner_instance._is_within_pause_schedule():
-                                logging.info("[Supervisor] System pause schedule has ended.")
-                                should_attempt_resume = True
-                            else:
-                                logging.info("[Supervisor] Still within system pause schedule.")
-                        
-                        # Add other specific checks if ProgramRunner introduces new pause_info error_types
-
-                        if should_attempt_resume:
-                            main.supervisor_resume_attempts += 1
-                            logging.info(f"[Supervisor] Conditions for pause '{pause_reason_str}' (Type: {pause_error_type}) no longer met. Attempting to resume ProgramRunner (Attempt {main.supervisor_resume_attempts}/{SUPERVISOR_MAX_RESUME_ATTEMPTS}).")
-                            try:
-                                global_program_runner_instance.resume_queue()
-                                # resume_queue() clears pause_info if successful
-                                if not global_program_runner_instance.queue_paused:
-                                    logging.info("[Supervisor] ProgramRunner resumed successfully by supervisor.")
-                                    main.supervisor_resume_attempts = 0 # Reset attempts on success
-                                else:
-                                    logging.warning(f"[Supervisor] Called resume_queue(), but ProgramRunner is still paused. Current pause reason: {global_program_runner_instance.pause_info.get('reason_string')}")
-                                    if main.supervisor_resume_attempts >= SUPERVISOR_MAX_RESUME_ATTEMPTS:
-                                        logging.error(f"[Supervisor] Max resume attempts ({SUPERVISOR_MAX_RESUME_ATTEMPTS}) reached. ProgramRunner remains paused. Manual intervention may be required. Last pause reason: {pause_reason_str}")
-                                        # Optionally, send a critical notification here
-                            except Exception as e_resume:
-                                logging.error(f"[Supervisor] Error attempting to resume ProgramRunner: {e_resume}", exc_info=True)
-                        else:
-                            # Conditions for pause still met, reset resume attempts for this specific pause reason if it changes.
-                            # This might be too complex; for now, attempts are general.
-                            logging.info(f"[Supervisor] Conditions for pause '{pause_reason_str}' (Type: {pause_error_type}) still appear to be met.")
-                            # If pause reason changes, supervisor_resume_attempts should ideally reset.
-                            # For simplicity, we're not tracking changes in pause_info string here.
-                elif not global_program_runner_instance.queue_paused:
-                    # If queue is not paused, reset supervisor attempts.
-                    if main.supervisor_resume_attempts > 0:
-                        logging.info("[Supervisor] ProgramRunner is no longer paused. Resetting resume attempts.")
-                        main.supervisor_resume_attempts = 0
-                    main.last_supervisor_check_time = time.time() # Update check time even if not paused to delay next check
-
 
     except KeyboardInterrupt:
         from routes.program_operation_routes import cleanup_port

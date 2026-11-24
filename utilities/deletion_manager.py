@@ -1029,7 +1029,7 @@ class DeletionManager:
 
                 headers = get_trakt_headers()
                 if headers:
-                    response = requests.get('https://api.trakt.tv/users/settings', headers=headers)
+                    response = requests.get('https://api.trakt.tv/users/settings', headers=headers, timeout=15)
                     if response.status_code == 200:
                         user_data = response.json()
                         authenticated_username = user_data.get('user', {}).get('username', '')
