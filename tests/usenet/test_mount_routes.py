@@ -256,9 +256,17 @@ class MountRoutesTests(unittest.TestCase):
         self.assertEqual(code, 400)
         self.assertIn('Start alongside', body['error'])
         st.assert_not_called()
+        # Running alongside but it can't start (no servers): say so at once.
+        with mock.patch.object(be, 'wanted', return_value=True), \
+                mock.patch.object(be, 'problems', return_value=['no usenet server set (Mount page → Usenet servers)']), \
+                mock.patch.object(bm, 'start_import') as st:
+            code, body = self._post(mr.migrate_import, {'limit': 0})
+        self.assertEqual(code, 400)
+        self.assertIn("can't start: no usenet server set", body['error'])
+        st.assert_not_called()
         # Copied settings: the sync runs in the import thread (prepare), so
         # the import waits for an engine restart instead of racing it.
-        with mock.patch.object(be, 'wanted', return_value=True), \
+        with mock.patch.object(be, 'wanted', return_value=True), mock.patch.object(mr, '_engine_why_down', return_value=''), \
                 mock.patch.object(bm, 'climount_repair_settings', return_value={'plex_prewarm': True}), \
                 mock.patch.object(bm, 'start_import', return_value='job1') as st, \
                 mock.patch.object(mr, '_engine'), mock.patch.object(mr, '_climount_source'), \
@@ -266,6 +274,7 @@ class MountRoutesTests(unittest.TestCase):
             code, body = self._post(mr.migrate_import, {'limit': 0})
         self.assertEqual((code, body['job']), (200, 'job1'))
         self.assertIs(st.call_args.kwargs['prepare'], mr._sync_now)
+        self.assertTrue(callable(st.call_args.kwargs['why_down']), 'Import can say why the engine is down')
         self.sync.assert_not_called()
 
     def test_status_counts_only_jobs_cli_mount_lists(self):

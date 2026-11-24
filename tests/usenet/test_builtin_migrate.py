@@ -294,7 +294,7 @@ class SpaceTests(unittest.TestCase):
             p = bm.space_plan(['a', 'b', 'c'], sizes, d, cache_dir=os.path.join(d, 'cache'), cache_left=2 << 30)
             self.assertEqual((p['cache_reserved'], p['fits'], p['fits_jobs']), (2 << 30, False, 2))
 
-    def _run(self, free, limit=0, n=3, eng=None, prepare=None):
+    def _run(self, free, limit=0, n=3, eng=None, prepare=None, why_down=None, wait=0.2):
         with tempfile.TemporaryDirectory() as d:
             mdir = os.path.join(d, 'usenet', 'meta')
             os.makedirs(mdir)
@@ -310,8 +310,9 @@ class SpaceTests(unittest.TestCase):
                     return iter(entries)
             eng = eng or FakeEngine()
             with unittest.mock.patch('shutil.disk_usage', side_effect=free), \
-                    unittest.mock.patch.object(bm, 'ENGINE_WAIT', 0.2), unittest.mock.patch.object(bm, 'ENGINE_POLL', 0.01):
-                jid = bm.start_import(Source(), eng, d, limit=limit, space={'data_dir': d}, prepare=prepare)
+                    unittest.mock.patch.object(bm, 'ENGINE_WAIT', wait), unittest.mock.patch.object(bm, 'ENGINE_POLL', 0.01):
+                jid = bm.start_import(Source(), eng, d, limit=limit, space={'data_dir': d}, prepare=prepare,
+                                       why_down=why_down)
                 for _ in range(200):
                     if bm.status(jid).get('complete'):
                         break
@@ -349,6 +350,14 @@ class SpaceTests(unittest.TestCase):
         self.assertIn("engine isn't answering (Connection refused)", st['error'])
         self.assertIn('Start alongside', st['error'])
         self.assertEqual(eng.posts, [])
+
+    def test_engine_that_cannot_start_ends_the_wait_with_the_reason(self):
+        # No 90 s blind wait: the engine's own reason ends it at once.
+        st, eng = self._run(lambda p: self._usage(50 << 30), eng=FakeEngine(reachable=lambda *a: False),
+                            why_down=lambda: "it can't start: no usenet server set", wait=60)
+        self.assertEqual((st['status'], st['total'], st['failed']), ('error', 3, 0))
+        self.assertIn("isn't running: it can't start: no usenet server set", st['error'])
+        self.assertEqual(eng.calls, 1, 'one readiness check, no 60 s wait')
 
     def test_waits_for_the_engine_after_the_settings_sync(self):
         # The sync (prepare) restarts the engine: the import waits for it
