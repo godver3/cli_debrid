@@ -102,6 +102,20 @@ def _fuse_mounted(path: str) -> bool:
     from utilities import builtin_engine
     return builtin_engine.fuse_mounted(path)
 
+
+def _dead_mount(path: str) -> bool:
+    """A FUSE mount whose program has stopped ("Transport endpoint is not
+    connected"). Docker leaves one in a container that was created while
+    cli_mount's mount was up: the container's bind is that mount itself, so
+    stopping cli_mount can't take it away. Only recreating the container does."""
+    import errno
+    try:
+        with os.scandir(path):  # stat still succeeds on a dead mount; opening it doesn't
+            pass
+    except OSError as exc:
+        return exc.errno == errno.ENOTCONN
+    return False
+
 def builtin_selected() -> bool:
     """The built-in mount is in use (usenet backend, or debrid-only)."""
     try:
@@ -747,6 +761,11 @@ def migrate_switch():
     if not root:
         return jsonify({'success': False, 'error': "cli_mount's mount path isn't known (File Management → original files path)."}), 400
     if _fuse_mounted(root):
+        if _dead_mount(root):
+            return jsonify({'success': False, 'error': (
+                f"cli_mount is stopped, but {root} is still held by this container: it was created while "
+                f"cli_mount's mount was up. With cli_mount still stopped, recreate Clyde's container "
+                f"(docker compose up -d --force-recreate <clyde service>), then switch.")}), 409
         return jsonify({'success': False, 'error': f'{root} is still mounted: stop the cli_mount container first, then switch.'}), 409
     if _debrid_needed():
         st = _debrid_status()
