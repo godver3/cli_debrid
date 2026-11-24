@@ -38,6 +38,14 @@ def add_torrent_to_debrid():
         tmdb_id = request.form.get('tmdb_id')
         original_scraped_torrent_title = request.form.get('original_scraped_torrent_title')
         source_context = request.form.get('source_context')  # e.g. 'recently_aired'
+
+        # Only configured versions (an upgrade's trailing '*' allowed), "No Version"
+        # (reverse-parsed below) or none. An unknown name made an item that no
+        # version settings can scrape or upgrade, as /content/request did.
+        if version_from_form and version_from_form != "No Version":
+            configured_versions = get_setting('Scraping', 'versions', {}) or {}
+            if version_from_form.rstrip('*') not in configured_versions:
+                return jsonify({'error': f"Unknown version: {version_from_form}"}), 400
         # Get file management mode to check if we should process folder selection
         file_management_mode = get_setting('File Management', 'file_collection_management', 'Plex')
 

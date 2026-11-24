@@ -141,107 +141,41 @@ def get_libraries(force: bool = False, url: str = None, key: str = None) -> List
     return items
 
 
-def _norm(path: str) -> str:
-    p = (path or '').replace('\\', '/')
-    while '//' in p:
-        p = p.replace('//', '/')
-    return p.rstrip('/') or '/'
+# Path translation is shared with Jellyfin/Emby (utilities/media_server_paths.py);
+# these wrappers keep Silo's names and use Silo's base folder.
+from utilities import media_server_paths as _paths
 
-
-def _under(path: str, root: str) -> bool:
-    return path == root or path.startswith(root.rstrip('/') + '/')
+_norm = _paths.norm
+_under = _paths.under
 
 
 def to_silo_path(local_path: str, libraries: Optional[List[dict]] = None) -> Optional[str]:
-    """The path Silo knows `local_path` by, or None when no library holds it.
-
-    Same path when Silo sees the folders where cli_debrid does. Otherwise the
-    part below the symlink folder is moved onto a library root: a root named
-    like the first folder under it (/mnt/symlinked/Movies/X → /media/Movies/X),
-    or a root named like the symlink folder itself (/mnt/symlinked/... →
-    /data/symlinked/...)."""
+    """The path Silo knows `local_path` by, or None when no library holds it
+    (see media_server_paths.to_server_path)."""
     if libraries is None:
         libraries = get_libraries()
-    p = _norm(local_path)
-    roots = [_norm(r) for lib in libraries for r in lib.get('paths') or []]
-    for root in roots:
-        if _under(p, root):
-            return p
-    base = _norm(local_base())
-    if base == '/' or not _under(p, base):
-        return None
-    rel = p[len(base):].lstrip('/')
-    first, _, rest = rel.partition('/')
-    for root in roots:
-        name = root.rsplit('/', 1)[-1]
-        if first and name == first:
-            return f'{root}/{rest}' if rest else root
-    for root in roots:
-        if root.rsplit('/', 1)[-1] == base.rsplit('/', 1)[-1]:
-            return f'{root}/{rel}' if rel else root
-    return None
+    return _paths.to_server_path(local_path, libraries, local_base())
 
 
 def from_silo_path(silo_path: str, libraries: List[dict], symlink_base: str = None) -> str:
     """The path cli_debrid knows a Silo file path by: the reverse of
     to_silo_path. Unchanged when it exists here as is (same paths)."""
-    p = _norm(silo_path)
-    if os.path.lexists(p):
-        return p
-    if symlink_base is None:
-        symlink_base = local_base()
-    base = _norm(symlink_base)
-    if base == '/':
-        return p
-    candidates = []
-    for lib in libraries:
-        for r in lib.get('paths') or []:
-            root = _norm(r)
-            if not _under(p, root):
-                continue
-            rest = p[len(root):].lstrip('/')
-            name = root.rsplit('/', 1)[-1]
-            candidates.append(f'{base}/{name}/{rest}' if rest else f'{base}/{name}')
-            if name == base.rsplit('/', 1)[-1]:
-                candidates.append(f'{base}/{rest}' if rest else base)
-    for c in candidates:
-        if os.path.lexists(c):
-            return c
-    return candidates[0] if candidates else p
+    return _paths.from_server_path(silo_path, libraries, local_base() if symlink_base is None else symlink_base)
 
 
 def _owning_library(silo_path: str, libraries: List[dict]) -> Tuple[Optional[dict], str]:
     """(library, root) of the deepest library root holding silo_path."""
-    best, best_root = None, ''
-    for lib in libraries:
-        for r in lib.get('paths') or []:
-            root = _norm(r)
-            if _under(silo_path, root) and len(root) > len(best_root):
-                best, best_root = lib, root
-    return best, best_root
+    return _paths.owning_library(silo_path, libraries)
 
 
 def _mirrored_silo_path(local_path: str, libraries: List[dict]) -> Optional[str]:
     """Silo's path for a file or folder in the mount's all-folder, through the
     library folder that mirrors it (as Plex mode's own scan does)."""
-    from utilities.plex_functions.sections_scan import _mirrored_library_path
-    base = local_base()
-    roots = {}
-    for lib in libraries:
-        for r in lib.get('paths') or []:
-            roots[from_silo_path(r, libraries, base).rstrip('/')] = _norm(r)
-    directory = local_path if os.path.isdir(local_path) else os.path.dirname(local_path)
-    mirrored = _mirrored_library_path(os.path.abspath(directory), list(roots))
-    if not mirrored:
-        return None
-    if directory != local_path:
-        mirrored = os.path.join(mirrored, os.path.basename(local_path))
-    return to_silo_path(mirrored, libraries)
+    return _paths.mirrored_server_path(local_path, libraries, local_base())
 
 
 def _library_ids_for_type(libraries: List[dict], item_type: str) -> List[str]:
-    want = 'movies' if item_type == 'movie' else 'series'
-    return [str(l['id']) for l in libraries if (l.get('type') or '') in (want, 'mixed')]
+    return _paths.library_ids_for_type(libraries, item_type, movie_types=('movies',), show_types=('series',))
 
 
 # ---------------------------------------------------------------------------
@@ -409,6 +343,7 @@ def get_collected_from_silo(added_after: Optional[str] = None) -> Optional[Dict[
                 continue
             common = {'addedAt': _epoch(it.get('added_at')), 'guid': it.get('content_id'),
                       'ratingKey': it.get('content_id'), 'type': it.get('type'),
+                      'media_file_id': v.get('file_id'),
                       'location': from_silo_path(v['file_path'], libraries, base)}
             if it.get('type') == 'movie':
                 movies.append({**common, 'title': it.get('title'), 'year': it.get('year'),
@@ -555,3 +490,91 @@ def collect_from_silo(items: List[Dict[str, Any]]) -> Optional[Tuple[int, int]]:
     finally:
         conn.close()
     return found, len(ids) - still
+
+
+# ---------------------------------------------------------------------------
+# Subtitles (Direct Mount run with Silo)
+# ---------------------------------------------------------------------------
+
+_profile_cache: Dict[str, Any] = {'key': None, 'id': None}
+
+
+def _profile_id(url: str, key: str) -> Optional[str]:
+    """An admin's primary profile, cached: user-level endpoints act as a profile."""
+    if _profile_cache['key'] != (url, key):
+        _profile_cache.update(key=(url, key), id=primary_profile_id(url, key))
+    return _profile_cache['id']
+
+
+# find_file_id's whole-catalog lookup (file name -> media file id), reused for a while
+_FILE_ID_MAP_TTL = 600
+_file_id_map: Dict[str, Any] = {'at': 0.0, 'map': None}
+
+
+def _file_ids_by_name(library: Dict[str, List[Dict[str, Any]]]) -> Dict[str, str]:
+    return {os.path.basename(e.get('location') or '').lower(): str(e['media_file_id'])
+            for e in library['movies'] + library['episodes'] if e.get('location') and e.get('media_file_id')}
+
+
+def find_file_id(local_path: str) -> Optional[str]:
+    """Silo's media file id for a file (by file name): what Silo added in the
+    last week first, then the whole catalog (read once and reused for
+    _FILE_ID_MAP_TTL seconds). None when Silo doesn't list it."""
+    name = os.path.basename(local_path or '').lower()
+    if not name:
+        return None
+    recent = get_recent_from_silo(hours=7 * 24)
+    if recent is None:
+        return None
+    found = _file_ids_by_name(recent).get(name)
+    if found:
+        return found
+    cached = _file_id_map['map']
+    if cached is not None and time.time() - _file_id_map['at'] < _FILE_ID_MAP_TTL:
+        return cached.get(name)
+    library = get_collected_from_silo()
+    if library is None:
+        return None
+    ids = _file_ids_by_name(library)
+    _file_id_map.update(at=time.time(), map=ids)
+    return ids.get(name)
+
+
+def upload_subtitle(local_path: str, content: bytes, lang_code: str, fmt: str = 'srt',
+                    file_id: Optional[str] = None, release_name: Optional[str] = None) -> bool:
+    """Store a subtitle for the file in Silo (POST /api/v2/subtitles/upload),
+    for a read-only mount where no sidecar file can be written. Silo keeps the
+    subtitle itself. True when Silo took it."""
+    data = content if isinstance(content, bytes) else (content or '').encode('utf-8')
+    if not data:
+        return False
+    url, key = silo_config()
+    if not url or not key:
+        return False
+    file_id = file_id or find_file_id(local_path)
+    if not file_id:
+        logging.warning(f'[Silo subs] {os.path.basename(local_path)} is not in Silo yet; subtitle not uploaded')
+        return False
+    try:
+        profile = _profile_id(url, key)
+        stem = os.path.splitext(os.path.basename(local_path))[0]
+        form = {'media_file_id': file_id, 'language': lang_code}
+        if release_name:
+            form['release_name'] = release_name
+        r = _request('POST', '/api/v2/subtitles/upload', url, key,
+                     headers_extra={'X-Profile-Id': profile} if profile else None,
+                     data=form, files={'file': (f'{stem}.{lang_code}.{fmt}', data, 'application/octet-stream')},
+                     timeout=60)
+    except requests.RequestException as e:
+        logging.warning(f'[Silo subs] upload for {os.path.basename(local_path)} failed: {e}')
+        return False
+    if r.status_code in (200, 201):
+        logging.info(f'[Silo subs] uploaded {lang_code} subtitle to file {file_id}')
+        return True
+    logging.warning(f'[Silo subs] upload for {os.path.basename(local_path)} refused (HTTP {r.status_code}): {_problem(r)}')
+    return False
+
+
+def pick_up_sidecar(local_path: str, item_type: str = '') -> bool:
+    """A sidecar was written next to the file: rescan its folder so Silo lists it."""
+    return scan_path(local_path, item_type)

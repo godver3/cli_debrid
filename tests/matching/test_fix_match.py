@@ -892,7 +892,7 @@ class TestFixMatchApply(FixMatchTestBase):
         payload, _ = self.apply(rematch_media_server=True)
 
         self.assertFalse(payload['rematch_started'])
-        self.assertIn('not in Plex mode', payload['rematch_note'])
+        self.assertIn('not in Direct Mount', payload['rematch_note'])
         self.assertEqual(self.rematch_calls, [])
 
     def test_ids_are_still_fixed_when_the_rematch_is_declined(self):

@@ -144,7 +144,7 @@ Content sources ──> Scrapers ──> Debrid / Usenet ──> Mount ──> L
 - **Per-show anime setting**, romaji and alternative-title searching, and seasons that are really movies (e.g. *Initial D Third Stage*).
 
 ### Library and media servers
-- **Plex or symlinked library:** Plex mode tracks your library through Plex's API. Symlinked mode builds a clean folder tree from your mount, with naming templates, for Plex, Jellyfin or Emby.
+- **Direct Mount or symlinked library:** with Direct Mount your media server (Plex, Silo, Jellyfin or Emby) reads the mount itself and cli_debrid tracks your library through its API. Symlinked/Local builds a clean folder tree from your mount, with naming templates, for Plex, Jellyfin, Emby or Silo.
 - **Plex extras:** collections, smart collections, labels, movie box sets and poster overlays.
 - **Subtitle manager** (Tools → Subtitles): finds subtitles that match your exact release by file hash and release name, from OpenSubtitles, SubDL, SubSource and more. See what each item has, search and compare scores, pick one or let it choose, fill in everything that's missing in one go, and import your existing subtitles from Bazarr. Bazarr can still connect to cli_debrid as if it were Radarr/Sonarr.
 

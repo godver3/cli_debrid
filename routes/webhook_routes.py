@@ -105,10 +105,10 @@ def rclone_webhook():
         # Check file management mode first
         file_management_mode = get_setting('File Management', 'file_collection_management', 'Symlinked/Local')
         if file_management_mode == 'Plex':
-            logging.info("Ignoring rclone webhook because file management mode is set to 'Plex'.")
+            logging.info("Ignoring rclone webhook because file management is Direct Mount.")
             return jsonify({
                 "status": "ignored",
-                "message": "Rclone webhook ignored; file management mode is 'Plex'."
+                "message": "Rclone webhook ignored; file management is Direct Mount."
             }), 200
 
         full_relative_path_str_raw = request.args.get('file') # Keep raw for logging

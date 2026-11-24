@@ -183,9 +183,11 @@ SECTIONS = {
         "tab": "Required Settings",
         "file_collection_management": {
             "type": "string",
-            "description": "Select library management method. On Windows with Plex use Plex: Plex Media Server for Windows skips symlinked files, so a Symlinked/Local library never appears in it.",
+            "description": "How your library is built. Direct Mount: your media server (Plex, Silo, Jellyfin or Emby) reads the mount directly. Symlinked/Local: cli_debrid makes a folder of symlinks into the mount, and your media server (Plex, Jellyfin, Emby or Silo) scans that. On Windows with Plex use Direct Mount: Plex Media Server for Windows skips symlinked files, so a Symlinked/Local library never appears in it.",
             "default": "Plex",
-            "choices": ["Plex", "Symlinked/Local"]
+            "choices": ["Plex", "Symlinked/Local"],
+            # Shown instead of the stored value ('Plex' stays the saved value)
+            "choice_labels": {"Plex": "Direct Mount"}
         },
         "original_files_path": {
             "type": "string",
@@ -242,9 +244,9 @@ SECTIONS = {
         },
         "plex_mode_media_server": {
             "type": "string",
-            "description": "Plex file management mode: the media server that reads the mount and tracks your library. Silo works like Plex here: it reads the mount's folders, and cli_debrid asks it what it has. Silo needs its URL and an admin API key.",
+            "description": "Direct Mount: the media server that reads the mount and tracks your library. Silo, Jellyfin and Emby work like Plex here: they read the mount's folders, and cli_debrid asks them what they have. Silo needs its URL and an admin API key; Jellyfin/Emby its URL and an API key.",
             "default": "plex",
-            "choices": ["plex", "silo"]
+            "choices": ["plex", "silo", "jellyfin"]
         }
     },
     "Debrid Provider": {
@@ -278,7 +280,7 @@ SECTIONS = {
         },
         "ffprobe_all_debrid_additions": {
             "type": "boolean",
-            "description": "Before collecting a debrid (Real-Debrid/etc.) file, probe it with ffprobe to confirm it's actually playable, on top of the normal checks. Works in both Symlinked/Local and Plex mode — in Plex mode it runs the moment the file is found on the mount, before cli_debrid tells Plex about it, so a confirmed-broken file is rejected and re-scraped before it ever shows up in Plex. Requires ffprobe to be installed. This will slow down how long it takes items to reach Collected.",
+            "description": "Before collecting a debrid (Real-Debrid/etc.) file, probe it with ffprobe to confirm it's actually playable, on top of the normal checks. Works in both Symlinked/Local and Direct Mount — in Direct Mount it runs the moment the file is found on the mount, before cli_debrid tells Plex about it, so a confirmed-broken file is rejected and re-scraped before it ever shows up in Plex. Requires ffprobe to be installed. This will slow down how long it takes items to reach Collected.",
             "default": False
         }
     },
@@ -337,7 +339,7 @@ SECTIONS = {
         },
         "ffprobe_all_nzbs": {
             "type": "boolean",
-            "description": "Before collecting an NZB file, probe it with ffprobe to confirm it's actually playable, on top of the existing missing-article/segment health check. Works in both Symlinked/Local and Plex mode — in Plex mode it runs the moment the file is found on the mount, before cli_debrid tells Plex about it, so a confirmed-broken file is rejected and re-scraped before it ever shows up in Plex. Requires ffprobe to be installed. This will slow down how long it takes NZB items to reach Collected.",
+            "description": "Before collecting an NZB file, probe it with ffprobe to confirm it's actually playable, on top of the existing missing-article/segment health check. Works in both Symlinked/Local and Direct Mount — in Direct Mount it runs the moment the file is found on the mount, before cli_debrid tells Plex about it, so a confirmed-broken file is rejected and re-scraped before it ever shows up in Plex. Requires ffprobe to be installed. This will slow down how long it takes NZB items to reach Collected.",
             "default": False
         },
         "provider": {

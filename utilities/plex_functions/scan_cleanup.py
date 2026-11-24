@@ -233,6 +233,23 @@ def scan_and_empty_plex_trash(paths: list = None, section_type: str = None, empt
         result['success'] = not result['errors']
         return result
 
+    # Direct Mount run with Jellyfin/Emby: same, through its library folders
+    from utilities.jellyfin_direct import is_jellyfin_direct, scan_path as jellyfin_scan_path
+    if is_jellyfin_direct():
+        jf_type = 'movie' if section_type == 'movie' else 'episode'
+        for path in paths or []:
+            (result['paths_scanned'] if jellyfin_scan_path(path, jf_type, removed=True) else result['errors']).append(path)
+        result['success'] = not result['errors']
+        return result
+
+    from utilities.direct_mount import unconfigured_server
+    missing = unconfigured_server()
+    if missing:
+        logger.warning(f"{missing} is the media server but its URL or API key is not set; nothing scanned")
+        result['errors'].append(f'{missing} URL or API key not set')
+        result['success'] = False
+        return result
+
     try:
         # Check for Jellyfin configuration first
         jellyfin_url = get_setting('Debug', 'emby_jellyfin_url', default='').strip()

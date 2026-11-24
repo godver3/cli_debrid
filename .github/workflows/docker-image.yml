@@ -319,17 +319,40 @@ jobs:
           url = f"{os.environ['SERVER_URL']}/{os.environ['REPO']}/releases/tag/v{version}"
           notes = open(f"release-notes/{version}.md", encoding='utf-8').read().strip()
 
+          # Embeds don't render "### Heading" (it shows as literal #s), but bold
+          # and "-" lists do: each heading becomes a bold line with a blank line
+          # before it. GitHub and the in-app popup keep the real headings.
+          import re
+          notes = re.sub(r'\n*^#{1,6}[ \t]+(.+?)[ \t]*$\n*', r'\n\n**\1**\n', notes, flags=re.M).strip()
+
+          # Split into sections at those headings, then pack whole sections into
+          # messages so a section doesn't straddle two. A section too long for
+          # one message is split on line boundaries.
           LIMIT = 3900
+          sections = re.split(r'\n\n(?=\*\*[^\n]+\*\*\n)', notes)
+          pieces = []
+          for section in sections:
+              if len(section) <= LIMIT:
+                  pieces.append(section)
+                  continue
+              cur = ''
+              for line in section.split('\n'):
+                  while len(line) > LIMIT:          # a single huge line: hard split
+                      if cur:
+                          pieces.append(cur); cur = ''
+                      pieces.append(line[:LIMIT]); line = line[LIMIT:]
+                  if cur and len(cur) + 1 + len(line) > LIMIT:
+                      pieces.append(cur); cur = line
+                  else:
+                      cur = f"{cur}\n{line}" if cur else line
+              if cur:
+                  pieces.append(cur)
           chunks, cur = [], ''
-          for line in notes.split('\n'):
-              while len(line) > LIMIT:          # a single huge line: hard split
-                  if cur:
-                      chunks.append(cur); cur = ''
-                  chunks.append(line[:LIMIT]); line = line[LIMIT:]
-              if cur and len(cur) + 1 + len(line) > LIMIT:
-                  chunks.append(cur); cur = line
+          for piece in pieces:
+              if cur and len(cur) + 2 + len(piece) > LIMIT:
+                  chunks.append(cur); cur = piece
               else:
-                  cur = f"{cur}\n{line}" if cur else line
+                  cur = f"{cur}\n\n{piece}" if cur else piece
           if cur:
               chunks.append(cur)
 

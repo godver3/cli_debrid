@@ -301,12 +301,16 @@ def render_debrid_manager(dm_mode):
     file_mgmt = get_setting('File Management', 'file_collection_management', default='Plex')
     media_server = get_setting('File Management', 'media_server_type', default='plex')
     from utilities.silo_functions import silo_kind
+    from utilities.direct_mount import is_direct_mount_jellyfin
+    direct_jellyfin = is_direct_mount_jellyfin()
     show_plex_trash = (
-        (file_mgmt == 'Plex' and silo_kind() != 'library') or
+        (file_mgmt == 'Plex' and silo_kind() != 'library' and not direct_jellyfin) or
         (file_mgmt == 'Symlinked/Local' and media_server == 'plex')
     )
     if silo_kind():
         media_server = 'silo'  # labels on the audit tab
+    elif direct_jellyfin:
+        media_server = 'jellyfin'
     symlink_mode = (file_mgmt == 'Symlinked/Local')
     provider_name = get_provider_display_name()
     # Derive abbreviation from the backup prefix map (single source of truth)

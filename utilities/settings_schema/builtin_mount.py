@@ -259,7 +259,7 @@ SECTIONS = {
         },
         "virtual_folders": {
             "type": "string",
-            "description": "Built-in mount only. Virtual folders: extra top folders listing the jobs that match their filters (cli_mount's custom folders), e.g. separate movies and shows folders for Plex libraries in Plex mode. Edit them on the Mount page. New installs start with Movies and TV Shows (the docs' Content routing filters), so every release lands in exactly one of them.",
+            "description": "Built-in mount only. Virtual folders: extra top folders listing the jobs that match their filters (cli_mount's custom folders), e.g. separate movies and shows folders for Plex libraries in Direct Mount. Edit them on the Mount page. New installs start with Movies and TV Shows (the docs' Content routing filters), so every release lands in exactly one of them.",
             "default": DEFAULT_VIRTUAL_FOLDERS_JSON
         },
         "servers": {

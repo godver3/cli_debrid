@@ -11,6 +11,11 @@ def _silo_selected():
     return is_silo_selected()
 
 
+def _direct_mount_jellyfin():
+    from utilities.direct_mount import is_direct_mount_jellyfin
+    return is_direct_mount_jellyfin()
+
+
 def _is_recollection(item, min_gap_seconds=60):
     """True when the row was collected before (repair, upgrade): original_collected_at is
     preserved across re-collections while collected_at is reset."""
@@ -498,9 +503,15 @@ def handle_state_change(item: Dict[str, Any]) -> None:
                 file_path = fresh_item.get('location_on_disk')
                 if not file_path:
                     logging.warning("No location_on_disk found for item, skipping subtitle download")
-                elif get_setting('File Management', 'file_collection_management') == 'Plex' and _silo_selected():
-                    logging.info("Subtitles: Plex mode run with Silo keeps files on the read-only mount, "
-                                 "and uploading to Silo isn't supported yet; skipping")
+                elif _direct_mount_jellyfin() or (
+                        get_setting('File Management', 'file_collection_management') == 'Plex' and _silo_selected()):
+                    # Direct Mount run with Jellyfin/Emby or Silo: a sidecar next to
+                    # the file when the mount takes it (then a folder rescan), else an
+                    # upload through the server's API (downsub.save_subtitles decides)
+                    logging.info("Running subtitle downloader (Direct Mount, "
+                                 f"{'Jellyfin/Emby' if _direct_mount_jellyfin() else 'Silo'}).")
+                    from .downsub import main as downsub_main
+                    downsub_main(file_path, item=dict(fresh_item))
                 elif get_setting('File Management', 'file_collection_management') == 'Plex':
                     # Plex mode: media is on a read-only debrid/usenet mount, so a
                     # sidecar .srt can't be written next to it. Download subtitles
@@ -527,7 +538,7 @@ def handle_state_change(item: Dict[str, Any]) -> None:
                         downsub_main(file_path, rating_key=str(rk), name_hint=name_hint,
                                      item=dict(fresh_item))
                     else:
-                        logging.info("Plex-mode subtitle upload skipped: item has no Plex ratingKey (ms_item_id) yet")
+                        logging.info("Direct Mount subtitle upload skipped: item has no Plex ratingKey (ms_item_id) yet")
                 else:
                     logging.info("Running subtitle downloader - this may take some time if it has never been run.")
                     from .downsub import main as downsub_main

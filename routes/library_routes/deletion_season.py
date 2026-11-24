@@ -584,7 +584,7 @@ def delete_episode(imdb_id, season_number, episode_number):
             else:
                 # In Plex mode, filesystem layer is not applicable since Plex manages files
                 if file_management_mode == 'Plex':
-                    layers_skipped.append({'layer': 'Filesystem', 'reason': 'Not applicable in Plex mode'})
+                    layers_skipped.append({'layer': 'Filesystem', 'reason': 'Not applicable in Direct Mount'})
                 else:
                     layers_skipped.append({'layer': 'Filesystem', 'reason': 'No files found'})
 

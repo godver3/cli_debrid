@@ -377,7 +377,7 @@ def update_settings():
 
             # Check if user is changing TO Plex mode (not already on Plex)
             if new_mode == 'Plex' and old_mode != 'Plex':
-                logging.info("DEBUG User is switching TO Plex mode - validation will be required")
+                logging.info("DEBUG User is switching TO Direct Mount - validation will be required")
                 should_validate_plex = True
 
         # Check if Plex library settings are being actively changed
@@ -410,7 +410,7 @@ def update_settings():
         if should_validate_plex:
             file_management = new_settings.get('File Management', config.get('File Management', {}))
             if (file_management.get('file_collection_management') == 'Plex'
-                    and (file_management.get('plex_mode_media_server') or 'plex') != 'silo'):
+                    and (file_management.get('plex_mode_media_server') or 'plex') not in ('silo', 'jellyfin')):
                 plex_settings_for_validation = new_settings.get('Plex', config.get('Plex', {}))
                 movie_libraries_for_validation = (plex_settings_for_validation.get('movie_libraries') or '').strip()
                 show_libraries_for_validation = (plex_settings_for_validation.get('shows_libraries') or '').strip()

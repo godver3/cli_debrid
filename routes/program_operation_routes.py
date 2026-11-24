@@ -400,15 +400,30 @@ def check_service_connectivity():
         from utilities.silo_functions import silo_config, test_connection as silo_test
         ok, message = silo_test(*silo_config())
         if ok:
-            logging.debug("Silo connectivity check passed (Plex mode)")
+            logging.debug("Silo connectivity check passed (Direct Mount)")
         else:
             logging.error(f"Silo check failed: {message}")
             services_reachable = False
             failed_services_details.append({"service": "Silo", "type": "CONNECTION_ERROR",
                                             "status_code": None, "message": message})
 
+    # Direct Mount run with Jellyfin/Emby: check it instead of Plex
+    from utilities.direct_mount import is_direct_mount_jellyfin
+    plex_mode_jellyfin = is_direct_mount_jellyfin()
+    if plex_mode_jellyfin:
+        from utilities.jellyfin_direct import test_connection as jellyfin_test
+        ok, message = jellyfin_test()
+        if ok:
+            logging.debug(f"Jellyfin/Emby connectivity check passed (Direct Mount): {message}")
+        else:
+            logging.error(f"Jellyfin/Emby check failed: {message}")
+            services_reachable = False
+            failed_services_details.append({"service": "Jellyfin/Emby", "type": "CONNECTION_ERROR",
+                                            "status_code": None, "message": message})
+
     # Check Plex connectivity and libraries
-    if get_setting('File Management', 'file_collection_management') == 'Plex' and not plex_mode_silo:
+    if (get_setting('File Management', 'file_collection_management') == 'Plex'
+            and not plex_mode_silo and not plex_mode_jellyfin):
         try:
             # First check basic connectivity and token validity
             response = api.get(f"{plex_url}?X-Plex-Token={plex_token}", timeout=5)
@@ -906,8 +921,9 @@ def check_program_conditions():
     content_sources_enabled = bool(config.get('Content Sources', {}))
     
     from utilities.silo_functions import is_silo_selected
-    # Silo as the media server needs no Plex connection
-    required_settings = [] if is_silo_selected() else [
+    from utilities.direct_mount import is_direct_mount_jellyfin
+    # Silo, or Jellyfin/Emby in Direct Mount, needs no Plex connection
+    required_settings = [] if (is_silo_selected() or is_direct_mount_jellyfin()) else [
         ('Plex', 'url'),
         ('Plex', 'token'),
     ]

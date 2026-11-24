@@ -16,9 +16,9 @@
       "runs": "Always on."
     },
     "Checking": {
-      "description": "Waits for an added file to show up, then marks the item Collected. In Symlinked/Local mode, once the file appears on the mount it creates the symlink, tells Plex or Jellyfin/Emby to scan it if one is set up, and runs post-processing. In Plex mode it waits until Plex has the file (or, with Disable Plex Library Checks, until the file is on the mount). Items that never show up go back to Wanted after the Checking Queue Period (Debug settings, default 1 hour). A torrent the provider reports missing several times in a row has its magnet blacklisted.",
+      "description": "Waits for an added file to show up, then marks the item Collected. In Symlinked/Local mode, once the file appears on the mount it creates the symlink, tells Plex or Jellyfin/Emby to scan it if one is set up, and runs post-processing. In Direct Mount it waits until Plex has the file (or, with Disable Plex Library Checks, until the file is on the mount). Items that never show up go back to Wanted after the Checking Queue Period (Debug settings, default 1 hour). A torrent the provider reports missing several times in a row has its magnet blacklisted.",
       "action": "Look for the files of the items in the Checking queue.",
-      "runs": "Always on, except in Plex mode with library checks disabled and no mounted file location (then Check Plex Files does this work)."
+      "runs": "Always on, except in Direct Mount with library checks disabled and no mounted file location (then Check Plex Files does this work)."
     },
     "Sleeping": {
       "description": "Items that weren't found while scraping rest here, then go back to Wanted for another try. By default that's every 30 minutes (Sleep Duration Minutes, minimum 10), up to 24 tries (Wake Limit). A version can set its own wake count, and -1 skips sleeping. After the last try the item goes to Final Scrape if it's enabled, otherwise to Blacklisted. Only recent items sleep. Older ones are blacklisted straight from Scraping.",
@@ -183,12 +183,12 @@
     "task_plex_full_scan": {
       "description": "Reads your whole Plex library and records everything in it as Collected, filling in missing resolutions from the file names. Then runs Reconcile Queues so items already in Plex leave Wanted.",
       "action": "Run a full Plex library scan.",
-      "runs": "Plex mode only, unless you turn it on by hand."
+      "runs": "Direct Mount only, unless you turn it on by hand."
     },
     "task_check_plex_files": {
-      "description": "In Plex mode, looks on the mount for the files of items in Checking. When one appears, it asks Plex to scan just that folder, so new files show up fast instead of waiting for Plex's own scan. With Disable Plex Library Checks on, items are marked Collected as soon as the file is on the mount, or right away if no mounted file location is set. Also fixes upgraded items whose saved location still points to the old file.",
+      "description": "In Direct Mount, looks on the mount for the files of items in Checking. When one appears, it asks Plex to scan just that folder, so new files show up fast instead of waiting for Plex's own scan. With Disable Plex Library Checks on, items are marked Collected as soon as the file is on the mount, or right away if no mounted file location is set. Also fixes upgraded items whose saved location still points to the old file.",
       "action": "Look for new files on the mount and trigger Plex scans.",
-      "runs": "Plex mode, when Update Plex on File Discovery or Disable Plex Library Checks is on."
+      "runs": "Direct Mount, when Update Plex on File Discovery or Disable Plex Library Checks is on."
     },
     "task_verify_symlinked_files": {
       "description": "Confirms that new symlinks actually showed up in Plex or Jellyfin/Emby. Alternates between checking recently added items and a full check, up to 500 files per run. Files that still don't appear after several tries are marked as failed.",
@@ -211,7 +211,7 @@
       "runs": "Only when Debug → Don't Add Plex Watch History Items to Queue is on."
     },
     "task_run_library_maintenance": {
-      "description": "Checks the library against the files on disk. In Symlinked/Local mode it finds broken symlinks (target missing) and orphaned symlinks the database doesn't know about. In Plex mode it checks that collected files are still on the mount. Broken items go back to Wanted if they were the last copy of their version, otherwise they're deleted, and their Plex entries are queued for removal.",
+      "description": "Checks the library against the files on disk. In Symlinked/Local mode it finds broken symlinks (target missing) and orphaned symlinks the database doesn't know about. In Direct Mount it checks that collected files are still on the mount. Broken items go back to Wanted if they were the last copy of their version, otherwise they're deleted, and their Plex entries are queued for removal.",
       "action": "Run library maintenance and fix what it finds.",
       "runs": "Off by default. On in limited environments or when Debug → Enable Library Maintenance Task is on."
     },
@@ -311,7 +311,7 @@
       "runs": "When Plex is the media server. Does nothing unless Plex Movie Box Sets is enabled."
     },
     "task_process_bulk_subtitles": {
-      "description": "Downloads subtitles for collected files that don't have any yet, up to 200 per run. Files that were already tried are skipped. Symlinked/Local mode saves .srt files next to the symlinks. Plex mode adds them through cli_mount.",
+      "description": "Downloads subtitles for collected files that don't have any yet, up to 200 per run. Files that were already tried are skipped. Symlinked/Local mode saves .srt files next to the symlinks. Direct Mount adds them through cli_mount.",
       "action": "Download subtitles for the next 200 files.",
       "runs": "Off by default."
     },

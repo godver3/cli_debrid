@@ -246,7 +246,7 @@ def delete_movie(imdb_id):
             else:
                 # In Plex mode, filesystem layer is not applicable since Plex manages files
                 if file_management == 'Plex':
-                    layers_skipped.append({'layer': 'Filesystem', 'reason': 'Not applicable in Plex mode'})
+                    layers_skipped.append({'layer': 'Filesystem', 'reason': 'Not applicable in Direct Mount'})
                 else:
                     layers_skipped.append({'layer': 'Filesystem', 'reason': 'No files found'})
 

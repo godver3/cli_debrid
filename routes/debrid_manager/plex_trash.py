@@ -687,6 +687,14 @@ def api_plex_force_scan():
             failed = [p for p in paths if not scan_path(p)]
             return jsonify({'success': not failed, 'paths_scanned': [p for p in paths if p not in failed],
                             'errors': [f'Silo did not take the scan of {p}' for p in failed]})
+        from utilities.direct_mount import is_direct_mount_jellyfin
+        if is_direct_mount_jellyfin():
+            from utilities.jellyfin_direct import is_jellyfin_direct, scan_path as jellyfin_scan_path
+            if not is_jellyfin_direct():
+                return jsonify({'success': False, 'error': 'Jellyfin/Emby URL or API key not configured in Settings → Required Settings → File Management'})
+            failed = [p for p in paths if not jellyfin_scan_path(p, removed=True)]
+            return jsonify({'success': not failed, 'paths_scanned': [p for p in paths if p not in failed],
+                            'errors': [f'Jellyfin/Emby did not take the scan of {p}' for p in failed]})
         if media_server == 'jellyfin':
             jf_url   = get_setting('Debug', 'emby_jellyfin_url', default='').rstrip('/')
             jf_token = get_setting('Debug', 'emby_jellyfin_token', default='').strip()

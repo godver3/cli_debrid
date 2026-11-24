@@ -140,7 +140,7 @@ class DeletionManager:
             else:
                 logging.warning(f"[DELETION_MANAGER] Symlinked/Local mode configured but symlink directory not found: {self.symlink_dir}")
         else:
-            logging.debug(f"[DELETION_MANAGER] Plex mode - symlink operations disabled")
+            logging.debug(f"[DELETION_MANAGER] Direct Mount - symlink operations disabled")
 
         # Media Server Type (stored in File Management section)
         media_server_raw = get_setting('File Management', 'media_server_type', 'plex')
@@ -155,7 +155,13 @@ class DeletionManager:
         # Silo picked as the media server (either mode): no Plex calls, even
         # with a Plex URL left over from before
         self.silo_enabled = is_silo_mode()
-        self.plex_enabled = not is_silo_selected() and self._check_plex_available()
+        # Direct Mount run with Jellyfin/Emby: removals are rescans through its
+        # libraries, never Plex calls
+        from utilities.direct_mount import is_direct_mount_jellyfin
+        from utilities.jellyfin_direct import is_jellyfin_direct
+        self.jellyfin_direct_enabled = is_jellyfin_direct()
+        self.plex_enabled = (not is_silo_selected() and not is_direct_mount_jellyfin()
+                             and self._check_plex_available())
         self.jellyfin_enabled = self._check_jellyfin_available()
 
         # Limited Environment Mode
@@ -324,8 +330,8 @@ class DeletionManager:
         if not plex_deletion_type or not content_title:
             logging.warning("[VERIFY_PLEX] Missing deletion type or title - assuming content exists")
             return True  # Conservative: assume it exists if we can't check
-        if self.silo_enabled:
-            return False  # Silo is the media server: there is no Plex content to check
+        if self.silo_enabled or self.jellyfin_direct_enabled:
+            return False  # Silo or Jellyfin/Emby is the media server: there is no Plex content to check
 
         try:
             from utilities.settings import get_setting
@@ -751,12 +757,24 @@ class DeletionManager:
         """
         if self.silo_enabled:
             return self._remove_from_silo(item)
+        if self.jellyfin_direct_enabled:
+            return self._remove_from_jellyfin_direct(item)
         if self.plex_enabled:
             return self._remove_from_plex(item)
         elif self.jellyfin_enabled:
             return self._remove_from_jellyfin(item)
         else:
             return {'success': True, 'server_type': 'none'}
+
+    def _remove_from_jellyfin_direct(self, item: dict) -> dict:
+        """Direct Mount run with Jellyfin/Emby: rescan the file's folder once it is gone."""
+        from utilities.jellyfin_direct import remove_file
+        item_path = item.get('location_on_disk') or item.get('filled_by_file')
+        if not item_path:
+            return {'success': True, 'server_type': 'jellyfin', 'error': None}
+        episode_title = item.get('episode_title') if item.get('type') == 'episode' else None
+        ok = remove_file(item.get('title') or '', item_path, episode_title)
+        return {'success': ok, 'server_type': 'jellyfin', 'error': None if ok else 'Jellyfin/Emby did not take the rescan'}
 
     def _remove_from_silo(self, item: dict) -> dict:
         """Silo has no delete call: rescan the file's path once it is gone."""
@@ -853,6 +871,12 @@ class DeletionManager:
         if self.silo_enabled:
             from utilities.silo_functions import scan_path
             scanned = [p for p in (deleted_paths or []) if scan_path(p, item_type or '')]
+            return {'success': len(scanned) == len(deleted_paths or []), 'paths_scanned': scanned,
+                    'sections_cleaned': [], 'errors': []}
+        if self.jellyfin_direct_enabled:
+            from utilities.jellyfin_direct import scan_path as jellyfin_scan_path
+            jf_type = 'movie' if item_type == 'movie' else 'episode'
+            scanned = [p for p in (deleted_paths or []) if jellyfin_scan_path(p, jf_type, removed=True)]
             return {'success': len(scanned) == len(deleted_paths or []), 'paths_scanned': scanned,
                     'sections_cleaned': [], 'errors': []}
         if self.plex_enabled:
@@ -1835,7 +1859,7 @@ class DeletionManager:
                         plex_result = remove_file_from_plex(item.get('title', 'Unknown'), path_for_plex_api, item.get('episode_title'))
                         if plex_result:
                             result['media_server_removed'] = True
-                            result['media_server_type'] = 'silo' if self.media_server == 'silo' else 'plex'
+                            result['media_server_type'] = ('silo' if self.media_server == 'silo' else 'jellyfin' if self.jellyfin_direct_enabled else 'plex')
                             logging.info(f"[DELETE_ITEM] Successfully removed {item.get('title')} from Plex")
                         else:
                             # Direct removal failed - try scan & empty trash as fallback

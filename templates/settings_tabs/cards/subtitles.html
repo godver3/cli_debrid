@@ -15,7 +15,7 @@
             <input type="checkbox" id="additional-enable_subtitles" name="Subtitle Settings.enable_subtitles"
                    data-section="Subtitle Settings" data-key="enable_subtitles"
                    {% if settings.get('Subtitle Settings', {}).get('enable_subtitles') %}checked{% endif %}>
-            <p class="settings-description">Download subtitles when an item is collected. Works in both modes: Symlinked/Local writes a sidecar file next to the library file; Plex mode uploads the subtitle to the Plex item (the mount is read-only). Adds a few seconds per file. Manage and search subtitles under Tools → Subtitle Manager.</p>
+            <p class="settings-description">Download subtitles when an item is collected. Works in both modes: Symlinked/Local writes a sidecar file next to the library file. In Direct Mount, Plex gets the subtitle uploaded to its item (the mount is read-only); Jellyfin, Emby and Silo get a sidecar file when the mount accepts one, else an upload (Jellyfin and Silo only). Adds a few seconds per file. Manage and search subtitles under Tools → Subtitle Manager.</p>
         </div>
 
         <!-- Hidden settings - no longer used with simplified downsub system -->
@@ -170,7 +170,7 @@
             <input type="checkbox" id="additional-probe_for_embedded_subtitles" name="Subtitle Settings.probe_for_embedded_subtitles"
                    data-section="Subtitle Settings" data-key="probe_for_embedded_subtitles"
                    {% if settings.get('Subtitle Settings', {}).get('probe_for_embedded_subtitles') %}checked{% endif %}>
-            <p class="settings-description">Skip languages the file already has as an embedded track (forced tracks don't count). If every language is embedded, the search (and Bazarr notification) is skipped. If the add-time ffprobe playability check is on, its result is reused, so there's no second read of the file; otherwise this reads the file header once (needs ffprobe). In Plex mode it only uses the add-time check's result.</p>
+            <p class="settings-description">Skip languages the file already has as an embedded track (forced tracks don't count). If every language is embedded, the search (and Bazarr notification) is skipped. If the add-time ffprobe playability check is on, its result is reused, so there's no second read of the file; otherwise this reads the file header once (needs ffprobe). In Direct Mount it only uses the add-time check's result.</p>
         </div>
     
         <div class="settings-subheader"><h5>Bazarr integration</h5></div>
@@ -184,7 +184,7 @@
                     Bazarr Integration requires <strong>Symlinked/Local</strong> or <strong>Plex</strong> file collection management mode.
                 </p>
                 <p style="margin: 5px 0 0 0; color: var(--text-secondary); font-size: 0.9em;">
-                    Your current mode is <strong>{{ settings.get('File Management', {}).get('file_collection_management', 'Plex') }}</strong>.
+                    Your current mode is <strong>{{ settings.get('File Management', {}).get('file_collection_management', 'Plex')|fm_label }}</strong>.
                     To use Bazarr Integration, change your File Collection Management setting in Required Settings.
                 </p>
             </div>

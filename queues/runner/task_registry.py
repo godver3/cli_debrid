@@ -125,9 +125,15 @@ def _external_adds_default(get):
     return _fm(get) == 'Symlinked/Local' and bool(get('File Management', 'scan_mount_for_external_adds', False))
 
 
+def _direct_mount_jellyfin(get):
+    """Direct Mount run with Jellyfin/Emby."""
+    from utilities.direct_mount import direct_mount_server
+    return direct_mount_server(get) == 'jellyfin'
+
+
 def _plex_mode(get):
     """Plex is the media server: Plex-only tasks (collections, box sets)."""
-    if _silo(get):
+    if _silo(get) or _direct_mount_jellyfin(get):
         return False
     return not (_fm(get) == 'Symlinked/Local' and get('File Management', 'media_server_type', '') == 'jellyfin')
 
@@ -149,8 +155,9 @@ def _overlays(get):
 
 
 def _watch_history_default(get):
-    # Plex's watch history; Plex mode run with Silo has no Plex to read
-    return bool(get('Debug', 'do_not_add_plex_watch_history_items_to_queue', False)) and _silo(get) != 'library'
+    # Plex's watch history; Direct Mount run with Silo or Jellyfin/Emby has no Plex to read
+    return (bool(get('Debug', 'do_not_add_plex_watch_history_items_to_queue', False))
+            and _silo(get) != 'library' and not _direct_mount_jellyfin(get))
 
 
 # ---- the table -----------------------------------------------------------------
@@ -165,7 +172,7 @@ _SPECS = [
     _q('Scraping', 'Scraping', 1),
     _q('Adding', 'Adding', 1),
     _q('Checking', 'Checking', 30, _checking_default,
-       'Off by default in Plex mode when Plex library checks are disabled and no mounted path is set'),
+       'Off by default in Direct Mount when Plex library checks are disabled and no mounted path is set'),
     _q('Sleeping', 'Sleeping', 300),
     _q('Unreleased', 'Unreleased', 300),
     _q('Blacklisted', 'Blacklisted', 2 * HOUR),
@@ -179,7 +186,7 @@ _SPECS = [
              controlled_by='Settings → Required → Plex (Update Plex on file discovery / Disable Plex library checks)',
              executor='queue'),
     TaskSpec('task_plex_full_scan', 'Plex full library scan', 'media_server', 1800, default=_plex_full_scan_default,
-             controlled_by='On in Plex file management mode'),
+             controlled_by='On in Direct Mount'),
     TaskSpec('task_verify_plex_removals', 'Detect items removed from the media server', 'media_server', 900),
     TaskSpec('task_process_standalone_plex_removals', 'Process media server removals', 'media_server', HOUR),
     TaskSpec('task_verify_symlinked_files', 'Verify symlinks are in the media server', 'media_server', 2 * HOUR,

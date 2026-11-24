@@ -37,7 +37,8 @@ def plex_server_source(get_setting: Callable) -> tuple:
     sources = PLEX_SOURCES
     try:
         from utilities.silo_functions import is_silo_selected
-        if is_silo_selected(get_setting):
+        from utilities.direct_mount import is_direct_mount_without_plex
+        if is_silo_selected(get_setting) or is_direct_mount_without_plex(get_setting):
             sources = PLEX_SOURCES[:1]
     except Exception:
         pass

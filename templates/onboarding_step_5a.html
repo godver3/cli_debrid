@@ -16,7 +16,7 @@
             <li><b>It picks the subtitle made for your exact file</b> first (an OpenSubtitles file-hash match, so it's in sync), then one for the same release group, then the same Blu-ray or streaming source. A subtitle for a different episode or movie is never used.</li>
             <li><b>Languages the file already has</b> as an embedded text track can be skipped (Settings → Subtitles → <i>Probe for embedded subtitles</i>).</li>
             {% if subs.plex_mode %}
-            <li><b>Plex mode:</b> the media is on a read-only mount, so subtitles are uploaded to the Plex item and show up in its subtitle menu.</li>
+            <li><b>Direct Mount:</b> the media is on a read-only mount, so subtitles are uploaded to the Plex item and show up in its subtitle menu.</li>
             {% else %}
             <li><b>Symlinks mode:</b> subtitles are saved next to the library file (<code>Movie (2020).en.srt</code>), so Plex, Jellyfin and Emby all pick them up.</li>
             {% endif %}

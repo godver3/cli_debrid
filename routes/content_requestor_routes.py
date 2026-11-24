@@ -102,6 +102,17 @@ def request_content():
         selected_folder_is_custom = data.get('selected_folder_is_custom', False)
         selected_tags = data.get('selected_tags') or None  # Tags for Plex mode NZB routing
 
+        # Only configured versions: an unknown name would add Wanted items that no version
+        # settings can scrape, and an empty list would add nothing but report "Already have".
+        if not isinstance(selected_versions, list):
+            selected_versions = []
+        configured_versions = set((load_config().get('Scraping', {}) or {}).get('versions', {}) or {})
+        unknown_versions = [v for v in selected_versions if v not in configured_versions]
+        if unknown_versions:
+            return jsonify({'error': f"Unknown version(s): {', '.join(map(str, unknown_versions))}"}), 400
+        if not selected_versions:
+            return jsonify({'error': 'Select at least one version'}), 400
+
         # Convert selected versions to dictionary format
         versions = {version: True for version in selected_versions}
 

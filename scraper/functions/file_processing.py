@@ -8,6 +8,7 @@ from scraper.functions.ptt_parser import parse_title_unwrapped
 from scraper.functions import *
 from scraper.functions.common import detect_season_episode_info
 from functools import lru_cache
+from utilities.hdr_tags import hdr_tags_mean_hdr
 import time
 
 # Pre-compile regex patterns
@@ -103,13 +104,9 @@ def _parse_with_ptt(title: str) -> Dict[str, Any]:
     return result
 
 def detect_hdr(parsed_info: Dict[str, Any]) -> bool:
-    # Extract HDR information from PTT result
-    hdr_info = parsed_info.get('hdr', False)
-    if hdr_info:
-        return True
-
-    # No fallback method - removed to prevent false positives with titles like "Devil's Advocate"
-    return False
+    # Extract HDR information from PTT result ('SDR' is not HDR)
+    # No title-based fallback - removed to prevent false positives with titles like "Devil's Advocate"
+    return hdr_tags_mean_hdr(parsed_info.get('hdr'))
 
 def match_any_title(release_title: str, official_titles: List[str], threshold: float = 0.35) -> float:
     max_similarity = 0

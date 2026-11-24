@@ -476,8 +476,9 @@ def get_plex_file_info(file_path: str) -> dict:
         Dictionary with 'size_gb' and 'resolution' keys, or empty dict if not found
     """
     from utilities.silo_functions import is_silo_selected
-    if is_silo_selected():
-        return {}  # Silo is the media server; callers fall back to the file itself
+    from utilities.direct_mount import is_direct_mount_jellyfin
+    if is_silo_selected() or is_direct_mount_jellyfin():
+        return {}  # Silo or Jellyfin/Emby is the media server; callers fall back to the file itself
     try:
         # Get Plex connection details
         file_management = get_setting('File Management', 'file_collection_management', default='Plex')

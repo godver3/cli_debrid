@@ -126,7 +126,7 @@
                             {% set is_disallowed = is_windows and choice == 'Symlinked/Local' and not allow_windows_symlinks %}
                             <option value="{{ choice }}" 
                                     {% if current_value == choice %}selected{% endif %} 
-                                    {% if is_disallowed and current_value != 'Symlinked/Local' %}disabled{% endif %}>{{ choice }}</option>
+                                    {% if is_disallowed and current_value != 'Symlinked/Local' %}disabled{% endif %}>{{ (value.choice_labels or {}).get(choice, choice) }}</option>
                         {% endfor %}
                     </select>
                     {% if key == 'file_collection_management' and is_windows and not allow_windows_symlinks %}
@@ -199,8 +199,9 @@
                         data-section="File Management" data-key="plex_mode_media_server">
                     <option value="plex" {% if settings.get('File Management', {}).get('plex_mode_media_server', 'plex') == 'plex' %}selected{% endif %}>Plex</option>
                     <option value="silo" {% if settings.get('File Management', {}).get('plex_mode_media_server', 'plex') == 'silo' %}selected{% endif %}>Silo</option>
+                    <option value="jellyfin" {% if settings.get('File Management', {}).get('plex_mode_media_server', 'plex') == 'jellyfin' %}selected{% endif %}>Jellyfin / Emby</option>
                 </select>
-                <p class="settings-description">The server that reads the mount and tracks your library. Silo works like Plex here: point its libraries at the mount's folders, and cli_debrid asks Silo what it has. Silo's URL and API key go in the fields that appear below.</p>
+                <p class="settings-description">The server that reads the mount and tracks your library. Silo, Jellyfin and Emby work like Plex here: point their libraries at the mount's Movies and TV Shows folders, and cli_debrid asks the server what it has. Its URL and API key go in the fields that appear below.</p>
             </div>
             {% for key, value in settings_schema['Plex'].items() %}
                 {% if key != 'tab' %}
@@ -269,7 +270,7 @@
                        value="{{ settings.get('Debug', {}).get('silo_api_key', '') }}" class="settings-input"
                        data-section="Debug" data-key="silo_api_key"
                        autocomplete="new-password">
-                <p class="settings-description">An admin API key (starts with sa_), from Silo's Settings → API Keys. Silo's libraries must point at the folders cli_debrid fills: the symlink folder's Movies/TV Shows in Symlinked/Local mode, the mount's folders in Plex mode. If Silo sees them at a different path, name each Silo library folder the same as the folder here.</p>
+                <p class="settings-description">An admin API key (starts with sa_), from Silo's Settings → API Keys. Silo's libraries must point at the folders cli_debrid fills: the symlink folder's Movies/TV Shows in Symlinked/Local mode, the mount's folders in Direct Mount. If Silo sees them at a different path, name each Silo library folder the same as the folder here.</p>
             </div>
         </div>
     </div>
@@ -671,7 +672,7 @@
             <input type="checkbox" id="usenet_provider-ffprobe_all_nzbs" name="Usenet Provider.ffprobe_all_nzbs"
                    data-section="Usenet Provider" data-key="ffprobe_all_nzbs"
                    {% if settings.get('Usenet Provider', {}).get('ffprobe_all_nzbs') %}checked{% endif %}>
-            <p class="settings-description">Before collecting an NZB file, probe it with ffprobe to confirm it's actually playable, on top of the existing missing-article/segment health check. Works in both Symlinked/Local and Plex mode — in Plex mode it runs the moment the file is found on the mount, before cli_debrid tells Plex about it, so a confirmed-broken file is rejected and re-scraped before it ever shows up in Plex. Requires ffprobe to be installed. This will slow down how long it takes NZB items to reach Collected.</p>
+            <p class="settings-description">Before collecting an NZB file, probe it with ffprobe to confirm it's actually playable, on top of the existing missing-article/segment health check. Works in both Symlinked/Local and Direct Mount — in Direct Mount it runs the moment the file is found on the mount, before cli_debrid tells Plex about it, so a confirmed-broken file is rejected and re-scraped before it ever shows up in Plex. Requires ffprobe to be installed. This will slow down how long it takes NZB items to reach Collected.</p>
         </div>
         {% if settings.get('File Management', {}).get('file_collection_management', '') != 'Symlinked/Local' %}
         <div class="settings-form-group">
@@ -828,8 +829,8 @@ function updateMediaServerSettings() {
 }
 
 // Silo's URL/key fields: shown for Silo in Symlinked/Local (Media Server Type) or in
-// Plex mode (its Media Server). In Plex mode with Silo, Plex's own connection
-// and library fields are hidden.
+// Direct Mount (its Media Server). In Direct Mount with Silo or Jellyfin/Emby,
+// Plex's own connection and library fields are hidden.
 function updateSiloSettings() {
     const fm = document.querySelector('select[name="File Management.file_collection_management"]');
     const ms = document.getElementById('media-server-type');
@@ -837,9 +838,14 @@ function updateSiloSettings() {
     const fmv = fm ? fm.value : '';
     const symlinkSilo = fmv === 'Symlinked/Local' && ms && ms.value === 'silo';
     const plexSilo = fmv === 'Plex' && pms && pms.value === 'silo';
+    const plexJellyfin = fmv === 'Plex' && pms && pms.value === 'jellyfin';
     const silo = document.getElementById('silo-settings-in-file-management');
     if (silo) silo.style.display = (symlinkSilo || plexSilo) ? 'block' : 'none';
-    document.querySelectorAll('.plex-server-only').forEach(el => { el.style.display = plexSilo ? 'none' : ''; });
+    // Direct Mount with Jellyfin/Emby: its URL/token fields (Symlinked/Local
+    // shows them through Media Server Type, handled by updateMediaServerSettings)
+    const jellyfin = document.getElementById('jellyfin-settings-in-file-management');
+    if (jellyfin && fmv === 'Plex') jellyfin.style.display = plexJellyfin ? 'block' : 'none';
+    document.querySelectorAll('.plex-server-only').forEach(el => { el.style.display = (plexSilo || plexJellyfin) ? 'none' : ''; });
 }
 window.updateSiloSettings = updateSiloSettings;
 

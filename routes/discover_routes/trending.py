@@ -298,8 +298,11 @@ def recommendation_sources():
                 logging.error(f"Recommendation viewers error: {e}")
                 viewers = []
             from utilities.silo_functions import is_silo_selected
+            from utilities.direct_mount import is_direct_mount_jellyfin
             if is_silo_selected():
                 name = 'Silo'  # even with a Plex URL left over from before
+            elif is_direct_mount_jellyfin():
+                name = {'emby': 'Emby'}.get(viewers[0]['source'], 'Jellyfin') if viewers else 'Jellyfin/Emby'
             elif get_setting('Plex', 'url', ''):
                 name = 'Plex'
             elif viewers:

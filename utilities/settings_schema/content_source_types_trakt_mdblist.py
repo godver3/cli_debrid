@@ -49,7 +49,7 @@ TYPES = {
         },
         "tags": {
             "type": "list",
-            "description": "Plex mode only: Tags to embed in NZB filenames for items from this source. Requires NZB file naming to be enabled. Format: {tags-Tag1,Tag2} inserted between {imdb-...} and version.",
+            "description": "Direct Mount only: Tags to embed in NZB filenames for items from this source. Requires NZB file naming to be enabled. Format: {tags-Tag1,Tag2} inserted between {imdb-...} and version.",
             "default": []
         },
         "tags_exclusive": {
@@ -212,7 +212,7 @@ TYPES = {
         },
         "tags": {
             "type": "list",
-            "description": "Plex mode only: Tags to embed in NZB filenames for items from this source. Requires NZB file naming to be enabled. Format: {tags-Tag1,Tag2} inserted between {imdb-...} and version.",
+            "description": "Direct Mount only: Tags to embed in NZB filenames for items from this source. Requires NZB file naming to be enabled. Format: {tags-Tag1,Tag2} inserted between {imdb-...} and version.",
             "default": []
         },
         "tags_exclusive": {
@@ -271,7 +271,7 @@ TYPES = {
         },
         "tags": {
             "type": "list",
-            "description": "Plex mode only: Tags to embed in NZB filenames for items from this source. Requires NZB file naming to be enabled. Format: {tags-Tag1,Tag2} inserted between {imdb-...} and version.",
+            "description": "Direct Mount only: Tags to embed in NZB filenames for items from this source. Requires NZB file naming to be enabled. Format: {tags-Tag1,Tag2} inserted between {imdb-...} and version.",
             "default": []
         },
         "tags_exclusive": {
@@ -352,7 +352,7 @@ TYPES = {
         },
         "tags": {
             "type": "list",
-            "description": "Plex mode only: Tags to embed in NZB filenames for items from this source. Requires NZB file naming to be enabled. Format: {tags-Tag1,Tag2} inserted between {imdb-...} and version.",
+            "description": "Direct Mount only: Tags to embed in NZB filenames for items from this source. Requires NZB file naming to be enabled. Format: {tags-Tag1,Tag2} inserted between {imdb-...} and version.",
             "default": []
         },
         "tags_exclusive": {
@@ -504,7 +504,7 @@ TYPES = {
         },
         "tags": {
             "type": "list",
-            "description": "Plex mode only: Tags to embed in NZB filenames for items from this source. Requires NZB file naming to be enabled. Format: {tags-Tag1,Tag2} inserted between {imdb-...} and version.",
+            "description": "Direct Mount only: Tags to embed in NZB filenames for items from this source. Requires NZB file naming to be enabled. Format: {tags-Tag1,Tag2} inserted between {imdb-...} and version.",
             "default": []
         },
         "tags_exclusive": {

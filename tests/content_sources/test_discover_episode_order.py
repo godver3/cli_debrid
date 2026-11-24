@@ -54,6 +54,7 @@ class DiscoverEpisodeOrderTests(unittest.TestCase):
             (mock.patch.object(cr.DirectAPI, 'tmdb_to_imdb', return_value=('tt1207808', 'test')), None),
             (mock.patch.object(cr.DirectAPI, 'get_show_seasons', side_effect=self._show_seasons), None),
             (mock.patch.object(cr, 'add_wanted_items', return_value=78), None),
+            (mock.patch.object(cr, 'load_config', return_value={'Scraping': {'versions': {'1080p': {}}}}), None),
             (mock.patch('metadata.metadata.process_metadata', return_value={'episodes': [{'imdb_id': 'tt1207808'}]}), None),
             (patch_in_package(mr, '_saved_episode_order', return_value='default'), None),
             (patch_in_package(mr, '_seasons_for_order', return_value=DVD_SEASONS), None),

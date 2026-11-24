@@ -288,7 +288,7 @@ def orphans_scan():
     from utilities.deletion_manager import find_orphan_subtitles
     root = _library_root()
     if not root:
-        return jsonify({'error': 'Only for Symlinked/Local file management (Plex mode has no subtitle files).'}), 400
+        return jsonify({'error': 'Only for Symlinked/Local file management (Direct Mount has no subtitle files).'}), 400
     found = find_orphan_subtitles(root)
     areas = {}
     for p in found:

@@ -416,10 +416,13 @@ def fix_match_apply():
                                if row['ms_item_id'] not in (None, '')), None)
 
             from utilities.silo_functions import is_silo_selected
+            from utilities.direct_mount import is_direct_mount_jellyfin
             if is_silo_selected():
                 rematch_note = 'Media server rematch skipped - Silo matches files itself'
+            elif is_direct_mount_jellyfin():
+                rematch_note = 'Media server rematch skipped - Jellyfin/Emby matches files itself'
             elif not is_plex:
-                rematch_note = 'Media server rematch skipped - not in Plex mode'
+                rematch_note = 'Media server rematch skipped - not in Direct Mount'
             elif not plex_configured:
                 rematch_note = 'Media server rematch skipped - Plex is not configured'
             elif not rating_key:

@@ -41,6 +41,19 @@ except ImportError as e:
     logging.info(f"[MEDIAINFO_DEBUG] ✗ pymediainfo import failed: {e}")
     logging.info(f"[MEDIAINFO] MediaInfo not available ({e}) - will parse resolution from filenames only")
 
+def is_single_folder_name(name) -> bool:
+    """True when name is one folder name that stays inside the directory it is joined to:
+    no path separators, not '.'/'..' (or all dots), not absolute, not blank."""
+    if not isinstance(name, str):
+        return False
+    stripped = name.strip()
+    if not stripped or set(stripped) == {'.'}:
+        return False
+    if '/' in stripped or '\\' in stripped or os.path.isabs(stripped):
+        return False
+    return True
+
+
 def sanitize_filename(filename: str) -> str:
     """Sanitize filename to be safe for symlinks."""
     # Get replacement character from settings, default to underscore
@@ -561,7 +574,9 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
         if selected_folder and selected_folder_is_custom:
             # User selected a custom folder - update the root path
             sanitized_selected_folder = sanitize_filename(selected_folder)
-            if sanitized_selected_folder:
+            if not is_single_folder_name(sanitized_selected_folder):
+                logging.warning(f"[SymlinkPath] Ignoring user-selected custom folder {selected_folder!r}: not a single folder name. Using current root.")
+            elif sanitized_selected_folder:
                 final_symlinked_path_root = os.path.join(symlinked_path_base, sanitized_selected_folder)
                 logging.info(f"[SymlinkPath] User selected custom folder '{sanitized_selected_folder}'. New root: '{final_symlinked_path_root}'")
             else:
@@ -757,6 +772,12 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
                 logging.info(f"[SymlinkPath] selected_folder_is_custom: {selected_folder_is_custom}")
                 logging.info(f"[SymlinkPath] Root path: {final_symlinked_path_root}")
                 logging.info(f"[SymlinkPath] =============================================")
+
+                if selected_folder and not selected_folder_is_custom and not is_single_folder_name(selected_folder):
+                    # Requests (any user role) send this name, and it is joined into the
+                    # symlink path: '..' or a path would put links outside the library.
+                    logging.warning(f"[SymlinkPath] Ignoring user-selected folder {selected_folder!r}: not a single folder name. Using auto-detection.")
+                    selected_folder = None
 
                 if selected_folder and not selected_folder_is_custom:
                     # User selected a standard type folder (not a custom folder)
@@ -1060,6 +1081,24 @@ def create_symlink(source_path: str, dest_path: str, media_item_id: int = None, 
 def _get_video_extensions() -> set:
     """Return a set of common video file extensions."""
     return {'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.mpg', '.mpeg', '.ts', '.m2ts'}
+
+
+def _additional_video_files(all_video_files: List[str], primary_file: str) -> List[str]:
+    """The folder's other videos that may be more versions of the item: every
+    video except the primary file, samples and trailers.
+
+    A sample named like the episode ("show.s02e07...sample.mkv") parses as the
+    same SxxEyy, so it became a second Collected row with its own library
+    symlink. cli_mount drops samples at import; the built-in mount engine
+    (0.8.0) keeps them in the job folder, which is when this started.
+    The primary file is never filtered, so a show named "Sample" still works.
+    """
+    from debrid.common.utils import is_unwanted_file
+    others = [f for f in all_video_files if f != primary_file]
+    skipped = [f for f in others if is_unwanted_file(os.path.basename(f))]
+    if skipped:
+        logging.info(f"[MultiFile] Skipping sample/trailer file(s): {[os.path.basename(f) for f in skipped]}")
+    return [f for f in others if f not in skipped]
 
 
 def _find_all_video_files_in_folder(folder_path: str, primary_file: str) -> List[str]:
@@ -2108,8 +2147,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 if source_folder and not skip_multifile_scan:
                     try:
                         all_video_files = _find_all_video_files_in_folder(source_folder, source_file)
-                        # Filter out the primary file we already processed
-                        additional_files = [f for f in all_video_files if f != source_file]
+                        additional_files = _additional_video_files(all_video_files, source_file)
 
                         if additional_files:
                             item_type = item.get('type', 'movie')

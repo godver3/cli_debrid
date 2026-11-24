@@ -85,7 +85,7 @@
   <h1 class="sm-title">Subtitle Manager</h1>
   <p class="sm-intro">
     Subtitle status for collected movies and episodes. A language counts as present when there's a subtitle file, one cli_debrid saved, or an embedded text track your media server found (not forced, not commentary, not an image/styled format that makes players transcode). Click an item to see its subtitles, search every provider by hand, or let the best match download automatically.
-    {% if plex_mode %}In Plex mode subtitles are uploaded to Plex, so the list shows what cli_debrid downloaded; open an item to see every subtitle Plex has.{% endif %}
+    {% if plex_mode %}In Direct Mount subtitles are uploaded to Plex, so the list shows what cli_debrid downloaded; open an item to see every subtitle Plex has.{% endif %}
     Languages, providers and the text-only (no transcoding) option are in <a href="{{ url_for('settings.index') }}#subtitles">Settings → Subtitle Settings</a>.
   </p>
 

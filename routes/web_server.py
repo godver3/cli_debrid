@@ -151,6 +151,12 @@ def inject_version():
         version = "Unknown"
     return dict(version=version)
 
+@app.template_filter('fm_label')
+def fm_label_filter(value):
+    """Display name of a File Management mode ('Plex' shows as "Direct Mount")."""
+    from utilities.file_management_labels import file_management_label
+    return file_management_label(value)
+
 @app.template_filter('isinstance')
 def isinstance_filter(value, class_name):
     return isinstance(value, getattr(datetime, class_name, type(None)))

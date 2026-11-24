@@ -49,9 +49,9 @@
         {# Debug output #}
         <!-- Management Type: {{ settings.get('File Management', {}).get('file_collection_management', 'Plex') }} -->
         {% with management_type = settings.get('File Management', {}).get('file_collection_management', 'Plex') %}
-        <p>You've selected {% if management_type == 'Symlinked/Local' %}Symlinked/Local{% else %}{{ management_type }}{% endif %} as your library management service. Here's your current setup:</p>
+        <p>You've selected {% if management_type == 'Symlinked/Local' %}Symlinked/Local{% else %}{{ management_type|fm_label }}{% endif %} as your library management service. Here's your current setup:</p>
         <ul class="info-list">
-            <li><span class="var-label">Library Management:</span> <span class="var-value">{% if management_type == 'Symlinked/Local' %}Symlinked/Local{% else %}{{ management_type }}{% endif %}</span></li>
+            <li><span class="var-label">Library Management:</span> <span class="var-value">{% if management_type == 'Symlinked/Local' %}Symlinked/Local{% else %}{{ management_type|fm_label }}{% endif %}</span></li>
             {% if settings.get('Plex', {}).get('url') %}
             <li><span class="var-label">Server URL:</span> <span class="var-value">{{ settings.get('Plex', {}).get('url') }}</span></li>
             {% endif %}
@@ -74,7 +74,7 @@
         <p>Starting fresh with a new media library. Here's your current configuration:</p>
         {% with management_type = settings.get('File Management', {}).get('file_collection_management', 'Plex') %}
         <ul class="info-list">
-            <li><span class="var-label">Library Management:</span> <span class="var-value">{% if management_type == 'Symlinked/Local' %}Symlinked/Local{% else %}{{ management_type }}{% endif %}</span></li>
+            <li><span class="var-label">Library Management:</span> <span class="var-value">{% if management_type == 'Symlinked/Local' %}Symlinked/Local{% else %}{{ management_type|fm_label }}{% endif %}</span></li>
             {% if settings.get('Plex', {}).get('url') %}
             <li><span class="var-label">Server URL:</span> <span class="var-value">{{ settings.get('Plex', {}).get('url') }}</span></li>
             {% endif %}
@@ -131,7 +131,7 @@
         {% endif %}
         <p>Here's your current configuration:</p>
         <ul class="info-list">
-            <li><span class="var-label">Library Management:</span> <span class="var-value">{% if management_type == 'Symlinked/Local' %}Symlinked/Local{% else %}{{ management_type }}{% endif %}</span></li>
+            <li><span class="var-label">Library Management:</span> <span class="var-value">{% if management_type == 'Symlinked/Local' %}Symlinked/Local{% else %}{{ management_type|fm_label }}{% endif %}</span></li>
             {% if plex_url %}
             <li><span class="var-label">Server URL:</span> <span class="var-value">{{ plex_url }}</span></li>
             {% endif %}
@@ -327,7 +327,7 @@
         <p>Here's your current configuration:</p>
         {% with management_type = settings.get('File Management', {}).get('file_collection_management', 'Symlinked/Local') %}
         <ul class="info-list">
-            <li><span class="var-label">Library Management:</span> <span class="var-value">{% if management_type == 'Symlinked/Local' %}Symlinked/Local{% else %}{{ management_type }}{% endif %}</span></li>
+            <li><span class="var-label">Library Management:</span> <span class="var-value">{% if management_type == 'Symlinked/Local' %}Symlinked/Local{% else %}{{ management_type|fm_label }}{% endif %}</span></li>
             {% if settings.get('Plex', {}).get('url') %}
             <li><span class="var-label">Server URL:</span> <span class="var-value">{{ settings.get('Plex', {}).get('url') }}</span></li>
             {% endif %}

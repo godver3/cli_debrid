@@ -211,7 +211,7 @@
     try {
       const d = await api('/api/subtitles/item/' + id);
       $('sm-d-title').textContent = d.label;
-      $('sm-d-sub').textContent = d.plex_mode ? 'Plex mode: subtitles are uploaded to the Plex item' : 'Subtitles are saved next to the library file';
+      $('sm-d-sub').textContent = d.plex_mode ? 'Direct Mount: subtitles are uploaded to the Plex item' : 'Subtitles are saved next to the library file';
       $('sm-d-file').innerHTML = `<span>Release</span><span>${esc(d.release || '—')}</span>
         <span>File</span><span>${esc(d.file || '—')}</span><span>Location</span><span>${esc(d.location || '—')}</span>`;
       $('sm-d-lang').innerHTML = '<option value="">All configured languages</option>' +
