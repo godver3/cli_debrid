@@ -52,10 +52,19 @@ META = (fld(1, '95af6933-9d46-487a-96a1-efac7d2b4113') + fld(2, 'Veep.S06E01') +
 
 
 class FakeEngine:
-    def __init__(self, code=201):
-        self.code, self.posts = code, []
+    """Records POSTs; GET /status (the readiness check) answers 200.
+    reachable(method, path, call_no) -> False makes a call fail like a
+    refused connection."""
+    def __init__(self, code=201, reachable=None):
+        self.code, self.posts, self.reachable, self.calls, self.last_error = code, [], reachable, 0, ''
 
     def _call(self, method, path, timeout=0, **kw):
+        self.calls += 1
+        if self.reachable and not self.reachable(method, path, self.calls):
+            self.last_error = 'Connection refused'
+            return None, None
+        if method == 'GET':
+            return 200, {}
         self.posts.append((method, path, kw.get('json')))
         return self.code, ({'error': 'boom'} if self.code >= 400 else {})
 
@@ -103,6 +112,9 @@ class MigrateTests(unittest.TestCase):
             outcome, msg, _ = bm.import_one(FakeEngine(), {'name': 'X', 'info_hash': 'missing'}, d)
             self.assertEqual(outcome, 'failed')
             self.assertIn('no cli_mount metadata', msg)
+            outcome, msg, _ = bm.import_one(FakeEngine(reachable=lambda *a: False), entry, d)
+            self.assertEqual(outcome, 'unreachable')
+            self.assertIn('Connection refused', msg, 'the real reason, not just "unreachable"')
 
     def test_compare_identical_and_different(self):
         class Jobs:
@@ -282,7 +294,7 @@ class SpaceTests(unittest.TestCase):
             p = bm.space_plan(['a', 'b', 'c'], sizes, d, cache_dir=os.path.join(d, 'cache'), cache_left=2 << 30)
             self.assertEqual((p['cache_reserved'], p['fits'], p['fits_jobs']), (2 << 30, False, 2))
 
-    def _run(self, free, limit=0, n=3):
+    def _run(self, free, limit=0, n=3, eng=None, prepare=None):
         with tempfile.TemporaryDirectory() as d:
             mdir = os.path.join(d, 'usenet', 'meta')
             os.makedirs(mdir)
@@ -296,9 +308,10 @@ class SpaceTests(unittest.TestCase):
             class Source:
                 def iter_library_nzbs(self):
                     return iter(entries)
-            eng = FakeEngine()
-            with unittest.mock.patch('shutil.disk_usage', side_effect=free):
-                jid = bm.start_import(Source(), eng, d, limit=limit, space={'data_dir': d})
+            eng = eng or FakeEngine()
+            with unittest.mock.patch('shutil.disk_usage', side_effect=free), \
+                    unittest.mock.patch.object(bm, 'ENGINE_WAIT', 0.2), unittest.mock.patch.object(bm, 'ENGINE_POLL', 0.01):
+                jid = bm.start_import(Source(), eng, d, limit=limit, space={'data_dir': d}, prepare=prepare)
                 for _ in range(200):
                     if bm.status(jid).get('complete'):
                         break
@@ -328,6 +341,45 @@ class SpaceTests(unittest.TestCase):
         self.assertEqual(st['status'], 'error')
         self.assertIn('Stopped after 2 job(s)', st['error'])
         self.assertEqual(len(eng.posts), 2, 'jobs imported before the stop are kept')
+
+    def test_engine_down_stops_once_with_a_clear_error(self):
+        # Engine not running: one clear error, not a "failed" line per job.
+        st, eng = self._run(lambda p: self._usage(50 << 30), eng=FakeEngine(reachable=lambda *a: False))
+        self.assertEqual((st['status'], st['failed'], st['done']), ('error', 0, 0))
+        self.assertIn("engine isn't answering (Connection refused)", st['error'])
+        self.assertIn('Start alongside', st['error'])
+        self.assertEqual(eng.posts, [])
+
+    def test_waits_for_the_engine_after_the_settings_sync(self):
+        # The sync (prepare) restarts the engine: the import waits for it
+        # instead of racing through every job while it's down.
+        state = {'synced': False, 'up_after': None}
+
+        def prepare():
+            state['synced'] = True
+            state['up_after'] = eng.calls + 3   # down for the next 3 calls
+
+        def reachable(method, path, n):
+            return state['up_after'] is not None and n > state['up_after']
+        eng = FakeEngine(reachable=reachable)
+        st, _ = self._run(lambda p: self._usage(50 << 30), eng=eng, prepare=prepare)
+        self.assertTrue(state['synced'])
+        self.assertEqual((st['status'], st['imported'], st['failed']), ('complete', 3, 0))
+
+    def test_engine_restart_mid_run_retries_the_job(self):
+        # 2nd import POST hits a restart: wait, retry it, carry on.
+        def reachable(method, path, n):
+            return not (method == 'POST' and n == 3)
+        st, eng = self._run(lambda p: self._usage(50 << 30), eng=FakeEngine(reachable=reachable))
+        self.assertEqual((st['status'], st['imported'], st['failed']), ('complete', 3, 0))
+        self.assertEqual(len(eng.posts), 3)
+
+    def test_engine_gone_mid_run_stops_instead_of_failing_the_rest(self):
+        def reachable(method, path, n):
+            return n <= 2   # readiness check + first import, then gone
+        st, eng = self._run(lambda p: self._usage(50 << 30), n=5, eng=FakeEngine(reachable=reachable))
+        self.assertEqual((st['status'], st['imported'], st['failed']), ('error', 1, 0))
+        self.assertIn('Stopped after 1 job(s) (1 imported)', st['error'])
 
     def test_copies_plex_protection_and_prewarm(self):
         import json

@@ -247,6 +247,52 @@ class MountRoutesTests(unittest.TestCase):
         self.assertEqual((code, body['job']), (200, 'abc'))
         st.assert_called_once()
 
+    def test_import_needs_the_engine_and_syncs_inside_the_import(self):
+        from utilities import builtin_engine as be, builtin_migrate as bm
+        self.store['Usenet Provider']['provider'] = 'climount'
+        with mock.patch.object(be, 'wanted', return_value=False), \
+                mock.patch.object(bm, 'start_import') as st:
+            code, body = self._post(mr.migrate_import, {'limit': 0})
+        self.assertEqual(code, 400)
+        self.assertIn('Start alongside', body['error'])
+        st.assert_not_called()
+        # Copied settings: the sync runs in the import thread (prepare), so
+        # the import waits for an engine restart instead of racing it.
+        with mock.patch.object(be, 'wanted', return_value=True), \
+                mock.patch.object(bm, 'climount_repair_settings', return_value={'plex_prewarm': True}), \
+                mock.patch.object(bm, 'start_import', return_value='job1') as st, \
+                mock.patch.object(mr, '_engine'), mock.patch.object(mr, '_climount_source'), \
+                mock.patch.object(mr, '_import_space', return_value=None):
+            code, body = self._post(mr.migrate_import, {'limit': 0})
+        self.assertEqual((code, body['job']), (200, 'job1'))
+        self.assertIs(st.call_args.kwargs['prepare'], mr._sync_now)
+        self.sync.assert_not_called()
+
+    def test_status_counts_only_jobs_cli_mount_lists(self):
+        # cli_mount's meta folder keeps maps of removed jobs (a user had 1093
+        # maps for 226 jobs): the page counts what Import will import.
+        from utilities import builtin_engine as be
+        with tempfile.TemporaryDirectory() as d:
+            mdir = os.path.join(d, 'usenet', 'meta')
+            os.makedirs(mdir)
+            for i in range(5):
+                with open(os.path.join(mdir, f'j{i}.meta'), 'wb') as f:
+                    f.write(b'\x0a' + b'x' * 100)
+            self.store['Usenet Provider'].update(provider='climount', data_path=d)
+
+            class Source:
+                def iter_library_nzbs(self):
+                    return iter([{'info_hash': 'j1'}, {'info_hash': 'j3'}])
+            with mock.patch.object(mr, '_climount_source', return_value=Source()), \
+                    mock.patch.object(mr, '_import_space', return_value={'data_dir': d, 'cache_dir': '', 'cache_left': 0}), \
+                    mock.patch.object(be, 'state', return_value='RUNNING'), \
+                    mock.patch.object(be, 'problems', return_value=[]), \
+                    mock.patch.object(mr, '_debrid_needed', return_value=False), \
+                    mock.patch.object(mr, '_debrid_status', return_value={}), \
+                    Flask(__name__).test_request_context():
+                body = mr.migrate_status().get_json()
+        self.assertEqual((body['metas'], body['listed'], body['space']['jobs']), (5, 2, 2))
+
 
 if __name__ == '__main__':
     unittest.main()

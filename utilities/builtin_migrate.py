@@ -496,20 +496,49 @@ def cancel(job_id: str) -> bool:
     return False
 
 
-def start_import(source, engine, data_path: str, limit: int = 0, space: Optional[dict] = None) -> str:
+def start_import(source, engine, data_path: str, limit: int = 0, space: Optional[dict] = None,
+                 prepare: Optional[Callable[[], object]] = None) -> str:
     """Import cli_mount's library into the engine in the background.
     source: a CliMountClient; engine: a BuiltinClient. space: {'data_dir',
-    'cache_dir', 'cache_left'} turns on the disk-space check."""
+    'cache_dir', 'cache_left'} turns on the disk-space check. prepare: run
+    first, in the import thread (the engine settings sync, which may restart
+    the engine: the import then waits for it to answer again)."""
     job_id = uuid.uuid4().hex[:12]
     with _lock:
         _jobs[job_id] = {'kind': 'import', 'status': 'starting', 'total': 0, 'done': 0, 'imported': 0,
                          'already': 0, 'failed': 0, 'skipped_files': 0, 'complete': False, 'log': [], 'error': None}
-    threading.Thread(target=_run_import, args=(job_id, source, engine, data_path, limit, space),
+    threading.Thread(target=_run_import, args=(job_id, source, engine, data_path, limit, space, prepare),
                      name='builtin-migrate', daemon=True).start()
     return job_id
 
 
 SPACE_RECHECK_EVERY = 25
+# The engine may be (re)starting when an import begins (the import's own
+# settings sync restarts it): wait this long for it to answer before giving up.
+ENGINE_WAIT = 90
+ENGINE_POLL = 2
+
+
+def _engine_reason(engine) -> str:
+    return getattr(engine, 'last_error', '') or 'no answer'
+
+
+def wait_for_engine(engine, timeout: Optional[float] = None, cancelled: Callable[[], bool] = lambda: False) -> bool:
+    """True once the engine answers HTTP at all (any status code), within
+    timeout seconds (default ENGINE_WAIT)."""
+    deadline = time.monotonic() + (ENGINE_WAIT if timeout is None else timeout)
+    while True:
+        code, _ = engine._call('GET', '/status', timeout=5)
+        if code is not None:
+            return True
+        if cancelled() or time.monotonic() >= deadline:
+            return False
+        time.sleep(ENGINE_POLL)
+
+
+def _engine_down_error(engine) -> str:
+    return (f"The built-in mount engine isn't answering ({_engine_reason(engine)}). Start it with step 1 "
+            f"(Start alongside), check the Mount page shows it running, then run Import again.")
 
 
 def _file_body(f: dict) -> dict:
@@ -525,7 +554,8 @@ def _file_body(f: dict) -> dict:
 
 
 def import_one(engine, entry: dict, mdir: str) -> Tuple[str, str, int]:
-    """(outcome, message, skipped files). outcome: imported/already/failed."""
+    """(outcome, message, skipped files). outcome: imported/already/failed,
+    or unreachable when the engine gave no answer (the job wasn't tried)."""
     jid, folder = entry.get('info_hash') or '', entry.get('name') or ''
     if not jid or not folder:
         return 'failed', f'{folder or jid}: missing name or id', 0
@@ -543,16 +573,22 @@ def import_one(engine, entry: dict, mdir: str) -> Tuple[str, str, int]:
     body = {'id': jid, 'name': folder, 'category': entry.get('category') or '',
             'files': [_file_body(f) for f in meta['files']]}
     code, resp = engine._call('POST', '/jobs/import', timeout=60, json=body)
+    if code is None:
+        return 'unreachable', f'{folder}: engine unreachable: {_engine_reason(engine)}', 0
     if code == 201:
         return 'imported', '', len(meta['skipped'])
     if code == 409:
         return 'already', '', 0
     err = (resp or {}).get('error') if isinstance(resp, dict) else None
-    return 'failed', f'{folder}: engine said {code}: {err or "unreachable"}', len(meta['skipped'])
+    return 'failed', f'{folder}: engine said {code}: {err or "no details"}', len(meta['skipped'])
 
 
-def _run_import(job_id, source, engine, data_path, limit, space=None):
+def _run_import(job_id, source, engine, data_path, limit, space=None, prepare=None):
+    cancelled = lambda: bool(status(job_id).get('cancel'))  # noqa: E731
     try:
+        if prepare:
+            _set(job_id, status='applying settings')
+            prepare()
         mdir = meta_dir(data_path)
         if not os.path.isdir(mdir):
             _set(job_id, status='error', complete=True,
@@ -578,6 +614,13 @@ def _run_import(job_id, source, engine, data_path, limit, space=None):
                            f"but only {_gb(plan['room'])} can be used on the disk holding {space['data_dir']}. "
                            f"Free up space, or import at most {plan['fits_jobs']} job(s) for now (Jobs to import).")
                 return
+        _set(job_id, status='waiting for the engine')
+        if not wait_for_engine(engine, cancelled=cancelled):
+            if cancelled():
+                _set(job_id, status='cancelled', complete=True)
+            else:
+                _set(job_id, status='error', complete=True, error=_engine_down_error(engine))
+            return
         _set(job_id, status='running', total=len(entries))
         _log(job_id, f'{len(entries)} job(s) listed by cli_mount; metadata from {mdir}')
         for n, e in enumerate(entries):
@@ -594,6 +637,20 @@ def _run_import(job_id, source, engine, data_path, limit, space=None):
                                f"({_gb(rest['free'])} free). Jobs imported so far stay; free up space and run Import again.")
                     return
             outcome, msg, skipped = import_one(engine, e, mdir)
+            if outcome == 'unreachable':
+                # Restarted or crashed mid-run: wait for it once, then retry
+                # this job. Still down: stop instead of failing every job left.
+                if wait_for_engine(engine, cancelled=cancelled):
+                    outcome, msg, skipped = import_one(engine, e, mdir)
+                if outcome == 'unreachable':
+                    if cancelled():
+                        _set(job_id, status='cancelled', complete=True)
+                        return
+                    st = status(job_id)
+                    _set(job_id, status='error', complete=True,
+                         error=f"Stopped after {n} job(s) ({st['imported']} imported): " + _engine_down_error(engine)
+                               + ' Jobs imported so far stay.')
+                    return
             _add(job_id, outcome)
             _add(job_id, 'done')
             if skipped:
