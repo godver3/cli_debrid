@@ -333,11 +333,18 @@ class MountRoutesTests(unittest.TestCase):
                     mock.patch.object(mr, '_import_space', return_value={'data_dir': d, 'cache_dir': '', 'cache_left': 0}), \
                     mock.patch.object(be, 'state', return_value='RUNNING'), \
                     mock.patch.object(be, 'problems', return_value=[]), \
+                    mock.patch.object(be, 'host_problems', return_value=['the container lacks SYS_ADMIN']), \
                     mock.patch.object(mr, '_debrid_needed', return_value=False), \
                     mock.patch.object(mr, '_debrid_status', return_value={}), \
                     Flask(__name__).test_request_context():
+                with open(os.path.join(d, 'config.json'), 'w') as f:
+                    json.dump({'usenet': {'providers': [{'host': 'news.a'}, {'host': 'news.b'}]}}, f)
+                self.store['Built-in Mount']['servers'] = '[]'
                 body = mr.migrate_status().get_json()
         self.assertEqual((body['metas'], body['listed'], body['space']['jobs']), (5, 2, 2))
+        # Checklist: container can't mount; no servers here, 2 to copy.
+        self.assertEqual((body['host_problems'], body['servers_set'], body['climount_servers']),
+                         (['the container lacks SYS_ADMIN'], 0, 2))
 
 
 if __name__ == '__main__':

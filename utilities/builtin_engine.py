@@ -85,17 +85,66 @@ def wanted(settings: dict = None) -> bool:
     return selected(s) or alongside(s)
 
 
+# What a container needs to mount, as one line for the messages below.
+CONTAINER_FUSE_SETUP = ('`devices: [/dev/fuse]`, `cap_add: [SYS_ADMIN]` and '
+                        '`security_opt: [apparmor:unconfined]`')
+_CAP_SYS_ADMIN = 21
+
+
+def _in_container() -> bool:
+    return (os.path.exists('/.dockerenv') or os.path.exists('/run/.containerenv')
+            or bool(os.environ.get('container')))
+
+
+def _cap_bounded(bit: int, status_path: str = '/proc/self/status'):
+    """True/False: the capability is in this process's bounding set (what
+    `cap_add` grants a container); None when it can't be read."""
+    try:
+        with open(status_path) as f:
+            for line in f:
+                if line.startswith('CapBnd:'):
+                    return bool(int(line.split()[1], 16) >> bit & 1)
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def _apparmor_profile() -> str:
+    """This process's AppArmor profile, e.g. 'docker-default (enforce)' or
+    'unconfined'; '' without AppArmor."""
+    for p in ('/proc/self/attr/apparmor/current', '/proc/self/attr/current'):
+        try:
+            with open(p) as f:
+                return f.read().strip('\x00\n ')
+        except OSError:
+            continue
+    return ''
+
+
 def host_problems() -> list:
     """Reasons this container/machine can't run the engine at all (no
-    settings involved): missing binary, /dev/fuse or WinFsp."""
+    settings involved): missing binary, /dev/fuse or WinFsp, and in a
+    container the two things a mount also needs: SYS_ADMIN, and an AppArmor
+    profile that allows mounting (Docker's default denies every mount, even
+    with SYS_ADMIN). Each says what to add to the container."""
     out = []
     if not (os.path.isfile(ENGINE_BIN) if IS_WINDOWS else os.access(ENGINE_BIN, os.X_OK)):
         out.append(f'engine binary missing ({ENGINE_BIN}); this build has no built-in mount')
     if IS_WINDOWS:
         if not any(os.path.exists(p) for p in _WINFSP_DLLS):
             out.append('WinFsp is not installed: get it from https://winfsp.dev (the built-in mount uses it on Windows)')
-    elif not os.path.exists('/dev/fuse'):
-        out.append('/dev/fuse is not available: add `devices: [/dev/fuse]` and `cap_add: [SYS_ADMIN]` to the container')
+        return out
+    # One line per container: the first missing piece, with the whole fix.
+    if not os.path.exists('/dev/fuse'):
+        out.append(f'/dev/fuse is not available: give the cli_debrid container {CONTAINER_FUSE_SETUP}')
+    elif _in_container():
+        profile = _apparmor_profile()
+        if _cap_bounded(_CAP_SYS_ADMIN) is False:
+            out.append(f'the container lacks SYS_ADMIN, which mounting needs: give the cli_debrid container '
+                       f'{CONTAINER_FUSE_SETUP}')
+        elif profile.startswith('docker-default') and '(enforce)' in profile:
+            out.append("Docker's default AppArmor profile blocks mounting: add "
+                       "`security_opt: [apparmor:unconfined]` to the cli_debrid container")
     return out
 
 

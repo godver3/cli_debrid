@@ -638,11 +638,11 @@ def migrate_status():
     root = bm.climount_mount_root(get_setting)
     space = None
     listed = None  # jobs cli_mount lists now: what Import imports
+    try:
+        listed = [e.get('info_hash') or '' for e in _climount_source().iter_library_nzbs()]
+    except Exception as exc:
+        logging.debug(f'[mount] cli_mount job list failed: {exc}')
     if metas:
-        try:
-            listed = [e.get('info_hash') or '' for e in _climount_source().iter_library_nzbs()]
-        except Exception as exc:
-            logging.debug(f'[mount] cli_mount job list failed: {exc}')
         try:
             sp = _import_space()
             sizes = bm.meta_sizes(mdir)
@@ -652,8 +652,17 @@ def migrate_status():
             space = bm.space_plan(ids, sizes, sp['data_dir'], sp['cache_dir'], sp['cache_left'])
         except Exception as exc:
             logging.debug(f'[mount] import space estimate failed: {exc}')
+    # Pre-flight checklist for the page: can this container mount at all,
+    # and where the usenet servers will come from.
+    try:
+        climount_servers = len(bm.climount_repair_settings(data_path).get(bm.SERVERS_KEY) or [])
+    except Exception:
+        climount_servers = 0
     return jsonify({
         'space': space,
+        'host_problems': builtin_engine.host_problems(),
+        'servers_set': len(builtin_engine.server_rows(get_setting(SECTION) or {})),
+        'climount_servers': climount_servers,
         'provider': (up.get('provider') or 'climount'),
         'climount_url': up.get('url') or '',
         'alongside': bool((get_setting('Built-in Mount') or {}).get('run_alongside')),
