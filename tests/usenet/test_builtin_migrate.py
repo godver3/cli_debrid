@@ -125,6 +125,22 @@ class MigrateTests(unittest.TestCase):
         get = lambda s, k, d='': '/media/x/mnt/__all__/' if (s, k) == ('File Management', 'original_files_path') else d
         self.assertEqual(bm.climount_mount_root(get), '/media/x/mnt')
 
+    def test_climount_mount_root_in_direct_mount(self):
+        def getter(mode, original, mounted):
+            values = {('File Management', 'file_collection_management'): mode,
+                      ('File Management', 'original_files_path'): original,
+                      ('Plex', 'mounted_file_location'): mounted}
+            return lambda s, k, d='': values.get((s, k), d)
+        # Direct Mount: its own path wins, even over a stale original files path.
+        self.assertEqual(bm.climount_mount_root(getter('Plex', '/mnt/zurg/__all__', '/mnt/decypharr/__all__')),
+                         '/mnt/decypharr')
+        # Onboarding hides the original files path in Direct Mount, so it's often blank.
+        self.assertEqual(bm.climount_mount_root(getter('Plex', '', '/mnt/decypharr/__all__')), '/mnt/decypharr')
+        # Symlinked/Local: the original files path, else the Direct Mount one.
+        self.assertEqual(bm.climount_mount_root(getter('Symlinked/Local', '/mnt/cm/__all__', '/mnt/x/__all__')), '/mnt/cm')
+        self.assertEqual(bm.climount_mount_root(getter('Symlinked/Local', '', '/mnt/x/__all__')), '/mnt/x')
+        self.assertEqual(bm.climount_mount_root(getter('Plex', '', '')), '')
+
 
 class _Resp:
     def __init__(self, code, body=None, content=b''):
@@ -377,3 +393,78 @@ class BackboneTests(unittest.TestCase):
         from utilities.builtin_engine import servers
         got = servers({'servers': [{'host': 'a', 'backbone': ' omicron '}, {'host': 'b'}]})
         self.assertEqual([s['backbone'] for s in got], ['omicron', ''])
+
+
+FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fixtures')
+
+
+def _fixture(name):
+    with open(os.path.join(FIXTURES, name), 'rb') as f:
+        return f.read()
+
+
+def _expected_segs(n, size, data_start, prefix):
+    """The segment map the fixture generator wrote (last segment a third)."""
+    out, off = [], 0
+    for i in range(n):
+        b = size // 3 if i == n - 1 else size
+        out.append({'number': i + 1, 'id': f'{prefix}-{i + 1:04d}@news.example', 'start': off,
+                    'end': off + b - 1, 'data_start': data_start})
+        off += b
+    return out
+
+
+class UpstreamV2MetaTests(unittest.TestCase):
+    """Upstream decypharr rewrites every .meta into its zstd "v2" format
+    (pkg/usenet/nzbcodec.go). The fixtures were written by upstream's own
+    encodeNZBV2: a 300-segment file, a deleted file, a file with no
+    articles, and an encrypted RAR member."""
+
+    def test_plain_job(self):
+        m = bm.parse_meta(_fixture('v2_plain.meta'))
+        self.assertEqual((m['id'], m['name']), ('a1b2c3d4e5f6', 'Some.Movie.2026.1080p.WEB-DL-GRP'))
+        self.assertEqual([(f['name'], f['size']) for f in m['files']],
+                         [('Some.Movie.2026.1080p.WEB-DL-GRP.mkv', 300 * 716800), ('Extras.mkv', 4 * 716800)],
+                         'deleted sample.mkv left out')
+        self.assertEqual(m['files'][0]['segments'], _expected_segs(300, 716800, 0, 'main'))
+        self.assertEqual(m['files'][1]['segments'], _expected_segs(4, 716800, 3, 'ex'),
+                         'columns of a later file start after the earlier files\' segments')
+        self.assertNotIn('key', m['files'][0])
+        self.assertEqual(m['skipped'], [('empty.nfo', 'no articles')])
+
+    def test_encrypted_member_keeps_key_iv_and_plaintext_size(self):
+        m = bm.parse_meta(_fixture('v2_encrypted.meta'))
+        f = m['files'][0]
+        self.assertEqual((f['name'], f['size'], f['key'], f['iv']),
+                         ('Some.Movie.2026.1080p.WEB-DL-GRP.mkv', 1234567, b'0123456789abcdef' * 2, b'ivivivivivivivi!'))
+        self.assertEqual(f['segments'], _expected_segs(5, 716800, 77, 'enc'))
+
+    def test_truncated_file_is_an_error_not_a_crash(self):
+        data = _fixture('v2_plain.meta')
+        with self.assertRaises(Exception):
+            bm.parse_meta(data[:40])
+
+    def test_import_one_from_v2(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, 'a1b2c3d4e5f6.meta'), 'wb') as f:
+                f.write(_fixture('v2_plain.meta'))
+            with open(os.path.join(d, 'broken.meta'), 'wb') as f:
+                f.write(_fixture('v2_plain.meta')[:40])
+            eng = FakeEngine()
+            self.assertEqual(bm.import_one(eng, {'name': 'Some Movie', 'info_hash': 'a1b2c3d4e5f6'}, d),
+                             ('imported', '', 1))
+            body = eng.posts[0][2]
+            self.assertEqual((body['id'], len(body['files']), len(body['files'][0]['segments'])),
+                             ('a1b2c3d4e5f6', 2, 300))
+            outcome, msg, _ = bm.import_one(eng, {'name': 'Broken', 'info_hash': 'broken'}, d)
+            self.assertEqual(outcome, 'failed')
+            self.assertIn('Broken: unreadable metadata', msg)
+
+    def test_space_estimate_counts_v2_at_protobuf_size(self):
+        with tempfile.TemporaryDirectory() as d:
+            v2 = _fixture('v2_plain.meta')
+            with open(os.path.join(d, 'new.meta'), 'wb') as f:
+                f.write(v2)
+            with open(os.path.join(d, 'old.meta'), 'wb') as f:
+                f.write(META)
+            self.assertEqual(bm.meta_sizes(d), {'new': len(v2) * bm.V2_SIZE_FACTOR, 'old': len(META)})

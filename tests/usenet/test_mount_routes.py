@@ -3,6 +3,7 @@
 blank password fields keep the saved ones, and bad input is rejected
 before anything is written."""
 
+import tempfile
 import json
 import os
 import sys
@@ -196,6 +197,27 @@ class MountRoutesTests(unittest.TestCase):
             code, body = self._post(mr.migrate_switch)
         self.assertEqual((code, self.store['Usenet Provider']['provider']), (200, 'builtin'))
         self.assertEqual(self.store['Built-in Mount']['mount_path'], '/mnt/climount')
+
+    def test_switch_explains_a_mount_left_in_the_container(self):
+        with self._switch_ready(False, {}), mock.patch.object(mr, '_fuse_mounted', return_value=True):
+            with mock.patch.object(mr, '_dead_mount', return_value=False):
+                code, body = self._post(mr.migrate_switch)
+            self.assertEqual(code, 409)
+            self.assertIn('stop the cli_mount container first', body['error'])
+            with mock.patch.object(mr, '_dead_mount', return_value=True):
+                code, body = self._post(mr.migrate_switch)
+            self.assertEqual(code, 409)
+            self.assertIn('recreate', body['error'])
+        self.assertEqual(self.store['Usenet Provider']['provider'], 'climount', 'nothing switched')
+
+    def test_dead_mount_is_enotconn_only(self):
+        import errno
+        with mock.patch.object(mr.os, 'scandir', side_effect=OSError(errno.ENOTCONN, 'Transport endpoint is not connected')):
+            self.assertTrue(mr._dead_mount('/mnt/x'))
+        with mock.patch.object(mr.os, 'scandir', side_effect=OSError(errno.ENOENT, 'gone')):
+            self.assertFalse(mr._dead_mount('/mnt/x'))
+        with tempfile.TemporaryDirectory() as d:
+            self.assertFalse(mr._dead_mount(d))
 
     def test_switch_without_debrid_does_not_wait(self):
         with self._switch_ready(False, {}), mock.patch.object(mr, '_fuse_mounted', return_value=False):

@@ -100,6 +100,20 @@
   }
 
   /* ── Modal wiring ── */
+
+  // On the Performance dashboard this page is an iframe grown to its full
+  // content height, so a modal centred in it landed far below the visible part
+  // of the screen. Place it at the top of whatever part of the frame is in view.
+  function placeModal(modal) {
+    const box = modal.firstElementChild;
+    const frame = (() => { try { return window.frameElement; } catch (_) { return null; } })();
+    if (!frame || !box) return;
+    const visibleTop = Math.max(0, -frame.getBoundingClientRect().top);
+    const visibleHeight = window.parent.innerHeight - Math.max(0, frame.getBoundingClientRect().top);
+    modal.style.alignItems = 'flex-start';
+    box.style.marginTop = `${visibleTop}px`;
+    box.style.maxHeight = `${Math.max(240, visibleHeight - 60)}px`;
+  }
   let _realtimeCalls = [];
 
   function openApiSummary() {
@@ -107,6 +121,7 @@
     const body = document.getElementById('api-summary-modal-body');
     const tf = document.getElementById('api-summary-timeframe');
     modal.style.display = 'flex';
+    placeModal(modal);
     loadApiSummary(tf.value, body);
     tf.onchange = () => loadApiSummary(tf.value, body);
   }
@@ -116,6 +131,7 @@
     const body = document.getElementById('realtime-api-modal-body');
     const filterSel = document.getElementById('realtime-api-filter');
     modal.style.display = 'flex';
+    placeModal(modal);
     loading(body);
     fetch('/api_call_summary/api/latest_calls')
       .then(r => r.json())

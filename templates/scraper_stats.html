@@ -5,6 +5,7 @@
 {% block head %}
 <style>
 #sstats{
+  --s-grabs:#3987e5;--s-failed:#e66767;
   --surface:#1a1a1a;--surface2:#222;--border:#2d2d2d;--border2:#3d3d3d;
   --accent:#e8601c;--text:#e0e0e0;--text2:#aaa;--text3:#777;
   --green:#22c55e;--red:#ef4444;--yellow:#f59e0b;--blue:#60a5fa;
@@ -59,6 +60,22 @@
 #sstats .b-replaced{background:#ffffff14;color:var(--text2);}
 #sstats .b-removed{background:#ffffff0a;color:var(--text3);}
 #sstats .rel{max-width:420px;overflow:hidden;text-overflow:ellipsis;}
+#sstats .rate.few{opacity:.45;}
+#sstats .trend{margin-top:1.25rem;}
+#sstats .sec-hdr{display:flex;align-items:baseline;justify-content:space-between;gap:1rem;flex-wrap:wrap;margin:0 0 .5rem;}
+#sstats .sec-hdr h3{font-size:14px;font-weight:600;margin:0;}
+#sstats .legend{display:flex;gap:14px;color:var(--text2);font-size:12px;}
+#sstats .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px;}
+#sstats .mults{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px;}
+#sstats .mult{background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:10px 12px 8px;position:relative;}
+#sstats .mult-hdr{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:6px;}
+#sstats .mult-name{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+#sstats .mult-meta{color:var(--text3);font-size:11px;white-space:nowrap;font-family:'JetBrains Mono',monospace;}
+#sstats .mult svg{display:block;width:100%;height:64px;overflow:visible;}
+#sstats .mult .axis{display:flex;justify-content:space-between;color:var(--text3);font-size:10px;margin-top:3px;}
+#sstats .tip{position:fixed;z-index:1000;pointer-events:none;background:#111;border:1px solid var(--border2);border-radius:6px;padding:6px 9px;font-size:12px;color:var(--text);box-shadow:0 6px 18px #0008;white-space:nowrap;}
+#sstats .tip b{display:block;margin-bottom:2px;}
+#sstats .tip i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:6px;}
 @media (max-width:640px){
   #sstats .hide-sm{display:none;}
   #sstats table{min-width:0;}
@@ -76,12 +93,9 @@
     <div class="since" id="ss-since"></div>
   </div>
   <p class="intro">
-    Which scrapers and indexers supply your library. Every release cli_debrid grabs is
-    logged with where it came from and how it ended: collected, failed before it reached
-    the library, repaired after it turned out to be broken, replaced by an upgrade, or
-    removed from the library later (deleted, or reset because the file went missing).
-    Removed files still count as a success for the source that supplied them.
-    Grabs are counted per media item, so a season pack counts once for each episode it filled.
+    Where your library's releases come from, and how each grab ended. A grab that reached
+    the library counts as a success even if it was later removed. A season pack counts once
+    per episode it filled. Hover a column heading for what it counts.
   </p>
   <div class="toolbar">
     <div class="pills" id="ss-days">
@@ -114,11 +128,19 @@
       <tbody id="ss-body"><tr><td colspan="10" class="empty">Loading…</td></tr></tbody>
     </table>
   </div>
+  <div class="trend" id="ss-trend" hidden>
+    <div class="sec-hdr">
+      <h3>Grabs per day</h3>
+      <div class="legend"><span><i style="background:var(--s-grabs)"></i>Grabs</span><span><i style="background:var(--s-failed)"></i>Failed</span></div>
+    </div>
+    <div class="mults" id="ss-mults"></div>
+  </div>
+  <div class="tip" id="ss-tip" hidden></div>
   <div class="recent" id="ss-recent" hidden>
     <h3 id="ss-recent-title"></h3>
     <div class="tbl-wrap">
       <table>
-        <thead><tr><th>When</th><th>Item</th><th>Release</th><th>Indexer</th><th>Trigger</th><th>Outcome</th></tr></thead>
+        <thead><tr><th>When</th><th>Item</th><th>Release</th><th class="col-idx">Indexer</th><th>Trigger</th><th>Outcome</th></tr></thead>
         <tbody id="ss-recent-body"></tbody>
       </table>
     </div>
@@ -129,7 +151,11 @@
 {% block scripts %}
 <script>
 (function () {
-  const state = { days: '30', kind: 'all', sort: 'grabs', desc: true, open: new Set(), data: null, sel: null };
+  const state = { days: '30', kind: 'all', sort: 'grabs', desc: true, open: new Set(), data: null, sel: null, hidden: new Set() };
+  // Columns dropped when every scraper has 0 in them for this range.
+  const OPTIONAL_COLS = ['in_library', 'repaired', 'replaced', 'removed', 'pending'];
+  // A success rate from fewer finished grabs than this is shown faded.
+  const FEW_GRABS = 20;
   const $ = id => document.getElementById(id);
   const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
@@ -143,10 +169,12 @@
     return `${Math.round(mins / 1440)}d ago`;
   }
 
-  function rate(v) {
+  function rate(v, settled) {
     if (v === null || v === undefined) return '<span class="muted">—</span>';
     const color = v >= 80 ? 'var(--green)' : v >= 50 ? 'var(--yellow)' : 'var(--red)';
-    return `<span class="rate">${v.toFixed(0)}%<span class="bar"><span style="width:${v}%;background:${color}"></span></span></span>`;
+    const few = settled < FEW_GRABS;
+    const title = few ? ` title="Only ${settled} finished grab${settled === 1 ? '' : 's'}: too few to judge"` : '';
+    return `<span class="rate${few ? ' few' : ''}"${title}>${v.toFixed(0)}%<span class="bar"><span style="width:${v}%;background:${color}"></span></span></span>`;
   }
 
   function num(v, cls) {
@@ -154,11 +182,19 @@
   }
 
   function cells(r) {
-    return `<td>${num(r.grabs)}</td><td class="hide-sm">${num(r.in_library)}</td><td>${rate(r.success_rate)}</td>` +
-      `<td>${num(r.failed, 'bad')}</td><td class="hide-sm">${num(r.repaired, 'warn')}</td>` +
-      `<td class="hide-sm">${num(r.replaced)}</td><td class="hide-sm">${num(r.removed)}</td>` +
-      `<td class="hide-sm">${num(r.pending)}</td>` +
-      `<td class="hide-sm">${when(r.last_grab)}</td>`;
+    const cols = [
+      ['grabs', '', num(r.grabs)],
+      ['in_library', 'hide-sm', num(r.in_library)],
+      ['success_rate', '', rate(r.success_rate, r.grabs - r.pending)],
+      ['failed', '', num(r.failed, 'bad')],
+      ['repaired', 'hide-sm', num(r.repaired, 'warn')],
+      ['replaced', 'hide-sm', num(r.replaced)],
+      ['removed', 'hide-sm', num(r.removed)],
+      ['pending', 'hide-sm', num(r.pending)],
+      ['last_grab', 'hide-sm', when(r.last_grab)],
+    ];
+    return cols.filter(([k]) => !state.hidden.has(k))
+      .map(([, cls, html]) => `<td${cls ? ` class="${cls}"` : ''}>${html}</td>`).join('');
   }
 
   function sorted(rows) {
@@ -195,6 +231,8 @@
       return;
     }
     renderTiles(d.scrapers);
+    state.hidden = new Set(OPTIONAL_COLS.filter(k => d.scrapers.every(s => !s[k])));
+    document.querySelectorAll('#ss-head th').forEach(th => { th.hidden = state.hidden.has(th.dataset.k); });
     let html = '';
     for (const s of sorted(d.scrapers)) {
       const open = state.open.has(s.instance);
@@ -227,7 +265,117 @@
       return;
     }
     render();
+    loadTrend();
     if (state.sel) loadRecent(state.sel.instance, state.sel.indexer);
+  }
+
+  // ---- Grabs per day: one small bar chart per scraper -----------------------
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  const CH = 64;  // chart height, px (matches the CSS)
+
+  function dayLabel(d) {
+    return new Date(d + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
+
+  function svgEl(tag, attrs) {
+    const el = document.createElementNS(SVG_NS, tag);
+    for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+    return el;
+  }
+
+  // A bar with rounded top corners only, anchored to y + h.
+  function topRounded(x, y, w, h, r) {
+    r = Math.min(r, w / 2, h);
+    return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}Z`;
+  }
+
+  function drawMultiple(card, days, grabs, failed) {
+    const svg = card.querySelector('svg');
+    const width = svg.clientWidth || 280;
+    svg.setAttribute('viewBox', `0 0 ${width} ${CH}`);
+    svg.setAttribute('preserveAspectRatio', 'none');
+    svg.replaceChildren();
+    const n = days.length;
+    const step = width / n;
+    const gap = step >= 4 ? 1 : 0;
+    const bw = Math.max(step - gap, 1);
+    const max = Math.max(1, ...grabs);
+    svg.appendChild(svgEl('line', { x1: 0, x2: width, y1: CH - 0.5, y2: CH - 0.5, stroke: 'var(--border2)', 'stroke-width': 1 }));
+    for (let i = 0; i < n; i++) {
+      if (!grabs[i]) continue;
+      const x = i * step;
+      const h = Math.max(2, (grabs[i] / max) * (CH - 2));
+      const fh = failed[i] ? Math.max(2, (failed[i] / max) * (CH - 2)) : 0;
+      const okH = h - fh;
+      if (okH > 0) {
+        // Rounded only when it is the top segment.
+        svg.appendChild(svgEl('path', {
+          d: fh ? `M${x},${CH}V${CH - okH}H${x + bw}V${CH}Z` : topRounded(x, CH - okH, bw, okH, 2),
+          fill: 'var(--s-grabs)',
+        }));
+      }
+      if (fh) {
+        // 1px surface gap between the two segments.
+        const fy = CH - h;
+        svg.appendChild(svgEl('path', { d: topRounded(x, fy, bw, Math.max(fh - (okH > 0 ? 1 : 0), 1), 2), fill: 'var(--s-failed)' }));
+      }
+    }
+    // Hit areas: a full-height column per day, wider than the bar.
+    const hits = svgEl('g', {});
+    for (let i = 0; i < n; i++) {
+      const r = svgEl('rect', { x: i * step, y: 0, width: step, height: CH, fill: 'transparent' });
+      r.dataset.i = i;
+      hits.appendChild(r);
+    }
+    svg.appendChild(hits);
+    const tip = $('ss-tip');
+    const cursor = svgEl('rect', { x: 0, y: 0, width: step, height: CH, fill: '#ffffff10', visibility: 'hidden', 'pointer-events': 'none' });
+    svg.insertBefore(cursor, svg.firstChild);
+    hits.addEventListener('mousemove', e => {
+      const i = Number(e.target.dataset.i);
+      if (Number.isNaN(i)) return;
+      cursor.setAttribute('x', i * step);
+      cursor.setAttribute('visibility', 'visible');
+      tip.innerHTML = `<b>${esc(dayLabel(days[i]))}</b>` +
+        `<div><i style="background:var(--s-grabs)"></i>${grabs[i]} grab${grabs[i] === 1 ? '' : 's'}</div>` +
+        `<div><i style="background:var(--s-failed)"></i>${failed[i]} failed</div>`;
+      tip.hidden = false;
+      const tw = tip.offsetWidth;
+      tip.style.left = `${Math.min(e.clientX + 12, window.innerWidth - tw - 8)}px`;
+      tip.style.top = `${e.clientY + 14}px`;
+    });
+    hits.addEventListener('mouseleave', () => { tip.hidden = true; cursor.setAttribute('visibility', 'hidden'); });
+  }
+
+  let trendSeq = 0;
+  async function loadTrend() {
+    const seq = ++trendSeq;
+    let j;
+    try {
+      j = await (await fetch(`/statistics/api/scraper_stats/trend?days=${state.days}&kind=${state.kind}`)).json();
+      if (!j.success) throw new Error(j.error || 'request failed');
+    } catch (e) {
+      if (seq === trendSeq) $('ss-trend').hidden = true;
+      return;
+    }
+    if (seq !== trendSeq) return;  // a newer filter's request owns the chart
+    const entries = Object.entries(j.series)
+      .map(([name, s]) => ({ name, ...s, total: s.grabs.reduce((a, b) => a + b, 0), fails: s.failed.reduce((a, b) => a + b, 0) }))
+      .filter(s => s.total > 0)
+      .sort((a, b) => b.total - a.total);
+    $('ss-trend').hidden = entries.length === 0 || j.days.length < 2;
+    if ($('ss-trend').hidden) return;
+    const first = dayLabel(j.days[0]), last = dayLabel(j.days[j.days.length - 1]);
+    $('ss-mults').innerHTML = entries.map((s, k) =>
+      `<div class="mult" data-k="${k}"><div class="mult-hdr"><span class="mult-name" title="${esc(s.name)}">${esc(s.name)}</span>` +
+      `<span class="mult-meta">${s.total} · ${s.fails} failed</span></div>` +
+      `<svg role="img" aria-label="${esc(s.name)}: ${s.total} grabs, ${s.fails} failed, ${esc(first)} to ${esc(last)}"></svg>` +
+      `<div class="axis"><span>${esc(first)}</span><span>peak ${Math.max(...s.grabs)}/day</span><span>${esc(last)}</span></div></div>`
+    ).join('');
+    $('ss-mults').querySelectorAll('.mult').forEach(card => {
+      const s = entries[Number(card.dataset.k)];
+      drawMultiple(card, j.days, s.grabs, s.failed);
+    });
   }
 
   async function loadRecent(instance, indexer) {
@@ -241,6 +389,8 @@
     try {
       const j = await (await fetch(`/statistics/api/scraper_stats/recent?${q}`)).json();
       if (!j.success) throw new Error(j.error || 'request failed');
+      const anyIndexer = j.grabs.some(g => g.indexer || g.source_detail);
+      document.querySelectorAll('#ss-recent .col-idx').forEach(th => { th.hidden = !anyIndexer; });
       $('ss-recent-body').innerHTML = j.grabs.length ? j.grabs.map(g => {
         const ep = g.season != null && g.episode != null
           ? ` S${String(g.season).padStart(2, '0')}E${String(g.episode).padStart(2, '0')}` : '';
@@ -249,7 +399,7 @@
         }, {}) : null;
         const idx = split ? Object.entries(split).map(([k, n]) => `${esc(k)} ×${n}`).join(', ') : esc(g.indexer || '—');
         return `<tr><td>${when(g.grabbed_at)}</td><td>${esc(g.title)}${ep}</td>` +
-          `<td class="rel" title="${esc(g.release_title)}">${esc(g.release_title)}</td><td>${idx}</td>` +
+          `<td class="rel" title="${esc(g.release_title)}">${esc(g.release_title)}</td>${anyIndexer ? `<td>${idx}</td>` : ''}` +
           `<td>${esc(g.trigger)}</td>` +
           `<td><span class="badge b-${esc(g.outcome)}" title="${esc(g.outcome_reason || '')}">${esc(g.outcome)}</span></td></tr>`;
       }).join('') : '<tr><td colspan="6" class="muted">No grabs in this range.</td></tr>';

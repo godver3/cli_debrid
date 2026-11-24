@@ -1243,7 +1243,7 @@ def send_ntfy_notification(host, api_key, priority, topic, content):
     try:
         response = requests.post(f"https://{host}/{topic}",
             data= (content).encode('utf-8'),
-            headers=headers)
+            headers=headers, timeout=15)
         response.raise_for_status()
     except Exception as e:
         logging.error(f"Failed to send NTFY notification: {str(e)}")
@@ -1255,7 +1255,7 @@ def send_telegram_notification(bot_token, chat_id, content):
     for attempt in range(MAX_RETRIES):
         try:
             url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-            response = requests.post(url, json={'chat_id': chat_id, 'text': content, 'parse_mode': 'HTML'})
+            response = requests.post(url, json={'chat_id': chat_id, 'text': content, 'parse_mode': 'HTML'}, timeout=15)
             response.raise_for_status()
             return True
         except requests.exceptions.RequestException as e:

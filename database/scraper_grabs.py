@@ -36,6 +36,12 @@ _RETURNED_STATES = ('Wanted', 'Scraping', 'Sleeping', 'Blacklisted', 'Ghostliste
 # Placeholder sources used for "the file we already have" in upgrade ranking.
 _NON_SCRAPER_SOURCES = {'__current__', 'Current Item'}
 
+# Row k is the same release as row u (by torrent hash or NZB guid), and row k
+# has a real source. Used to give a reused release its original source.
+_SAME_RELEASE_SQL = ("((u.info_hash IS NOT NULL AND u.info_hash != '' AND k.info_hash = u.info_hash)"
+                     " OR (u.nzb_guid IS NOT NULL AND u.nzb_guid != '' AND k.nzb_guid = u.nzb_guid))")
+_KNOWN_SOURCE_SQL = "k.scraper_instance NOT IN ('Unknown', 'Manual')"
+
 
 def create_scraper_grabs_table() -> None:
     conn = get_db_connection()
@@ -70,6 +76,8 @@ def create_scraper_grabs_table() -> None:
             CREATE INDEX IF NOT EXISTS idx_scraper_grabs_item ON scraper_grabs (item_id);
             CREATE INDEX IF NOT EXISTS idx_scraper_grabs_grabbed ON scraper_grabs (grabbed_at);
             CREATE INDEX IF NOT EXISTS idx_scraper_grabs_instance ON scraper_grabs (scraper_instance);
+            CREATE INDEX IF NOT EXISTS idx_scraper_grabs_hash ON scraper_grabs (info_hash);
+            CREATE INDEX IF NOT EXISTS idx_scraper_grabs_guid ON scraper_grabs (nzb_guid);
         """)
         # Settle a grab the moment its item enters the library, whichever of the
         # many code paths (queues, Plex/local scans, raw SQL) sets the state, so
@@ -89,6 +97,20 @@ def create_scraper_grabs_table() -> None:
                 WHERE id = (SELECT MAX(id) FROM scraper_grabs WHERE item_id = NEW.id)
                   AND outcome IN ('pending', 'removed');
             END
+        """)
+        # Grabs recorded before record_grab inherited a reused release's source
+        # (e.g. a season pack reused by sibling episodes) were logged as
+        # 'Unknown'. Give them the source of the latest earlier grab of the same
+        # torrent or NZB. Idempotent: rows with no such grab stay Unknown.
+        conn.execute(f"""
+            UPDATE scraper_grabs AS u
+            SET (scraper_type, scraper_instance, indexer) = (
+                SELECT k.scraper_type, k.scraper_instance, k.indexer FROM scraper_grabs k
+                WHERE k.id < u.id AND {_SAME_RELEASE_SQL} AND {_KNOWN_SOURCE_SQL}
+                ORDER BY k.id DESC LIMIT 1)
+            WHERE u.scraper_instance = 'Unknown' AND EXISTS (
+                SELECT 1 FROM scraper_grabs k
+                WHERE k.id < u.id AND {_SAME_RELEASE_SQL} AND {_KNOWN_SOURCE_SQL})
         """)
         # Runs at startup: keep the log bounded.
         conn.execute(
@@ -196,6 +218,19 @@ def _close_row(conn, row_id, outcome, reason, now, mark_collected=False):
     )
 
 
+def _inherited_source(conn, info_hash, nzb_guid) -> Optional[Tuple[str, str, str]]:
+    """(scraper_type, scraper_instance, indexer) of the latest grab of the same
+    torrent or NZB that has a real source, or None."""
+    row = conn.execute(
+        f"""SELECT k.scraper_type, k.scraper_instance, k.indexer
+            FROM scraper_grabs k, (SELECT ? AS info_hash, ? AS nzb_guid) u
+            WHERE {_SAME_RELEASE_SQL} AND {_KNOWN_SOURCE_SQL}
+            ORDER BY k.id DESC LIMIT 1""",
+        (info_hash or None, nzb_guid or None),
+    ).fetchone()
+    return (row[0] or '', row[1], row[2] or '') if row else None
+
+
 def record_grab(
     item: Dict[str, Any],
     result: Optional[Dict[str, Any]],
@@ -213,8 +248,6 @@ def record_grab(
             return None
         result = result if isinstance(result, dict) else {}
         scraper_type, instance, indexer = result_source(result)
-        if not instance:
-            instance = 'Manual' if trigger == 'manual' else 'Unknown'
         pi = result.get('parsed_info') or {}
         release_title = (release_title or result.get('original_title')
                          or result.get('title') or item.get('filled_by_title') or '')
@@ -227,6 +260,15 @@ def record_grab(
         now = _ts()
         conn = get_db_connection()
         try:
+            if not instance and trigger != 'manual' and (info_hash or nzb_guid):
+                # A reused release (another episode's season pack, a torrent
+                # already in the debrid account) carries no scrape result of its
+                # own: credit the source that grabbed it in the first place.
+                inherited = _inherited_source(conn, info_hash, nzb_guid)
+                if inherited:
+                    scraper_type, instance, indexer = inherited
+            if not instance:
+                instance = 'Manual' if trigger == 'manual' else 'Unknown'
             prev = _latest_row(conn, item_id)
             if prev is not None:
                 prev_id, prev_outcome, prev_title, prev_hash, prev_guid, _, _ = prev
@@ -465,6 +507,54 @@ def get_scraper_stats(days: Optional[int] = None, kind: Optional[str] = None) ->
         s['indexers'].sort(key=lambda i: i['grabs'], reverse=True)
     out.sort(key=lambda s: s['grabs'], reverse=True)
     return {'scrapers': out, 'tracking_since': first}
+
+
+def get_scraper_trend(days: Optional[int] = None, kind: Optional[str] = None) -> Dict[str, Any]:
+    """Grabs and failed grabs per scraper per day, oldest day first.
+
+    Every day in the range is listed, including days with no grabs, so each
+    scraper's series lines up with `days`. With no range, it runs from the first
+    grab in the log.
+    """
+    conn = get_db_connection()
+    try:
+        where, params = _filters(days, kind)
+        rows = conn.execute(
+            f"""SELECT COALESCE(g.scraper_instance, 'Unknown') AS instance,
+                       substr(g.grabbed_at, 1, 10) AS day,
+                       COUNT(*) AS grabs,
+                       SUM(g.outcome = 'failed') AS failed
+                FROM scraper_grabs g
+                {where}
+                GROUP BY instance, day""",
+            params,
+        ).fetchall()
+        first = conn.execute("SELECT MIN(substr(grabbed_at, 1, 10)) FROM scraper_grabs").fetchone()[0]
+    finally:
+        conn.close()
+
+    today = datetime.now().date()
+    if days:
+        # Same rolling cutoff as the stats table (_filters), so the chart's
+        # totals match it; the first bar is a partial day.
+        start = (datetime.now() - timedelta(days=int(days))).date()
+    elif first:
+        start = datetime.strptime(first, '%Y-%m-%d').date()
+    else:
+        start = today
+    span = (today - start).days + 1
+    day_list = [(start + timedelta(days=i)).isoformat() for i in range(max(span, 1))]
+    index = {d: i for i, d in enumerate(day_list)}
+
+    series: Dict[str, Dict[str, List[int]]] = {}
+    for r in rows:
+        i = index.get(r['day'])
+        if i is None:
+            continue
+        s = series.setdefault(r['instance'], {'grabs': [0] * len(day_list), 'failed': [0] * len(day_list)})
+        s['grabs'][i] = r['grabs'] or 0
+        s['failed'][i] = r['failed'] or 0
+    return {'days': day_list, 'series': series}
 
 
 def _with_rates(row: Dict[str, Any]) -> Dict[str, Any]:

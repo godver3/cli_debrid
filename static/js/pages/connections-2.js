@@ -7,9 +7,17 @@
 
   const SECTION_LABELS = {
     system:  'System Connections',
-    scraper: 'Scraper Connections',
+    torrent: 'Torrent Scrapers',
+    usenet:  'Usenet Indexers',
     source:  'Content Source Connections',
   };
+
+  // Usenet indexers carry extra lines (expiry, daily usage), so they get their
+  // own section instead of sharing rows with the shorter torrent scraper cards.
+  function sectionOf(entry) {
+    if (entry.group !== 'scraper') return entry.group;
+    return /^newznab\b/i.test(entry.name) ? 'usenet' : 'torrent';
+  }
 
   const TYPE_MAP = {
     system:  { cli_battery:'Internal', plex:'Media Server', jellyfin:'Media Server', silo:'Media Server', 'mounted-files':'File System', 'phalanx-db':'Database' },
@@ -46,35 +54,55 @@
 
   const SOURCE_SVG = `<svg viewBox="0 0 256 256" style="width:16px;height:16px;fill:currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M25.801,82.108l0,-1.152c0,-6.666 4.033,-13.058 11.21,-17.772c7.178,-4.713 16.913,-7.361 27.064,-7.361c36.543,0 91.307,0 127.85,0c10.151,0 19.886,2.648 27.064,7.361c7.177,4.714 11.21,11.106 11.21,17.772l0,1.152c-1.449,-0.11 -2.914,-0.166 -4.387,-0.166c-51.829,0 -143.795,0 -195.624,0c-1.473,0 -2.938,0.056 -4.387,0.166Z" style="fill:currentColor;fill-opacity:0.29"/><path d="M51.25,57.276l0,-1.107c0,-6.666 4.032,-13.058 11.21,-17.772c7.178,-4.713 16.913,-7.361 27.064,-7.361c23.489,0 53.463,0 76.952,0c10.151,0 19.886,2.648 27.064,7.361c7.178,4.714 11.21,11.106 11.21,17.772l0,1.107c-4.079,-0.953 -8.413,-1.453 -12.825,-1.453c-36.543,0 -91.307,0 -127.85,0c-4.412,0 -8.746,0.5 -12.825,1.453Z" style="fill:currentColor;fill-opacity:0.71"/><path d="M45.532,52.632c1.827,-11.217 12.562,-20.01 22.832,-23.878c6.643,-2.503 13.801,-3.674 20.898,-3.717c25.825,-0.053 51.651,-0.053 77.476,0c18.406,0.112 38.802,7.932 43.295,25.475c0.171,0.668 0.311,1.344 0.421,2.025c11.89,3.635 22.02,11.021 25.027,22.762c0.441,1.719 0.676,3.489 0.713,5.263c10.836,6.161 18.705,17.784 18.83,31.098c0.085,27.842 0.085,55.685 0,83.528c-0.175,18.632 -16.365,35.595 -35.776,35.775c-60.832,0.193 -121.664,0.193 -182.496,0c-18.554,-0.172 -35.593,-16.135 -35.776,-35.776c-0.086,-27.842 -0.086,-55.685 0,-83.527c0.119,-12.759 7.71,-24.807 18.83,-31.144c0.018,-1.002 0.05,-1.253 0.116,-1.892c1.225,-11.791 12.359,-21.078 22.993,-25.083c0.864,-0.326 1.736,-0.629 2.617,-0.909Zm174.903,35.298c-61.602,-0.138 -123.204,-0.138 -184.806,0c-11.896,0.774 -22.535,11.14 -22.653,23.804c-0.086,27.843 -0.258,55.687 0.001,83.528c0.19,12.251 10.729,23.499 23.7,23.7c60.879,0.564 121.767,0.564 182.646,0c12.325,-0.191 23.499,-10.765 23.7,-23.7c0.262,-27.891 0.262,-55.786 0,-83.677c-0.185,-11.942 -10.167,-22.853 -22.588,-23.655Zm-28.166,-26.106c-42.728,-0.151 -85.455,-0.001 -128.183,-0.001c-3.869,0.014 -7.723,0.435 -11.493,1.301c0,0 -0.209,0.037 -0.536,0.068c-4.828,1.165 -9.409,3.134 -13.343,6.133c-2.277,1.735 -4.313,3.873 -5.617,6.436l-0.09,0.181l2.048,0c0.562,-0.033 1.128,-0.053 1.697,-0.058c60.832,-0.189 121.664,-0.189 182.496,0c0.558,0.005 1.113,0.025 1.668,0.058l2.077,0c-3.316,-6.787 -10.682,-10.888 -19.107,-12.807c-0.387,-0.025 -0.782,-0.081 -1.182,-0.17c-1.533,-0.328 -1.678,-0.34 -2.429,-0.464c-2.635,-0.435 -5.301,-0.648 -7.969,-0.676l-0.037,-0.001Zm4.385,-11.823c0.172,0.011 0.272,0.017 0.272,0.017c-5.547,-9.188 -18.305,-12.908 -30.237,-12.981c-25.864,-0.053 -51.728,-0.157 -77.592,0.001c-11.66,0.119 -24.363,3.769 -29.986,12.918c0,0 1.857,-0.08 3.608,-0.117c0.171,-0.003 0.342,-0.007 0.512,-0.009l0.017,0l0.17,-0.003l0.062,-0.001l0.006,0l0.133,-0.001l0.116,-0.001l0.078,0l0.292,-0.001c17.877,-0.062 35.754,-0.072 53.631,-0.063c24.726,-0.008 49.452,0.013 74.177,0.063l0.274,0.001c0.13,0 0.26,0.002 0.391,0.003l0.258,0.003c0.112,0.001 0.227,0.004 0.345,0.007c1.152,0.025 2.312,0.079 3.473,0.164Z" style="fill:currentColor;fill-rule:nonzero"/><path d="M99.68,103.306c0.896,0.113 1.753,0.387 2.559,0.829l74.651,44.677c1.253,0.817 1.505,1.19 1.96,1.896c1.571,2.435 1.05,5.996 -1.213,7.872c-0.314,0.261 -0.406,0.307 -0.747,0.529l-74.651,44.678c-1.294,0.709 -1.734,0.756 -2.559,0.828c-2.987,0.261 -5.992,-2.034 -6.454,-5.076c-0.061,-0.398 -0.053,-0.5 -0.068,-0.901l0,-89.354c0.052,-1.389 0.187,-1.617 0.421,-2.208c0.937,-2.368 3.413,-3.903 6.101,-3.77Zm5.478,84.749l56.967,-34.094l-56.967,-34.094c0,22.729 0,45.459 0,68.188Z" style="fill:currentColor;fill-rule:nonzero"/></svg>`;
 
+  const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  // One compact row per connection: icon, name, type (plus subscription expiry
+  // or indexer usage when known), and status as a dot with a short label.
+  // Scraper and source names arrive as "Type (instance_id)" / "Display (source_id)".
+  // Show the instance as the name and the part before it as the type, so a card
+  // reads "NZBGeek_1 / Newznab" instead of repeating "Newznab (NZBGeek_1)".
+  function splitName(group, name) {
+    const m = /^(.*\S)\s+\(([^()]+)\)$/.exec(name);
+    if (!m) return { label: name, type: null };
+    if (group === 'scraper') return { label: m[2], type: m[1] };
+    if (group === 'source') return { label: m[1], type: null };
+    return { label: name, type: null };
+  }
+
+  // "Expires Oct 26, 2026", flagged when it has passed or is within 14 days.
+  function expiryHtml(dateStr, autoRenew) {
+    const d = new Date(dateStr + 'T00:00:00');
+    if (isNaN(d)) return `<i class="fa-regular fa-calendar"></i> expires ${esc(dateStr)}`;
+    const days = Math.round((d - new Date(new Date().toDateString())) / 86400000);
+    const shown = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    if (autoRenew) return `<i class="fa-regular fa-calendar"></i> renews ${esc(shown)}`;
+    if (days < 0) return `<span class="conn-expired"><i class="fa-solid fa-circle-exclamation"></i> expired ${esc(shown)}</span>`;
+    if (days <= 14) return `<span class="conn-expiring"><i class="fa-regular fa-calendar"></i> expires ${esc(shown)} (${days}d)</span>`;
+    return `<i class="fa-regular fa-calendar"></i> expires ${esc(shown)}`;
+  }
+
   function buildTngCard(entry) {
-    const { name, group, status, ts, expiryDate, autoRenew } = entry;
-    const checked = ts ? timeAgoTng(ts) : 'Checking…';
-    const type = getType(group, entry.service, name);
-    const icon = getTngIcon(name);
+    const { name, group, status, expiryDate, autoRenew, usage } = entry;
+    const split = splitName(group, name);
+    const type = split.type || getType(group, entry.service, name);
     const dotCls = status || 'checking';
     const statusLabel = status === 'online' ? 'Online' : status === 'offline' ? 'Offline' : 'Checking';
-    const iconHtml = group === 'source'
-      ? `<div class="conn-icon">${SOURCE_SVG}</div>`
-      : group === 'scraper'
-      ? `<div class="conn-icon">${SCRAPER_SVG}</div>`
-      : `<div class="conn-icon"><i class="${icon}"></i></div>`;
-    return `<div class="tng-card ${dotCls}" title="${name}">
-      <div class="conn-top">
-        ${iconHtml}
+    const iconHtml = group === 'source' ? SOURCE_SVG
+      : group === 'scraper' ? SCRAPER_SVG
+      : `<i class="${getTngIcon(name)}"></i>`;
+    const extras = [];
+    if (expiryDate) extras.push(expiryHtml(expiryDate, autoRenew));
+    if (usage) extras.push(`<i class="fa-solid fa-gauge"></i> ${esc(usage)}`);
+    return `<div class="tng-card compact ${dotCls}" title="${esc(name)}">
+      <div class="conn-row">
+        <div class="conn-icon">${iconHtml}</div>
         <div class="conn-info">
-          <div class="conn-name">${name}</div>
-          <div class="conn-type">${type}</div>
+          <div class="conn-name">${esc(split.label)}</div>
+          <div class="conn-type">${esc(type)}</div>
         </div>
-        <div class="conn-status">
-          <span class="status-dot ${dotCls}"></span>
-          <span class="status-text ${dotCls}">${statusLabel}</span>
-        </div>
+        <div class="conn-status"><span class="status-dot ${dotCls}"></span><span class="status-text ${dotCls}">${statusLabel}</span></div>
       </div>
-      <div class="conn-divider"></div>
-      <div class="conn-meta">
-        ${expiryDate ? `<div class="conn-checked conn-expiry"><i class="fa-regular fa-calendar"></i><div class="conn-expiry-lines"><span>Subscription Expires:${autoRenew ? ' (auto-renews)' : ''}</span><span class="conn-expiry-date">${expiryDate}</span></div></div>` : ''}
-        <div class="conn-checked"><i class="fa-regular fa-clock"></i> Last checked: ${checked}</div>
-      </div>
+      ${extras.length ? `<div class="conn-extras">${extras.map(x => `<div class="conn-extra">${x}</div>`).join('')}</div>` : ''}
     </div>`;
   }
 
@@ -112,8 +140,10 @@
     });
 
     const total = allCards().length;
+    const latest = Math.max(0, ...allCards().map(e => e.ts || 0));
+    const checked = latest ? ` · checked ${timeAgoTng(latest)}` : '';
     document.getElementById('tng-result-info').textContent =
-      filtered.length < total ? `${filtered.length} of ${total} shown` : `${total} connections`;
+      (filtered.length < total ? `${filtered.length} of ${total} shown` : `${total} connections`) + checked;
 
     const area = document.getElementById('tng-sections-area');
     if (!filtered.length) {
@@ -126,8 +156,8 @@
       return;
     }
 
-    const groups = { system: [], scraper: [], source: [] };
-    allCards().forEach(e => { if (groups[e.group]) groups[e.group].push(e); });
+    const groups = { system: [], torrent: [], usenet: [], source: [] };
+    allCards().forEach(e => { const g = sectionOf(e); if (groups[g]) groups[g].push(e); });
 
     let html = '';
     for (const [group, entries] of Object.entries(groups)) {
@@ -161,7 +191,7 @@
       <div>${offline.map(e => `<div class="issue-row">
         <div class="issue-bar"></div>
         <div class="issue-info">
-          <div class="issue-name">${e.name}</div>
+          <div class="issue-name">${esc(e.name)}</div>
           <div class="issue-status"><i class="fa-solid fa-circle-xmark" style="color:var(--red);font-size:10px"></i> Status: Disconnected</div>
         </div>
       </div>`).join('')}</div>
@@ -208,7 +238,8 @@
       const expiryEl = card.querySelector('.conn-card-expiry');
       const expiryDate = expiryEl?.dataset.expiryDate || null;
       const autoRenew = expiryEl?.dataset.autoRenew === 'true';
-      registry[service] = { service, name, group: 'scraper', status, ts, expiryDate, autoRenew };
+      const usage = card.querySelector('.conn-card-usage-text')?.textContent.trim() || null;
+      registry[service] = { service, name, group: 'scraper', status, ts, expiryDate, autoRenew, usage };
     });
     // source
     document.querySelectorAll('#source-cards .connection-card').forEach(card => {

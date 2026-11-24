@@ -643,7 +643,7 @@ export function updateSettings() {
 
         // Handle filter lists
         ['filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out'].forEach(filterType => {
-            const filterList = section.querySelector(`.filter-list[data-version="${versionId}"][data-filter-type="${filterType}"]`);
+            const filterList = section.querySelector(`.filter-list[data-version="${CSS.escape(versionId)}"][data-filter-type="${filterType}"]`);
             if (filterList) {
                 versionData[filterType] = [];
                 filterList.querySelectorAll('.filter-item').forEach(item => {

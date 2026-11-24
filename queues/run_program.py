@@ -1552,14 +1552,8 @@ def get_and_add_recent_collected_from_plex():
     logging.warning(f"Failed to retrieve or process recent content from {mode}.")
     return None
 
-def run_local_library_scan():
-    # ... (This function seems unused/disabled, no changes needed) ...
-    logging.info("Full library scan disabled for now")
     #local_library_scan()
 
-def run_recent_local_library_scan():
-    # ... (This function seems unused/disabled, no changes needed) ...
-    logging.info("Recent library scan disabled for now")
     #recent_local_library_scan()
 
 # Add Listener Setup Method

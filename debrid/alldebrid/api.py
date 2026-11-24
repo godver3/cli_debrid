@@ -3,13 +3,12 @@
 import logging
 import time
 import threading
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from ..base import ProviderUnavailableError, RateLimitError
 from .exceptions import AllDebridAPIError, AllDebridAuthError
 from utilities.settings import get_setting
 from routes.api_tracker import api
-import asyncio
 
 # AllDebrid API rate limits (from official docs):
 # - 12 requests per second
@@ -278,31 +277,3 @@ def make_request(
         raise ProviderUnavailableError(f"AllDebrid request failed: {str(e)}")
 
 
-async def get_all_magnets(api_key: str) -> Optional[List[Dict]]:
-    """
-    Fetches all user's magnets from AllDebrid
-
-    Args:
-        api_key: The AllDebrid API key
-
-    Returns:
-        A list of all magnet items, or None if an error occurs
-    """
-    try:
-        logging.debug("Fetching all magnets from AllDebrid")
-        result = await asyncio.to_thread(
-            make_request, 'GET', '/v4.1/magnet/status', api_key
-        )
-
-        if result and isinstance(result, dict):
-            # AllDebrid returns magnets in data.magnets array
-            data = result.get('data', {})
-            magnets = data.get('magnets', [])
-            logging.debug(f"Retrieved {len(magnets)} magnets from AllDebrid")
-            return magnets
-
-        return []
-
-    except Exception as e:
-        logging.error(f"Error fetching AllDebrid magnets: {str(e)}")
-        return None

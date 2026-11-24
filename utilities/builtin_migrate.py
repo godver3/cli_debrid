@@ -5,8 +5,9 @@ Migrate from cli_mount to the built-in mount, side by side.
      on its own mount path.
   2. Import: every job cli_mount lists (GET /api/browse/nzbs: folder name +
      job id) is added to the engine with the SAME id, folder and file names,
-     from cli_mount's own metadata (<data_path>/usenet/meta/<id>.meta, a
-     protobuf NZBProto). The engine reads files through cli_mount's segment
+     from cli_mount's own metadata (<data_path>/usenet/meta/<id>.meta: a
+     protobuf NZBProto, or the zstd "v2" format upstream decypharr writes
+     since it rewrote its metadata). The engine reads files through cli_mount's segment
      maps, so they are byte-identical and nothing is downloaded or
      re-parsed. nzb:<id> references in cli_debrid stay valid.
   3. Compare: a sample of files is read through both mounts (size + SHA-256
@@ -72,10 +73,13 @@ def _fields(b: bytes) -> List[Tuple[int, object]]:
 
 
 def parse_meta(data: bytes) -> dict:
-    """cli_mount's NZBProto -> {id, name, files: [{name, size, segments}],
-    skipped: [(name, why)]}. Segment fields follow cli_mount: start/end are
+    """cli_mount's metadata -> {id, name, files: [{name, size, segments}],
+    skipped: [(name, why)]}. Reads both the protobuf NZBProto and upstream
+    decypharr's v2 format. Segment fields follow cli_mount: start/end are
     inclusive file offsets, data_start is where the file's bytes begin in
     the decoded article."""
+    if data[:1] == bytes([META_V2_MAGIC]):
+        return _parse_meta_v2(data)
     out = {'id': '', 'name': '', 'files': [], 'skipped': []}
     for f, v in _fields(data):
         if f == 1:
@@ -91,23 +95,31 @@ def parse_meta(data: bytes) -> dict:
                                  'start': s.get(4, 0), 'end': s.get(5, 0), 'data_start': s.get(7, 0)})
                 else:
                     meta[ff] = vv
-            name = (meta.get(2) or b'').decode('utf-8', 'replace')
-            if meta.get(10):
-                continue  # deleted from the job (repair cleanup)
-            if not segs:
-                out['skipped'].append((name, 'no articles'))
-                continue
-            segs.sort(key=lambda s: s['start'])
-            entry = {'name': name, 'size': meta.get(4, 0), 'segments': segs}
-            if meta.get(15):
-                # Encrypted RAR member: cli_mount kept the derived AES key and
-                # IV; the segments map the ciphertext, size is the plaintext.
-                key, iv = meta.get(13) or b'', meta.get(14) or b''
-                if len(key) not in (16, 24, 32) or len(iv) != 16:
-                    out['skipped'].append((name, 'encrypted archive without a usable key in cli_mount\'s metadata'))
-                    continue
-                entry['key'], entry['iv'] = key, iv
-            out['files'].append(entry)
+            _add_file(out, (meta.get(2) or b'').decode('utf-8', 'replace'), meta.get(4, 0), segs,
+                      bool(meta.get(10)), bool(meta.get(15)), meta.get(13) or b'', meta.get(14) or b'')
+    return _dedupe(out)
+
+
+def _add_file(out: dict, name: str, size: int, segs: list, deleted: bool, encrypted: bool,
+              key: bytes, iv: bytes) -> None:
+    if deleted:
+        return  # deleted from the job (repair cleanup)
+    if not segs:
+        out['skipped'].append((name, 'no articles'))
+        return
+    segs.sort(key=lambda s: s['start'])
+    entry = {'name': name, 'size': size, 'segments': segs}
+    if encrypted:
+        # Encrypted RAR member: cli_mount kept the derived AES key and IV;
+        # the segments map the ciphertext, size is the plaintext.
+        if len(key) not in (16, 24, 32) or len(iv) != 16:
+            out['skipped'].append((name, 'encrypted archive without a usable key in cli_mount\'s metadata'))
+            return
+        entry['key'], entry['iv'] = key, iv
+    out['files'].append(entry)
+
+
+def _dedupe(out: dict) -> dict:
     # A name listed twice (seen live: a stray ~100 MB entry next to the real
     # 6-8 GB movie) would make the engine refuse the whole job: keep the largest.
     best = {}
@@ -121,6 +133,116 @@ def parse_meta(data: bytes) -> dict:
                 out['skipped'].append((f['name'], f'duplicate name, kept the larger copy ({f["size"]} bytes left out)'))
         out['files'] = [f for f in out['files'] if id(f) in keep]
     return out
+
+
+# ---- upstream decypharr's v2 metadata (pkg/usenet/nzbcodec.go) ---------------
+# [0xB1] [uvarint len + zstd(header)] [uvarint len + zstd(segment columns)]
+# [zstd(message ids)]. The header holds the NZB's scalars and each file's
+# metadata plus its segment count; segment fields are stored column by column
+# for all files in order (number, bytes, start, end, data start, group index),
+# then the message ids, each length-prefixed. Upstream converts every older
+# protobuf .meta to this on startup, so a current decypharr has only these.
+
+META_V2_MAGIC = 0xB1
+
+
+class _Reader:
+    def __init__(self, buf: bytes):
+        self.buf, self.pos = buf, 0
+
+    def uvarint(self) -> int:
+        try:
+            v, self.pos = _varint(self.buf, self.pos)
+        except IndexError:
+            raise ValueError('v2 metadata: truncated') from None
+        return v
+
+    def varint(self) -> int:
+        v = self.uvarint()
+        return (v >> 1) ^ -(v & 1)  # zigzag (Go's binary.Varint)
+
+    def span(self) -> bytes:
+        n = self.uvarint()
+        if self.pos + n > len(self.buf):
+            raise ValueError('v2 metadata: field out of range')
+        b = self.buf[self.pos:self.pos + n]
+        self.pos += n
+        return b
+
+    def str(self) -> str:
+        return self.span().decode('utf-8', 'replace')
+
+    def skip(self, n: int) -> None:
+        if self.pos + n > len(self.buf):
+            raise ValueError('v2 metadata: field out of range')
+        self.pos += n
+
+    def boolean(self) -> bool:
+        self.skip(1)
+        return self.buf[self.pos - 1] != 0
+
+    def strings(self) -> List[str]:
+        return [self.str() for _ in range(self.uvarint())]
+
+
+def _zstd(b: bytes) -> bytes:
+    import zstandard
+    # Upstream's frames carry their content size, but don't rely on it.
+    return zstandard.ZstdDecompressor().decompressobj().decompress(b)
+
+
+def _parse_meta_v2(data: bytes) -> dict:
+    r = _Reader(data)
+    r.skip(1)
+    hc = r.span()
+    sc = r.span()
+    mc = data[r.pos:]
+
+    h = _Reader(_zstd(hc))
+    out = {'id': '', 'name': '', 'files': [], 'skipped': []}
+    out['id'], out['name'] = h.str(), h.str()
+    h.str(), h.str()                      # title, path
+    h.varint(), h.varint()                # total size, date posted
+    h.str()                               # category
+    h.strings()                           # groups
+    h.boolean()                           # downloaded
+    h.varint(), h.varint()                # added on, last activity
+    h.str()                               # status
+    h.skip(16)                            # progress, percentage (float64)
+    h.varint(), h.varint(), h.varint()    # size downloaded, eta, speed
+    h.varint()                            # completed on
+    h.boolean()                           # is bad
+    h.str(), h.str(), h.str()             # storage, fail message, password
+    files = []
+    for _ in range(h.uvarint()):
+        f = {'name': h.str()}
+        h.str()                           # internal path
+        f['size'] = h.varint()
+        h.varint()                        # start offset
+        h.strings()                       # groups
+        h.str(), h.str()                  # file type, password
+        f['deleted'] = h.boolean()
+        h.boolean()                       # is stored
+        h.varint()                        # segment size
+        f['key'], f['iv'] = h.span(), h.span()
+        f['encrypted'] = h.boolean()
+        f['count'] = h.uvarint()
+        files.append(f)
+
+    total = sum(f['count'] for f in files)
+    s = _Reader(_zstd(sc))
+    s.strings()                           # group table
+    cols = [[s.varint() for _ in range(total)] for _ in range(5)]  # number, bytes, start, end, data start
+    m = _Reader(_zstd(mc))
+    ids = [m.str() for _ in range(total)]
+
+    off = 0
+    for f in files:
+        segs = [{'number': cols[0][i], 'id': ids[i], 'start': cols[2][i], 'end': cols[3][i],
+                 'data_start': cols[4][i]} for i in range(off, off + f['count'])]
+        off += f['count']
+        _add_file(out, f['name'], f['size'], segs, f['deleted'], f['encrypted'], f['key'], f['iv'])
+    return _dedupe(out)
 
 
 def meta_dir(data_path: str) -> str:
@@ -148,15 +270,24 @@ def _existing(path: str) -> str:
     return path
 
 
+# Upstream decypharr's v2 .meta is zstd-compressed, about 4x smaller than the
+# protobuf the factor above was measured on; count it at its protobuf size.
+V2_SIZE_FACTOR = 4
+
+
 def meta_sizes(mdir: str) -> Dict[str, int]:
-    """job id -> .meta size in bytes."""
+    """job id -> .meta size in bytes (v2 files at their protobuf size)."""
     out = {}
     try:
         with os.scandir(mdir) as it:
             for e in it:
                 if e.name.endswith('.meta'):
                     try:
-                        out[e.name[:-5]] = e.stat().st_size
+                        size = e.stat().st_size
+                        with open(e.path, 'rb') as f:
+                            if f.read(1) == bytes([META_V2_MAGIC]):
+                                size *= V2_SIZE_FACTOR
+                        out[e.name[:-5]] = size
                     except OSError:
                         pass
     except OSError:
@@ -638,7 +769,12 @@ def compare(engine, climount_root: str, builtin_root: str, sample: int = 10,
 # ---- switch over / back ------------------------------------------------------
 
 def climount_mount_root(get_setting: Callable) -> str:
-    """cli_mount's mount as cli_debrid sees it (File Management's original
-    files path, minus __all__)."""
-    p = (get_setting('File Management', 'original_files_path', '') or '').rstrip('/\\')
+    """cli_mount's mount as cli_debrid sees it, minus __all__. Direct Mount
+    keeps it in Plex → mounted_file_location (onboarding hides the original
+    files path there, so it's often blank); Symlinked/Local in File
+    Management → original_files_path. Either falls back to the other."""
+    original = get_setting('File Management', 'original_files_path', '') or ''
+    mounted = get_setting('Plex', 'mounted_file_location', '') or ''
+    direct = (get_setting('File Management', 'file_collection_management', '') or '') == 'Plex'
+    p = ((mounted or original) if direct else (original or mounted)).rstrip('/\\')
     return p[:-len('__all__')].rstrip('/\\') if p.endswith('__all__') else p

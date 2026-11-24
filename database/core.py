@@ -371,6 +371,19 @@ def get_db_connection(db_path=None):
     return PooledConnection(conn, key, _db_file_identity(key))
 
 # --- Media Item Specific Functions (Example) ---
+def ensure_watch_history_indexes(conn):
+    """Index the ID lookups that skip watched items when adding or collecting.
+
+    The UNIQUE(show_title, season, episode, watched_at) constraint already covers
+    the show-title fallback; the IMDb and TMDB lookups were full-table scans,
+    run once per episode of every batch.
+    """
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_watch_history_imdb '
+                 'ON watch_history(imdb_id, season, episode)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_watch_history_tmdb '
+                 'ON watch_history(tmdb_id, season, episode)')
+
+
 def get_existing_airtime(conn, imdb_id):
     cursor = conn.execute('''
         SELECT airtime FROM media_items

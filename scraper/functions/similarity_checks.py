@@ -1,12 +1,8 @@
 import html
-import logging
 import re
-from typing import Dict, Any
 from difflib import SequenceMatcher
-from fuzzywuzzy import fuzz
 import unicodedata
 from scraper.functions import *
-from scraper.functions.ptt_parser import parse_with_ptt
 from functools import lru_cache
 
 # Pre-compiled regex patterns for better performance
@@ -20,75 +16,6 @@ _BARE_039_PATTERN = re.compile(r'\s+039\s+')
 
 def similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a.lower(), b.lower()).ratio()
-
-def improved_title_similarity(query_title: str, result: Dict[str, Any], is_anime: bool = False, content_type: str = None) -> float:
-    # Normalize titles
-    query_title = normalize_title(query_title).replace('&', 'and').replace('-','.')
-    
-    parsed_info = result.get('parsed_info', {})
-    result_title = result.get('title', '')
-    result_original_title = result.get('original_title', result_title)
-    
-    logging.debug(f"Title similarity calculation:")
-    logging.debug(f"  - Query title: '{query_title}'")
-    logging.debug(f"  - Original result title: '{result_original_title}'")
-    
-    # Use PTT to parse the result title if not already parsed
-    if not parsed_info.get('title'):
-        logging.debug(f"Parsing title with PTT: '{result_title}'")
-        ptt_result = parse_with_ptt(result_title)
-        logging.debug(f"PTT parsed result: {ptt_result}")
-        ptt_title = ptt_result.get('title', '')
-    else:
-        ptt_title = parsed_info.get('title', result_title)
-        logging.debug(f"Using already parsed title: '{ptt_title}'")
-    
-    ptt_title = normalize_title(ptt_title).replace('&', 'and').replace('-','.')
-    
-    logging.debug(f"  - Normalized query: '{query_title}'")
-    logging.debug(f"  - Normalized PTT title: '{ptt_title}'")
-
-    if is_anime:
-        # For anime, use match_any_title function
-        official_titles = [query_title]
-        
-        # Add alternative titles
-        alternative_titles = parsed_info.get('alternative_title', [])
-        if isinstance(alternative_titles, str):
-            alternative_titles = [alternative_titles]
-        official_titles.extend(alternative_titles)
-        
-        # Normalize alternative titles
-        official_titles = [normalize_title(title).replace('&', 'and') for title in official_titles]
-        
-        similarity = match_any_title(ptt_title, official_titles)
-        
-        logging.debug(f"Anime title similarity: {similarity}")
-
-    else:
-        # For non-anime, use the existing logic with improved word matching
-        token_sort_similarity = fuzz.token_sort_ratio(query_title, ptt_title) / 100
-        
-        # Split into words and remove 's' from the end of words for comparison
-        query_words = set(word.rstrip('s') for word in query_title.split())
-        ptt_words = set(word.rstrip('s') for word in ptt_title.split())
-        
-        # Check if all base words (without 's') are present
-        all_words_present = query_words.issubset(ptt_words) or ptt_words.issubset(query_words)
-
-        # If token sort similarity is very high (>0.95), don't penalize as heavily
-        if token_sort_similarity > 0.95:
-            similarity = token_sort_similarity
-        else:
-            similarity = token_sort_similarity * (0.75 if all_words_present else 0.5)
-
-        logging.debug(f"Token sort ratio: {token_sort_similarity}")
-        logging.debug(f"All base words present: {all_words_present}")
-
-    logging.debug(f"Final similarity score: {similarity}")
-
-    return similarity  # Already a float between 0 and 1
-
 
 @lru_cache(maxsize=1024)
 def normalize_title(title: str) -> str:

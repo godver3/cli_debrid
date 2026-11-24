@@ -1305,7 +1305,8 @@ def create_plex_pin():
         response = requests.post(
             'https://plex.tv/api/v2/pins',
             headers=headers,
-            json={'strong': True}
+            json={'strong': True},
+            timeout=15,
         )
         
         if response.status_code == 201:
@@ -1399,7 +1400,8 @@ def verify_plex_token():
                 'X-Plex-Token': token,
                 'X-Plex-Client-Identifier': client_id,
                 'X-Plex-Product': 'cli_debrid'
-            }
+            },
+            timeout=15,
         )
         
         if response.status_code == 200:
@@ -1455,7 +1457,8 @@ def check_plex_pin():
 
         response = requests.get(
             f'https://plex.tv/api/v2/pins/{pin_id}',
-            headers=headers
+            headers=headers,
+            timeout=15,
         )
 
         if response.status_code == 200:

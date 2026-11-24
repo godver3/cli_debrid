@@ -48,7 +48,7 @@ def env(monkeypatch, tmp_path):
         def __init__(self, *a, **k):
             pass
 
-    _stub("queues.run_program", get_and_add_recent_collected_from_plex=noop, run_recent_local_library_scan=noop)
+    _stub("queues.run_program", get_and_add_recent_collected_from_plex=noop)
     _stub("utilities.local_library_scan", check_local_file_for_item=noop)
     _stub("utilities.plex_functions", plex_update_item=noop)
     _stub("utilities.emby_functions", emby_update_item=noop)
