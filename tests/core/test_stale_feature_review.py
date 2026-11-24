@@ -84,6 +84,46 @@ class ContentRequestVersionTests(unittest.TestCase):
         self.add.assert_not_called()
 
 
+class AddToDebridVersionTests(unittest.TestCase):
+    """/scraper/add_to_debrid (non-admins with scraper permission) takes the same
+    version check as /content/request, plus "No Version" and an empty version."""
+
+    def setUp(self):
+        self.addCleanup(_fresh_app_modules().stop)
+        import inspect
+        from flask import Flask
+        import routes.scraper_routes.add_to_debrid as atd
+        settings = {('Scraping', 'versions'): {'1080p': {}, '4K': {}},
+                    ('File Management', 'file_collection_management'): 'Plex'}
+        p = mock.patch.object(atd, 'get_setting', lambda s, k=None, d=None: settings.get((s, k), d))
+        p.start()
+        self.addCleanup(p.stop)
+        self.view = inspect.unwrap(atd.add_torrent_to_debrid)
+        self.app = Flask(__name__)
+
+    def _add(self, version):
+        # No magnet link: a version that passes the check stops at the magnet check.
+        form = {'title': 'X', 'year': '2020', 'media_type': 'movie', 'magnet_link': ''}
+        if version is not None:
+            form['version'] = version
+        with self.app.test_request_context(method='POST', data=form):
+            response, status = self.view()
+        return status, response.get_json()['error']
+
+    def test_unknown_version_is_refused(self):
+        for version in ('Default', '720p', '4K x'):
+            status, error = self._add(version)
+            self.assertEqual(status, 400, version)
+            self.assertIn('Unknown version', error)
+
+    def test_configured_no_version_and_empty_pass_the_check(self):
+        for version in ('1080p', '4K*', 'No Version', '', None):
+            status, error = self._add(version)
+            self.assertEqual(status, 400, version)
+            self.assertNotIn('Unknown version', error, version)
+            self.assertIn('magnet', error.lower(), version)
+
+
 class UserManagementTests(unittest.TestCase):
     def setUp(self):
         self.addCleanup(_fresh_app_modules().stop)
