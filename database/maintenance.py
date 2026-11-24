@@ -807,7 +807,7 @@ def run_plex_library_maintenance():
                                 SELECT COUNT(*) 
                                 FROM media_items 
                                 WHERE state IN ('Collected', 'Upgrading')
-                                AND version LIKE ?
+                                AND RTRIM(version, '*') = ?
                                 AND id != ?
                                 AND type = 'movie'
                                 AND imdb_id = (SELECT imdb_id FROM media_items WHERE id = ?)
@@ -824,14 +824,14 @@ def run_plex_library_maintenance():
                                         AND m3.id = m2.id
                                     )
                                 )
-                            """, (f"%{clean_version}%", missing['id'], missing['id']))
+                            """, (clean_version, missing['id'], missing['id']))
                         else:
                             # For TV shows, compare version, imdb_id, season_number, and episode_number
                             cursor.execute("""
                                 SELECT COUNT(*) 
                                 FROM media_items 
                                 WHERE state IN ('Collected', 'Upgrading')
-                                AND version LIKE ?
+                                AND RTRIM(version, '*') = ?
                                 AND id != ?
                                 AND type = 'episode'
                                 AND imdb_id = (SELECT imdb_id FROM media_items WHERE id = ?)
@@ -850,7 +850,7 @@ def run_plex_library_maintenance():
                                         AND m3.id = m2.id
                                     )
                                 )
-                            """, (f"%{clean_version}%", missing['id'], missing['id'], missing['id'], missing['id']))
+                            """, (clean_version, missing['id'], missing['id'], missing['id'], missing['id']))
                         
                         remaining_items = cursor.fetchone()[0]
                         
@@ -1213,26 +1213,26 @@ def handle_maintenance_actions(cursor, broken_links, orphaned_links, symlink_bas
                         SELECT location_on_disk
                         FROM media_items
                         WHERE state IN ('Collected', 'Upgrading')
-                        AND version LIKE ?
+                        AND RTRIM(version, '*') = ?
                         AND id != ?
                         AND type = 'movie'
                         AND imdb_id = (SELECT imdb_id FROM media_items WHERE id = ?)
                         AND location_on_disk IS NOT NULL AND location_on_disk != ''
-                    """, (f"%{clean_version}%", item_id, item_id))
+                    """, (clean_version, item_id, item_id))
                 else:
                     # For TV shows, compare version, imdb_id, season_number, and episode_number
                     cursor.execute("""
                         SELECT location_on_disk
                         FROM media_items
                         WHERE state IN ('Collected', 'Upgrading')
-                        AND version LIKE ?
+                        AND RTRIM(version, '*') = ?
                         AND id != ?
                         AND type = 'episode'
                         AND imdb_id = (SELECT imdb_id FROM media_items WHERE id = ?)
                         AND season_number = (SELECT season_number FROM media_items WHERE id = ?)
                         AND episode_number = (SELECT episode_number FROM media_items WHERE id = ?)
                         AND location_on_disk IS NOT NULL AND location_on_disk != ''
-                    """, (f"%{clean_version}%", item_id, item_id, item_id, item_id))
+                    """, (clean_version, item_id, item_id, item_id, item_id))
                 
                 remaining_items = sum(
                     1 for (location,) in cursor.fetchall()

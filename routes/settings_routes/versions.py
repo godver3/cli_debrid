@@ -14,13 +14,82 @@ import sys
 from ._common import _reload_components_after_settings_change, migrate_clean_stale_scraper_keys_from_versions, migrate_clean_version_filter_keys, settings_bp
 from .default_versions import HARDCODED_DEFAULT_VERSIONS
 
+
+# Settings outside Scraping.versions that hold a single version name, with the
+# value each falls back to when that version is deleted without a replacement.
+_SINGLE_VERSION_SETTINGS = (
+    ('Reverse Parser', 'default_version', ''),
+    ('Plex Movie Box Sets', 'grab_version', 'Default'),
+    ('Usenet Provider', 'repair_version', ''),
+)
+
+
+def _version_name_error(name, existing):
+    """Why `name` can't be used for a new or renamed version, or None if it can."""
+    if not name:
+        return 'Version name cannot be empty.'
+    if '*' in name:
+        return "Version names cannot contain '*': it marks versions the reverse parser assigned."
+    if '/' in name or '\\' in name:
+        return 'Version names cannot contain / or \\: they are used as folder names.'
+    if name.casefold() == 'none':
+        return "'None' is reserved: it means no fallback version."
+    if name in existing:
+        return f"A version named '{name}' already exists."
+    return None
+
+
+def _retarget_version_references(config, old_name, new_name):
+    """Point every setting that names `old_name` at `new_name`. With
+    new_name=None (version deleted, nothing to reassign to) those settings go
+    back to their unset value and list/dict entries are dropped."""
+    versions = config.get('Scraping', {}).get('versions', {})
+    for v_name, v_config in versions.items():
+        if v_name != new_name and isinstance(v_config, dict) and v_config.get('fallback_version') == old_name:
+            v_config['fallback_version'] = new_name or 'None'
+            logging.info(f"Fallback version of '{v_name}' changed from '{old_name}' to '{new_name or 'None'}'")
+
+    for source_id, source_config in (config.get('Content Sources') or {}).items():
+        if not isinstance(source_config, dict):
+            continue
+        source_versions = source_config.get('versions')
+        if isinstance(source_versions, dict) and old_name in source_versions:
+            enabled = source_versions.pop(old_name)
+            if new_name:
+                source_versions[new_name] = enabled
+        elif isinstance(source_versions, list) and old_name in source_versions:
+            source_versions.remove(old_name)
+            if new_name and new_name not in source_versions:
+                source_versions.append(new_name)
+        else:
+            continue
+        logging.info(f"Content Source '{source_id}': version '{old_name}' -> '{new_name or 'removed'}'")
+
+    for section, key, unset in _SINGLE_VERSION_SETTINGS:
+        section_config = config.get(section)
+        if isinstance(section_config, dict) and section_config.get(key) == old_name:
+            section_config[key] = new_name or unset
+            logging.info(f"{section} {key} changed from '{old_name}' to '{new_name or unset}'")
+
+    reverse_parser = config.get('Reverse Parser')
+    if isinstance(reverse_parser, dict):
+        terms = reverse_parser.get('version_terms')
+        if isinstance(terms, dict) and old_name in terms:
+            moved = terms.pop(old_name)
+            if new_name and new_name not in terms:
+                terms[new_name] = moved
+        order = reverse_parser.get('version_order')
+        if isinstance(order, list) and old_name in order:
+            if new_name and new_name not in order:
+                order[order.index(old_name)] = new_name
+            else:
+                order.remove(old_name)
+
 @settings_bp.route('/versions/add', methods=['POST'])
 @admin_required
 def add_version():
     data = request.json
-    version_name = data.get('name')
-    if not version_name:
-        return jsonify({'success': False, 'error': 'No version name provided'}), 400
+    version_name = (data.get('name') or '').strip()
 
     config = load_config()
     if 'Scraping' not in config:
@@ -28,8 +97,9 @@ def add_version():
     if 'versions' not in config['Scraping']:
         config['Scraping']['versions'] = {}
 
-    if version_name in config['Scraping']['versions']:
-        return jsonify({'success': False, 'error': 'Version already exists'}), 400
+    name_error = _version_name_error(version_name, config['Scraping']['versions'])
+    if name_error:
+        return jsonify({'success': False, 'error': name_error}), 400
 
     # Add the new version with default settings
     config['Scraping']['versions'][version_name] = {
@@ -73,74 +143,43 @@ def add_version():
 @settings_bp.route('/versions/delete', methods=['POST'])
 @admin_required
 def delete_version():
-    data = request.json
+    data = request.json or {}
     version_id = data.get('version_id')
-    target_version_id = data.get('target_version_id') # New: Can be None
-    
+    target_version_id = data.get('target_version_id') or None
+
     if not version_id:
         return jsonify({'success': False, 'error': 'No version ID provided'}), 400
 
     try:
-        # Perform database update first
-        from database import get_db_connection
         from database.database_writing import update_version_for_items
-        
-        conn = get_db_connection()
-        updated_count = 0 # Initialize count
+
+        # Check the config before touching the database, so a bad request
+        # can't move items and then fail.
+        config = load_config()
+        versions = config.get('Scraping', {}).get('versions', {})
+        if version_id not in versions:
+            return jsonify({'success': False, 'error': f"Version '{version_id}' not found"}), 404
+        if target_version_id is not None and (target_version_id == version_id or target_version_id not in versions):
+            return jsonify({'success': False, 'error': f"Can't reassign items to '{target_version_id}'"}), 400
+
         try:
             updated_count = update_version_for_items(version_id, target_version_id)
-            logging.info(f"Updated {updated_count} media items in database from version '{version_id}' to '{target_version_id or 'None'}'")
-            conn.commit() # Commit the database change
         except Exception as db_error:
-            conn.rollback()
             logging.error(f"Database error during version deletion: {db_error}", exc_info=True)
             return jsonify({'success': False, 'error': f'Database error: {db_error}'}), 500
-        finally:
-            conn.close()
 
-        # Now update the config file
-        config = load_config()
-        if 'Scraping' in config and 'versions' in config['Scraping'] and version_id in config['Scraping']['versions']:
-            # Before deleting, update fallbacks pointing to this version
-            versions = config['Scraping']['versions']
-            for v_name, v_config in versions.items():
-                if v_name != version_id and v_config.get('fallback_version') == version_id:
-                    versions[v_name]['fallback_version'] = 'None' # Set to None as requested
-                    logging.info(f"Reset fallback_version for version '{v_name}' as '{version_id}' was deleted.")
-            
-            # --- New Logic: Remove deleted version from Content Sources ---
-            content_sources = config.get('Content Sources', {})
-            updated_sources_count = 0
-            for source_id, source_config in content_sources.items():
-                if isinstance(source_config, dict) and 'versions' in source_config:
-                    source_versions = source_config['versions']
-                    if isinstance(source_versions, dict) and version_id in source_versions:
-                        del source_versions[version_id]
-                        updated_sources_count += 1
-                        logging.info(f"Removed deleted version '{version_id}' from Content Source '{source_id}' (dict format)")
-                    elif isinstance(source_versions, list) and version_id in source_versions:
-                        source_versions.remove(version_id)
-                        updated_sources_count += 1
-                        logging.info(f"Removed deleted version '{version_id}' from Content Source '{source_id}' (list format)")
-            if updated_sources_count > 0:
-                logging.info(f"Removed deleted version from {updated_sources_count} Content Source(s).")
+        _retarget_version_references(config, version_id, target_version_id)
+        del versions[version_id]
+        save_config(config)
 
-            # Delete the actual version
-            del versions[version_id]
-            save_config(config) # Save config with updated fallbacks and deleted version
+        # Reload components so the change takes effect mid-run
+        _reload_components_after_settings_change('version')
 
-            # Reload components so the change takes effect mid-run
-            _reload_components_after_settings_change('version')
+        message = f"Version '{version_id}' deleted."
+        if updated_count > 0:
+            message += f" {updated_count} items reassigned to '{target_version_id or 'versionless'}'."
+        return jsonify({'success': True, 'message': message})
 
-            message = f"Version '{version_id}' deleted."
-            if updated_count > 0:
-                message += f" {updated_count} items reassigned to '{target_version_id or 'versionless'}'."
-            return jsonify({'success': True, 'message': message})
-        else:
-            # This case should ideally not happen if DB update succeeded, but handle defensively
-            logging.warning(f"Version '{version_id}' was updated in DB but not found in config for deletion.")
-            return jsonify({'success': False, 'error': 'Version not found in config after DB update'}), 404
-            
     except Exception as e:
         logging.error(f"Error deleting version '{version_id}': {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -368,71 +407,45 @@ def import_versions():
 @settings_bp.route('/versions/rename', methods=['POST'])
 @admin_required
 def rename_version():
-    data = request.json
+    data = request.json or {}
     old_name = data.get('old_name')
-    new_name = data.get('new_name')
-    
-    if not old_name or not new_name:
-        return jsonify({'success': False, 'error': 'Missing old_name or new_name'}), 400
+    new_name = (data.get('new_name') or '').strip()
+
+    if not old_name:
+        return jsonify({'success': False, 'error': 'Missing old_name'}), 400
 
     config = load_config()
-    if 'Scraping' in config and 'versions' in config['Scraping']:
-        versions = config['Scraping']['versions']
-        if old_name in versions:
-            # Update version name in config
-            versions[new_name] = versions.pop(old_name)
-            # Don't save yet, more updates needed
+    versions = config.get('Scraping', {}).get('versions')
+    if not isinstance(versions, dict) or old_name not in versions:
+        return jsonify({'success': False, 'error': 'Version not found'}), 404
+    if new_name == old_name:
+        return jsonify({'success': True})
+    name_error = _version_name_error(new_name, versions)
+    if name_error:
+        return jsonify({'success': False, 'error': name_error}), 400
 
-            # Update version name in database
-            updated_db_count = update_version_name(old_name, new_name)
-            logging.info(f"Updated {updated_db_count} media items in database from version prefix '{old_name}' to '{new_name}'")
+    try:
+        updated_db_count = update_version_name(old_name, new_name)
+    except Exception as db_error:
+        logging.error(f"Database error renaming version '{old_name}': {db_error}", exc_info=True)
+        return jsonify({'success': False, 'error': f'Database error: {db_error}'}), 500
 
-            # Update fallback_version references in other versions
-            for v_name, v_config in versions.items():
-                if v_name != new_name and v_config.get('fallback_version') == old_name:
-                    versions[v_name]['fallback_version'] = new_name
-                    logging.info(f"Updated fallback_version for version '{v_name}' from '{old_name}' to '{new_name}'")
+    # Rebuild the dict so the renamed version keeps its place in the list.
+    config['Scraping']['versions'] = {
+        (new_name if name == old_name else name): settings
+        for name, settings in versions.items()
+    }
+    renamed = config['Scraping']['versions'][new_name]
+    if isinstance(renamed, dict) and renamed.get('display_name') == old_name:
+        renamed['display_name'] = new_name
+    _retarget_version_references(config, old_name, new_name)
+    save_config(config)
+    logging.info(f"Renamed version '{old_name}' to '{new_name}' ({updated_db_count} media items)")
 
-            # --- New Logic: Update Content Source Version Assignments ---
-            content_sources = config.get('Content Sources', {})
-            updated_sources_count = 0
-            for source_id, source_config in content_sources.items():
-                if isinstance(source_config, dict) and 'versions' in source_config:
-                    source_versions = source_config['versions']
-                    
-                    # Handle dictionary format {version_name: enabled_boolean}
-                    if isinstance(source_versions, dict):
-                        if old_name in source_versions:
-                            enabled_status = source_versions.pop(old_name) # Remove old, get status
-                            source_versions[new_name] = enabled_status # Add new with same status
-                            updated_sources_count += 1
-                            logging.info(f"Updated version assignment for Content Source '{source_id}': '{old_name}' -> '{new_name}' (dict format)")
-                    
-                    # Handle list format [version_name, ...] - Less common now but good to support
-                    elif isinstance(source_versions, list):
-                         if old_name in source_versions:
-                             source_versions.remove(old_name)
-                             if new_name not in source_versions: # Avoid duplicates
-                                 source_versions.append(new_name)
-                             updated_sources_count += 1
-                             logging.info(f"Updated version assignment for Content Source '{source_id}': '{old_name}' -> '{new_name}' (list format)")
-                             
-            if updated_sources_count > 0:
-                 logging.info(f"Updated version assignments in {updated_sources_count} Content Source(s).")
-            # --- End New Logic ---
+    # Reload components so the change takes effect mid-run
+    _reload_components_after_settings_change('version')
 
-            # Save config with all updates (version rename, fallbacks, content sources)
-            save_config(config)
-
-            # Reload components so the change takes effect mid-run
-            _reload_components_after_settings_change('version')
-
-            return jsonify({'success': True})
-        else:
-            return jsonify({'success': False, 'error': 'Version not found'}), 404
-    else:
-        # Handle case where Scraping or versions section is missing
-        return jsonify({'success': False, 'error': 'Scraping versions configuration not found'}), 404
+    return jsonify({'success': True})
 
 @settings_bp.route('/versions/duplicate', methods=['POST'])
 @admin_required

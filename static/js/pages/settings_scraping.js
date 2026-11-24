@@ -391,7 +391,7 @@ function duplicateVersion(versionId) {
 
 function deleteVersion(versionId) {
     // First, check usage
-    fetch(`/settings/versions/check_usage/${versionId}`)
+    fetch(`/settings/versions/check_usage/${encodeURIComponent(versionId)}`)
     .then(response => response.json())
     .then(checkData => {
         if (!checkData.success) {

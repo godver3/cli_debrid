@@ -260,7 +260,7 @@ def save_content_source_order():
         logging.error(f"Error saving content source order: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
 
-@settings_bp.route('/versions/check_usage/<version_id>', methods=['GET'])
+@settings_bp.route('/versions/check_usage/<path:version_id>', methods=['GET'])
 def check_version_usage(version_id):
     try:
         from database import get_db_connection
@@ -268,7 +268,9 @@ def check_version_usage(version_id):
         cursor = conn.cursor()
         
         # Check if any media items use this version
-        cursor.execute("SELECT COUNT(*) FROM media_items WHERE version = ?", (version_id,))
+        # Count items with the reverse parser's '*'/'**' marker too: delete
+        # reassigns them, so they need a target like any other.
+        cursor.execute("SELECT COUNT(*) FROM media_items WHERE RTRIM(version, '*') = ?", (version_id,))
         count = cursor.fetchone()[0]
         conn.close()
 
