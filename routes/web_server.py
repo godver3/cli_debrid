@@ -29,9 +29,6 @@ init_db(app)
 log = logging.getLogger('werkzeug')
 log.disabled = True
 
-# Configure logging for web_server
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
-
 # Global variables for statistics
 start_time = time.time()
 

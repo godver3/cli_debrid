@@ -41,8 +41,6 @@ except Exception as e:
 
 connections_bp = Blueprint('connections', __name__)
 
-# Add logging configuration if not already present
-logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
 from .models import user_required # Added import

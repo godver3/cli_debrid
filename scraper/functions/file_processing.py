@@ -393,17 +393,3 @@ def get_resolution_rank(resolution: str) -> int:
         return 1
     return 0  # For unknown resolutions
 
-def compare_resolutions(res1: str, res2: str) -> int:
-    resolution_order = {
-        '2160p': 6, '4k': 6, 'uhd': 6,
-        '1440p': 5, 'qhd': 5,
-        '1080p': 4, 'fhd': 4,
-        '720p': 3, 'hd': 3,
-        '480p': 2, 'sd': 2,
-        '360p': 1
-    }
-
-    val1 = resolution_order.get(res1.lower(), 0)
-    val2 = resolution_order.get(res2.lower(), 0)
-
-    return val1 - val2

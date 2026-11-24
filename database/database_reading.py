@@ -425,86 +425,6 @@ def cleanup_duplicate_episodes(tmdb_id):
 def row_to_dict(row):
     return dict(row)
 
-@trace_memory_usage
-def get_all_videos():
-    """
-    Retrieve all videos from the database with their essential information.
-    Groups movies and TV shows separately.
-    """
-    conn = get_db_connection()
-    try:
-        # Get movies
-        cursor = conn.execute('''
-            SELECT 
-                id,
-                title,
-                year,
-                type as media_type,
-                filled_by_file,
-                location_on_disk,
-                version,
-                state
-            FROM media_items
-            WHERE type = 'movie'
-            AND state = 'Collected'
-            AND (location_on_disk IS NOT NULL OR filled_by_file IS NOT NULL)
-            ORDER BY title, year
-        ''')
-        movies = [row_to_dict(row) for row in cursor]
-        
-        # Get TV episodes
-        cursor = conn.execute('''
-            SELECT 
-                id,
-                title,
-                year,
-                type as media_type,
-                filled_by_file,
-                location_on_disk,
-                version,
-                state,
-                season_number,
-                episode_number,
-                episode_title
-            FROM media_items
-            WHERE type = 'episode'
-            AND state = 'Collected'
-            AND (location_on_disk IS NOT NULL OR filled_by_file IS NOT NULL)
-            ORDER BY title, year, season_number, episode_number
-        ''')
-        episodes = [row_to_dict(row) for row in cursor]
-        
-        return {
-            'movies': movies,
-            'episodes': episodes
-        }
-    finally:
-        conn.close()
-
-def get_video_by_id(video_id):
-    """
-    Retrieve a specific video by its ID.
-    """
-    conn = get_db_connection()
-    try:
-        cursor = conn.execute('''
-            SELECT id, title, filled_by_file, state, location_on_disk
-            FROM media_items
-            WHERE id = ?
-        ''', (video_id,))
-        row = cursor.fetchone()
-        if row:
-            video = row_to_dict(row)
-            logging.info(f"Found video in database: {video}")
-            # Use location_on_disk for file path if available
-            if not video.get('location_on_disk') and video.get('filled_by_file'):
-                logging.warning(f"No location_on_disk for video {video_id}, falling back to filled_by_file")
-            return video
-        logging.error(f"No video found with ID {video_id}")
-        return None
-    finally:
-        conn.close()
-
 def get_media_country_code(tmdb_id: str) -> str:
     """
     Get the country code for a media item by its TMDB ID.
@@ -1741,8 +1661,6 @@ __all__ = [
     'get_episode_count',
     'get_all_season_episode_counts',
     'row_to_dict',
-    'get_all_videos',
-    'get_video_by_id',
     'get_media_country_code',
     'get_episode_details',
     'get_imdb_aliases',

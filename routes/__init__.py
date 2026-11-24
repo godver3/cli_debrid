@@ -1,9 +1,7 @@
 from flask import Blueprint, jsonify, redirect, url_for, render_template, g, request, abort, flash
-from functools import wraps
 import json
 import os
 import sys
-from requests.exceptions import RequestException
 from werkzeug.exceptions import TooManyRequests
 
 from .models import admin_required, user_required, require_login
@@ -24,7 +22,6 @@ from .trakt_routes import trakt_bp
 from .log_viewer_routes import logs_bp
 from .settings_routes import settings_bp
 from .program_operation_routes import program_operation_bp
-from .video_routes import video_routes
 from routes.api_tracker import is_rate_limited, get_blocked_domains, APIRateLimiter, api  # Add this import at the top of the file
 from routes.extensions import app
 from .content_requestor_routes import content_requestor_bp
@@ -73,33 +70,6 @@ def get_tooltips():
     tooltips = get_tooltip_schema()
     return jsonify(tooltips)
 
-
-def is_html_request():
-    return 'text/html' in request.accept_mimetypes.values()
-
-def rate_limit_check(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if is_rate_limited():
-            g.is_rate_limited = True
-            # Allow access to login page, over_usage page, and static files even when rate-limited
-            if request.endpoint in ['auth.login', 'over_usage.index'] or request.path.startswith('/static/'):
-                return f(*args, **kwargs)
-            if is_html_request():
-                return redirect(url_for('over_usage.index'))
-            else:
-                return jsonify(error="Rate limit exceeded", is_rate_limited=True), 429
-        try:
-            return f(*args, **kwargs)
-        except RequestException as e:
-            if "Rate limit exceeded" in str(e):
-                g.is_rate_limited = True
-                if is_html_request():
-                    return redirect(url_for('over_usage.index'))
-                else:
-                    return jsonify(error="Rate limit exceeded", is_rate_limited=True), 429
-            raise
-    return decorated_function
 
 over_usage_bp = Blueprint('over_usage', __name__)
 
@@ -160,7 +130,6 @@ def register_blueprints(app):
         (real_time_api_bp, '/realtime_api_calls'),
         (tooltip_bp, '/tooltip'),
         (over_usage_bp, '/over_usage'),
-        (video_routes, '/video'),
         (content_requestor_bp, '/content'),
         (mount_bp, '/mount'),
         (base_bp, '/base'),
@@ -192,9 +161,4 @@ def register_blueprints(app):
     for blueprint, url_prefix in blueprints:
         app.register_blueprint(blueprint, url_prefix=url_prefix)
 
-    # Remove rate_limit_check decorator from all routes
-    # for endpoint, view_func in app.view_functions.items():
-    #     if not endpoint.startswith('over_usage.'):
-    #         app.view_functions[endpoint] = rate_limit_check(view_func)
-
-__all__ = ['register_blueprints', 'admin_required', 'user_required', 'auth_bp', 'statistics_bp', 'rate_limit_check']
+__all__ = ['register_blueprints', 'admin_required', 'user_required', 'auth_bp', 'statistics_bp']

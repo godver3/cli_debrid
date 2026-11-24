@@ -4,8 +4,6 @@ import aiohttp
 import logging
 import re
 
-logging.basicConfig(level=logging.DEBUG)
-
 logger = logging.getLogger(__name__)
 
 MAX_CONCURRENT_REQUESTS = 50  # Back to original but with small delays between batches
