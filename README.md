@@ -9,8 +9,8 @@
 
 *Same app, same images and settings, new name. See [Renamed from cli_debrid](#renamed-from-cli_debrid).*
 
-[![Dev version](https://img.shields.io/github/v/release/godver3/cli_debrid?include_prereleases&label=dev&color=orange)](https://github.com/godver3/cli_debrid/releases)
-[![Main version](https://img.shields.io/github/v/release/godver3/cli_debrid?label=main)](https://github.com/godver3/cli_debrid/releases/latest)
+[![Dev version](https://img.shields.io/github/v/release/godver3/clyde?include_prereleases&label=dev&color=orange)](https://github.com/godver3/clyde/releases)
+[![Main version](https://img.shields.io/github/v/release/godver3/clyde?label=main)](https://github.com/godver3/clyde/releases/latest)
 [![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/ynqnXGJ4hU)
 
 Clyde is a successor to, and pays homage to, plex_debrid. It watches your lists, finds the best release for everything on them, gets it through your debrid service or Usenet, and keeps your Plex or Jellyfin library organised and upgraded, with no files downloaded to your server. Its **built-in mount** streams your debrid account and your Usenet server itself, so a single container is all you need.
@@ -32,22 +32,22 @@ The easiest setup is a single container: Clyde with its **built-in mount**, whic
 
 ```bash
 # Linux with Docker Engine
-mkdir -p ${HOME}/cli_debrid && cd ${HOME}/cli_debrid
-curl -o docker-compose.yml https://raw.githubusercontent.com/godver3/cli_debrid/dev/docker-compose.builtin.yml
+mkdir -p ${HOME}/clyde && cd ${HOME}/clyde
+curl -o docker-compose.yml https://raw.githubusercontent.com/godver3/clyde/dev/docker-compose.builtin.yml
 docker compose up -d
 ```
 
 Then open Clyde at `http://your-server-ip:5000` and follow the onboarding wizard. Keep **Built-in mount** as the mount tool; it fills in `/mnt/clid/__all__`. Give your media server the same folders at the same paths: `/mnt/clid` (with `:rslave` if it runs in Docker) and, for Symlink mode, `/mnt/symlinks`. The compose file has a Plex service you can uncomment. The [built-in mount guide](https://godver3.github.io/cli_docs/integrations/builtin-mount/) covers the settings, WebDAV for a media server on another machine, and moving over from cli_mount.
 
-**Prefer a separate mount container?** [docker-compose.cli_mount.yml](https://raw.githubusercontent.com/godver3/cli_debrid/dev/docker-compose.cli_mount.yml) runs Clyde and **[cli_mount](https://github.com/mash2k3/decypharr/tree/dev)** together:
+**Prefer a separate mount container?** [docker-compose.cli_mount.yml](https://raw.githubusercontent.com/godver3/clyde/dev/docker-compose.cli_mount.yml) runs Clyde and **[cli_mount](https://github.com/mash2k3/decypharr/tree/dev)** together:
 
 ```bash
 # Create the shared folders once:
 sudo mkdir -p /mnt/cli_mount /mnt/symlinks
 sudo chown 1000:1000 /mnt/cli_mount
 
-mkdir -p ${HOME}/cli_debrid && cd ${HOME}/cli_debrid
-curl -o docker-compose.yml https://raw.githubusercontent.com/godver3/cli_debrid/dev/docker-compose.cli_mount.yml
+mkdir -p ${HOME}/clyde && cd ${HOME}/clyde
+curl -o docker-compose.yml https://raw.githubusercontent.com/godver3/clyde/dev/docker-compose.cli_mount.yml
 docker compose up -d
 ```
 
@@ -55,7 +55,7 @@ docker compose up -d
 2. Open Clyde at `http://your-server-ip:5000` and follow the onboarding wizard. Choose **cli_mount** as the mount tool, with the mount path `/mnt/cli_mount/__all__`. If you use Usenet, click **Detect** next to the mount URL; it finds `http://cli_mount:8282`. After onboarding, **Settings → Required → Usenet Mount → Detect** also fills in cli_mount's data path (`/climount_data`), which turns on backups of cli_mount's databases.
 3. Give your media server the same folders at the same paths: `/mnt/cli_mount` (with `:rslave` if it runs in Docker) and, for Symlink mode, `/mnt/symlinks`.
 
-The [Docker guide](https://godver3.github.io/cli_docs/installation/docker/) explains each line and covers Plex in the same stack. Already have a mount, or using Zurg or Decypharr? Use the plain [docker-compose.yml](https://raw.githubusercontent.com/godver3/cli_debrid/dev/docker-compose.yml) instead.
+The [Docker guide](https://godver3.github.io/cli_docs/installation/docker/) explains each line and covers Plex in the same stack. Already have a mount, or using Zurg or Decypharr? Use the plain [docker-compose.yml](https://raw.githubusercontent.com/godver3/clyde/dev/docker-compose.yml) instead.
 
 Each image tag works on both AMD64 and ARM64:
 

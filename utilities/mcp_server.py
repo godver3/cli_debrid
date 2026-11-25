@@ -290,7 +290,7 @@ def tool_lookup_item(query: str, season: Optional[int] = None, episode: Optional
 _HELP_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'help_content')
 DOCS_URL = 'https://godver3.github.io/cli_docs/'
 DISCORD_URL = 'https://discord.gg/ynqnXGJ4hU'
-ISSUES_URL = 'https://github.com/godver3/cli_debrid/issues'
+ISSUES_URL = 'https://github.com/godver3/clyde/issues'
 
 
 def _help_topics() -> Dict[str, str]:

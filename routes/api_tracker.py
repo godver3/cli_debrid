@@ -198,7 +198,7 @@ class APITracker:
         self.session.mount('https://', adapter)
         self.session.mount('http://', adapter)
         self.session.headers.update({
-            'User-Agent': f'cli_debrid/{get_app_version()} (+https://github.com/godver3/cli_debrid)'
+            'User-Agent': f'cli_debrid/{get_app_version()} (+https://github.com/godver3/clyde)'
         })
         self.cookies = requests.cookies
         self.exceptions = requests.exceptions

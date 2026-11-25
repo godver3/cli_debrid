@@ -1235,7 +1235,7 @@ def send_ntfy_notification(host, api_key, priority, topic, content):
     if not priority:
         priority = "low"
     headers={
-                "Icon": "https://raw.githubusercontent.com/godver3/cli_debrid/refs/heads/main/static/white-icon-32x32.png",
+                "Icon": "https://raw.githubusercontent.com/godver3/clyde/refs/heads/main/static/white-icon-32x32.png",
                 "Priority": priority
             }
     if api_key:
