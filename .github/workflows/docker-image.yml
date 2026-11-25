@@ -266,7 +266,10 @@ jobs:
               cat "$NOTES"
               printf '\n\n---\n\n'
               echo "<!-- release-notes -->"
-              if [ "$ALREADY" = true ]; then echo "$POSTED"; fi
+              # Keep every branch's posted marker: dev and main share this
+              # release, so dropping the other branch's marker made its next
+              # rebuild post the same notes again.
+              printf '%s\n' "$PREV" | tr -d '\r' | grep -E '^<!-- discord-posted:[^ ]+ -->$' | sort -u || true
             fi
             echo "Version ${VERSION} (${{ github.ref_name }} branch), commit ${{ github.sha }}"
             echo ""
