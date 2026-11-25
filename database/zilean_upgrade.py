@@ -1239,7 +1239,8 @@ def _scan_season_pack(imdb_id: str, season_num: int, season_eps: List[Dict],
 # ---------------------------------------------------------------------------
 
 def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
-                      triggered_by: str = 'manual') -> Dict[str, Any]:
+                      triggered_by: str = 'manual',
+                      recent_release_days: Optional[int] = None) -> Dict[str, Any]:
     """
     Scan Collected items for better releases: the configured scrapers (a rotating
     slice per scan), Zilean and the Newznab browse feed.
@@ -1257,6 +1258,9 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
 
     Args:
       scan_limit: If set, caps total Collected items processed (applied before type split).
+      recent_release_days: "Search recent releases": the scraper phase searches every
+        item released in the last N days (up to MAX_CHECKS_PER_SCAN) instead of the
+        usual rotating slice, even with "Search with my scrapers" off.
     """
     global _scan_in_progress, _last_scan_results, _last_scan_time, _scan_progress, _vs_cache
 
@@ -1288,6 +1292,11 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
         from database.upgrade_hub_scrapers import scraper_settings
         _scr = scraper_settings()
         use_scrapers = _scr['enabled'] and _scr['limit'] > 0
+        scraper_limit = _scr['limit']
+        if recent_release_days is not None:
+            from database.upgrade_hub_scrapers import MAX_CHECKS_PER_SCAN
+            use_scrapers = True
+            scraper_limit = MAX_CHECKS_PER_SCAN
 
         zilean_info = get_zilean_config()
         if use_zilean and not zilean_info:
@@ -1319,7 +1328,7 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
         columns = ['id', 'type', 'imdb_id', 'title', 'year',
                    'season_number', 'episode_number', 'version',
                    'current_score', 'filled_by_file', 'location_on_disk', 'location_basename',
-                   'state', 'genres', 'size', 'filled_by_torrent_id']
+                   'state', 'genres', 'size', 'filled_by_torrent_id', 'release_date']
         all_collected = [
             dict(row) for row in get_all_media_items(state='Collected', columns=columns)
             if row['imdb_id']
@@ -1376,6 +1385,11 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
         # it to the scan limit first kept it on the same first N rows forever.
         scraper_pool = (_dedupe_movies([i for i in all_collected if i['type'] == 'movie'])
                         + [i for i in all_collected if i['type'] == 'episode'])
+        if recent_release_days is not None:
+            from database.upgrade_hub_scrapers import released_within
+            scraper_pool = released_within(scraper_pool, recent_release_days)
+            logger.info(f"[UPGRADE_HUB] Search recent releases: {len(scraper_pool)} item(s) "
+                        f"released in the last {recent_release_days} day(s)")
 
         # Apply scan limit before splitting by type (Zilean / NZB phases)
         if scan_limit and scan_limit > 0 and len(all_collected) > scan_limit:
@@ -1714,7 +1728,7 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
             try:
                 from database.upgrade_hub_scrapers import scan_with_scrapers
                 _scan_progress.update({'phase': 'scrapers', 'done': 0,
-                                       'total': min(_scr['limit'], len(scraper_pool))})
+                                       'total': min(scraper_limit, len(scraper_pool))})
 
                 def _scr_progress(done, total):
                     with _state_lock:
@@ -1723,7 +1737,7 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
 
                 scr_upgrades = scan_with_scrapers(
                     scraper_pool, threshold, default_version,
-                    not_wanted_hashes=_not_wanted_hashes, limit=_scr['limit'],
+                    not_wanted_hashes=_not_wanted_hashes, limit=scraper_limit,
                     progress_callback=_scr_progress, errors=errors,
                 )
                 by_item = {c['item_id']: c for c in upgrade_candidates if 'item_id' in c}
@@ -1907,6 +1921,7 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
                 'episodes_scanned': len(episodes),
                 'errors': len(errors),
                 'scan_limit': scan_limit,
+                'recent_release_days': recent_release_days,
             },
         )
 

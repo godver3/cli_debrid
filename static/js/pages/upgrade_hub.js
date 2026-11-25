@@ -284,9 +284,10 @@ function togglePackExpand(btn) {
 // ---------------------------------------------------------------------------
 // Scan
 // ---------------------------------------------------------------------------
-async function startScan() {
+async function startScan(body = {}) {
     const btn = document.getElementById('scan-btn');
     btn.disabled = true;
+    setRecentBtnDisabled(true);
     btn.innerHTML = '<span class="uh-spinner"></span> Scanning…';
     showProgress('starting', 0, 0);
 
@@ -294,13 +295,12 @@ async function startScan() {
         const res = await fetch('/upgrade_hub/api/scan', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({}),
+            body: JSON.stringify(body),
         });
         const data = await res.json();
         if (!data.success) {
             showStatus('error', data.error || 'Failed to start scan');
-            btn.disabled = false;
-            btn.innerHTML = svgSearch() + ' Scan for Upgrades';
+            resetScanBtn();
             hideProgress();
             return;
         }
@@ -308,10 +308,65 @@ async function startScan() {
         pollStatus();
     } catch(e) {
         showStatus('error', 'Network error: ' + e.message);
-        btn.disabled = false;
-        btn.innerHTML = svgSearch() + ' Scan for Upgrades';
+        resetScanBtn();
         hideProgress();
     }
+}
+
+function setRecentBtnDisabled(disabled) {
+    const b = document.getElementById('recent-btn');
+    if (b) b.disabled = disabled;
+}
+
+// "Search Recent Releases": a scan whose scraper search covers every item
+// released in the last N days (default: the Release Age setting), instead of
+// the usual capped, oldest-checked-first slice.
+function searchRecentReleases() {
+    const upg = _settings.upgrading || {};
+    const def = upg.upgrade_max_release_age_days ?? 7;
+    showPopup({
+        type: 'prompt',
+        title: 'Search Recent Releases',
+        message: 'Search your scrapers for a better release of every collected item released in the last:',
+        formHtml: `<form onsubmit="return false"><input type="number" name="days" min="0" max="3650" step="1" value="${escAttr(String(def))}" style="width:90px"> days</form>`,
+        confirmText: 'Next',
+        cancelText: 'Cancel',
+        onConfirm: async (vals) => {
+            const days = parseInt((vals || {}).days, 10);
+            if (isNaN(days) || days < 0) {
+                showStatus('error', 'Enter a number of days (0 or more)');
+                return;
+            }
+            let p;
+            try {
+                const res = await fetch(`/upgrade_hub/api/recent_preview?days=${days}`);
+                p = await res.json();
+            } catch (e) {
+                showStatus('error', 'Network error: ' + e.message);
+                return;
+            }
+            if (!p.success) { showStatus('error', p.error || 'Could not count items'); return; }
+            if (!p.items) {
+                showPopup({ type: 'info', title: 'Search Recent Releases',
+                            message: `No collected items were released in the last ${days} day(s).` });
+                return;
+            }
+            const capped = p.items > p.cap
+                ? ` Only ${p.cap} are searched per run (the ones checked longest ago); run it again for the rest.`
+                : '';
+            showPopup({
+                type: 'confirm',
+                title: 'Search Recent Releases',
+                message: `Search ${p.items} item(s) released in the last ${days} day(s) `
+                       + `(${p.movies} movie(s), ${p.episodes} episode(s))? Each one is a full search, `
+                       + `two at a time, as part of a normal scan.${capped} Better releases show up in the `
+                       + 'results to queue as usual.',
+                confirmText: 'Search',
+                cancelText: 'Cancel',
+                onConfirm: () => startScan({ recent_release_days: days }),
+            });
+        },
+    });
 }
 
 function pollStatus() {
@@ -356,6 +411,7 @@ setInterval(() => { if (_lastScanAt && !_scanInProgress) updateScanBtnAge(); }, 
 function resetScanBtn() {
     const btn = document.getElementById('scan-btn');
     btn.disabled = false;
+    setRecentBtnDisabled(false);
     if (_lastScanAt) {
         updateScanBtnAge();
     } else {
@@ -1258,6 +1314,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (s.in_progress) {
             _scanInProgress = true;
             document.getElementById('scan-btn').disabled = true;
+            setRecentBtnDisabled(true);
             document.getElementById('scan-btn').innerHTML = '<span class="uh-spinner"></span> Scanning…';
             const _initP = s.progress || {};
             const _initPct = _initP.total > 0 ? Math.round((_initP.done || 0) / _initP.total * 100) : 0;

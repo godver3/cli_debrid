@@ -78,9 +78,22 @@ def start_scan():
     if get_scan_status()['in_progress']:
         return jsonify({'success': False, 'error': 'Scan already in progress'}), 409
 
+    # "Search recent releases": the scraper phase searches every item released
+    # in the last N days, whatever the per-scan cap and scraper toggle say.
+    data = request.get_json(silent=True) or {}
+    recent_days = data.get('recent_release_days')
+    if recent_days is not None:
+        try:
+            recent_days = int(recent_days)
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': 'Days must be a whole number'}), 400
+        if not 0 <= recent_days <= MAX_RECENT_DAYS:
+            return jsonify({'success': False,
+                            'error': f'Days must be between 0 and {MAX_RECENT_DAYS}'}), 400
+
     from database.upgrade_hub_scrapers import scraper_settings
     _scr = scraper_settings()
-    use_scrapers = _scr['enabled'] and _scr['limit'] > 0
+    use_scrapers = (_scr['enabled'] and _scr['limit'] > 0) or recent_days is not None
     upgrade_source = get_setting('Upgrade Hub', 'upgrade_source', 'both') or 'both'
     use_zilean = upgrade_source in ('both', 'zilean_only') and bool(get_zilean_config())
     use_nzb    = upgrade_source in ('both', 'nzb_only') and bool(get_newznab_scrapers())
@@ -103,7 +116,7 @@ def start_scan():
             scan_limit = None
 
     def _run():
-        scan_for_upgrades(scan_limit=scan_limit)
+        scan_for_upgrades(scan_limit=scan_limit, recent_release_days=recent_days)
 
     threading.Thread(target=_run, daemon=True, name='upgrade-hub-scan').start()
     try:
@@ -114,6 +127,23 @@ def start_scan():
     except Exception:
         pass
     return jsonify({'success': True, 'message': 'Scan started'})
+
+
+MAX_RECENT_DAYS = 3650
+
+
+@upgrade_hub_bp.route('/api/recent_preview')
+@admin_required
+def recent_preview():
+    """How many items "Search recent releases" would search for ?days=N."""
+    from database.upgrade_hub_scrapers import count_recent_items
+    try:
+        days = int(request.args.get('days', ''))
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': 'Days must be a whole number'}), 400
+    if not 0 <= days <= MAX_RECENT_DAYS:
+        return jsonify({'success': False, 'error': f'Days must be between 0 and {MAX_RECENT_DAYS}'}), 400
+    return jsonify({'success': True, 'days': days, **count_recent_items(days)})
 
 
 @upgrade_hub_bp.route('/api/results')
