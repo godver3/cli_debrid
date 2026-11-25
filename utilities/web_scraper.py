@@ -1619,6 +1619,19 @@ def trending_anime():
     logging.info(f"Total anime found using Trakt genre filter: {len(trending_anime)}")
     return {"trendingAnime": trending_anime}
 
+def _country_tagged_title(title: str, metadata_title: Optional[str]) -> str:
+    """'The Traitors' + metadata 'The Traitors (IN)' -> 'The Traitors (IN)'.
+    Only when the metadata title is this same title plus a known country tag."""
+    from scraper.functions.filter_results import title_country_tag, _TRAILING_COUNTRY_TAG
+    if not title or not metadata_title or title_country_tag(title):
+        return title
+    if not title_country_tag(metadata_title):
+        return title
+    if _TRAILING_COUNTRY_TAG.sub('', metadata_title).strip().lower() != title.strip().lower():
+        return title
+    logging.info(f"Using country-tagged metadata title '{metadata_title}' instead of '{title}'")
+    return metadata_title
+
 def process_media_selection(media_id: str, title: str, year: str, media_type: str, season: Optional[int], episode: Optional[int], multi: bool, version: str, genres: List[str], skip_cache_check: bool = True, background_cache_check: bool = False) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     from metadata.metadata import get_metadata
     logging.info(f"Processing media selection with skip_cache_check={skip_cache_check}, background_cache_check={background_cache_check}")
@@ -1631,6 +1644,11 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
 
     if not imdb_id:
         logging.info(f"No IMDB ID found for TMDB ID {tmdb_id}")
+
+    # TMDB names national versions of a format plainly ("The Traitors"); the
+    # metadata battery keeps the country tag ("The Traitors (IN)") that turns on
+    # country filtering. Queued scrapes already use the battery title.
+    title = _country_tagged_title(title, metadata.get('title') if metadata else None)
 
     movie_or_episode = 'episode' if media_type == 'tv' or media_type == 'show' else 'movie'
 
