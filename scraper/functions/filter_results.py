@@ -806,7 +806,8 @@ def filter_results(
                         raw_season_title = season_info.get('title') or season_info.get('name')
                 season_title = normalize_title(raw_season_title) if isinstance(raw_season_title, str) else ''
                 season_title_words = (
-                    set() if re.fullmatch(r'(?:season|series)(?:\.\d+)?|specials', season_title)
+                    set() if not re.search(r'[a-z]', season_title)
+                    or re.fullmatch(r'(?:season|series)(?:[.-]*\d+)?|specials', season_title)
                     else set(re.findall(r'[a-z0-9]+', season_title))
                 )
 

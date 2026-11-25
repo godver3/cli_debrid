@@ -17,20 +17,21 @@ VERSION = {"max_resolution": "1080p", "min_bitrate_mbps": 0, "max_bitrate_mbps":
 
 
 def _filter(titles, *, season_title="Indigo League", aliases=ALIASES, matching_aliases=None,
-            translated_title=None, show="Pokémon", anime=True, original_season=None, season=1):
+            translated_title=None, show="Pokémon", anime=True, original_season=None, season=1,
+            episode=82, seasons_metadata=None):
     api = Mock()
     api.get_show_aliases.return_value = (aliases, "battery")
-    api.get_show_metadata.return_value = ({
-        "seasons": {"1": {"title": season_title}, "2": {"name": "Adventures in the Orange Islands"}}
-    }, "battery")
+    if seasons_metadata is None:
+        seasons_metadata = {"1": {"title": season_title}, "2": {"name": "Adventures in the Orange Islands"}}
+    api.get_show_metadata.return_value = ({"seasons": seasons_metadata}, "battery")
     results = [
         {"title": title, "original_title": title, "size": 1.5, "parsed_info": parse_torrent_info(title, 1.5),
          "scraper_type": "Newznab", "additional_metadata": {"filename": title}}
         for title in titles
     ]
     passed, _ = filter_results(
-        results, "60572", show, 1997, "episode", season, 82, False, VERSION,
-        22, 82, {1: 82, 2: 36}, ["anime"] if anime else ["drama"],
+        results, "60572", show, 1997, "episode", season, episode, False, VERSION,
+        22, 82, {1: 82, 2: 36, 19: 136, 20: 159}, ["anime"] if anime else ["drama"],
         matching_aliases=matching_aliases, imdb_id="tt0168366", direct_api=api,
         translated_title=translated_title, original_season=original_season,
     )
@@ -64,7 +65,9 @@ def test_xem_remap_uses_the_items_original_season_title():
     assert passed == results, results[0]["filter_reason"]
 
 
-@pytest.mark.parametrize("season_title", [None, "Season 1"])
+@pytest.mark.parametrize("season_title", [
+    None, "Season 1", "ポケットモンスター", "サン&ムーン", "ポケットモンスター (2023)",
+])
 def test_sub_series_alias_keeps_existing_behavior_without_a_named_season(season_title):
     passed, results = _filter([HORIZONS], season_title=season_title)
     assert passed == results, results[0]["filter_reason"]
@@ -76,7 +79,7 @@ def test_sub_series_alias_keeps_existing_behavior_without_a_named_season(season_
 ])
 def test_plain_alternate_and_country_tagged_aliases_still_pass(show, alias, release_title):
     passed, results = _filter([f"{release_title}.S01E82.1080p.WEB-DL"],
-                              show=show, anime=False, aliases={"us": [alias]})
+                              show=show, anime=False, aliases={"us": [alias]}, season_title="Indigo League")
     assert passed == results, results[0]["filter_reason"]
 
 
@@ -123,3 +126,87 @@ def test_tmdb_season_title_from_alias_response_survives_battery_cache(monkeypatc
         session.flush()
         direct_api._upsert_seasons_and_episodes(item.id, metadata["seasons"], session)
         assert direct_api._build_show_metadata_dict(item)["seasons"][1]["title"] == "Indigo League"
+
+
+@pytest.mark.parametrize("paginated_names", [True, False], ids=["episode-seasonName", "season-translation"])
+def test_tvdb_pokemon_releases_use_translated_season_names(monkeypatch, paginated_names):
+    from cli_battery.app import tvdb_client
+
+    original_names = {
+        1: "ポケットモンスター", 2: "ポケットモンスター",
+        19: "ポケットモンスター (2019)", 20: "ポケットモンスター (2023)",
+    }
+    english_names = {1: "Indigo League", 2: "Adventures on the Orange Islands", 19: "Journeys", 20: "Horizons"}
+    tvdb_seasons = [
+        {"id": 1000 + number, "number": number, "type": {"id": 1}, "name": name, "nameTranslations": ["eng", "jpn"]}
+        for number, name in original_names.items()
+    ]
+    episodes = [
+        {"seasonNumber": number, "number": episode, "name": "Episode",
+         "seasonName": english_names[number] if paginated_names else name}
+        for number, name in original_names.items()
+        for episode in (1, 2)
+    ]
+    raw = {
+        "name": "ポケットモンスター",
+        "translations": {"nameTranslations": [{"language": "eng", "name": "Pokémon"}]},
+        "originalNetwork": {"timezone": "Asia/Tokyo"},
+        "seasons": tvdb_seasons,
+    }
+
+    def response(url, **kwargs):
+        if url.endswith("/extended?meta=translations,episodes"):
+            data = raw
+        elif url.endswith("/episodes/default/eng?page=0"):
+            data = {"episodes": episodes}
+        else:
+            _, season_id, _, language = url.rsplit("/", 3)
+            assert language == "eng"
+            assert kwargs == {"max_retries": 1}
+            data = {"name": english_names[int(season_id) - 1000]}
+        return Mock(status_code=200, json=Mock(return_value={"data": data}))
+
+    monkeypatch.setattr(tvdb_client, "_resolve_tvdb_id", lambda *_, **__: 76703)
+    monkeypatch.setattr(tvdb_client, "narrowed_season", lambda *_: None)
+    request = Mock(side_effect=response)
+    monkeypatch.setattr(tvdb_client, "_make_request", request)
+    metadata = tvdb_client.get_show_data("tt0168366")
+    assert {number: info["title"] for number, info in metadata["seasons"].items()} == english_names
+    assert request.call_count == (2 if paginated_names else 2 + len(tvdb_seasons))
+
+    for season, episode, title in [
+        (1, 82, HORIZONS),
+        (2, 22, "Pokemon.Horizons.The.Series.S02E22.1080p.WEB-DL"),
+        (19, 22, "Pokemon.Horizons.The.Series.S19E22.1080p.WEB-DL"),
+    ]:
+        passed, results = _filter([title], season=season, episode=episode, seasons_metadata=metadata["seasons"])
+        assert not passed
+        assert results[0]["filter_reason"].startswith("Title similarity too low")
+
+    for season, episode, original_season, title in [
+        (1, 82, None, "Pokemon.Indigo.League.082.1080p.WEB-DL"),
+        (2, 22, None, "Pokemon.S02E22.1080p.WEB-DL"),
+        (20, 82, None, "Pokemon.Horizons.The.Series.S20E82.1080p.WEB-DL"),
+        (1, 82, 20, HORIZONS),
+    ]:
+        passed, results = _filter([title], season=season, episode=episode,
+                                  original_season=original_season, seasons_metadata=metadata["seasons"])
+        assert passed == results, results[0]["filter_reason"]
+
+
+def test_tvdb_missing_english_season_translation_preserves_original_and_plain_alias(monkeypatch):
+    from cli_battery.app import tvdb_client
+
+    raw_title = "新しい物語 (2023)"
+    raw = {"seasons": [{"number": 1, "id": 1001, "name": raw_title, "nameTranslations": ["jpn"]}]}
+    seasons = {1: {"episodes": {}}}
+    request = Mock()
+    monkeypatch.setattr(tvdb_client, "_make_request", request)
+    tvdb_client._add_aired_season_titles(seasons, raw)
+    assert seasons[1]["title"] == raw_title
+    request.assert_not_called()
+
+    passed, results = _filter(["La.Casa.de.Papel.S01E82.1080p.WEB-DL"],
+                              show="Money Heist", anime=False, aliases={"us": ["La Casa de Papel"]},
+                              seasons_metadata=seasons)
+    assert passed == results, results[0]["filter_reason"]
