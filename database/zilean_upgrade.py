@@ -20,6 +20,7 @@ Upgrade types supported:
 import functools
 import json
 import logging
+import re
 import threading
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -360,8 +361,13 @@ def _get_db_config(zilean_settings: Dict) -> Optional[Dict]:
     }
 
 
+_RESOLUTION_HINT = re.compile(r'(?i)(?<![a-z0-9])(?:2160|1080|720|576|480)[pi](?![a-z0-9])|(?<![a-z0-9])(?:4k|uhd)(?![a-z0-9])')
+
+
 @functools.lru_cache(maxsize=50000)
 def _has_quality_info(name: str) -> bool:
+    if _RESOLUTION_HINT.search(name):
+        return True  # the common case, without a full parse
     try:
         from PTT import parse_title
         return bool(parse_title(name).get('resolution'))
