@@ -197,10 +197,8 @@ class RunnerResolutionTests(unittest.TestCase):
                     self.assertTrue(hasattr(rp.ProgramRunner, spec.name))
 
     def test_interval_update_reuses_schedule_task(self):
-        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        with open(os.path.join(root, 'queues', 'run_program.py')) as f:
-            src = f.read()
-        body = src[src.index('def update_task_interval'):src.index('def task_trim_memory')]
+        from tests._source import runner_method
+        body = runner_method('update_task_interval')
         self.assertIn('self._schedule_task(normalized_name, target_interval_seconds)', body)
         self.assertNotIn('IntervalTrigger(', body)
 

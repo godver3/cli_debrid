@@ -15,7 +15,7 @@
             <input type="checkbox" id="additional-enable_subtitles" name="Subtitle Settings.enable_subtitles"
                    data-section="Subtitle Settings" data-key="enable_subtitles"
                    {% if settings.get('Subtitle Settings', {}).get('enable_subtitles') %}checked{% endif %}>
-            <p class="settings-description">Enable automatic subtitle downloading for media files. Requires Symlink File Management. Activate with caution as the Subtitle downloader adds 2-3 seconds of overhead per file processed. Consider instead filtering for MULTI releases with the language of your preference.</p>
+            <p class="settings-description">Download subtitles when an item is collected. Works in both modes: Symlinked/Local writes a sidecar file next to the library file. In Direct Mount, Plex gets the subtitle uploaded to its item (the mount is read-only); Jellyfin, Emby and Silo get a sidecar file when the mount accepts one, else an upload (Jellyfin and Silo only). Adds a few seconds per file. Manage and search subtitles under Tools → Subtitle Manager.</p>
         </div>
 
         <!-- Hidden settings - no longer used with simplified downsub system -->
@@ -28,7 +28,7 @@
                    class="settings-input"
                    data-section="Subtitle Settings" data-key="opensubtitles_username"
                    {% if environment_mode != 'full' %}readonly disabled{% endif %}>
-            <p class="settings-description">OpenSubtitles username for subtitle downloads</p>
+            <p class="settings-description">OpenSubtitles.com account (free). Needed to download from OpenSubtitles.com, the largest provider.</p>
         </div>
 
         <div class="settings-form-group">
@@ -42,12 +42,154 @@
         </div>
 
         <div class="settings-form-group">
-            <label for="additional-subtitle_languages" class="settings-title">Subtitle Languages:</label>
-            <input type="text" id="additional-subtitle_languages" name="Subtitle Settings.subtitle_languages"
-                   value="{{ settings.get('Subtitle Settings', {}).get('subtitle_languages', 'eng,zho') }}" 
+            <label for="additional-opensubtitles_org_username" class="settings-title">OpenSubtitles.org Username:</label>
+            <input type="{% if environment_mode != 'full' %}password{% else %}text{% endif %}" id="additional-opensubtitles_org_username" name="Subtitle Settings.opensubtitles_org_username"
+                   value="{{ settings.get('Subtitle Settings', {}).get('opensubtitles_org_username', '') }}"
                    class="settings-input"
+                   data-section="Subtitle Settings" data-key="opensubtitles_org_username"
+                   {% if environment_mode != 'full' %}readonly disabled{% endif %}>
+            <p class="settings-description">Only for the legacy OpenSubtitles.org provider. Its accounts can differ from OpenSubtitles.com's, and the old API refuses .com logins. Leave blank to use the login above.</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-opensubtitles_org_password" class="settings-title">OpenSubtitles.org Password:</label>
+            <input type="password" id="additional-opensubtitles_org_password" name="Subtitle Settings.opensubtitles_org_password"
+                   value="{{ settings.get('Subtitle Settings', {}).get('opensubtitles_org_password', '') }}"
+                   class="settings-input"
+                   data-section="Subtitle Settings" data-key="opensubtitles_org_password"
+                   {% if environment_mode != 'full' %}readonly disabled{% endif %}>
+        </div>
+
+        <div class="settings-form-group">
+            <label class="settings-title">Subtitle Languages:</label>
+            <input type="hidden" id="additional-subtitle_languages" name="Subtitle Settings.subtitle_languages"
+                   value="{{ settings.get('Subtitle Settings', {}).get('subtitle_languages', 'eng,zho') }}"
                    data-section="Subtitle Settings" data-key="subtitle_languages">
-            <p class="settings-description">Comma-separated list of language codes (e.g., eng,zho,spa). Uses ISO-639-3 codes.</p>
+            <div id="sublang-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px"></div>
+            <select id="sublang-add" class="settings-input" style="max-width:320px">
+                <option value="">Add a language…</option>
+            </select>
+            <p class="settings-description">Languages to get subtitles in. Pick from the list; the order doesn't matter. A red entry is a code that isn't a recognised language: remove it and pick the language from the list.</p>
+            <script>
+            (function () {
+              const LANGS = [["afr", "Afrikaans"], ["sqi", "Albanian"], ["ara", "Arabic"], ["hye", "Armenian"], ["aze", "Azerbaijani"], ["eus", "Basque"], ["bel", "Belarusian"], ["ben", "Bengali"], ["bos", "Bosnian"], ["bul", "Bulgarian"], ["mya", "Burmese"], ["cat", "Catalan"], ["zho", "Chinese"], ["zho-CN", "Chinese (Simplified)"], ["zho-TW", "Chinese (Traditional)"], ["hrv", "Croatian"], ["ces", "Czech"], ["dan", "Danish"], ["nld", "Dutch"], ["eng", "English"], ["est", "Estonian"], ["fil", "Filipino"], ["fin", "Finnish"], ["fra", "French"], ["glg", "Galician"], ["kat", "Georgian"], ["deu", "German"], ["ell", "Greek"], ["guj", "Gujarati"], ["heb", "Hebrew"], ["hin", "Hindi"], ["hun", "Hungarian"], ["isl", "Icelandic"], ["ind", "Indonesian"], ["gle", "Irish"], ["ita", "Italian"], ["jpn", "Japanese"], ["kan", "Kannada"], ["kaz", "Kazakh"], ["khm", "Khmer"], ["kor", "Korean"], ["lao", "Lao"], ["lav", "Latvian"], ["lit", "Lithuanian"], ["mkd", "Macedonian"], ["msa", "Malay"], ["mal", "Malayalam"], ["mar", "Marathi"], ["mon", "Mongolian"], ["nep", "Nepali"], ["nor", "Norwegian"], ["nob", "Norwegian Bokm\u00e5l"], ["fas", "Persian (Farsi)"], ["pol", "Polish"], ["por", "Portuguese"], ["pt-BR", "Portuguese (Brazil)"], ["pan", "Punjabi"], ["ron", "Romanian"], ["rus", "Russian"], ["srp", "Serbian"], ["sin", "Sinhala"], ["slk", "Slovak"], ["slv", "Slovenian"], ["spa", "Spanish"], ["es-MX", "Spanish (Latin America)"], ["swa", "Swahili"], ["swe", "Swedish"], ["tam", "Tamil"], ["tel", "Telugu"], ["tha", "Thai"], ["tur", "Turkish"], ["ukr", "Ukrainian"], ["urd", "Urdu"], ["vie", "Vietnamese"], ["cym", "Welsh"]];
+              const ALIAS = {en:'eng',eng:'eng',english:'eng',zh:'zho',chi:'zho',zho:'zho',fr:'fra',fre:'fra',fra:'fra',
+                de:'deu',ger:'deu',deu:'deu',es:'spa',spa:'spa',it:'ita',ita:'ita',pt:'por',por:'por',pob:'pt-BR',pb:'pt-BR',
+                'pt-br':'pt-BR',nl:'nld',dut:'nld',nld:'nld',ru:'rus',rus:'rus',ja:'jpn',jpn:'jpn',ko:'kor',kor:'kor',
+                ar:'ara',ara:'ara',he:'heb',heb:'heb',iw:'heb',sv:'swe',swe:'swe',no:'nor',nor:'nor',nb:'nob',nob:'nob',
+                da:'dan',dan:'dan',fi:'fin',fin:'fin',tr:'tur',tur:'tur',el:'ell',gre:'ell',ell:'ell',hu:'hun',hun:'hun',
+                cs:'ces',cze:'ces',ces:'ces',ro:'ron',rum:'ron',ron:'ron',th:'tha',tha:'tha',vi:'vie',vie:'vie',
+                hr:'hrv',hrv:'hrv',sr:'srp',srp:'srp',bs:'bos',bos:'bos',pl:'pol',pol:'pol',uk:'ukr',ukr:'ukr',
+                id:'ind',ind:'ind',ms:'msa',may:'msa',msa:'msa',fa:'fas',per:'fas',fas:'fas',hi:'hin',hin:'hin',
+                bg:'bul',bul:'bul',sk:'slk',slo:'slk',slk:'slk',sl:'slv',slv:'slv',et:'est',est:'est',lv:'lav',lav:'lav',
+                lt:'lit',lit:'lit',is:'isl',ice:'isl',isl:'isl',mk:'mkd',mac:'mkd',mkd:'mkd',sq:'sqi',alb:'sqi',sqi:'sqi',
+                hy:'hye',arm:'hye',hye:'hye',ka:'kat',geo:'kat',kat:'kat',eu:'eus',baq:'eus',eus:'eus',cy:'cym',wel:'cym',cym:'cym',
+                my:'mya',bur:'mya',mya:'mya',zt:'zho-TW','zh-tw':'zho-TW','zh-hant':'zho-TW','zh-cn':'zho-CN','zh-hans':'zho-CN',
+                'es-419':'es-MX','es-mx':'es-MX'};
+              const NAMES = Object.fromEntries(LANGS);
+              const input = document.getElementById('additional-subtitle_languages');
+              const chips = document.getElementById('sublang-chips');
+              const add = document.getElementById('sublang-add');
+              if (!input || !chips || !add) return;
+              const norm = (c) => { const k = (c || '').trim(); if (!k) return null;
+                return NAMES[k] ? k : (ALIAS[k.toLowerCase()] || (LANGS.find((l) => l[1].toLowerCase() === k.toLowerCase()) || [])[0] || ('?' + k)); };
+              let codes = [...new Set((input.value || '').split(',').map(norm).filter(Boolean))];
+              function save() {
+                input.value = codes.filter((c) => !c.startsWith('?')).concat(codes.filter((c) => c.startsWith('?')).map((c) => c.slice(1))).join(',');
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+              }
+              function render() {
+                chips.innerHTML = '';
+                if (!codes.length) chips.innerHTML = '<span class="settings-description" style="margin:0">No languages: subtitles won\'t be downloaded.</span>';
+                for (const c of codes) {
+                  const bad = c.startsWith('?');
+                  const chip = document.createElement('span');
+                  chip.style.cssText = 'display:inline-flex;align-items:center;gap:6px;padding:3px 6px 3px 10px;border-radius:14px;font-size:13px;' +
+                    (bad ? 'border:1px solid #ef4444;color:#ef4444' : 'border:1px solid rgba(255,255,255,.2)');
+                  chip.textContent = bad ? c.slice(1) + ' (not a recognised language)' : (NAMES[c] || c);
+                  const x = document.createElement('button');
+                  x.type = 'button'; x.textContent = '×'; x.title = 'Remove';
+                  x.style.cssText = 'background:none;border:none;color:inherit;cursor:pointer;font-size:15px;line-height:1;padding:0 2px';
+                  x.onclick = () => { codes = codes.filter((y) => y !== c); save(); render(); };
+                  chip.appendChild(x);
+                  chips.appendChild(chip);
+                }
+                add.innerHTML = '<option value="">Add a language…</option>' +
+                  LANGS.filter((l) => !codes.includes(l[0])).map((l) => `<option value="${l[0]}">${l[1]}</option>`).join('');
+              }
+              add.addEventListener('change', () => { if (add.value) { codes.push(add.value); save(); render(); } });
+              render();
+            })();
+            </script>
+        </div>
+
+        {% set _sel = settings.get('Subtitle Settings', {}).get('subtitle_providers') or ['opensubtitlescom', 'gestdown', 'tvsubtitles'] %}
+        <div class="settings-form-group">
+            <div class="settings-title">Subtitle Providers:</div>
+            {% set _providers = [
+                ('opensubtitlescom', 'OpenSubtitles.com', 'login above'),
+                ('subdl', 'SubDL', 'API key below'),
+                ('subsource', 'SubSource', 'API key below'),
+                ('gestdown', 'Gestdown', 'Addic7ed mirror, TV only'),
+                ('tvsubtitles', 'TVsubtitles', 'TV only'),
+                ('subtitulamos', 'Subtitulamos', 'Spanish'),
+                ('bsplayer', 'BSPlayer', 'hash matches only'),
+                ('opensubtitles', 'OpenSubtitles.org', 'legacy; .org login above'),
+            ] %}
+            <div id="additional-subtitle_providers" class="subtitle-provider-list" role="group" aria-label="Subtitle providers"
+                 style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:6px 16px;margin-top:4px">
+                {% for value, name, note in _providers %}
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 0">
+                    <input type="checkbox" class="subtitle-provider-option" value="{{ value }}"
+                           {% if value in _sel %}checked{% endif %}>
+                    <span>{{ name }} <span style="color:var(--text-secondary);font-size:0.9em">({{ note }})</span></span>
+                </label>
+                {% endfor %}
+            </div>
+            <p class="settings-description">None of these need a captcha. Every selected provider is searched and the best match wins: a file-hash match first (exact release, already in sync), then same release group/source. Matches for the wrong episode or movie are never downloaded.</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-subdl_api_key" class="settings-title">SubDL API Key:</label>
+            <input type="password" id="additional-subdl_api_key" name="Subtitle Settings.subdl_api_key"
+                   value="{{ settings.get('Subtitle Settings', {}).get('subdl_api_key', '') }}" class="settings-input"
+                   data-section="Subtitle Settings" data-key="subdl_api_key"
+                   {% if environment_mode != 'full' %}readonly disabled{% endif %}>
+            <p class="settings-description">Free key from your subdl.com account (API section). Large catalog, strong for TV and releases OpenSubtitles has little for.</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-subsource_api_key" class="settings-title">SubSource API Key:</label>
+            <input type="password" id="additional-subsource_api_key" name="Subtitle Settings.subsource_api_key"
+                   value="{{ settings.get('Subtitle Settings', {}).get('subsource_api_key', '') }}" class="settings-input"
+                   data-section="Subtitle Settings" data-key="subsource_api_key"
+                   {% if environment_mode != 'full' %}readonly disabled{% endif %}>
+            <p class="settings-description">Free key from your subsource.net profile (API section).</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-text_subtitles_only" class="settings-title">Avoid Transcoding Formats:</label>
+            <input type="checkbox" id="additional-text_subtitles_only" name="Subtitle Settings.text_subtitles_only"
+                   data-section="Subtitle Settings" data-key="text_subtitles_only"
+                   {% if settings.get('Subtitle Settings', {}).get('text_subtitles_only') %}checked{% endif %}>
+            <p class="settings-description">Styled ASS/SSA and image (PGS/VobSub) subtitles make most Plex/Jellyfin/Emby clients transcode. When on, downloaded ASS/SSA subtitles are converted to plain SRT, and an embedded image or styled track doesn't count as having that language, so an SRT is fetched.</p>
+        </div>
+
+        <div class="settings-form-group">
+            <div style="background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.3); padding: 12px 15px; border-radius: 8px;">
+                <p style="margin: 0; font-weight: bold; color: #f59e0b;"><i class="fas fa-exclamation-triangle"></i> Plex users: turn off Plex's own subtitle analysis</p>
+                <p style="margin: 6px 0 0 0; color: var(--text-secondary);">In Plex go to Settings → Library and set <strong>Generate voice activity data</strong> to <strong>never</strong>. Plex uses it to auto-sync subtitles, but it reads every file in full, which on a debrid/usenet mount means downloading your whole library in the background. Sync here only reads a few short samples.</p>
+                <p style="margin: 6px 0 0 0; color: var(--text-secondary);">Moving from Bazarr? Tools → Subtitle Manager → <strong>Import from Bazarr</strong> copies its languages, providers, login and sync settings.</p>
+            </div>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-ignore_embedded_subtitles" class="settings-title">Ignore Embedded Subtitles:</label>
+            <input type="checkbox" id="additional-ignore_embedded_subtitles" name="Subtitle Settings.ignore_embedded_subtitles"
+                   data-section="Subtitle Settings" data-key="ignore_embedded_subtitles"
+                   {% if settings.get('Subtitle Settings', {}).get('ignore_embedded_subtitles') %}checked{% endif %}>
+            <p class="settings-description">Always fetch separate subtitle files, even when the video already has a good embedded track in that language. Off (default): an embedded text track (not forced, not commentary, not a format that makes players transcode) counts as having the language.</p>
         </div>
 
         <div class="settings-form-group">
@@ -55,7 +197,7 @@
             <input type="checkbox" id="additional-probe_for_embedded_subtitles" name="Subtitle Settings.probe_for_embedded_subtitles"
                    data-section="Subtitle Settings" data-key="probe_for_embedded_subtitles"
                    {% if settings.get('Subtitle Settings', {}).get('probe_for_embedded_subtitles') %}checked{% endif %}>
-            <p class="settings-description">Before searching for subtitles, probe the file with ffprobe to detect embedded tracks. If all configured languages are already embedded, the external search (and Bazarr notification) is skipped. Requires ffprobe. Note: probing reads from the debrid mount — ensure your mount is stable before enabling.</p>
+            <p class="settings-description">Skip languages the file already has as an embedded track (forced tracks don't count). If every language is embedded, the search (and Bazarr notification) is skipped. If the add-time ffprobe playability check is on, its result is reused, so there's no second read of the file; otherwise this reads the file header once (needs ffprobe). In Direct Mount it only uses the add-time check's result.</p>
         </div>
     
         <div class="settings-subheader"><h5>Bazarr integration</h5></div>
@@ -66,10 +208,10 @@
             <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); padding: 15px; border-radius: 8px;">
                 <p style="margin: 0; font-weight: bold; color: #ef4444;"><i class="fas fa-exclamation-triangle"></i> Not Available</p>
                 <p style="margin: 10px 0 0 0; color: var(--text-primary);">
-                    Bazarr Integration requires <strong>Symlinked/Local</strong> file collection management mode.
+                    Bazarr Integration requires <strong>Symlinked/Local</strong> or <strong>Plex</strong> file collection management mode.
                 </p>
                 <p style="margin: 5px 0 0 0; color: var(--text-secondary); font-size: 0.9em;">
-                    Your current mode is <strong>{{ settings.get('File Management', {}).get('file_collection_management', 'Plex') }}</strong>.
+                    Your current mode is <strong>{{ settings.get('File Management', {}).get('file_collection_management', 'Plex')|fm_label }}</strong>.
                     To use Bazarr Integration, change your File Collection Management setting in Required Settings.
                 </p>
             </div>
@@ -81,7 +223,7 @@
             <input type="checkbox" id="bazarr-enabled" name="Bazarr Integration.enabled"
                    data-section="Bazarr Integration" data-key="enabled"
                    {% if settings.get('Bazarr Integration', {}).get('enabled') %}checked{% endif %}>
-            <p class="settings-description">Enable Radarr/Sonarr API spoofing for Bazarr subtitle integration. When enabled, cli_debrid will expose API endpoints that allow Bazarr to connect as if this were Radarr/Sonarr.</p>
+            <p class="settings-description">Enable Radarr/Sonarr API spoofing for Bazarr subtitle integration. When enabled, Clyde will expose API endpoints that allow Bazarr to connect as if this were Radarr/Sonarr.</p>
         </div>
 
         <!-- API Key with Generate/Copy buttons -->

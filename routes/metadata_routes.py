@@ -11,15 +11,19 @@ from cli_battery.app.database import (
 )
 from cli_battery.app.direct_api import DirectAPI
 
+from routes.models import admin_required
+
 metadata_bp = Blueprint('metadata', __name__)
 
 
 @metadata_bp.route('/debug')
+@admin_required
 def metadata_debug():
     return render_template('metadata_debug.html')
 
 
 @metadata_bp.route('/api/item/<imdb_id>')
+@admin_required
 def get_item_by_imdb(imdb_id: str):
     # Ensure DB is initialized
     init_db()
@@ -101,6 +105,7 @@ def get_item_by_imdb(imdb_id: str):
 
 
 @metadata_bp.route('/api/delete/<imdb_id>', methods=['POST'])
+@admin_required
 def delete_item_by_imdb(imdb_id: str):
     # Ensure DB is initialized
     init_db()

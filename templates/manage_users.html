@@ -195,6 +195,7 @@
     {% if not current_user.oidc_sub %}
     <form id="changeOwnPasswordForm">
       <div class="mu-form-row">
+        <input class="mu-input" type="password" name="current_password" placeholder="Current Password" required autocomplete="current-password">
         <input class="mu-input" type="password" name="new_password" placeholder="New Password" required autocomplete="new-password">
         <input class="mu-input" type="password" name="confirm_password" placeholder="Confirm New Password" required autocomplete="new-password">
         <button type="submit" class="mu-btn mu-btn-primary">Change Password</button>
@@ -208,7 +209,7 @@
   <!-- API Token -->
   <div class="mu-card">
     <div class="mu-section-title">API Token</div>
-    <p style="color:var(--mu-text2);margin:0 0 .75rem">Use this token to access cli_debrid endpoints externally (OpenClaw, homepage widgets, etc.).</p>
+    <p style="color:var(--mu-text2);margin:0 0 .75rem">Use this token to access Clyde endpoints externally (OpenClaw, homepage widgets, etc.).</p>
     <div class="mu-token-row">
       <input type="text" id="api-token-display" class="mu-input" value="{{ current_user.api_token or '' }}" readonly style="font-family:monospace;flex:1;min-width:260px">
       <button type="button" id="copy-api-token-btn" class="mu-btn mu-btn-copy">Copy</button>
@@ -236,11 +237,11 @@
         </div>
         <div class="mu-sso-row">
           <label class="mu-sso-label">Discovery URL</label>
-          <input type="text" id="sso-discovery-url" class="mu-input" placeholder="https://auth.example.com/application/o/cli-debrid/.well-known/openid-configuration">
+          <input type="text" id="sso-discovery-url" class="mu-input" placeholder="https://auth.example.com/application/o/clyde/.well-known/openid-configuration">
         </div>
         <div class="mu-sso-row">
           <label class="mu-sso-label">Client ID</label>
-          <input type="text" id="sso-client-id" class="mu-input" placeholder="cli-debrid">
+          <input type="text" id="sso-client-id" class="mu-input" placeholder="clyde">
         </div>
         <div class="mu-sso-row">
           <label class="mu-sso-label">Client Secret</label>
@@ -338,6 +339,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (changeOwnPasswordForm) {
         changeOwnPasswordForm.addEventListener('submit', function(e) {
             e.preventDefault();
+            const currentPassword = this.elements.current_password.value;
             const newPassword = this.elements.new_password.value;
             const confirmPassword = this.elements.confirm_password.value;
             if (newPassword !== confirmPassword) { showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: 'Passwords do not match.' }); return; }
@@ -350,7 +352,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     fetch("{{ url_for('user_management.change_own_password') }}", {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-                        body: JSON.stringify({ new_password: newPassword, confirm_password: confirmPassword })
+                        body: JSON.stringify({ current_password: currentPassword, new_password: newPassword, confirm_password: confirmPassword })
                     })
                     .then(r => r.json())
                     .then(data => {
@@ -430,7 +432,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (s.provider)       document.getElementById('sso-provider').value = s.provider;
             if (s.discovery_url)  document.getElementById('sso-discovery-url').value = s.discovery_url;
             if (s.client_id)      document.getElementById('sso-client-id').value = s.client_id;
-            if (s.client_secret)  document.getElementById('sso-client-secret').value = s.client_secret;
+            if (s.client_secret_set) document.getElementById('sso-client-secret').placeholder = '(saved — leave blank to keep)';
             if (s.default_role)   document.getElementById('sso-default-role').value = s.default_role;
             document.getElementById('sso-auto-provision').checked   = s.auto_provision !== false;
             document.getElementById('sso-disable-local-auth').checked = !!s.disable_local_auth;

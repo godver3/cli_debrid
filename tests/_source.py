@@ -39,3 +39,19 @@ def runner_method(name: str) -> str:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
                 return ast.get_source_segment(src, node)
     raise KeyError(f"ProgramRunner has no method {name!r}")
+
+
+def project_source(relpath: str) -> str:
+    """Source of a project module by its old path, e.g. 'routes/debug_routes.py'.
+
+    Large modules were split into packages of the same name; for those, every
+    file in the package is returned as one text, so source checks keep working
+    whichever file a function now lives in.
+    """
+    path = os.path.join(ROOT, relpath)
+    if os.path.isfile(path):
+        return _read(path)
+    pkg = path[:-3] if path.endswith('.py') else path
+    if os.path.isdir(pkg):
+        return '\n\n'.join(_read(f) for f in sorted(glob.glob(os.path.join(pkg, '*.py'))))
+    raise FileNotFoundError(relpath)

@@ -272,6 +272,3 @@ async def get_all_torrents(api_key: str) -> Optional[List[Dict]]:
     """Fetches all torrents from the user's Real-Debrid account asynchronously."""
     return await get_all_items('/torrents', api_key, limit=500, extra_params=None) # Use page pagination default
 
-async def get_all_downloads(api_key: str) -> Optional[List[Dict]]:
-    """Fetches all downloads from the user's Real-Debrid account asynchronously."""
-    return await get_all_items('/downloads', api_key, limit=500, extra_params=None) # Use page pagination default

@@ -1,6 +1,7 @@
 import logging
 from typing import List, Dict, Any, Optional, Callable, Tuple
 import os
+import sys
 from utilities.settings import get_setting
 import shutil
 import re
@@ -13,6 +14,7 @@ from database.symlink_verification import add_symlinked_file_for_verification, a
 from database.database_reading import get_all_media_items, get_media_item_by_id, get_season_year
 from scraper.functions.ptt_parser import parse_with_ptt
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from utilities.paths import safe_realpath
 
 # Check MediaInfo availability at module load (optional dependency)
 _MEDIAINFO_AVAILABLE = False
@@ -38,6 +40,19 @@ try:
 except ImportError as e:
     logging.info(f"[MEDIAINFO_DEBUG] ✗ pymediainfo import failed: {e}")
     logging.info(f"[MEDIAINFO] MediaInfo not available ({e}) - will parse resolution from filenames only")
+
+def is_single_folder_name(name) -> bool:
+    """True when name is one folder name that stays inside the directory it is joined to:
+    no path separators, not '.'/'..' (or all dots), not absolute, not blank."""
+    if not isinstance(name, str):
+        return False
+    stripped = name.strip()
+    if not stripped or set(stripped) == {'.'}:
+        return False
+    if '/' in stripped or '\\' in stripped or os.path.isabs(stripped):
+        return False
+    return True
+
 
 def sanitize_filename(filename: str) -> str:
     """Sanitize filename to be safe for symlinks."""
@@ -502,8 +517,12 @@ def truncate_path_components(
     return sanitized
 
 
-def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup: bool = False) -> str:
-    """Get the full path for the symlink based on settings and metadata."""
+def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup: bool = False,
+                     symlink_root: Optional[str] = None) -> str:
+    """Get the full path for the symlink based on settings and metadata.
+
+    symlink_root replaces the configured symlinked_files_path for this call
+    (Tools > Rclone Mount to Symlinks with a different base path)."""
     import json
     try:
         # --- BEGIN Enhanced Logging ---
@@ -520,7 +539,7 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
         logging.debug(f"Input item: type={item.get('type')}, genres={item.get('genres')}, content_source={item.get('content_source')}")
 
         # Get the base symlink path from general File Management settings
-        symlinked_path_base = get_setting('File Management', 'symlinked_files_path')
+        symlinked_path_base = symlink_root or get_setting('File Management', 'symlinked_files_path')
         
         # Check for content source specific custom subfolder
         final_symlinked_path_root = symlinked_path_base # Start with the base path
@@ -555,7 +574,9 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
         if selected_folder and selected_folder_is_custom:
             # User selected a custom folder - update the root path
             sanitized_selected_folder = sanitize_filename(selected_folder)
-            if sanitized_selected_folder:
+            if not is_single_folder_name(sanitized_selected_folder):
+                logging.warning(f"[SymlinkPath] Ignoring user-selected custom folder {selected_folder!r}: not a single folder name. Using current root.")
+            elif sanitized_selected_folder:
                 final_symlinked_path_root = os.path.join(symlinked_path_base, sanitized_selected_folder)
                 logging.info(f"[SymlinkPath] User selected custom folder '{sanitized_selected_folder}'. New root: '{final_symlinked_path_root}'")
             else:
@@ -751,6 +772,12 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
                 logging.info(f"[SymlinkPath] selected_folder_is_custom: {selected_folder_is_custom}")
                 logging.info(f"[SymlinkPath] Root path: {final_symlinked_path_root}")
                 logging.info(f"[SymlinkPath] =============================================")
+
+                if selected_folder and not selected_folder_is_custom and not is_single_folder_name(selected_folder):
+                    # Requests (any user role) send this name, and it is joined into the
+                    # symlink path: '..' or a path would put links outside the library.
+                    logging.warning(f"[SymlinkPath] Ignoring user-selected folder {selected_folder!r}: not a single folder name. Using auto-detection.")
+                    selected_folder = None
 
                 if selected_folder and not selected_folder_is_custom:
                     # User selected a standard type folder (not a custom folder)
@@ -952,6 +979,23 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
         logging.error(f"[SymlinkPath] Error generating symlink path for item {item.get('id', '')}: {str(e)}", exc_info=True)
         return None
 
+_WINDOWS_PLEX_SYMLINK_WARNED = False
+
+
+def _warn_windows_plex_symlinks():
+    """Plex Media Server on Windows skips file symlinks while scanning, so a
+    symlinked library never shows up there (found testing #585 on Windows).
+    Say so once per run instead of letting items sit Collected but missing."""
+    global _WINDOWS_PLEX_SYMLINK_WARNED
+    if _WINDOWS_PLEX_SYMLINK_WARNED or not sys.platform.startswith('win'):
+        return
+    _WINDOWS_PLEX_SYMLINK_WARNED = True
+    if (get_setting('File Management', 'media_server_type', 'plex') or 'plex').lower() == 'plex':
+        logging.warning("Plex on Windows ignores symlinked files, so this library won't appear in Plex. "
+                        "Use File Management = Plex and point the Plex libraries at the mount's folders "
+                        "(e.g. M:\\Movies and M:\\TV Shows) instead.")
+
+
 def create_symlink(source_path: str, dest_path: str, media_item_id: int = None, skip_verification: bool = False) -> bool:
     """Creates a symlink from source_path to dest_path."""
     
@@ -973,7 +1017,7 @@ def create_symlink(source_path: str, dest_path: str, media_item_id: int = None, 
     # If destination exists and is a symlink, check if it points to the correct source
     if os.path.islink(dest_path):
         try:
-            current_target = os.path.realpath(dest_path)
+            current_target = safe_realpath(dest_path)
             if current_target == source_path:
                 logging.info(f"Symlink already exists and points to the correct target: {dest_path}")
                 symlink_ok_or_created = True # Symlink is already correct
@@ -1013,6 +1057,7 @@ def create_symlink(source_path: str, dest_path: str, media_item_id: int = None, 
         try:
             os.symlink(source_path, dest_path)
             logging.info(f"Created symlink: {dest_path} -> {source_path}")
+            _warn_windows_plex_symlinks()
             symlink_ok_or_created = True # Symlink successfully created
         except Exception as e:
             logging.error(f"Failed to create symlink from {source_path} to {dest_path}: {e}")
@@ -1036,6 +1081,24 @@ def create_symlink(source_path: str, dest_path: str, media_item_id: int = None, 
 def _get_video_extensions() -> set:
     """Return a set of common video file extensions."""
     return {'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.mpg', '.mpeg', '.ts', '.m2ts'}
+
+
+def _additional_video_files(all_video_files: List[str], primary_file: str) -> List[str]:
+    """The folder's other videos that may be more versions of the item: every
+    video except the primary file, samples and trailers.
+
+    A sample named like the episode ("show.s02e07...sample.mkv") parses as the
+    same SxxEyy, so it became a second Collected row with its own library
+    symlink. cli_mount drops samples at import; the built-in mount engine
+    (0.8.0) keeps them in the job folder, which is when this started.
+    The primary file is never filtered, so a show named "Sample" still works.
+    """
+    from debrid.common.utils import is_unwanted_file
+    others = [f for f in all_video_files if f != primary_file]
+    skipped = [f for f in others if is_unwanted_file(os.path.basename(f))]
+    if skipped:
+        logging.info(f"[MultiFile] Skipping sample/trailer file(s): {[os.path.basename(f) for f in skipped]}")
+    return [f for f in others if f not in skipped]
 
 
 def _find_all_video_files_in_folder(folder_path: str, primary_file: str) -> List[str]:
@@ -1388,7 +1451,10 @@ def _cleanup_old_symlink(item: Dict[str, Any], item_identifier: str, source_file
 
         # Remove the old file from Plex or Emby/Jellyfin
         media_server_type = 'none'
-        if get_setting('Debug', 'emby_jellyfin_url', default=False):
+        from utilities.silo_functions import is_silo_mode
+        if is_silo_mode():
+            media_server_type = 'silo'
+        elif get_setting('Debug', 'emby_jellyfin_url', default=False):
             media_server_type = 'emby_jellyfin'
         elif get_setting('File Management', 'plex_url_for_symlink', default=False):
             media_server_type = 'plex'
@@ -1396,7 +1462,10 @@ def _cleanup_old_symlink(item: Dict[str, Any], item_identifier: str, source_file
         if media_server_type != 'none':
             try:
                 episode_title = item.get('episode_title') if item.get('type') == 'episode' else None
-                if media_server_type == 'emby_jellyfin':
+                if media_server_type == 'silo':
+                    from utilities.silo_functions import remove_file_from_silo
+                    remove_file_from_silo(item['title'], old_dest, episode_title)
+                elif media_server_type == 'emby_jellyfin':
                     from utilities.emby_functions import remove_file_from_emby
                     remove_file_from_emby(item['title'], old_dest, episode_title)
                 elif media_server_type == 'plex':
@@ -1840,7 +1909,8 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
             
             # Add check for content_source to prevent manual assignments from triggering upgrades
             is_manually_assigned = item.get('content_source') == 'Magnet_Assigner'
-            is_upgrade_candidate = (days_since_release <= 7 and 
+            from utilities.settings import get_upgrade_max_release_age_days
+            is_upgrade_candidate = (days_since_release <= get_upgrade_max_release_age_days() and
                                     get_setting("Scraping", "enable_upgrading", default=False) and
                                     not is_manually_assigned) # Check if NOT manually assigned
             
@@ -2078,8 +2148,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 if source_folder and not skip_multifile_scan:
                     try:
                         all_video_files = _find_all_video_files_in_folder(source_folder, source_file)
-                        # Filter out the primary file we already processed
-                        additional_files = [f for f in all_video_files if f != source_file]
+                        additional_files = _additional_video_files(all_video_files, source_file)
 
                         if additional_files:
                             item_type = item.get('type', 'movie')
@@ -2564,7 +2633,7 @@ def scan_for_broken_symlinks(library_path: str = None) -> Dict[str, Any]:
                 # Check if it's a symlink
                 if os.path.islink(file_path):
                     total_symlinks += 1
-                    target_path = os.path.realpath(file_path)
+                    target_path = safe_realpath(file_path)
                     relative_path = os.path.relpath(file_path, library_path)
                     
                     logging.debug(f"Checking symlink: {relative_path} -> {target_path}")
@@ -2640,7 +2709,7 @@ def repair_broken_symlink(symlink_path: str, new_target_path: str = None) -> Dic
                 'new_target': None
             }
             
-        old_target = os.path.realpath(symlink_path)
+        old_target = safe_realpath(symlink_path)
         
         # If no new target specified, try to find the file
         if not new_target_path:
@@ -2943,7 +3012,7 @@ def resync_symlinks_with_new_settings(
                 needs_recreate = False
                 if not os.path.lexists(db_symlink_location): needs_recreate = True
                 elif not os.path.islink(db_symlink_location): needs_recreate = True
-                elif os.path.realpath(db_symlink_location) != os.path.realpath(actual_source_file_to_use): needs_recreate = True
+                elif safe_realpath(db_symlink_location) != safe_realpath(actual_source_file_to_use): needs_recreate = True
                 
                 if needs_recreate:
                     symlink_recreated = create_symlink(actual_source_file_to_use, new_symlink_destination, item_id, skip_verification=True)

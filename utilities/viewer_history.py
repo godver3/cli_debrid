@@ -1,9 +1,10 @@
-"""Per-user watch history from Plex and Emby/Jellyfin, for Discover recommendations.
+"""Per-user watch history from Plex, Emby/Jellyfin and Silo, for Discover recommendations.
 
 Kept separate from watch_history.db (the owner-only Plex sync that feeds the
 "don't add watched items" setting). Each sync replaces one source's rows, so a
 failed sync leaves the previous data in place. Viewer ids look like
-``plex:1`` (account 1 is the server owner) or ``jellyfin:<user id>``.
+``plex:1`` (account 1 is the server owner), ``jellyfin:<user id>`` or
+``silo:<profile id>`` (Silo keeps history per profile, like Plex Home).
 """
 
 import logging
@@ -244,9 +245,71 @@ def sync_emby():
     return len(viewers), len(plays)
 
 
+def sync_silo():
+    """Every profile's plays on Silo (admin playback history). Returns
+    (viewers, titles) counts, or None when Silo isn't the media server."""
+    from utilities import silo_functions as silo
+    if not silo.is_silo_mode():
+        return None
+    url, key = silo.silo_config()
+    since = (datetime.utcnow() - timedelta(days=HISTORY_DAYS)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    rows, cursor = [], None
+    for _ in range(500):
+        params = {'limit': 200, 'ended_after': since}
+        if cursor:
+            params['cursor'] = cursor
+        r = silo._request('GET', '/api/v2/admin/playback-history', url, key, params=params, timeout=30)
+        r.raise_for_status()
+        body = r.json() or {}
+        rows += body.get('items') or []
+        cursor = (body.get('page') or {}).get('next_cursor')
+        if not (body.get('page') or {}).get('has_more') or not cursor:
+            break
+
+    def catalog(ids):
+        out, ids = {}, sorted({i for i in ids if i})
+        for start in range(0, len(ids), 200):
+            for it in silo.catalog_items(url, key, ids[start:start + 200], timeout=30):
+                out[it.get('content_id')] = it
+        return out
+
+    items = catalog(r.get('media_item_id') for r in rows)
+    series = catalog(it.get('series_id') for it in items.values() if it.get('type') == 'episode')
+    try:
+        r = silo._request('GET', '/api/v2/admin/users', url, key, timeout=30)
+        users = ((r.json() or {}).get('items') or []) if r.status_code == 200 else []
+    except Exception:
+        users = []  # only decides the main viewer
+    admins = {str(u.get('id')) for u in users if u.get('role') == 'admin'}
+
+    viewers, plays = {}, {}
+    for row in rows:
+        vid = str(row.get('profile_id') or row.get('user_id') or '')
+        if not vid:
+            continue
+        viewers.setdefault(vid, (row.get('profile_name') or row.get('username') or vid,
+                                 str(row.get('user_id')) in admins))
+        if not row.get('completed'):
+            continue
+        it = items.get(row.get('media_item_id'))
+        if not it:
+            continue
+        if it.get('type') == 'movie':
+            mt, src = 'movie', it
+        else:
+            mt, src = 'tv', series.get(it.get('series_id')) or {}
+        ids = (str(src['tmdb_id']) if src.get('tmdb_id') else None, src.get('imdb_id') or None)
+        _add_play(plays, vid, mt, ids, src.get('title') or it.get('series_title') or it.get('title'),
+                  _emby_date(row.get('ended_at')), row.get('media_item_id'))
+    # One main viewer: the first profile of an admin account.
+    main = next((v for v, (_, adm) in viewers.items() if adm), None)
+    _store('silo', [(v, name, v == main) for v, (name, _) in viewers.items()], plays)
+    return len(viewers), len(plays)
+
+
 def sync_all():
     """Sync every configured server; one failing doesn't stop the other."""
-    for name, fn in (('Plex', sync_plex), ('Emby/Jellyfin', sync_emby)):
+    for name, fn in (('Plex', sync_plex), ('Emby/Jellyfin', sync_emby), ('Silo', sync_silo)):
         try:
             counts = fn()
             if counts:

@@ -5750,3 +5750,177 @@ body[data-theme="tangerine"] .settings-form-group:has(input[type="checkbox"]) .s
 .settings-section.single-section > .settings-section-header {
     display: none;
 }
+
+/* ── Versions page: summary line, ⋯ / Add menus, setting groups ──────────── */
+.version-card .version-header-left {
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
+    min-width: 0;
+}
+.vs-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.vs-chip {
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: #222;
+    border: 1px solid #3d3d3d;
+    color: #aaa;
+    font-size: 11px;
+    line-height: 1.5;
+    white-space: nowrap;
+}
+
+.vs-menu {
+    position: relative;
+    flex-shrink: 0;
+}
+.version-card .vs-menu-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border-radius: 6px;
+    background: #222;
+    border: 1px solid #3d3d3d;
+    color: #aaa;
+    cursor: pointer;
+}
+.version-card .vs-menu-toggle:hover,
+.version-card .vs-menu-toggle[aria-expanded="true"] {
+    background: #2a2a2a;
+    border-color: #555;
+    color: #e0e0e0;
+}
+/* Fixed, placed by settings_scraping.js: cards clip overflow, so an absolute
+   menu would be cut off at the bottom of a collapsed card. */
+.vs-menu-items {
+    position: fixed;
+    z-index: 1000;
+    min-width: 180px;
+    padding: 4px;
+    background: #1b1b1b;
+    border: 1px solid #3d3d3d;
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+.vs-menu-items[hidden] {
+    display: none;
+}
+.vs-add-menu .vs-menu-items {
+    min-width: 260px;
+}
+.vs-menu-items [role="menuitem"] {
+    display: grid;
+    grid-template-columns: 18px 1fr;
+    column-gap: 8px;
+    align-items: center;
+    width: 100%;
+    padding: 8px 10px;
+    background: none;
+    border: 0;
+    border-radius: 5px;
+    color: #e0e0e0;
+    font: 500 13px 'Inter', sans-serif;
+    text-align: left;
+    cursor: pointer;
+}
+.vs-menu-items [role="menuitem"] small {
+    grid-column: 2;
+    color: #888;
+    font-size: 11px;
+    font-weight: 400;
+}
+.vs-menu-items [role="menuitem"]:hover,
+.vs-menu-items [role="menuitem"]:focus-visible {
+    background: #2a2a2a;
+    outline: none;
+}
+.vs-menu-items [role="menuitem"].vs-danger {
+    color: #f87171;
+}
+.vs-menu-items [role="menuitem"].vs-danger:hover {
+    background: rgba(248, 113, 113, 0.12);
+}
+
+.vs-group {
+    border-top: 1px solid #2e2e2e;
+    padding-top: 6px;
+    margin-bottom: 14px;
+}
+.vs-group:first-child {
+    border-top: 0;
+    padding-top: 0;
+}
+.version-card .vs-group-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0 4px;
+    color: #e8601c;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+.vs-group-description {
+    margin-top: 0;
+}
+.vs-count:not(:empty) {
+    padding: 0 7px;
+    border-radius: 999px;
+    background: rgba(232, 96, 28, 0.15);
+    color: #e8601c;
+    font-size: 11px;
+    line-height: 18px;
+}
+.vs-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 0 16px;
+}
+
+@media (max-width: 768px) {
+    .version-card .version-header-left h4 {
+        flex-basis: 100%;
+        white-space: normal !important;
+        overflow-wrap: anywhere;
+    }
+    .vs-add-menu,
+    .vs-add-menu .vs-menu-toggle {
+        flex: 1 1 100%;
+        width: 100%;
+    }
+}
+.vs-subhead {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 14px 0 6px;
+}
+.vs-subhead:first-child {
+    margin-top: 4px;
+}
+.vs-subhead-label {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 8px;
+    color: #e0e0e0;
+    font-weight: 600;
+    font-size: 13px;
+}
+.vs-subhead-label small {
+    flex-basis: 100%;
+    color: #888;
+    font-weight: 400;
+    font-size: 11px;
+}
+.vs-subhead .add-filter-btn {
+    flex-shrink: 0;
+}

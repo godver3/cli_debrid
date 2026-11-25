@@ -297,6 +297,29 @@ def limit_debrid_pack_probe_results(results: List[Dict], item: Dict) -> List[Dic
     return [r for r in results if r.get('_debrid_pack_probe') and _result_resolution(r) == tier]
 
 
+def collected_elsewhere_check(conn, item: Dict[str, Any]) -> Tuple[str, int]:
+    """For an Adding episode with no release id in memory: (the row's own
+    release id in the database, or '', and how many OTHER rows hold the same
+    episode + version Collected).
+
+    The row is read, not the in-memory copy: a manual grab writes its
+    NZB/torrent id as it goes to Adding, and a row with a release of its own
+    must be checked and symlinked, never "restored" to Collected from the
+    episode's old copy (Dragon Ball Kai S02E03, 2026-11-21: Collected with
+    no symlink)."""
+    own = conn.execute("SELECT filled_by_torrent_id FROM media_items WHERE id=?", (item.get('id'),)).fetchone()
+    if own and own[0]:
+        return str(own[0]), 0
+    count = conn.execute(
+        "SELECT COUNT(*) FROM media_items "
+        "WHERE imdb_id=? AND season_number=? AND episode_number=? "
+        "AND version=? AND type='episode' AND state='Collected' AND id != ?",
+        (item.get('imdb_id'), item.get('season_number'), item.get('episode_number'),
+         item.get('version'), item.get('id'))
+    ).fetchone()[0]
+    return '', int(count or 0)
+
+
 class AddingQueue:
     """Manages the queue of items being added to the debrid service"""
     
@@ -525,15 +548,12 @@ class AddingQueue:
                     from database import get_db_connection as _gdb_aq
                     _conn_aq = _gdb_aq()
                     try:
-                        _cnt_aq = _conn_aq.execute(
-                            "SELECT COUNT(*) FROM media_items "
-                            "WHERE imdb_id=? AND season_number=? AND episode_number=? "
-                            "AND version=? AND type='episode' AND state='Collected'",
-                            (item.get('imdb_id'), item.get('season_number'),
-                             item.get('episode_number'), item.get('version'))
-                        ).fetchone()[0]
+                        _own_aq, _cnt_aq = collected_elsewhere_check(_conn_aq, item)
                     finally:
                         _conn_aq.close()
+                    if _own_aq:
+                        item['filled_by_torrent_id'] = _own_aq
+                        continue  # has its own release: the NZB health check / next tick handles it
                     if _cnt_aq:
                         logging.info(f"Item {item_id} ({item.get('title')} S{item.get('season_number')}E{item.get('episode_number')}) already Collected under different entry — restoring state")
                         from database.database_writing import update_media_item_state

@@ -1,6 +1,6 @@
 ### Settings Help
 
-This page allows you to configure various aspects of the cli_debrid application.
+This page allows you to configure various aspects of the Clyde application.
 
 *   **General Settings:** Basic application behavior.
 *   **Debrid Services:** Connect and manage your debrid accounts.

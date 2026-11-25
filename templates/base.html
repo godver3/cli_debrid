@@ -13,7 +13,7 @@
         {%- endfor %}
     }}
     </script>
-    <title>cli_debrid - {% block title %}{% endblock %}</title>
+    <title>Clyde - {% block title %}{% endblock %}</title>
     
     <!-- Force browsers to refresh favicon -->
     <meta http-equiv="cache-control" content="no-cache, no-store, must-revalidate" />
@@ -25,7 +25,7 @@
     <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='plex-icon-32x32.png') }}">
     <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='plex-icon-16x16.png') }}">
     <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='plex-favicon-192x192.png') }}">
-    {% elif logo_path.startswith('default') %}
+    {% elif logo_path.startswith('clyde') %}
     <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='icon-32x32.png') }}">
     <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='icon-16x16.png') }}">
     <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='apple-touch-icon.png') }}">
@@ -35,12 +35,12 @@
     <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='color-favicon-192x192.png') }}">
     {% endif %}
     <link rel="manifest" href="{{ url_for('static', filename='site.webmanifest') }}">
-    <link rel="mask-icon" href="{{ url_for('static', filename='safari-pinned-tab.svg') }}" color="#007bff">
+    <link rel="mask-icon" href="{{ url_for('static', filename='safari-pinned-tab.svg') }}" color="#0F1724">
     
     <!-- Meta tags -->
-    <meta name="msapplication-TileColor" content="#007bff">
+    <meta name="msapplication-TileColor" content="#0F1724">
     <meta name="msapplication-TileImage" content="{{ url_for('static', filename='mstile-144x144.png') }}">
-    <meta name="theme-color" content="#007bff">
+    <meta name="theme-color" content="#0F1724">
     
     <!-- Prevent FOUC by hiding page until theme is applied -->
     <style>
@@ -166,10 +166,10 @@
             <div class="st-nav-left">
                 <a class="st-nav-brand" href="{{ url_for('root.root') }}">
                     <div class="st-nav-brand-icon">
-                        <img src="{{ url_for('static', filename=logo_path) }}" alt="cli_debrid">
+                        <img src="{{ url_for('static', filename=logo_path) }}" alt="Clyde">
                     </div>
                     <div>
-                        <div class="st-nav-brand-name">cli_debrid</div>
+                        <div class="st-nav-brand-name">Clyde</div>
                         <div class="st-nav-brand-ver">v{{ get_version_with_branch() }}</div>
                     </div>
                 </a>
@@ -231,10 +231,16 @@
                         {% if not is_limited_environment() %}
                         <a class="st-nav-dd-item" href="{{ url_for('debrid_manager.index') }}"><i class="fa-solid fa-cloud-arrow-down"></i> Debrid Manager</a>
                         <a class="st-nav-dd-item" href="{{ url_for('debrid_manager.climount_page') }}"><i class="fa-solid fa-hard-drive"></i> Usenet Manager</a>
-                        <a class="st-nav-dd-item" href="{{ url_for('upgrade_hub.index') }}"><i class="fa-solid fa-arrow-up"></i> Upgrade Hub</a>
                         {% endif %}
                     </div>
                 </div>
+
+                {% if builtin_mount_selected() %}
+                <!-- Mount (built-in mount engine only) -->
+                <div class="st-nav-item" id="st-dd-mount">
+                    <a class="st-nav-btn" href="{{ url_for('mount.index') }}" style="text-decoration:none">Mount</a>
+                </div>
+                {% endif %}
 
                 <!-- Tools -->
                 <div class="st-nav-item" id="st-dd-tools">
@@ -246,6 +252,10 @@
                         <a class="st-nav-dd-item" href="{{ url_for('magnet.assign_magnet') }}"><i class="fa-solid fa-arrow-right-arrow-left"></i> Manual Assign</a>
                         <a class="st-nav-dd-item" href="{{ url_for('debug.manual_blacklist') }}"><i class="fa-solid fa-ban"></i> Manual Blacklist</a>
                         <a class="st-nav-dd-item" href="{{ url_for('overlay_page.overlays_page') }}"><i class="fa-solid fa-layer-group"></i> Overlays</a>
+                        <a class="st-nav-dd-item" href="{{ url_for('subtitle_manager.page') }}"><i class="fa-solid fa-closed-captioning"></i> Subtitle Manager</a>
+                        {% if not is_limited_environment() %}
+                        <a class="st-nav-dd-item" href="{{ url_for('upgrade_hub.index') }}"><i class="fa-solid fa-arrow-up"></i> Upgrade Hub</a>
+                        {% endif %}
                     </div>
                 </div>
 
@@ -275,10 +285,20 @@
                         <i class="fas fa-bell"></i>
                         <span class="st-notif-count" id="st_notif_count" style="display:none;"></span>
                     </button>
-                    <button class="st-nav-icon-btn" id="st_releaseNotesButton" title="Release notes on Discord" data-tooltip="global.releaseNotesButton">
+                    <button class="st-nav-icon-btn" id="st_releaseNotesButton" title="Release notes" data-tooltip="global.releaseNotesButton">
                         <i class="fas fa-file-alt"></i>
                     </button>
                     {% if current_user.role == 'admin' %}
+                    <button class="st-nav-icon-btn" id="st_bugReportButton" title="Report a bug" data-tooltip="global.bugReportButton">
+                        <i class="fas fa-bug"></i>
+                    </button>
+                    {% endif %}
+                    {% if current_user.role == 'admin' %}
+                    {% if builtin_mount_selected() %}
+                    <button id="st_mountControlButton" class="st-nav-act-btn st-btn-starting" title="Built-in mount: start or stop it (the program and the mount run separately)" disabled>
+                        <i class="fa-solid fa-hard-drive"></i><span>Mount…</span>
+                    </button>
+                    {% endif %}
                         {% set program_status = get_program_status() %}
                         <button id="st_programControlButton" class="st-nav-act-btn {% if program_status == 'Running' %}st-btn-stop{% elif program_status in ['Starting', 'Stopping'] %}st-btn-starting{% else %}st-btn-start{% endif %}" data-status="{{ program_status }}" {% if program_status in ['Starting', 'Stopping'] %}disabled{% endif %}>
                             <i class="fas {% if program_status == 'Running' %}fa-stop{% elif program_status in ['Starting', 'Stopping'] %}fa-spinner fa-spin{% else %}fa-play{% endif %}"></i>
@@ -294,9 +314,17 @@
                         <i class="fas fa-bell"></i>
                         <span class="st-notif-count" id="st_notif_count" style="display:none;"></span>
                     </button>
-                    <button class="st-nav-icon-btn" id="st_releaseNotesButton" title="Release notes on Discord" data-tooltip="global.releaseNotesButton">
+                    <button class="st-nav-icon-btn" id="st_releaseNotesButton" title="Release notes" data-tooltip="global.releaseNotesButton">
                         <i class="fas fa-file-alt"></i>
                     </button>
+                    <button class="st-nav-icon-btn" id="st_bugReportButton" title="Report a bug" data-tooltip="global.bugReportButton">
+                        <i class="fas fa-bug"></i>
+                    </button>
+                    {% if builtin_mount_selected() %}
+                    <button id="st_mountControlButton" class="st-nav-act-btn st-btn-starting" title="Built-in mount: start or stop it (the program and the mount run separately)" disabled>
+                        <i class="fa-solid fa-hard-drive"></i><span>Mount…</span>
+                    </button>
+                    {% endif %}
                     {% set program_status = get_program_status() %}
                     <button id="st_programControlButton" class="st-nav-act-btn {% if program_status == 'Running' %}st-btn-stop{% elif program_status in ['Starting', 'Stopping'] %}st-btn-starting{% else %}st-btn-start{% endif %}" data-status="{{ program_status }}" {% if program_status in ['Starting', 'Stopping'] %}disabled{% endif %}>
                         <i class="fas {% if program_status == 'Running' %}fa-stop{% elif program_status in ['Starting', 'Stopping'] %}fa-spinner fa-spin{% else %}fa-play{% endif %}"></i>
@@ -386,10 +414,16 @@
                             {% if not is_limited_environment() %}
                             <a class="st-nav-mob-item" href="{{ url_for('debrid_manager.index') }}"><i class="fa-solid fa-cloud-arrow-down"></i> Debrid Manager</a>
                             <a class="st-nav-mob-item" href="{{ url_for('debrid_manager.climount_page') }}"><i class="fa-solid fa-hard-drive"></i> Usenet Manager</a>
-                            <a class="st-nav-mob-item" href="{{ url_for('upgrade_hub.index') }}"><i class="fa-solid fa-arrow-up"></i> Upgrade Hub</a>
                             {% endif %}
                         </div>
                     </div>
+
+                    {% if builtin_mount_selected() %}
+                    <!-- Mount -->
+                    <div class="st-nav-acc-section" id="st-acc-mount">
+                        <a class="st-nav-mob-item" href="{{ url_for('mount.index') }}"><i class="fa-solid fa-hard-drive"></i> Mount</a>
+                    </div>
+                    {% endif %}
 
                     <!-- Tools -->
                     <div class="st-nav-acc-section" id="st-acc-tools">
@@ -402,6 +436,10 @@
                             <a class="st-nav-mob-item" href="{{ url_for('magnet.assign_magnet') }}"><i class="fa-solid fa-arrow-right-arrow-left"></i> Manual Assign</a>
                             <a class="st-nav-mob-item" href="{{ url_for('debug.manual_blacklist') }}"><i class="fa-solid fa-ban"></i> Manual Blacklist</a>
                             <a class="st-nav-mob-item" href="{{ url_for('overlay_page.overlays_page') }}"><i class="fa-solid fa-layer-group"></i> Overlays</a>
+                            <a class="st-nav-mob-item" href="{{ url_for('subtitle_manager.page') }}"><i class="fa-solid fa-closed-captioning"></i> Subtitle Manager</a>
+                            {% if not is_limited_environment() %}
+                            <a class="st-nav-mob-item" href="{{ url_for('upgrade_hub.index') }}"><i class="fa-solid fa-arrow-up"></i> Upgrade Hub</a>
+                            {% endif %}
                         </div>
                     </div>
 
@@ -467,9 +505,9 @@
     <header>
         <div class="header-content">
             <a href="{{ url_for('root.root') }}" style="text-decoration: none; color: inherit; display: flex; align-items: center;">
-                <img src="{{ url_for('static', filename=logo_path) }}" alt="cli_debrid icon" class="header-icon">
+                <img src="{{ url_for('static', filename=logo_path) }}" alt="Clyde icon" class="header-icon">
                 <div class="title-version">
-                    <h1>cli_debrid</h1>
+                    <h1>Clyde</h1>
                     {% set version_str = get_version_with_branch() %}
                     {% set evil = version_str.count('6') >= 3 %}
                     <div class="version-container">
@@ -541,14 +579,15 @@
                         ('tool_pages.maintenance', 'Maintenance'),
                         ('database.phalanxdb_status', 'Phalanx DB'),
                         ('performance.performance_dashboard', 'Performance Dashboard')] +
-                        ([] if is_limited_environment() or (is_user_system_enabled() and not (current_user.is_authenticated and current_user.role == 'admin')) else [('debrid_manager.index', 'Debrid Manager'), ('debrid_manager.climount_page', 'Usenet Manager'), ('upgrade_hub.index', 'Upgrade Hub')]) + [
+                        ([] if is_limited_environment() or (is_user_system_enabled() and not (current_user.is_authenticated and current_user.role == 'admin')) else [('debrid_manager.index', 'Debrid Manager'), ('debrid_manager.climount_page', 'Usenet Manager')]) + [
                     ],
                     'Tools': [
                         ('tool_pages.tools', 'All Tools'),
                         ('scraper.scraper_tester', 'Tester'),
                         ('magnet.assign_magnet', 'M. Assign'),
                         ('debug.manual_blacklist', 'M. Blacklist'),
-                    ] + ([('overlay_page.overlays_page', 'Overlays')] if not is_user_system_enabled() or (current_user.is_authenticated and current_user.role == 'admin') else [])
+                    ] + ([('overlay_page.overlays_page', 'Overlays'), ('subtitle_manager.page', 'Subtitle Manager')] if not is_user_system_enabled() or (current_user.is_authenticated and current_user.role == 'admin') else [])
+                      + ([] if is_limited_environment() or (is_user_system_enabled() and not (current_user.is_authenticated and current_user.role == 'admin')) else [('upgrade_hub.index', 'Upgrade Hub')])
                 } %}
 
                 {% set menu_icons = {
@@ -584,6 +623,7 @@
                     'Symlink Tools': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>',
                     'Metadata Debug': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/></svg>',
                     'Overlays': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>',
+                    'Subtitle Manager': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2" stroke-width="2"/><path stroke-linecap="round" stroke-width="2" d="M7 13h4m2 0h4M7 16h7"/></svg>',
                     'Manage Users': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>'
                 } %}
                 
@@ -808,6 +848,52 @@
         <div id="hack-text"></div>
     </div>
 
+    <!-- Bug report (admins): a formatted report with version, setup and log links -->
+    <div class="release-notes-overlay" id="bugReportOverlay" style="display: none;"></div>
+    <div class="release-notes-popup bug-report-popup" id="bugReportPopup" style="display: none;" role="dialog" aria-labelledby="bugReportTitle">
+        <div class="release-notes-header">
+            <h3 class="release-notes-title" id="bugReportTitle">Report a bug</h3>
+            <button class="release-notes-close" id="bugReportClose" aria-label="Close">&times;</button>
+        </div>
+        <div class="release-notes-content">
+            <div id="bugReportForm">
+                <label for="bugReportSummary">Summary</label>
+                <input type="text" id="bugReportSummary" maxlength="120" placeholder="e.g. Episodes stuck in Checking after upgrade">
+                <label for="bugReportWhat">What happened?</label>
+                <textarea id="bugReportWhat" rows="4" placeholder="What you saw, and what you expected instead"></textarea>
+                <label for="bugReportSteps">When or how does it happen? <span class="bug-report-optional">(optional)</span></label>
+                <textarea id="bugReportSteps" rows="3" placeholder="Steps, the title involved, roughly when it started"></textarea>
+                <label class="bug-report-check"><input type="checkbox" id="bugReportLogs" checked> Upload logs (redacted) and link them <span id="bugReportLogsWhich"></span></label>
+                <div class="bug-report-setup" id="bugReportSetup">Loading your setup...</div>
+                <button class="btn btn-primary" id="bugReportCreate">Create report</button>
+                <div class="bug-report-status" id="bugReportStatus"></div>
+            </div>
+            <div id="bugReportResult" style="display: none;">
+                <textarea id="bugReportOutput" rows="12" aria-label="Report (you can edit it)"></textarea>
+                <div class="bug-report-actions">
+                    <button class="btn btn-primary" id="bugReportGithub"><i class="fab fa-github"></i> Open GitHub issue</button>
+                    <button class="btn" id="bugReportCopyGithub"><i class="fas fa-copy"></i> Copy for GitHub</button>
+                    <button class="btn" id="bugReportCopyDiscord"><i class="fab fa-discord"></i> Copy for Discord</button>
+                    <button class="btn" id="bugReportDiscord"><i class="fas fa-external-link-alt"></i> Open Discord</button>
+                    <button class="btn" id="bugReportBack">Edit</button>
+                </div>
+                <div class="bug-report-status" id="bugReportCopied"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Release notes popup -->
+    <div class="release-notes-overlay" id="releaseNotesOverlay" style="display: none;"></div>
+    <div class="release-notes-popup" id="releaseNotesPopup" style="display: none;">
+        <div class="release-notes-header">
+            <h3 class="release-notes-title">Release Notes</h3>
+            <button class="release-notes-close" id="releaseNotesClose">&times;</button>
+        </div>
+        <div class="release-notes-content" id="releaseNotesContent">
+            <div class="loading">Loading release notes...</div>
+        </div>
+    </div>
+
     <!-- Scripts -->
     <script>
     // Remove page-loading class after page is fully loaded to enable nav menu hover
@@ -820,6 +906,7 @@
     <script type="module" src="{{ url_for('static', filename='js/tooltips.js') }}"></script>
     <script type="module" src="{{ url_for('static', filename='js/task_monitor.js') }}"></script>
     <script type="module" src="{{ url_for('static', filename='js/base.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/bug_report.js') }}" defer></script>
     <script src="{{ url_for('static', filename='js/zabby.js') }}" defer></script>
     <script src="{{ url_for('static', filename='js/library_settings_modal.js') }}" defer></script>
     <script src="{{ url_for('static', filename='js/discover_settings_modal.js') }}" defer></script>
@@ -829,13 +916,13 @@
     <div id="supportModal" class="modal" style="display: none;">
         <div class="modal-content support-modal">
             <div class="modal-header">
-                <h2>Support cli_debrid</h2>
+                <h2>Support Clyde</h2>
                 <span class="close" id="supportModalClose">&times;</span>
             </div>
             <div class="modal-body">
                 <div class="support-modal-content">
                     <div style="text-align: center; margin-left: 150px; margin-right: 150px; text-align: left;">
-                    <p>cli_debrid is a labor of love that requires significant time and resources to develop and maintain. I love supporting this project and have committed countless hours to it. Any support is appreciated!</p>
+                    <p>Clyde is a labor of love that requires significant time and resources to develop and maintain. I love supporting this project and have committed countless hours to it. Any support is appreciated!</p>
                     <p>Your support helps cover these costs and enables:</p>
                     <ul>
                         <li>Faster development of new features</li>
@@ -1001,7 +1088,7 @@
                         Enable Textless / Clean Posters
                     </label>
                     <p class="overlay-setting-description">
-                        When enabled, cli_debrid will fetch a language-neutral (textless) poster from TMDB
+                        When enabled, Clyde will fetch a language-neutral (textless) poster from TMDB
                         as the base image — these posters have no baked-in title text so the title logo
                         badge can render it cleanly at your chosen position.
                         Use the <strong>Title Logo</strong> badge in the layout editor to add the show or movie
@@ -1018,7 +1105,7 @@
                         Enable Textless / Clean Posters
                     </label>
                     <p class="overlay-setting-description">
-                        When enabled, cli_debrid will fetch a language-neutral (textless) poster from TMDB
+                        When enabled, Clyde will fetch a language-neutral (textless) poster from TMDB
                         as the base image — these posters have no baked-in title text so the title logo
                         badge can render it cleanly at your chosen position.
                         Use the <strong>Title Logo</strong> badge in the layout editor to add the show or movie
@@ -1035,7 +1122,7 @@
                         Enable Textless / Clean Posters
                     </label>
                     <p class="overlay-setting-description">
-                        When enabled, cli_debrid will fetch a language-neutral (textless) poster from TMDB
+                        When enabled, Clyde will fetch a language-neutral (textless) poster from TMDB
                         as the base image — these posters have no baked-in title text so the title logo
                         badge can render it cleanly at your chosen position.
                         Use the <strong>Title Logo</strong> badge in the layout editor to add the show or movie
@@ -1049,7 +1136,7 @@
                 <div class="overlay-setting-group">
                     <label for="overlaySettingsMediaDataPath">Media Server Data Path</label>
                     <input type="text" id="overlaySettingsMediaDataPath" class="overlay-setting-input" placeholder="/config/Library/Application Support/Plex Media Server">
-                    <p class="overlay-setting-description">Path to the Plex Media Server data directory. Required for the poster cleanup task to delete old uploaded overlay versions directly from the filesystem.</p>
+                    <p class="overlay-setting-description">The Plex Media Server data folder, the one that contains Plex's <code>Metadata</code> folder, as Clyde's container sees it. Required for the poster cleanup task to delete old overlay versions Plex no longer uses.</p>
                 </div>
 
                 <div class="overlay-setting-group">
@@ -1095,6 +1182,36 @@
         </div>
     </div>
 
+    <script>
+    // Built-in mount button: separate from the program Start/Stop.
+    (function () {
+        var b = document.getElementById('st_mountControlButton');
+        if (!b) return;
+        var cur = null;
+        function show(st) {
+            cur = st;
+            var running = st.state === 'RUNNING' || st.state === 'STARTING';
+            b.disabled = false;
+            b.className = 'st-nav-act-btn ' + (running ? 'st-btn-stop' : 'st-btn-start');
+            b.innerHTML = '<i class="fa-solid ' + (running ? 'fa-stop' : 'fa-play') + '"></i><span>' + (running ? 'Stop mount' : 'Start mount') + '</span>';
+        }
+        function poll() { fetch('/mount/api/state').then(function (r) { return r.json(); }).then(show).catch(function () {}); }
+        b.addEventListener('click', function () {
+            if (!cur) return;
+            var running = cur.state === 'RUNNING' || cur.state === 'STARTING';
+            if (running && !confirm('Stop the built-in mount? Anything playing from it stops, and it stays stopped until you start it again.')) return;
+            b.disabled = true;
+            b.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i><span>Mount…</span>';
+            fetch('/mount/api/' + (running ? 'stop' : 'start'), {method: 'POST'}).then(function (r) { return r.json(); })
+                .then(function (j) { if (!j.success) alert(j.error || 'Mount action failed'); })
+                .finally(function () { setTimeout(poll, 1500); });
+        });
+        poll();
+        // Hidden tabs don't poll; catch up as soon as the tab is shown again.
+        setInterval(function () { if (!document.hidden) poll(); }, 10000);
+        document.addEventListener('visibilitychange', function () { if (!document.hidden) poll(); });
+    })();
+    </script>
     {% block scripts %}{% endblock %}
     <script>
     // Suppress unhandled promise rejections from browser extensions (e.g. Bitwarden autofill)

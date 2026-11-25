@@ -102,18 +102,39 @@ def _jellyfin_configured(get):
                 and str(get('Debug', 'emby_jellyfin_token', '') or '').strip())
 
 
+def _silo(get):
+    """'symlink', 'library' (Plex mode run with Silo) or None."""
+    from utilities.silo_functions import silo_kind
+    return silo_kind(get)
+
+
+def _silo_configured(get):
+    return (_silo(get) is not None
+            and bool(str(get('Debug', 'silo_url', '') or '').strip())
+            and bool(str(get('Debug', 'silo_api_key', '') or '').strip()))
+
+
 def _verify_symlinks_default(get):
     if _fm(get) != 'Symlinked/Local':
         return False
     plex = get('File Management', 'plex_url_for_symlink', '') and get('File Management', 'plex_token_for_symlink', '')
-    return bool(plex or _jellyfin_configured(get))
+    return bool(plex or _jellyfin_configured(get) or (_silo(get) == 'symlink' and _silo_configured(get)))
 
 
 def _external_adds_default(get):
     return _fm(get) == 'Symlinked/Local' and bool(get('File Management', 'scan_mount_for_external_adds', False))
 
 
+def _direct_mount_jellyfin(get):
+    """Direct Mount run with Jellyfin/Emby."""
+    from utilities.direct_mount import direct_mount_server
+    return direct_mount_server(get) == 'jellyfin'
+
+
 def _plex_mode(get):
+    """Plex is the media server: Plex-only tasks (collections, box sets)."""
+    if _silo(get) or _direct_mount_jellyfin(get):
+        return False
     return not (_fm(get) == 'Symlinked/Local' and get('File Management', 'media_server_type', '') == 'jellyfin')
 
 
@@ -121,7 +142,7 @@ def _viewer_history_default(get):
     if not str(get('TMDB', 'api_key', '') or '').strip():
         return False
     plex = get('Plex', 'url', '') and get('Plex', 'token', '')
-    return bool(plex or _jellyfin_configured(get))
+    return bool(plex or _jellyfin_configured(get) or _silo_configured(get))
 
 
 def _limited_environment(get):
@@ -130,11 +151,13 @@ def _limited_environment(get):
 
 
 def _overlays(get):
-    return bool(get('Overlay Settings', 'overlays_enabled', False))
+    return bool(get('Overlay Settings', 'overlays_enabled', False)) and not _silo(get)
 
 
 def _watch_history_default(get):
-    return bool(get('Debug', 'do_not_add_plex_watch_history_items_to_queue', False))
+    # Plex's watch history; Direct Mount run with Silo or Jellyfin/Emby has no Plex to read
+    return (bool(get('Debug', 'do_not_add_plex_watch_history_items_to_queue', False))
+            and _silo(get) != 'library' and not _direct_mount_jellyfin(get))
 
 
 # ---- the table -----------------------------------------------------------------
@@ -149,12 +172,12 @@ _SPECS = [
     _q('Scraping', 'Scraping', 1),
     _q('Adding', 'Adding', 1),
     _q('Checking', 'Checking', 30, _checking_default,
-       'Off by default in Plex mode when Plex library checks are disabled and no mounted path is set'),
+       'Off by default in Direct Mount when Plex library checks are disabled and no mounted path is set'),
     _q('Sleeping', 'Sleeping', 300),
     _q('Unreleased', 'Unreleased', 300),
     _q('Blacklisted', 'Blacklisted', 2 * HOUR),
     _q('Pending Uncached', 'Pending Uncached', HOUR),
-    _q('Upgrading', 'Upgrading', HOUR),
+    _q('Upgrading', 'Upgrading', 300),
     _q('final_check_queue', 'Final Scrape', 900),
     _q('Pre_release', 'Pre-release', DAY),
 
@@ -163,13 +186,13 @@ _SPECS = [
              controlled_by='Settings → Required → Plex (Update Plex on file discovery / Disable Plex library checks)',
              executor='queue'),
     TaskSpec('task_plex_full_scan', 'Plex full library scan', 'media_server', 1800, default=_plex_full_scan_default,
-             controlled_by='On in Plex file management mode'),
+             controlled_by='On in Direct Mount'),
     TaskSpec('task_verify_plex_removals', 'Detect items removed from the media server', 'media_server', 900),
     TaskSpec('task_process_standalone_plex_removals', 'Process media server removals', 'media_server', HOUR),
     TaskSpec('task_verify_symlinked_files', 'Verify symlinks are in the media server', 'media_server', 2 * HOUR,
              default=_verify_symlinks_default,
              controlled_by='On in Symlinked/Local mode when a media server is configured'),
-    TaskSpec('task_scan_mount_for_external_adds', 'Pick up files added outside cli_debrid', 'media_server', 900,
+    TaskSpec('task_scan_mount_for_external_adds', 'Pick up files added outside Clyde', 'media_server', 900,
              default=_external_adds_default,
              controlled_by='Settings → Required → File Management (Scan mount for external adds)'),
     TaskSpec('task_sync_library_metadata', 'Sync library metadata', 'media_server', DAY),
@@ -224,6 +247,10 @@ _SPECS = [
     TaskSpec('task_cleanup_debrid', 'Clean up debrid account', 'library', DAY, default=False, destructive=True),
     TaskSpec('task_upgrade_hub_scan', 'Upgrade Hub scan', 'library', DAY, default=False),
     TaskSpec('task_upgrade_hub_auto_queue', 'Upgrade Hub auto-queue', 'library', DAY, default=False),
+    # Runs only while 'Upgrade Hub scan' is on (checked in the task), so it
+    # follows that switch; its interval is adjustable here.
+    TaskSpec('task_upgrade_hub_feed_sync', 'Upgrade Hub NZB feed sync', 'library', HOUR,
+             controlled_by='Runs while Upgrade Hub scan is on'),
 
     # System
     TaskSpec('task_send_notifications', 'Send notifications', 'system', 15, INTERNAL, executor='queue'),

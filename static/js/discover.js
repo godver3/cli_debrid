@@ -2667,7 +2667,7 @@ async function loadTrending() {
 let _trendingLoaded = false; // Only fetch once per page load
 let _recLoaded = false;  // Only fetch once per page load (per chosen source/user)
 const REC_SOURCE_KEY = 'discoverRecSource';
-const REC_SERVER_LABELS = { plex: 'Plex', jellyfin: 'Jellyfin', emby: 'Emby' };
+const REC_SERVER_LABELS = { plex: 'Plex', jellyfin: 'Jellyfin', emby: 'Emby', silo: 'Silo' };
 window.recState = { sources: null, selection: null };  // selection: {source, viewer}
 
 async function loadRecommendationSources() {
@@ -8001,7 +8001,7 @@ async function loadFlixPatrolContent(platformId, period = 'today') {
         }
     } catch (error) {
         console.error('[FlixPatrol] Load error:', error);
-        showError('Failed to load FlixPatrol content');
+        showError('Failed to load Top 10 content');
     } finally {
         window.flixpatrolState.isLoading = false;
         clearLoadingFlag();
@@ -8255,7 +8255,7 @@ function populateSidebarListsDropdown() {
     if (state.flixpatrolPlatforms.length > 0) {
         const fpHeader = document.createElement('div');
         fpHeader.className = 'chips-dropdown-header';
-        fpHeader.textContent = 'FlixPatrol Top 10';
+        fpHeader.textContent = 'Streaming Top 10';
         dropdown.appendChild(fpHeader);
 
         state.flixpatrolPlatforms.forEach(platform => {
@@ -8912,7 +8912,7 @@ async function loadSavedLists(listPairs) {
         
         if (source === 'flixpatrol') {
             const platform = state.flixpatrolPlatforms.find(p => p.id === listId);
-            listName = platform ? platform.name : `FlixPatrol ${listId}`;
+            listName = platform ? platform.name : `Top 10 ${listId}`;
         } else if (source === 'mdblist') {
             const list = state.mdblistLists.find(l => l.key === listId);
             listName = list ? list.name : `MDBList ${listId}`;
@@ -8993,7 +8993,7 @@ async function loadSidebarListContent(source, listId) {
         if (source === 'flixpatrol') {
             // Load FlixPatrol list
             const response = await fetch(`/discover/api/flixpatrol/top10/${listId}`);
-            if (!response.ok) throw new Error('Failed to load FlixPatrol list');
+            if (!response.ok) throw new Error('Failed to load Top 10 list');
             data = await response.json();
         } else if (source === 'mdblist') {
             // Load MDBList

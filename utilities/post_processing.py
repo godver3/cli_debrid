@@ -6,6 +6,16 @@ import subprocess
 from utilities.settings import get_setting
 
 
+def _silo_selected():
+    from utilities.silo_functions import is_silo_selected
+    return is_silo_selected()
+
+
+def _direct_mount_jellyfin():
+    from utilities.direct_mount import is_direct_mount_jellyfin
+    return is_direct_mount_jellyfin()
+
+
 def _is_recollection(item, min_gap_seconds=60):
     """True when the row was collected before (repair, upgrade): original_collected_at is
     preserved across re-collections while collected_at is reset."""
@@ -71,7 +81,8 @@ def _delete_replaced_files(item_dict, old_rows, log_tag, entry_label, snapshots=
     # Symlinked/Local + Plex: the old version is removed from Plex only after Plex has
     # scanned in the replacement (see remove_replaced_plex_media_after_scan). Deleting
     # it straight away removed the whole Plex item, so the replacement came back as a
-    # brand-new "recently added" entry. Jellyfin/Emby keep the immediate removal.
+    # brand-new "recently added" entry. Jellyfin/Emby and Silo keep the immediate removal
+    # (for Silo that is a rescan; it restores the item's added date when a file returns).
     new_path = item_dict.get('location_on_disk')
     # Plex mode defers too for snapshots: a force-collected replacement may not be in Plex yet.
     defer_modes = ('Symlinked/Local', 'Plex') if snapshots else ('Symlinked/Local',)
@@ -79,6 +90,7 @@ def _delete_replaced_files(item_dict, old_rows, log_tag, entry_label, snapshots=
         bool(new_path)
         and get_setting('File Management', 'file_collection_management') in defer_modes
         and not (get_setting('Debug', 'emby_jellyfin_url', default='') or '').strip()
+        and not _silo_selected()
     )
     new_original = item_dict.get('original_path_for_symlink')
     new_torrent_id = item_dict.get('filled_by_torrent_id')
@@ -478,17 +490,41 @@ def handle_state_change(item: Dict[str, Any]) -> None:
             # Run CineSync for items
             run_cinesync(dict(fresh_item))
             
+            # The file is new or replaced: its embedded subtitle tracks must be
+            # read again from the media server, not from the cache
+            try:
+                from .plex_subtitle_info import forget as _forget_embedded
+                _forget_embedded(dict(fresh_item))
+            except Exception:
+                pass
+
             # Run subtitle downloader
             try:
                 file_path = fresh_item.get('location_on_disk')
                 if not file_path:
                     logging.warning("No location_on_disk found for item, skipping subtitle download")
+                elif _direct_mount_jellyfin() or (
+                        get_setting('File Management', 'file_collection_management') == 'Plex' and _silo_selected()):
+                    # Direct Mount run with Jellyfin/Emby or Silo: a sidecar next to
+                    # the file when the mount takes it (then a folder rescan), else an
+                    # upload through the server's API (downsub.save_subtitles decides)
+                    logging.info("Running subtitle downloader (Direct Mount, "
+                                 f"{'Jellyfin/Emby' if _direct_mount_jellyfin() else 'Silo'}).")
+                    from .downsub import main as downsub_main
+                    downsub_main(file_path, item=dict(fresh_item))
                 elif get_setting('File Management', 'file_collection_management') == 'Plex':
                     # Plex mode: media is on a read-only debrid/usenet mount, so a
                     # sidecar .srt can't be written next to it. Download subtitles
                     # and upload them to the Plex item via API (keyed on the stored
                     # ratingKey). Storage-agnostic — works for zurg/nzbdav/climount.
-                    rk = fresh_item.get('ms_item_id')
+                    rk = None
+                    if fresh_item.get('ms_item_id'):
+                        # episodes store their show's ratingKey; upload to the episode
+                        try:
+                            from .plex_subtitle_info import rating_key as _plex_rk
+                            rk = _plex_rk(dict(fresh_item))
+                        except Exception:
+                            rk = None
                     if rk:
                         # The on-disk file is often obfuscated (e.g. tGcr.mkv) on
                         # debrid/usenet mounts; the release folder name carries the
@@ -499,13 +535,14 @@ def handle_state_change(item: Dict[str, Any]) -> None:
                                      or _os_sub.path.basename(_os_sub.path.dirname(file_path)) or None)
                         logging.info("Running subtitle downloader (Plex API upload mode).")
                         from .downsub import main as downsub_main
-                        downsub_main(file_path, rating_key=str(rk), name_hint=name_hint)
+                        downsub_main(file_path, rating_key=str(rk), name_hint=name_hint,
+                                     item=dict(fresh_item))
                     else:
-                        logging.info("Plex-mode subtitle upload skipped: item has no Plex ratingKey (ms_item_id) yet")
+                        logging.info("Direct Mount subtitle upload skipped: item has no Plex ratingKey (ms_item_id) yet")
                 else:
                     logging.info("Running subtitle downloader - this may take some time if it has never been run.")
                     from .downsub import main as downsub_main
-                    downsub_main(file_path)
+                    downsub_main(file_path, item=dict(fresh_item))
             except Exception as e:
                 logging.error(f"Failed to run subtitle downloader: {str(e)}")
                 logging.exception("Subtitle downloader traceback:")

@@ -175,6 +175,20 @@ jobs:
           pip install -r requirements.txt
           pip install psutil
           
+      - name: Set up Go (built-in mount engine)
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: engine/go.mod
+          cache-dependency-path: engine/go.sum
+
+      - name: Build built-in mount engine
+        shell: cmd
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          cd engine
+          go build -trimpath -ldflags="-s -w" -o clid-engine.exe ./cmd/clid-engine
+
       - name: Build Windows executable
         shell: cmd
         run: |
@@ -229,7 +243,48 @@ jobs:
             exit 1
           fi
 
+      # Release notes: release-notes/<version>.md, written in the PR that bumps
+      # version.txt, goes on top of the release, ended by a release-notes
+      # marker (the in-app Release notes popup lists releases that have it).
+      # A second marker records that this branch's build posted it to Discord,
+      # so a rebuild of the same version doesn't post twice. The post step adds
+      # it only after Discord accepted every message, so a failed post (or a
+      # version built before the webhook secret existed) is retried on the next
+      # build of that version. The main build posts once more, as stable.
+      - name: Build release body
+        id: notes
+        run: |
+          NOTES="release-notes/${VERSION}.md"
+          POSTED="<!-- discord-posted:${{ github.ref_name }} -->"
+          PREV=$(gh release view "v${VERSION}" --repo "${{ github.repository }}" --json body --jq .body 2>/dev/null || true)
+          ALREADY=false
+          if printf '%s' "$PREV" | grep -qF "$POSTED"; then ALREADY=true; fi
+          POST=false
+          if [ -f "$NOTES" ] && [ -n "$WEBHOOK" ] && [ "$ALREADY" = false ]; then POST=true; fi
+          {
+            if [ -f "$NOTES" ]; then
+              cat "$NOTES"
+              printf '\n\n---\n\n'
+              echo "<!-- release-notes -->"
+              if [ "$ALREADY" = true ]; then echo "$POSTED"; fi
+            fi
+            echo "Version ${VERSION} (${{ github.ref_name }} branch), commit ${{ github.sha }}"
+            echo ""
+            echo "## Windows install"
+            echo ""
+            echo "1. Download the ZIP file"
+            echo "2. Extract all contents to a folder of your choice"
+            echo '3. Run `cli_debrid.exe` from the extracted folder'
+            echo ""
+            echo "**Note:** All files must be kept together in the same folder for the application to work properly."
+          } > release_body.md
+          echo "post=$POST" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+
       - name: Create Release
+        id: release
         uses: softprops/action-gh-release@v1
         with:
           files: "windows-executable/cli_debrid-${{ env.VERSION }}.zip"
@@ -238,27 +293,110 @@ jobs:
           target_commitish: ${{ github.sha }}
           draft: false
           prerelease: ${{ github.ref_name == 'dev' }}
-          body: |
-            Version ${{ env.VERSION }} (${{ github.ref_name }} branch)
-            
-            This release was automatically created from the ${{ github.ref_name }} branch.
-            Commit: ${{ github.sha }}
-            
-            ## Installation Instructions:
-            
-            1. Download the ZIP file
-            2. Extract all contents to a folder of your choice
-            3. Run `cli_debrid.exe` from the extracted folder
-            
-            **Note:** All files must be kept together in the same folder for the application to work properly.
+          body_path: release_body.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Posts the notes and the release link to the Discord release notes
+      # channel (secret DISCORD_RELEASE_WEBHOOK: a webhook made in that
+      # channel). Skipped without the secret or without a notes file.
+      # An embed description holds 4096 characters, so long notes are split on
+      # line boundaries into several messages (first one carries the title and
+      # link) instead of being cut off.
+      - name: Post release notes to Discord
+        if: steps.notes.outputs.post == 'true'
+        run: |
+          if [ -z "$WEBHOOK" ]; then
+            echo "DISCORD_RELEASE_WEBHOOK not set; skipping"
+            exit 0
+          fi
+          python3 - <<'EOF'
+          import json, os, sys, time, urllib.error, urllib.request
+
+          version = os.environ['VERSION']
+          stable = os.environ['REF_NAME'] == 'main'
+          title = f"Clyde {version} ({'stable' if stable else 'dev'})"
+          color = 5763719 if stable else 16753920
+          url = f"{os.environ['SERVER_URL']}/{os.environ['REPO']}/releases/tag/v{version}"
+          notes = open(f"release-notes/{version}.md", encoding='utf-8').read().strip()
+
+          # Embeds don't render "### Heading" (it shows as literal #s), but bold
+          # and "-" lists do: each heading becomes a bold line with a blank line
+          # before it. GitHub and the in-app popup keep the real headings.
+          import re
+          notes = re.sub(r'\n*^#{1,6}[ \t]+(.+?)[ \t]*$\n*', r'\n\n**\1**\n', notes, flags=re.M).strip()
+
+          # Split into sections at those headings, then pack whole sections into
+          # messages so a section doesn't straddle two. A section too long for
+          # one message is split on line boundaries.
+          LIMIT = 3900
+          sections = re.split(r'\n\n(?=\*\*[^\n]+\*\*\n)', notes)
+          pieces = []
+          for section in sections:
+              if len(section) <= LIMIT:
+                  pieces.append(section)
+                  continue
+              cur = ''
+              for line in section.split('\n'):
+                  while len(line) > LIMIT:          # a single huge line: hard split
+                      if cur:
+                          pieces.append(cur); cur = ''
+                      pieces.append(line[:LIMIT]); line = line[LIMIT:]
+                  if cur and len(cur) + 1 + len(line) > LIMIT:
+                      pieces.append(cur); cur = line
+                  else:
+                      cur = f"{cur}\n{line}" if cur else line
+              if cur:
+                  pieces.append(cur)
+          chunks, cur = [], ''
+          for piece in pieces:
+              if cur and len(cur) + 2 + len(piece) > LIMIT:
+                  chunks.append(cur); cur = piece
+              else:
+                  cur = f"{cur}\n\n{piece}" if cur else piece
+          if cur:
+              chunks.append(cur)
+
+          for i, chunk in enumerate(chunks, 1):
+              embed = {'description': chunk, 'color': color}
+              if i == 1:
+                  embed.update(title=title, url=url)
+              else:
+                  embed['title'] = f"{title} ({i}/{len(chunks)})"
+              # Discord refuses webhook names containing "clyde" (its old
+              # built-in bot) with a 400; the title carries the name instead.
+              body = json.dumps({'username': 'Release notes', 'embeds': [embed],
+                                 'allowed_mentions': {'parse': []}}).encode()
+              req = urllib.request.Request(os.environ['WEBHOOK'], data=body,
+                                           headers={'Content-Type': 'application/json',
+                                                    'User-Agent': 'clyde-release'})
+              try:
+                  urllib.request.urlopen(req, timeout=30).read()
+              except urllib.error.HTTPError as e:
+                  print(f"::error::Discord refused part {i}/{len(chunks)}: HTTP {e.code} "
+                        f"{e.read().decode('utf-8', 'replace')[:500]}")
+                  sys.exit(1)
+              print(f"posted part {i}/{len(chunks)} ({len(chunk)} chars)")
+              time.sleep(1)  # stay under the webhook rate limit
+          EOF
+          # Posted: record it on the release so a rebuild doesn't post again.
+          POSTED="<!-- discord-posted:${REF_NAME} -->"
+          sed "s|^<!-- release-notes -->\$|&\n${POSTED}|" release_body.md > release_body_posted.md
+          gh release edit "v${VERSION}" --repo "$REPO" --notes-file release_body_posted.md
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+          REF_NAME: ${{ github.ref_name }}
+          SERVER_URL: ${{ github.server_url }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # The dev build creates v<version> first, as a pre-release; the main build
       # only updates it to a full release, and GitHub doesn't move the "Latest"
       # badge on an update. Set it explicitly.
       - name: Mark main release as latest
-        if: github.ref_name == 'main'
+        # Also after a failed Discord post: that shouldn't keep the release
+        # from being marked latest.
+        if: ${{ !cancelled() && github.ref_name == 'main' && steps.release.outcome == 'success' }}
         run: gh release edit "v${{ env.VERSION }}" --latest --repo "${{ github.repository }}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -365,12 +503,15 @@ jobs:
       - name: Set Docker tags
         run: |
           if [ "${{ github.ref_name }}" = "dev" ]; then
-            echo "DOCKER_TAGS=godver3/cli_debrid:dev godver3/cli_debrid:dev-${{ env.VERSION }} godver3/cli_debrid:latest" >> $GITHUB_ENV
+            TAGS="dev dev-${{ env.VERSION }} latest"
           elif [ "${{ github.ref_name }}" = "main" ]; then
-            echo "DOCKER_TAGS=godver3/cli_debrid:main godver3/cli_debrid:main-${{ env.VERSION }}" >> $GITHUB_ENV
+            TAGS="main main-${{ env.VERSION }}"
           else
-            echo "DOCKER_TAGS=godver3/cli_debrid:batteryintegration godver3/cli_debrid:batteryintegration-${{ env.VERSION }}" >> $GITHUB_ENV
+            TAGS="batteryintegration batteryintegration-${{ env.VERSION }}"
           fi
+          # Same image under the original name and the Clyde name.
+          echo "DOCKER_TAGS=$(for t in $TAGS; do printf 'godver3/cli_debrid:%s ' "$t"; done)" >> $GITHUB_ENV
+          echo "CLYDE_TAGS=$(for t in $TAGS; do printf 'godver3/clyde:%s ' "$t"; done)" >> $GITHUB_ENV
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -388,14 +529,30 @@ jobs:
           docker buildx imagetools create $TAG_ARGS \
             $(printf 'godver3/cli_debrid@sha256:%s ' *)
 
+      # The Clyde name gets the same manifest. Kept separate and non-fatal so a
+      # problem with the new repo never stops godver3/cli_debrid from updating.
+      - name: Also publish as godver3/clyde
+        id: clyde
+        continue-on-error: true
+        working-directory: /tmp/digests
+        run: |
+          TAG_ARGS=$(for t in $CLYDE_TAGS; do printf -- '-t %s ' "$t"; done)
+          docker buildx imagetools create $TAG_ARGS \
+            $(printf 'godver3/cli_debrid@sha256:%s ' *)
+
       - name: Inspect image
         run: |
           for t in $DOCKER_TAGS; do docker buildx imagetools inspect "$t"; done
+          if [ "${{ steps.clyde.outcome }}" = "success" ]; then
+            for t in $CLYDE_TAGS; do docker buildx imagetools inspect "$t"; done
+          else
+            echo "::warning::Publishing godver3/clyde failed; godver3/cli_debrid was published as usual"
+          fi
 
       - name: Notify Discord - Build Completed
         uses: sarisia/actions-status-discord@v1
         with:
           webhook: ${{ secrets.DISCORD_TOKEN }}
           title: "Docker Build Completed"
-          description: "Version ${{ env.VERSION }} has been built and pushed to Docker Hub.\nTags: ${{ env.DOCKER_TAGS }}"
+          description: "Version ${{ env.VERSION }} has been built and pushed to Docker Hub.\nTags: ${{ env.DOCKER_TAGS }}${{ steps.clyde.outcome == 'success' && env.CLYDE_TAGS || '' }}"
           color: 0x00FF00

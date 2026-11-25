@@ -1,6 +1,6 @@
 import threading
 import logging
-from .core import get_db_connection, normalize_string
+from .core import get_db_connection, normalize_string, ensure_watch_history_indexes
 from database.manual_blacklist import is_blacklisted
 from typing import List, Dict, Any
 import json
@@ -151,6 +151,8 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
                     watch_history_conn.execute('ALTER TABLE watch_history ADD COLUMN source TEXT')
                     watch_history_conn.commit()
                     logging.info("Added 'source' column to watch_history table")
+                ensure_watch_history_indexes(watch_history_conn)
+                watch_history_conn.commit()
 
         if isinstance(versions_input, str):
             try:
@@ -384,7 +386,10 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
                         if imdb_id: conditions_wh.append("imdb_id = ?"); params_wh.append(imdb_id)
                         if tmdb_id: conditions_wh.append("tmdb_id = ?"); params_wh.append(tmdb_id)
                         if conditions_wh:
-                            query_wh += " OR ".join(conditions_wh)
+                            # Parenthesised: AND binds tighter than OR, so a bare
+                            # "type = 'movie' AND imdb_id = ? OR tmdb_id = ?" also matched
+                            # episode rows whose show shares the movie's TMDB number.
+                            query_wh += "(" + " OR ".join(conditions_wh) + ")"
                             if watch_history_conn.execute(query_wh, params_wh).fetchone():
                                 skip_stats['already_watched'] += 1; items_skipped += 1; _note_skip('watch history', item); continue
                 else:

@@ -220,22 +220,6 @@ def cache_unavailable_poster(tmdb_id, media_type):
     cache_poster_url(tmdb_id, media_type, UNAVAILABLE_POSTER)
 
 
-def get_cached_trending_response():
-    """Get cached trending response if available and not expired"""
-    _ensure_loaded()
-    cache_key = "all_trending_response"
-    with _cache_lock:
-        cache_item = _cache.get(cache_key)
-    if cache_item:
-        response_data, timestamp = cache_item
-        if datetime.now() - timestamp < timedelta(minutes=15):
-            logging.info("Using cached trending response")
-            return response_data
-        else:
-            logging.info("Cached trending response expired")
-    return None
-
-
 def cache_trending_response(response_data):
     """Cache the entire trending response for 15 minutes"""
     global _cache_dirty

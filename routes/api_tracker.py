@@ -1,7 +1,6 @@
 import requests
 import logging
 import logging.handlers
-from functools import wraps
 from urllib.parse import urlparse, parse_qs
 import time
 from collections import defaultdict, deque
@@ -52,25 +51,68 @@ def setup_api_logging():
     handler.namer = namer
     
     api_logger.addHandler(handler)
+    install_request_logging()
 
-def log_api_call(func):
-    @wraps(func)
-    def wrapper(self, *args, **kwargs):
+
+# Hosts cli_debrid talks to as part of its own plumbing, not external APIs:
+# polled constantly, they would bury the API summary. Cached for a minute.
+_internal_hosts_cache = (0.0, frozenset())
+
+
+def _internal_hosts():
+    global _internal_hosts_cache
+    now = time.time()
+    if now - _internal_hosts_cache[0] < 60:
+        return _internal_hosts_cache[1]
+    hosts = set()
+    try:
+        phalanx = int(os.environ.get('CLI_DEBRID_PHALANX_PORT', 8888))
+        hosts.update({f'localhost:{phalanx}', f'127.0.0.1:{phalanx}'})
+        from utilities.settings import get_setting
+        bm = get_setting('Built-in Mount') or {}
+        hosts.add(f"127.0.0.1:{int(bm.get('api_port') or 8283)}")
+        mount_url = get_setting('Usenet Provider', 'url', '') or ''
+        if mount_url:
+            hosts.add(urlparse(mount_url).netloc.lower())
+    except Exception:
+        pass
+    hosts.discard('')
+    _internal_hosts_cache = (now, frozenset(hosts))
+    return _internal_hosts_cache[1]
+
+
+def _log_outbound(request):
+    logger = globals().get('api_logger')
+    if logger is None:
+        return
+    parsed = urlparse(request.url)
+    if parsed.netloc.lower() in _internal_hosts():
+        return
+    # Domain and path only: query strings can carry API keys.
+    logger.info(f"{request.method} {parsed.netloc}{parsed.path}")
+
+
+def install_request_logging():
+    """Log every outbound HTTP request to api_calls.log, whichever code makes it.
+
+    Requests made through `api` were logged, but many callers use requests or
+    their own Session directly (the TVDB client, most TMDB lookups), so the API
+    summary never showed them. Every requests call goes through
+    HTTPAdapter.send, so logging there covers all of them exactly once.
+    """
+    if getattr(HTTPAdapter.send, '_cli_debrid_logged', False):
+        return
+    original_send = HTTPAdapter.send
+
+    def send(self, request, *args, **kwargs):
         try:
-            url = args[0] if args else kwargs.get('url')
-            if not isinstance(url, str):
-                return func(self, *args, **kwargs)
-                
-            method = func.__name__.upper()
-            parsed = urlparse(url)
-            # Only log domain and path, skip query parameters
-            domain = parsed.netloc
-            path = parsed.path
-            api_logger.info(f"{method} {domain}{path}")
-        except Exception as e:
-            api_logger.error(f"Error in log_api_call: {str(e)}")
-        return func(self, *args, **kwargs)
-    return wrapper
+            _log_outbound(request)
+        except Exception:
+            pass
+        return original_send(self, request, *args, **kwargs)
+
+    send._cli_debrid_logged = True
+    HTTPAdapter.send = send
 
 class Args:
     def __init__(self, query_params):
@@ -173,7 +215,6 @@ class APITracker:
             self._args = Args(self.get_query_params())
         return self._args
 
-    @log_api_call
     def get(self, url, **kwargs):
         domain = urlparse(url).netloc
         if domain in self.monitored_domains:
@@ -193,7 +234,6 @@ class APITracker:
             api_logger.error(f"Error: {domain} - {str(e)}")
             raise
 
-    @log_api_call
     def post(self, url, **kwargs):
         domain = urlparse(url).netloc
         if domain in self.monitored_domains:
@@ -210,7 +250,6 @@ class APITracker:
             api_logger.error(f"Error: {domain} - {str(e)}")
             raise
 
-    @log_api_call
     def put(self, url, **kwargs):
         domain = urlparse(url).netloc
         if domain in self.monitored_domains:
@@ -227,7 +266,6 @@ class APITracker:
             api_logger.error(f"Error: {domain} - {str(e)}")
             raise
 
-    @log_api_call
     def delete(self, url, **kwargs):
         domain = urlparse(url).netloc
         if domain in self.monitored_domains:

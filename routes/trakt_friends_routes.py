@@ -421,6 +421,11 @@ def delete_friend(auth_id):
                 del config['Content Sources'][source_id]
             
             save_config(config)
+            if sources_to_delete:
+                # Like add_source: without a reload the removed source's task kept
+                # running until restart, then failed on the deleted auth file.
+                from routes.settings_routes import _reload_components_after_settings_change
+                _reload_components_after_settings_change('content_source')
         
         return jsonify({'success': True})
     

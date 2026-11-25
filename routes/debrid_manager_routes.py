@@ -300,10 +300,17 @@ def render_debrid_manager(dm_mode):
     from utilities.settings import get_setting
     file_mgmt = get_setting('File Management', 'file_collection_management', default='Plex')
     media_server = get_setting('File Management', 'media_server_type', default='plex')
+    from utilities.silo_functions import silo_kind
+    from utilities.direct_mount import is_direct_mount_jellyfin
+    direct_jellyfin = is_direct_mount_jellyfin()
     show_plex_trash = (
-        file_mgmt == 'Plex' or
+        (file_mgmt == 'Plex' and silo_kind() != 'library' and not direct_jellyfin) or
         (file_mgmt == 'Symlinked/Local' and media_server == 'plex')
     )
+    if silo_kind():
+        media_server = 'silo'  # labels on the audit tab
+    elif direct_jellyfin:
+        media_server = 'jellyfin'
     symlink_mode = (file_mgmt == 'Symlinked/Local')
     provider_name = get_provider_display_name()
     # Derive abbreviation from the backup prefix map (single source of truth)
@@ -331,9 +338,16 @@ def render_debrid_manager(dm_mode):
         all_providers = [{'index': i, 'name': p.PROVIDER_NAME} for i, p in enumerate(get_debrid_providers())]
     except Exception:
         all_providers = [{'index': 0, 'name': provider_name}]
+    # Tab shown on a fresh visit: Health & Repair when the mount serves the
+    # debrid torrents, else Active. The cli_mount page opens on its first tab.
+    if dm_mode == 'climount':
+        default_tab = ''
+    else:
+        default_tab = 'debrid-repair' if show_climount_tab else 'active'
     return render_template(
         'debrid_manager.html',
         dm_mode=dm_mode,
+        dm_default_tab=default_tab,
         show_plex_trash=show_plex_trash,
         symlink_mode=symlink_mode,
         climount_mode=climount_mode,
@@ -400,18 +414,16 @@ def api_active_files():
     Rclone mode: mount.detail.transferring from /debug/stats (name, bytes, size, speed, progress)
     """
     try:
-        import requests as _req
         from usenet.climount_client import get_climount_client
+        from usenet.base import supports, STATS
         dc = get_climount_client()
-        if not dc or not dc.is_enabled():
+        if not dc or not dc.is_enabled() or not supports(dc, STATS):
             return jsonify({'success': False, 'error': 'cli_mount not enabled'}), 400
 
-        base = dc.base_url.rstrip('/')
-        resp = _req.get(f'{base}/debug/stats', timeout=8)
-        if resp.status_code != 200:
-            return jsonify({'success': False, 'error': f'cli_mount stats returned {resp.status_code}'}), 502
+        data = dc.get_debug_stats(timeout=8)
+        if data is None:
+            return jsonify({'success': False, 'error': 'cli_mount stats unavailable'}), 502
 
-        data = resp.json()
         now = int(time.time())
 
         # DFS / WebDAV mode — active_streams

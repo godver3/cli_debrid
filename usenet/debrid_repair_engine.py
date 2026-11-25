@@ -19,7 +19,6 @@ import logging
 import re
 import threading as _threading
 import time
-import urllib.parse
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +38,45 @@ def _dcy_cfg():
     return url, token
 
 
-def _dcy_headers():
-    _, token = _dcy_cfg()
-    return {'Authorization': f'Bearer {token}'} if token else {}
+def _backend_enabled() -> bool:
+    """The usenet backend whose mount holds the debrid torrents is set up:
+    cli_mount (its URL) or the built-in mount (which mirrors the accounts)."""
+    try:
+        return bool(_client().is_enabled())
+    except Exception:
+        return False
+
+
+def _client():
+    """The client of the mount that holds the debrid torrents: the built-in
+    mount when it mirrors the debrid accounts (also when it runs for debrid
+    alone), else the active usenet client (cli_mount's /api/repair/*; other
+    backends answer with empty no-ops)."""
+    try:
+        from utilities import mount_debrid
+        from utilities.settings import get_setting
+        if mount_debrid.engine_holds_debrid(get_setting):
+            from usenet.builtin_client import BuiltinClient
+            c = BuiltinClient()
+            c.enabled = True  # usenet may be off or another backend: debrid still lives here
+            return c
+    except Exception as exc:
+        logger.debug(f'[DebridRepair] built-in mount check failed: {exc}')
+    from usenet import get_usenet_client
+    return get_usenet_client()
+
+
+def _strip_media_ext(name: str) -> str:
+    """Mount folders have no extension; health entry names sometimes do."""
+    for ext in ('.mkv', '.mp4', '.avi', '.mov', '.ts', '.m2ts'):
+        if name.lower().endswith(ext):
+            return name[:-len(ext)]
+    return name
+
+
+def _mount_entry_names(client) -> set:
+    """Names of torrent entries that exist in the mount (browse API)."""
+    return {e.get('name', '') for e in client.iter_mount_torrents() if e.get('name')}
 
 
 # ---------------------------------------------------------------------------
@@ -52,16 +87,12 @@ def fetch_broken_items() -> list:
     """Return broken torrent-protocol entries from cli_mount /api/repair/health.
     Each entry is tagged with is_ghost=True if its folder does not exist in the mount."""
     try:
-        from routes.api_tracker import api
-        url, _ = _dcy_cfg()
-        if not url:
+        if not _backend_enabled():
             return []
-        r = api.get(f'{url}/api/repair/health', headers=_dcy_headers(), timeout=60)
-        if r.status_code != 200:
-            logger.warning(f'[DebridRepair] /api/repair/health HTTP {r.status_code}')
+        client = _client()
+        entries = client.list_repair_health(timeout=60)
+        if entries is None:
             return []
-        data = r.json()
-        entries = data if isinstance(data, list) else data.get('entries', data.get('items', []))
         broken_torrent = [
             e for e in entries
             if (e.get('status') or '').lower() == 'broken'
@@ -69,33 +100,14 @@ def fetch_broken_items() -> list:
         ]
 
         # Tag ghosts via browse API — only entries that exist in the mount appear there
-        mount_names = set()
         try:
-            page = 1
-            while True:
-                br = api.get(f'{url}/api/browse/torrents', headers=_dcy_headers(),
-                             params={'limit': 500, 'page': page}, timeout=30)
-                if br.status_code != 200:
-                    break
-                bd = br.json()
-                for e in bd.get('entries', []):
-                    n = e.get('name', '')
-                    if n:
-                        mount_names.add(n)
-                if page >= bd.get('total_pages', 1):
-                    break
-                page += 1
+            mount_names = _mount_entry_names(client)
         except Exception:
-            pass
+            mount_names = set()
 
         for e in broken_torrent:
             if e.get('failure_reason') == 'missing_provider_link':
-                name = (e.get('entry_name') or '').strip()
-                folder = name
-                for ext in ('.mkv', '.mp4', '.avi', '.mov', '.ts', '.m2ts'):
-                    if folder.lower().endswith(ext):
-                        folder = folder[:-len(ext)]
-                        break
+                folder = _strip_media_ext((e.get('entry_name') or '').strip())
                 e['is_ghost'] = folder not in mount_names
             else:
                 e['is_ghost'] = False
@@ -110,20 +122,21 @@ def fetch_broken_items() -> list:
 def get_health_summary() -> dict:
     """Return health-state counts for torrent-protocol entries only."""
     try:
-        from routes.api_tracker import api
-        url, _ = _dcy_cfg()
-        if not url:
+        if not _backend_enabled():
             return {}
-        r = api.get(f'{url}/api/repair/health', headers=_dcy_headers(), timeout=60)
-        if r.status_code != 200:
+        client = _client()
+        if hasattr(client, 'health_counts'):
+            # built-in mount: every debrid job, unchecked ones as unknown
+            return client.health_counts('debrid')
+        entries = client.list_repair_health(timeout=60)
+        if entries is None:
             return {}
-        data = r.json()
-        entries = data if isinstance(data, list) else data.get('entries', data.get('items', []))
-        torrent_entries = [e for e in entries if (e.get('protocol') or '').lower() == 'torrent']
         counts: dict = {}
-        for e in torrent_entries:
-            s = (e.get('status') or 'unknown').lower()
-            counts[s] = counts.get(s, 0) + 1
+        for e in entries:
+            if (e.get('protocol') or '').lower() != 'torrent':
+                continue
+            st = (e.get('status') or 'unknown').lower()
+            counts[st] = counts.get(st, 0) + 1
         return counts
     except Exception as e:
         logger.debug(f'[DebridRepair] get_health_summary error: {e}')
@@ -135,36 +148,10 @@ def trigger_health_scan(full: bool = False, wait: bool = False, timeout: int = 3
     full=True scans all files; full=False (default) only scans unchecked files.
     wait=True blocks until the scan completes (up to timeout seconds)."""
     try:
-        import time as _t
-        from routes.api_tracker import api
-        url, _ = _dcy_cfg()
-        if not url:
+        if not _backend_enabled():
             return False
-        params = 'protocol=torrent'
-        if full:
-            params += '&ignore_last_checked=true'
-        r = api.post(f'{url}/api/repair/run?{params}', headers=_dcy_headers(), timeout=30)
-        if r.status_code not in (200, 202, 204):
-            return False
-        if not wait:
-            return True
-        run_id = (r.json() or {}).get('run_id', '')
-        if not run_id:
-            return True
-        deadline = _t.time() + timeout
-        while _t.time() < deadline:
-            _t.sleep(30)
-            try:
-                sr = api.get(f'{url}/api/repair/runs/{run_id}', headers=_dcy_headers(), timeout=10)
-                if sr.status_code == 200:
-                    status = (sr.json() or {}).get('status', '')
-                    if status in ('completed', 'failed', 'error'):
-                        logger.info(f'[DebridRepair] Torrent health scan completed: status={status}')
-                        return True
-            except Exception:
-                pass
-        logger.warning('[DebridRepair] Torrent health scan wait timed out')
-        return True
+        return _client().run_health_scan('torrent', full=full, wait=wait, timeout=timeout,
+                                         log_label='Torrent')
     except Exception as e:
         logger.warning(f'[DebridRepair] trigger_health_scan error: {e}')
         return False
@@ -331,22 +318,16 @@ def _delete_from_climount(info_hash: str, entry_name: str = '') -> bool:
         logger.warning(f'[DebridRepair] _delete_from_climount: no hash for {entry_name!r}')
         return False
     try:
-        from routes.api_tracker import api
-        url, _ = _dcy_cfg()
-        if not url:
+        if not _backend_enabled():
             return False
-        r = api.delete(
-            f'{url}/api/browse/torrents/{info_hash}',
-            headers=_dcy_headers(),
-            timeout=15,
-        )
-        if r.status_code in (200, 204):
+        status = _client().delete_mount_torrent(info_hash)
+        if status in (200, 204):
             logger.info(f'[DebridRepair] Deleted torrent {info_hash} from cli_mount')
             return True
-        if r.status_code == 404:
+        if status == 404:
             logger.info(f'[DebridRepair] Torrent {info_hash} already gone from cli_mount (404)')
             return True
-        logger.warning(f'[DebridRepair] delete torrent {info_hash} returned HTTP {r.status_code}')
+        logger.warning(f'[DebridRepair] delete torrent {info_hash} returned HTTP {status}')
         return False
     except Exception as e:
         logger.warning(f'[DebridRepair] _delete_from_climount error for {info_hash!r}: {e}')
@@ -367,22 +348,16 @@ def delete_ghost_health_records() -> dict:
 
     Returns dict: {deleted, skipped, errors}
     """
-    import urllib.parse as _up
-    from routes.api_tracker import api
-
-    url, _ = _dcy_cfg()
-    if not url:
+    if not _backend_enabled():
         return {'deleted': 0, 'skipped': 0, 'errors': 0}
+    client = _client()
 
     # Fetch all broken missing_provider_link torrent entries from health API
     try:
-        r = api.get(f'{url}/api/repair/health', headers=_dcy_headers(), timeout=60)
-        if r.status_code != 200:
-            logger.warning(f'[DebridRepair] ghost cleanup: health API returned {r.status_code}')
+        all_entries = client.list_repair_health(timeout=60)
+        if all_entries is None:
+            logger.warning('[DebridRepair] ghost cleanup: health API call failed')
             return {'deleted': 0, 'skipped': 0, 'errors': 0}
-        all_entries = r.json()
-        if not isinstance(all_entries, list):
-            all_entries = all_entries.get('entries', [])
     except Exception as e:
         logger.warning(f'[DebridRepair] ghost cleanup: failed to fetch health: {e}')
         return {'deleted': 0, 'skipped': 0, 'errors': 0}
@@ -400,22 +375,8 @@ def delete_ghost_health_records() -> dict:
     # Build set of names that exist in the mount via the browse API.
     # The browse API only returns entries whose folder exists in the mount,
     # so any broken entry absent from this set is a ghost.
-    mount_names = set()
     try:
-        page = 1
-        while True:
-            br = api.get(f'{url}/api/browse/torrents', headers=_dcy_headers(),
-                         params={'limit': 500, 'page': page}, timeout=30)
-            if br.status_code != 200:
-                break
-            bd = br.json()
-            for e in bd.get('entries', []):
-                n = e.get('name', '')
-                if n:
-                    mount_names.add(n)
-            if page >= bd.get('total_pages', 1):
-                break
-            page += 1
+        mount_names = _mount_entry_names(client)
         logger.debug(f'[DebridRepair] ghost cleanup: {len(mount_names)} entries in mount')
     except Exception as e:
         logger.warning(f'[DebridRepair] ghost cleanup: failed to fetch browse list: {e}')
@@ -426,25 +387,18 @@ def delete_ghost_health_records() -> dict:
         name = (entry.get('entry_name') or '').strip()
         if not name:
             continue
-        # Strip file extension — mount folders have no extension
-        folder_name = name
-        for ext in ('.mkv', '.mp4', '.avi', '.mov', '.ts', '.m2ts'):
-            if folder_name.lower().endswith(ext):
-                folder_name = folder_name[:-len(ext)]
-                break
-        if folder_name in mount_names:
+        if _strip_media_ext(name) in mount_names:
             logger.debug(f'[DebridRepair] ghost cleanup: in mount, skipping {name!r}')
             skipped += 1
             continue
         # Not in mount → ghost. Delete only the health record.
-        encoded = _up.quote(name, safe='')
         try:
-            d = api.delete(f'{url}/api/repair/health/{encoded}', headers=_dcy_headers(), timeout=15)
-            if d.status_code == 200:
+            status = client.delete_repair_health(name)
+            if status == 200:
                 deleted += 1
                 logger.info(f'[DebridRepair] Deleted ghost health record: {name!r}')
             else:
-                logger.warning(f'[DebridRepair] Failed to delete ghost health record {name!r}: HTTP {d.status_code}')
+                logger.warning(f'[DebridRepair] Failed to delete ghost health record {name!r}: HTTP {status}')
                 errors += 1
         except Exception as e:
             logger.warning(f'[DebridRepair] Error deleting ghost health record {name!r}: {e}')
@@ -681,11 +635,9 @@ def reinsert_entry(entry_name: str, info_hash: str) -> dict:
         import threading as _t
         _new_id = new_id  # capture for closure
         def _wait_then_sync():
-            _url, _ = _dcy_cfg()
-            if not _url or not info_hash:
+            if not _backend_enabled() or not info_hash:
                 return
             try:
-                from routes.api_tracker import api as _api
                 rd_id = _new_id
                 # If already_existed, find the current RD torrent ID by hash
                 if rd_id is None:
@@ -724,23 +676,18 @@ def reinsert_entry(entry_name: str, info_hash: str) -> dict:
                 # Trigger cli_mount sync using the NEW RD torrent ID so it fetches
                 # fresh placement data instead of using the stale old placement ID.
                 try:
-                    sync_url = f'{_url}/api/torrents/{info_hash}/sync'
-                    if rd_id:
-                        sync_url += f'?rdId={rd_id}'
-                    r = _api.post(sync_url, headers=_dcy_headers(), timeout=15)
-                    if r.status_code == 200:
+                    _sync_status = _client().sync_torrent(info_hash, rd_id=rd_id or '')
+                    if _sync_status == 200:
                         logger.info(f'[DebridRepair] cli_mount sync succeeded for {info_hash} (rdId={rd_id})')
                     else:
-                        logger.warning(f'[DebridRepair] cli_mount sync returned HTTP {r.status_code} for {info_hash}')
+                        logger.warning(f'[DebridRepair] cli_mount sync returned HTTP {_sync_status} for {info_hash}')
                 except Exception as _se:
                     logger.debug(f'[DebridRepair] cli_mount sync error (non-critical): {_se}')
                 # Re-probe health so cli_mount re-validates the file link immediately
                 # (health cache has next_check_due_at next week — recheck forces it now)
                 try:
-                    encoded_name = urllib.parse.quote(entry_name, safe='')
-                    rr = _api.post(f'{_url}/api/repair/health/{encoded_name}/check',
-                                   headers=_dcy_headers(), timeout=30)
-                    logger.info(f'[DebridRepair] Recheck triggered for {entry_name!r}: HTTP {rr.status_code}')
+                    _rr_status = _client().recheck_entry_health(entry_name, timeout=30)
+                    logger.info(f'[DebridRepair] Recheck triggered for {entry_name!r}: HTTP {_rr_status}')
                 except Exception as _re:
                     logger.debug(f'[DebridRepair] Recheck error (non-critical): {_re}')
                 # Trigger Plex scan so Plex picks up the re-inserted file

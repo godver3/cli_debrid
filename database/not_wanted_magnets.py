@@ -219,7 +219,6 @@ def get_base_filename(url):
         return None
 
     if url.startswith('magnet:'):
-        import re
         # Hex hash (40 chars, SHA1)
         btih_match = re.search(r'btih:([a-fA-F0-9]{40})(?:[&?]|$)', url, re.IGNORECASE)
         if btih_match:
@@ -234,6 +233,11 @@ def get_base_filename(url):
             except Exception:
                 return b32_match.group(1).lower()
     
+    # A bare info-hash (how add_to_not_wanted stores entries); hashes from
+    # some providers come upper-case.
+    if re.fullmatch(r'[a-fA-F0-9]{40}', url):
+        return url.lower()
+
     # For URLs with file parameter
     if 'file=' in url:
         return url.split('file=')[-1].split('&')[0]

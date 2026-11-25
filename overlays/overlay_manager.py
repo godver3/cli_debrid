@@ -46,6 +46,87 @@ def _get_db_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
+def normalise_show_status(raw_status: str, has_upcoming: bool = False) -> Optional[str]:
+    """Badge label for a raw show status ('returning series' → 'Returning' / 'Airing')."""
+    raw = raw_status.strip().lower()
+    if raw in ('returning series', 'returning') and has_upcoming:
+        return 'Airing'
+    if raw in ('returning series', 'returning'):
+        return 'Returning'
+    if raw == 'ended':
+        return 'Ended'
+    if raw in ('canceled', 'cancelled'):
+        return 'Canceled'
+    return raw_status.strip().title()
+
+
+_UPCOMING_SQL = """
+    EXISTS(
+        SELECT 1 FROM media_items mi
+        WHERE mi.imdb_id = ts.imdb_id
+          AND mi.type = 'episode'
+          AND date(mi.release_date) BETWEEN date('now') AND date('now', '+14 days')
+        LIMIT 1
+    )
+"""
+
+
+def show_statuses(imdb_ids) -> Dict[str, str]:
+    """
+    Badge status for each show, keyed by imdb_id. Shows with no status are left out.
+
+    The rendered badge and the content-change check both read this, so the hash
+    stored at render time is the one the check recomputes. Main DB tv_shows first
+    (with a 14-day upcoming-episode check for 'Airing'), then cli_battery's
+    media_status for shows tv_shows has no status for.
+    """
+    import os
+    wanted = [i for i in {i for i in imdb_ids if i}]
+    if not wanted:
+        return {}
+    result: Dict[str, str] = {}
+    log = logging.getLogger(__name__)
+    try:
+        conn = _get_db_connection()
+        try:
+            for start in range(0, len(wanted), 500):
+                chunk = wanted[start:start + 500]
+                rows = conn.execute(
+                    f"SELECT ts.imdb_id, ts.status, {_UPCOMING_SQL} AS has_upcoming "
+                    f"FROM tv_shows ts WHERE ts.imdb_id IN ({','.join('?' * len(chunk))}) "
+                    f"AND ts.status IS NOT NULL AND ts.status != ''",
+                    chunk).fetchall()
+                for r in rows:
+                    result[r['imdb_id']] = normalise_show_status(r['status'], bool(r['has_upcoming']))
+        finally:
+            conn.close()
+    except Exception as e:
+        log.debug(f"Show status lookup in tv_shows failed: {e}")
+
+    missing = [i for i in wanted if i not in result]
+    if missing:
+        battery_path = os.path.join(
+            os.environ.get('USER_DB_CONTENT', '/user/db_content'), 'cli_battery.db')
+        if os.path.exists(battery_path):
+            try:
+                bconn = sqlite3.connect(f'file:{battery_path}?mode=ro', uri=True, timeout=5)
+                try:
+                    for start in range(0, len(missing), 500):
+                        chunk = missing[start:start + 500]
+                        rows = bconn.execute(
+                            f"SELECT imdb_id, media_status FROM items WHERE type = 'show' "
+                            f"AND imdb_id IN ({','.join('?' * len(chunk))}) "
+                            f"AND media_status IS NOT NULL AND media_status != ''",
+                            chunk).fetchall()
+                        for imdb_id, media_status in rows:
+                            result.setdefault(imdb_id, normalise_show_status(media_status))
+                finally:
+                    bconn.close()
+            except Exception as e:
+                log.debug(f"Show status lookup in cli_battery failed: {e}")
+    return result
+
+
 from .layout_manager import LayoutManager
 from .media_info import MediaInfoExtractor
 from .plex_client import PlexClient
@@ -738,6 +819,22 @@ class OverlayManager:
             ELSE 1
         END
     """
+    # Full ORDER BY for "best version first". Ends in a deterministic tie-break
+    # (video codec, then row id): episodes that tie on resolution/HDR/audio but
+    # differ in codec used to come back in arbitrary order, so the renderer and the
+    # quality-change check could pick different episodes and reset the same season
+    # every sync. Every best-version query (here and in scheduled_tasks) uses this.
+    _QUALITY_ORDER = f"""
+        ({_RES_RANK}) DESC,
+        ({_HDR_RANK}) DESC,
+        ({_AUD_RANK}) DESC,
+        CAST(COALESCE(ms_audio_channels, '0') AS REAL) DESC,
+        CASE lower(COALESCE(ms_video_codec, ''))
+            WHEN 'av1' THEN 3 WHEN 'hevc' THEN 2 WHEN 'h265' THEN 2 WHEN 'x265' THEN 2
+            WHEN '' THEN 0 ELSE 1
+        END DESC,
+        id ASC
+    """
     # Fields that can be filled from a lower-ranked row when missing on the best one.
     # Resolution/HDR/DV are intentionally NOT here — they define which row is "best".
     _FILLABLE = (
@@ -776,11 +873,7 @@ class OverlayManager:
                   AND type = ?
                   AND state IN ('Collected', 'Upgrading')
                   AND ms_resolution IS NOT NULL
-                ORDER BY
-                    ({self._RES_RANK}) DESC,
-                    ({self._HDR_RANK}) DESC,
-                    ({self._AUD_RANK}) DESC,
-                    CAST(COALESCE(ms_audio_channels, '0') AS REAL) DESC
+                ORDER BY {self._QUALITY_ORDER}
             ''', (imdb_id, item_type))
             rows = cursor.fetchall()
             conn.close()
@@ -842,11 +935,7 @@ class OverlayManager:
                   AND type = ?
                   AND state IN ('Collected', 'Upgrading')
                   AND ms_resolution IS NOT NULL
-                ORDER BY
-                    ({self._RES_RANK}) DESC,
-                    ({self._HDR_RANK}) DESC,
-                    ({self._AUD_RANK}) DESC,
-                    CAST(COALESCE(ms_audio_channels, '0') AS REAL) DESC
+                ORDER BY {self._QUALITY_ORDER}
             ''', (ms_item_id, item_type))
             rows = cursor.fetchall()
             conn.close()
@@ -1157,7 +1246,8 @@ class OverlayManager:
         return ratings
 
     def _fetch_ratings(self, imdb_id: str, item_type: Optional[str] = None,
-                       plex_metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                       plex_metadata: Optional[Dict[str, Any]] = None,
+                       refresh: bool = False) -> Dict[str, Any]:
         """
         Fetch ratings for a media item. Sources in priority order:
           1. In-memory cache (24h TTL — avoids any I/O within a single sync run)
@@ -1166,6 +1256,9 @@ class OverlayManager:
           3. TMDB direct API (tmdb_rating only, via /find by IMDB ID)
           4. MDBList API (IMDb, TMDB, Trakt, RT — all in one call; 0.2s pre-sleep)
           5. Combined Plex metadata + Trakt fallback (when MDBList fails/rate-limited)
+
+        refresh=True skips both caches (the content-change check uses it to re-fetch
+        ratings that are older than overlay_content_check_interval_days).
         """
         import time
         import json
@@ -1173,7 +1266,7 @@ class OverlayManager:
         cache = OverlayManager._ratings_cache
 
         # ── 1. In-memory cache (fastest path, no I/O) ────────────────────────
-        cached = cache.get(imdb_id)
+        cached = None if refresh else cache.get(imdb_id)
         if cached:
             ts, data = cached
             if time.time() - ts < 86400:
@@ -1201,7 +1294,7 @@ class OverlayManager:
                 (imdb_id,)
             ).fetchone()
             _db.close()
-            if _row and (time.time() - _row[1]) < _RATINGS_TTL:
+            if _row and not refresh and (time.time() - _row[1]) < _RATINGS_TTL:
                 data = json.loads(_row[0])
                 _trakt_miss = _trakt_configured and not data.get('trakt_rating') and not _in_backoff
                 _mdblist_miss = _mdblist_configured and not (data.get('imdb_rating') and data.get('tmdb_rating'))
@@ -1409,65 +1502,7 @@ class OverlayManager:
         """
         if item_type != 'episode' or not imdb_id:
             return None
-
-        def _normalise(raw_status: str, has_upcoming: bool = False) -> Optional[str]:
-            raw = raw_status.strip().lower()
-            if raw in ('returning series', 'returning') and has_upcoming:
-                return 'Airing'
-            if raw in ('returning series', 'returning'):
-                return 'Returning'
-            if raw == 'ended':
-                return 'Ended'
-            if raw in ('canceled', 'cancelled'):
-                return 'Canceled'
-            return raw_status.strip().title()
-
-        # ── Primary: main DB tv_shows ─────────────────────────────────────
-        try:
-            conn = _get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT ts.status,
-                       EXISTS(
-                           SELECT 1 FROM media_items mi
-                           WHERE mi.imdb_id = ts.imdb_id
-                             AND mi.type = 'episode'
-                             AND date(mi.release_date) BETWEEN date('now') AND date('now', '+14 days')
-                           LIMIT 1
-                       ) AS has_upcoming
-                FROM tv_shows ts
-                WHERE ts.imdb_id = ?
-            """, (imdb_id,))
-            row = cursor.fetchone()
-            conn.close()
-            if row and row['status']:
-                return _normalise(row['status'], bool(row['has_upcoming']))
-        except Exception as e:
-            self.logger.debug(f"Could not fetch show status from tv_shows for {imdb_id}: {e}")
-
-        # ── Fallback: cli_battery items.media_status ──────────────────────
-        # Newly-added shows may have battery metadata before tv_shows is populated.
-        try:
-            import os
-            battery_path = os.path.join(
-                os.environ.get('USER_DB_CONTENT', '/user/db_content'), 'cli_battery.db'
-            )
-            import sqlite3 as _sqlite3
-            bconn = _sqlite3.connect(battery_path, timeout=5)
-            bconn.row_factory = _sqlite3.Row
-            bcursor = bconn.cursor()
-            bcursor.execute(
-                "SELECT media_status FROM items WHERE imdb_id = ? AND type = 'show' LIMIT 1",
-                (imdb_id,)
-            )
-            brow = bcursor.fetchone()
-            bconn.close()
-            if brow and brow['media_status']:
-                return _normalise(brow['media_status'])
-        except Exception as e:
-            self.logger.debug(f"Could not fetch show status from cli_battery for {imdb_id}: {e}")
-
-        return None
+        return show_statuses([imdb_id]).get(imdb_id)
 
     def _enrich_media_info(self, info: Dict[str, Any], item: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -1536,27 +1571,22 @@ class OverlayManager:
         info['hdr_subtype'] = hdr_label if hdr else None
 
         # ── Ratings (MDBList API) ─────────────────────────────────────────
-        # Always fetch so RT scores are populated even when IMDb/TMDB are already set.
-        # _fetch_ratings uses a 24-hour in-process cache so this is cheap.
-        # Fetch ratings whenever any score is missing (cache makes this cheap).
-        _needs_ratings = (
-            not info.get('imdb_rating') or
-            not info.get('tmdb_rating') or
-            not info.get('rt_critics_score') or
-            not info.get('rt_user_score')
-        )
-        if _needs_ratings:
-            imdb_id = item.get('imdb_id') or ''
+        # Always fetch (cached, so cheap). Fetched ratings win over values the media server supplied (Jellyfin's
+        # CommunityRating), which stay as the fallback: the content-change check
+        # compares against the fetched/cached ratings, so a media-server value
+        # baked into the stored hash would never match it and re-render every sync.
+        imdb_id = item.get('imdb_id') or ''
+        if imdb_id:
             ratings = self._fetch_ratings(
                 imdb_id, item.get('type'),
                 plex_metadata=item.get('_plex_metadata')
-            ) if imdb_id else {}
-            # Use 'or' assignment so existing None values get overwritten with real data
-            info['imdb_rating']      = info.get('imdb_rating')      or ratings.get('imdb_rating')
-            info['tmdb_rating']      = info.get('tmdb_rating')      or ratings.get('tmdb_rating')
-            info['trakt_rating']     = info.get('trakt_rating')     or ratings.get('trakt_rating')
-            info['rt_critics_score'] = info.get('rt_critics_score') or ratings.get('rt_critics_score')
-            info['rt_user_score']    = info.get('rt_user_score')    or ratings.get('rt_user_score')
+            )
+            for _rk in ('imdb_rating', 'tmdb_rating', 'trakt_rating',
+                        'rt_critics_score', 'rt_user_score'):
+                if ratings.get(_rk) is not None:
+                    info[_rk] = ratings[_rk]
+                else:
+                    info[_rk] = info.get(_rk)
 
         # ── Network / Studio / Content Rating ────────────────────────────
         # Fall back to ms_* DB columns if not already set by media server live fetch
@@ -2469,11 +2499,7 @@ class OverlayManager:
                   AND type = 'episode'
                   AND state IN ('Collected', 'Upgrading')
                   AND ms_resolution IS NOT NULL
-                ORDER BY
-                    ({self._RES_RANK}) DESC,
-                    ({self._HDR_RANK}) DESC,
-                    ({self._AUD_RANK}) DESC,
-                    CAST(COALESCE(ms_audio_channels, '0') AS REAL) DESC
+                ORDER BY {self._QUALITY_ORDER}
                 LIMIT 1
             ''', (show_imdb_id, season_number))
             row = cursor.fetchone()

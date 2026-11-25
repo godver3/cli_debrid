@@ -35,8 +35,8 @@ USER_INITIATED_INDEX = 6
 
 
 def _parse(relpath):
-    with open(os.path.join(PROJECT_ROOT, relpath), encoding='utf-8') as f:
-        return ast.parse(f.read())
+    from tests._source import project_source
+    return ast.parse(project_source(relpath))
 
 
 def _find_function(tree, name):

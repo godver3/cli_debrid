@@ -46,6 +46,12 @@ MAX_IMPORTS_PER_RUN = 25
 MAX_ATTEMPTS = 3
 RETRY_AFTER_SECONDS = 6 * 60 * 60
 
+# A folder missing from one listing is kept in state this long before it's
+# forgotten. A flaky mount can list a fraction of its folders; dropping their
+# state at once turned every baseline folder into a "new" import when the
+# listing recovered.
+GONE_GRACE_SECONDS = 7 * 24 * 60 * 60
+
 
 def _state_path() -> str:
     db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
@@ -67,9 +73,11 @@ def _load_state() -> Dict:
 
 def _save_state(state: Dict) -> None:
     path = _state_path()
+    tmp = path + '.tmp'
     try:
-        with open(path, 'w', encoding='utf-8') as f:
+        with open(tmp, 'w', encoding='utf-8') as f:
             json.dump(state, f, indent=2)
+        os.replace(tmp, path)
     except OSError as e:
         logging.error(f"[ExternalScan] Could not write state file {path}: {e}")
 
@@ -339,12 +347,26 @@ def scan_mount_for_external_adds() -> Dict:
     # a file with one key per mount folder on every run buys nothing.
     dirty = False
 
-    # Drop state for folders that have gone from the mount, so the file
-    # doesn't grow without bound.
+    # Forget folders that have been gone from the mount for a while, so the
+    # file doesn't grow without bound -- but not on a single missed listing.
     present = set(entries)
-    for name in [n for n in state if n not in present]:
-        del state[name]
-        dirty = True
+    for name in list(state):
+        entry = state[name]
+        if name in present:
+            if isinstance(entry, dict) and entry.pop('gone_since', None) is not None:
+                dirty = True
+            continue
+        if not isinstance(entry, dict):
+            del state[name]
+            dirty = True
+            continue
+        gone_since = entry.get('gone_since')
+        if gone_since is None:
+            entry['gone_since'] = now
+            dirty = True
+        elif now - gone_since >= GONE_GRACE_SECONDS:
+            del state[name]
+            dirty = True
 
     candidates = []
     for name in entries:
@@ -426,7 +448,7 @@ def scan_mount_for_external_adds() -> Dict:
                 name,                # assumed_item_title_from_path
                 False,               # user_initiated - see below
             )
-            progress = rclone_scan_progress.get(task_id) or {}
+            progress = rclone_scan_progress.pop(task_id, None) or {}
             added = progress.get('items_added_to_db', 0)
             symlinks = progress.get('symlinks_created', 0)
             if added > 0:

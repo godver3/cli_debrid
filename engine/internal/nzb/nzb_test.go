@@ -1,0 +1,115 @@
+package nzb
+
+import (
+	"strings"
+	"testing"
+)
+
+const sample = `<?xml version="1.0" encoding="utf-8"?>
+<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
+ <head><meta type="title">Some.Movie.2024</meta><meta type="password">pw</meta></head>
+ <file poster="p" date="1" subject="Some.Movie [1/2] - &quot;some.movie.mkv&quot; yEnc (1/4)">
+  <groups><group>alt.binaries.test</group></groups>
+  <segments>
+   <segment bytes="100" number="1"> &lt;a1@x&gt; </segment>
+   <segment bytes="100" number="2">a2@x</segment>
+   <segment bytes="100" number="2">a2dup@x</segment>
+   <segment bytes="50" number="4">a4@x</segment>
+  </segments>
+ </file>
+ <file poster="p" date="1" subject="no quotes here">
+  <groups><group>alt.binaries.test</group></groups>
+  <segments><segment bytes="10" number="1">b1@x</segment></segments>
+ </file>
+</nzb>`
+
+func TestParse(t *testing.T) {
+	n, err := Parse(strings.NewReader(sample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.Meta["password"] != "pw" || len(n.Files) != 2 {
+		t.Fatalf("meta %v files %d", n.Meta, len(n.Files))
+	}
+	f := n.Files[0]
+	if f.Name != "some.movie.mkv" {
+		t.Fatalf("name %q", f.Name)
+	}
+	if len(f.Segments) != 3 || f.Segments[0].ID != "a1@x" || f.Segments[1].ID != "a2@x" {
+		t.Fatalf("segments %+v", f.Segments)
+	}
+	if f.Total != 4 || f.Announced != 4 || len(f.Missing) != 1 || f.Missing[0] != 3 || f.Complete() {
+		t.Fatalf("total %d announced %d missing %v", f.Total, f.Announced, f.Missing)
+	}
+	if n.Files[1].Name != "no quotes here" || !n.Files[1].Complete() {
+		t.Fatalf("second file %+v", n.Files[1])
+	}
+}
+
+// Obfuscated posts announce random counts: "yEnc (1/148)" on a file whose
+// NZB lists segments 1..137 (Shawshank HiDt). The listed segments decide.
+func TestParseIgnoresAnnouncedCount(t *testing.T) {
+	n, err := Parse(strings.NewReader(`<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
+ <file poster="p" date="1" subject="X [7/10] &quot;x.part02.rar&quot; yEnc (1/5)">
+  <groups><group>a.b</group></groups>
+  <segments><segment bytes="9" number="1">c1@x</segment><segment bytes="9" number="2">c2@x</segment></segments>
+ </file>
+</nzb>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := n.Files[0]
+	if f.Total != 2 || f.Announced != 5 || !f.Complete() {
+		t.Fatalf("total %d announced %d missing %v", f.Total, f.Announced, f.Missing)
+	}
+}
+
+func TestParseRejectsEmpty(t *testing.T) {
+	if _, err := Parse(strings.NewReader(`<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb"></nzb>`)); err == nil {
+		t.Fatal("empty NZB accepted")
+	}
+}
+
+// Some NZB writers leave subject empty and put the file description in
+// poster. Merging by (empty) subject glued every file into one blob.
+func TestEmptySubjectFilesStaySeparate(t *testing.T) {
+	n, err := Parse(strings.NewReader(`<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
+ <file poster="&quot;show.part01.rar&quot; yEnc (1/2)" date="1" subject="">
+  <groups><group>a.b</group></groups>
+  <segments><segment bytes="9" number="1">p1a@x</segment><segment bytes="9" number="2">p1b@x</segment></segments>
+ </file>
+ <file poster="&quot;show.part02.rar&quot; yEnc (1/1)" date="1">
+  <groups><group>a.b</group></groups>
+  <segments><segment bytes="9" number="1">p2a@x</segment></segments>
+ </file>
+ <file poster="someone@example" date="1" subject="">
+  <groups><group>a.b</group></groups>
+  <segments><segment bytes="9" number="1">u1@x</segment></segments>
+ </file>
+ <file poster="someone@example" date="1" subject="">
+  <groups><group>a.b</group></groups>
+  <segments><segment bytes="9" number="1">u2@x</segment></segments>
+ </file>
+</nzb>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(n.Files) != 4 {
+		t.Fatalf("%d files, want 4", len(n.Files))
+	}
+	names := map[string]bool{}
+	ids := map[string]bool{}
+	for _, f := range n.Files {
+		names[f.Name] = true
+		if len(f.Segments) == 0 || f.Segments[0].Number != 1 {
+			t.Fatalf("file %q segments %+v", f.Name, f.Segments)
+		}
+		ids[f.Segments[0].ID] = true
+	}
+	if !names["show.part01.rar"] || !names["show.part02.rar"] {
+		t.Fatalf("names %v", names)
+	}
+	if !ids["u1@x"] || !ids["u2@x"] {
+		t.Fatalf("unnamed files merged: %v", ids)
+	}
+}

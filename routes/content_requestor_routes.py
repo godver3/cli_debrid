@@ -102,6 +102,17 @@ def request_content():
         selected_folder_is_custom = data.get('selected_folder_is_custom', False)
         selected_tags = data.get('selected_tags') or None  # Tags for Plex mode NZB routing
 
+        # Only configured versions: an unknown name would add Wanted items that no version
+        # settings can scrape, and an empty list would add nothing but report "Already have".
+        if not isinstance(selected_versions, list):
+            selected_versions = []
+        configured_versions = set((load_config().get('Scraping', {}) or {}).get('versions', {}) or {})
+        unknown_versions = [v for v in selected_versions if v not in configured_versions]
+        if unknown_versions:
+            return jsonify({'error': f"Unknown version(s): {', '.join(map(str, unknown_versions))}"}), 400
+        if not selected_versions:
+            return jsonify({'error': 'Select at least one version'}), 400
+
         # Convert selected versions to dictionary format
         versions = {version: True for version in selected_versions}
 
@@ -296,14 +307,13 @@ def request_content():
                 logging.warning(f"Post-add refresh failed for {imdb_id}: {e_refresh}")
 
         logging.info(f"Content request processed: TMDB ID {tmdb_id} -> IMDB ID {imdb_id} ({media_type}) with versions {versions}, items added: {items_added}")
-        # AI Assistant disabled: habit tracking (utilities/ai_habits.py) is off.
-        # try:
-        #     from utilities.ai_habits import track_action
-        #     _uid = current_user.username if is_user_system_enabled() and current_user.is_authenticated else 'system'
-        #     _detail = f"{data.get('title', '')} ({data.get('year', '')}) [{media_type}]"
-        #     track_action('library_add_manual', detail=_detail, user_id=_uid)
-        # except Exception:
-        #     pass
+        try:
+            from utilities.ai_habits import track_action
+            _uid = current_user.username if is_user_system_enabled() and current_user.is_authenticated else 'system'
+            _detail = f"{data.get('title', '')} ({data.get('year', '')}) [{media_type}]"
+            track_action('library_add_manual', detail=_detail, user_id=_uid)
+        except Exception:
+            pass
         if items_added == 0:
             return jsonify({
                 'success': True,

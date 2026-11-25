@@ -1647,7 +1647,7 @@ def test_bazarr_connection():
     # Determine status
     if not symlinked_mode:
         status = 'unavailable'
-        status_message = 'Bazarr integration requires Symlinked/Local or Plex file management mode'
+        status_message = 'Bazarr integration requires Symlinked/Local or Direct Mount file management'
     elif not enabled:
         status = 'disabled'
         status_message = 'Bazarr integration is disabled'

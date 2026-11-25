@@ -35,8 +35,8 @@ BUGGY_SORT_KEY = "ep.get('episode_number', 999)"
 
 
 def _read_source():
-    with open(SOURCE_PATH, encoding="utf-8") as f:
-        return f.read()
+    from tests._source import project_source
+    return project_source("routes/library_routes.py")
 
 
 def _iter_statement_lists(node):

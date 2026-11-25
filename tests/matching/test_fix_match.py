@@ -50,8 +50,8 @@ def _load_fix_match_module():
     Route decorators are dropped (ast puts them outside the node's source
     segment), so the view functions are plain callables here.
     """
-    with open(LIBRARY_ROUTES_PATH, encoding='utf-8') as handle:
-        source = handle.read()
+    from tests._source import project_source
+    source = project_source('routes/library_routes.py')
     tree = ast.parse(source, filename=LIBRARY_ROUTES_PATH)
 
     segments = {}
@@ -892,7 +892,7 @@ class TestFixMatchApply(FixMatchTestBase):
         payload, _ = self.apply(rematch_media_server=True)
 
         self.assertFalse(payload['rematch_started'])
-        self.assertIn('not in Plex mode', payload['rematch_note'])
+        self.assertIn('not in Direct Mount', payload['rematch_note'])
         self.assertEqual(self.rematch_calls, [])
 
     def test_ids_are_still_fixed_when_the_rematch_is_declined(self):

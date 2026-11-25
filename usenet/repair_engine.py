@@ -253,15 +253,16 @@ def _backfill_hash_for_item(item: dict) -> str:
     if not item:
         return ''
     try:
-        import requests as _req
         from utilities.settings import get_setting
         from database.database_writing import update_media_item
+        from usenet.base import supports, QUEUE
 
-        dcy_url = get_setting('Usenet Provider', 'url', default='').rstrip('/')
-        dcy_token = get_setting('Usenet Provider', 'api_token', default='')
-        if not dcy_url:
+        if not get_setting('Usenet Provider', 'url', default='').rstrip('/'):
             return ''
-        headers = {'Authorization': f'Bearer {dcy_token}'} if dcy_token else {}
+        client = _client()
+        # cli_mount job lookup only; SAB-style backends already store native ids.
+        if not supports(client, QUEUE):
+            return ''
 
         # Build candidate names from the DB item
         candidates = []
@@ -306,27 +307,19 @@ def _backfill_hash_for_item(item: dict) -> str:
         # Search provider for each candidate
         for candidate in unique_candidates:
             try:
-                r = _req.get(
-                    f'{dcy_url}/api/torrents',
-                    params={'search': candidate[:60]},
-                    headers=headers,
-                    timeout=10,
-                )
-                if r.status_code == 200:
-                    for t in r.json().get('torrents', []):
-                        if t.get('name', '').strip() == candidate.strip():
-                            found_hash = t.get('info_hash', '')
-                            if found_hash:
-                                logger.info(
-                                    f'[NZBRepair] Targeted backfill resolved hash {found_hash!r} '
-                                    f'via candidate {candidate!r} for item id={item.get("id")}'
-                                )
-                                # Update DB so future lookups work
-                                try:
-                                    update_media_item(item['id'], filled_by_torrent_id=f'nzb:{found_hash}')
-                                except Exception:
-                                    pass
-                                return found_hash
+                # resolve_job_id: search=<candidate[:60]> + exact (stripped) name match.
+                found_hash = client.resolve_job_id(candidate)
+                if found_hash:
+                    logger.info(
+                        f'[NZBRepair] Targeted backfill resolved hash {found_hash!r} '
+                        f'via candidate {candidate!r} for item id={item.get("id")}'
+                    )
+                    # Update DB so future lookups work
+                    try:
+                        update_media_item(item['id'], filled_by_torrent_id=f'nzb:{found_hash}')
+                    except Exception:
+                        pass
+                    return found_hash
             except Exception as _e:
                 logger.debug(f'[NZBRepair] backfill candidate {candidate!r} error: {_e}')
 
@@ -534,6 +527,27 @@ def _find_db_items_by_entry_name(entry_name: str):
 _HEADER_MEMO: dict = {}   # (path, size, mtime) -> (monotonic time, header dict or None)
 _HEADER_MEMO_TTL = 30.0
 
+# Subtitle tracks seen by the header read, kept longer than the memo so the
+# subtitle downloader (post-processing, minutes later) reuses the add-time
+# ffprobe instead of reading the file again. realpath -> (monotonic, tracks)
+_SUB_TRACKS: dict = {}
+_SUB_TRACKS_TTL = 6 * 3600.0
+
+
+def cached_subtitle_tracks(file_path: str):
+    """Subtitle tracks [{codec, language, forced}] from an earlier header
+    read of this file, or None when it hasn't been probed recently."""
+    import os as _os_s
+    import time as _time_s
+    try:
+        key = _os_s.path.realpath(file_path)
+    except Exception:
+        key = file_path
+    hit = _SUB_TRACKS.get(key) or _SUB_TRACKS.get(file_path)
+    if hit and _time_s.monotonic() - hit[0] < _SUB_TRACKS_TTL:
+        return hit[1]
+    return None
+
 
 def _media_header(file_path: str, timeout: int = 10):
     """Stream types and duration from ONE ffprobe header read, or None if it failed.
@@ -562,7 +576,8 @@ def _media_header(file_path: str, timeout: int = 10):
     try:
         r = _sp.run(
             ['ffprobe', '-v', 'error',
-             '-show_entries', 'stream=codec_type:format=duration',
+             '-show_entries',
+             'stream=codec_type,codec_name:stream_tags:stream_disposition=forced:format=duration',
              '-of', 'json', file_path],
             timeout=timeout, capture_output=True, text=True,
         )
@@ -572,8 +587,23 @@ def _media_header(file_path: str, timeout: int = 10):
                 duration = float((data.get('format') or {}).get('duration'))
             except (TypeError, ValueError):
                 duration = None
-            info = {'types': [st.get('codec_type') for st in (data.get('streams') or [])],
+            streams = data.get('streams') or []
+            info = {'types': [st.get('codec_type') for st in streams],
                     'duration': duration}
+            from utilities.subtitle_lang import track_frames as _frames
+            subs = [{'codec': (st.get('codec_name') or '').lower(),
+                     'language': ((st.get('tags') or {}).get('language') or '').strip().lower(),
+                     'forced': bool((st.get('disposition') or {}).get('forced')),
+                     'title': (st.get('tags') or {}).get('title') or '',
+                     'frames': _frames(st.get('tags'))}
+                    for st in streams if st.get('codec_type') == 'subtitle']
+            try:
+                _real = _os_h.path.realpath(file_path)
+            except Exception:
+                _real = file_path
+            if len(_SUB_TRACKS) > 2048:
+                _SUB_TRACKS.clear()
+            _SUB_TRACKS[_real] = (now, subs)
     except Exception:
         info = None
     if len(_HEADER_MEMO) > 256:
@@ -698,6 +728,17 @@ def probe_file_playable(location_on_disk: str, timeout: int = 10, attempts: int 
     if not _os.path.exists(file_path):
         logger.debug(f'[NZBRepair] File not on mount: {file_path!r}')
         return False
+
+    # A job folder is not a file: its st_size is 0 (always on Windows), which
+    # read as "empty file" and rejected healthy releases. Probe the largest
+    # video in it; a folder without one says nothing about playability.
+    if _os.path.isdir(file_path):
+        from utilities.paths import media_file_at
+        inner = media_file_at(file_path)
+        if not inner:
+            logger.info(f'[NZBRepair] {file_path!r} is a folder with no video in it — not probing')
+            return True
+        file_path = inner
 
     # A file the mount itself lists as 0 bytes really is empty: it can't play,
     # and an empty read from it says nothing about the mount being stale. The
@@ -1615,7 +1656,8 @@ def _teardown_playback_repair_mounts(repair: dict, item: dict) -> None:
     client = _client()
     for info_hash, entry_name in sources:
         try:
-            if hasattr(client, 'remove_nzb_exact'):
+            from usenet.base import supports, EXACT_REMOVE
+            if supports(client, EXACT_REMOVE):
                 client.remove_nzb_exact(info_hash)
             else:
                 _delete_from_provider(info_hash, entry_name)

@@ -1,9 +1,10 @@
 from flask import Blueprint, render_template, jsonify, request
 import json
 import os
-from datetime import datetime, timedelta
+import time
 from collections import deque
 from .models import user_required
+from queues.performance_monitor import entry_epoch
 
 performance_bp = Blueprint('performance', __name__)
 
@@ -44,7 +45,7 @@ def get_performance_log():
     limit = request.args.get('limit', type=int, default=1000)
     entry_type = request.args.get('type', type=str)  # Optional type filter
     metric_type = request.args.get('metric', type=str)  # Optional metric filter
-    cutoff_time = datetime.utcnow() - timedelta(hours=hours)
+    cutoff_epoch = time.time() - hours * 3600
 
     try:
         entries = []
@@ -68,10 +69,9 @@ def get_performance_log():
                 if metric_type and ('metrics' not in entry or metric_type not in entry['metrics']):
                     continue
 
-                entry_time = datetime.fromisoformat(entry['timestamp'].replace('Z', '+00:00'))
-                if entry_time >= cutoff_time:
+                if entry_epoch(entry) >= cutoff_epoch:
                     entries.append(entry)
-            except (json.JSONDecodeError, KeyError, ValueError):
+            except (json.JSONDecodeError, KeyError, ValueError, TypeError):
                 continue
 
         # Sort entries by timestamp in descending order (newest first)
@@ -112,8 +112,9 @@ def get_cpu_metrics():
     # Get optional time range parameters
     hours = request.args.get('hours', type=int, default=1)  # Default to last hour
     limit = request.args.get('limit', type=int, default=60)  # Default to 60 entries (1 per minute)
-    include_threads = request.args.get('threads', type=bool, default=False)  # Option to include thread data
-    cutoff_time = datetime.now() - timedelta(hours=hours)
+    # type=bool would read "false" as True
+    include_threads = (request.args.get('threads') or '').lower() in ('1', 'true', 'yes', 'on')
+    cutoff_epoch = time.time() - hours * 3600
 
     try:
         entries = []
@@ -121,26 +122,27 @@ def get_cpu_metrics():
         max_lines_to_read = limit * 10  # CPU metrics are less frequent
         lines = _read_last_n_lines(log_file, max_lines_to_read)
 
-        for line in lines:
+        # Newest first: stopping at `limit` must keep the latest samples, not the oldest.
+        for line in reversed(lines):
             try:
                 entry = json.loads(line.strip())
                 # Only process CPU metric entries
                 if entry.get('type') != 'cpu_metrics':
                     continue
 
-                entry_time = datetime.fromisoformat(entry['timestamp'])
-                if entry_time >= cutoff_time:
+                if entry_epoch(entry) >= cutoff_epoch:
                     # Optionally exclude thread data to reduce payload size
                     if not include_threads and 'metrics' in entry:
                         entry['metrics'].pop('thread_times', None)
                     entries.append(entry)
                     if len(entries) >= limit:
                         break
-            except (json.JSONDecodeError, KeyError, ValueError):
+                else:
+                    break  # older than the window; everything before it is too
+            except (json.JSONDecodeError, KeyError, ValueError, TypeError):
                 continue
 
-        # Sort entries by timestamp
-        entries.sort(key=lambda x: x.get('timestamp', ''))
+        entries.reverse()  # back to oldest -> newest for the charts
 
         # Calculate summary statistics
         summary = {}
@@ -175,7 +177,7 @@ def get_memory_metrics():
     # Get optional time range parameters
     hours = request.args.get('hours', type=int, default=1)  # Default to last hour
     limit = request.args.get('limit', type=int, default=60)  # Default to 60 entries
-    cutoff_time = datetime.now() - timedelta(hours=hours)
+    cutoff_epoch = time.time() - hours * 3600
 
     try:
         entries = []
@@ -183,23 +185,24 @@ def get_memory_metrics():
         max_lines_to_read = limit * 5  # Memory metrics are more frequent than CPU
         lines = _read_last_n_lines(log_file, max_lines_to_read)
 
-        for line in lines:
+        # Newest first: stopping at `limit` must keep the latest samples, not the oldest.
+        for line in reversed(lines):
             try:
                 entry = json.loads(line.strip())
                 # Only process memory metric entries
                 if entry.get('type') not in ['basic_metrics', 'detailed_memory']:
                     continue
 
-                entry_time = datetime.fromisoformat(entry['timestamp'])
-                if entry_time >= cutoff_time:
+                if entry_epoch(entry) >= cutoff_epoch:
                     entries.append(entry)
                     if len(entries) >= limit:
                         break
-            except (json.JSONDecodeError, KeyError, ValueError):
+                else:
+                    break  # older than the window; everything before it is too
+            except (json.JSONDecodeError, KeyError, ValueError, TypeError):
                 continue
 
-        # Sort entries by timestamp
-        entries.sort(key=lambda x: x.get('timestamp', ''))
+        entries.reverse()  # back to oldest -> newest for the charts
 
         # Calculate summary statistics
         summary = {}

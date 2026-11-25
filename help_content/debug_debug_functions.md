@@ -100,9 +100,9 @@ This page provides access to various functions primarily intended for troublesho
 *   **Convert Library to Symlinks:**
     *   **Advanced/Irreversible:** Initiates a one-time process to convert an existing media library (managed directly by Plex/Emby/Jellyfin) to use the application's symlink structure.
     *   **Use Case:** Migrating a non-symlinked library setup to a symlinked setup managed by this application. **Only run this once** during initial setup/migration. If doing so your steps would be:
-        *   Set up cli_debrid with a Plex library (not symlinked)
+        *   Set up Clyde with a Plex library (not symlinked)
         *   Complete a full scan of your Plex library
-        *   Change the cli_debrid `Required` settings to reflect your symlinked settings
+        *   Change the Clyde `Required` settings to reflect your symlinked settings
         *   Run this function to create the symlinks
         *   Add the symlinked locations into your Plex instance and complete a full scan (this can take several days)
         *   Remove your existing non-symlinked locations from Plex

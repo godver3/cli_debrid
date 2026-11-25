@@ -7,6 +7,7 @@ from queues.config_manager import add_scraper, add_content_source, load_config
 import logging
 import os
 import platform
+import time
 from routes.trakt_routes import check_trakt_auth_status
 import json
 import requests
@@ -15,7 +16,7 @@ from .models import admin_required
 
 onboarding_bp = Blueprint('onboarding', __name__)
 
-USENET_BACKENDS = ('climount', 'nzbdav', 'zurg')
+USENET_BACKENDS = ('climount', 'nzbdav', 'zurg', 'builtin')
 # New configs get this placeholder debrid key; it doesn't mean debrid is set up.
 DEBRID_PLACEHOLDER_KEY = 'demo_key'
 
@@ -27,7 +28,8 @@ def _debrid_configured():
     return bool(get_setting('Debrid Provider', 'provider') and _real_debrid_key(load_config()))
 
 def _usenet_configured():
-    return bool(get_setting('Usenet Provider', 'enabled') and get_setting('Usenet Provider', 'url'))
+    from usenet import usenet_configured
+    return usenet_configured(get_setting)
 
 def _media_provider_configured():
     """Return True if either a debrid provider or usenet provider is configured."""
@@ -73,7 +75,18 @@ def _save_required_settings(form):
         'plex_token_for_symlink': plex_token if media_server == 'plex' else '',
     })
     if is_symlink:
-        file_management['media_server_type'] = 'jellyfin' if media_server == 'jellyfin' else 'plex'
+        file_management['media_server_type'] = media_server if media_server in ('jellyfin', 'silo') else 'plex'
+    else:
+        picked = form.get('plex_mode_media_server')
+        file_management['plex_mode_media_server'] = picked if picked in ('silo', 'jellyfin') else 'plex'
+        if file_management['plex_mode_media_server'] == 'jellyfin':
+            debug_cfg = config.setdefault('Debug', {})
+            debug_cfg['emby_jellyfin_url'] = form.get('plex_jellyfin_url', '').strip().rstrip('/')
+            debug_cfg['emby_jellyfin_token'] = form.get('plex_jellyfin_token', '').strip()
+        if file_management['plex_mode_media_server'] == 'silo':
+            debug_cfg = config.setdefault('Debug', {})
+            debug_cfg['silo_url'] = form.get('plex_silo_url', '').strip().rstrip('/')
+            debug_cfg['silo_api_key'] = form.get('plex_silo_api_key', '').strip()
     file_management.setdefault('symlink_organize_by_type', True)
 
     def _libraries(name):
@@ -97,6 +110,9 @@ def _save_required_settings(form):
         else:
             debug['emby_jellyfin_url'] = ''
             debug['emby_jellyfin_token'] = ''
+        if media_server == 'silo':
+            debug['silo_url'] = form.get('silo_url', '').strip().rstrip('/')
+            debug['silo_api_key'] = form.get('silo_api_key', '').strip()
 
     if 'use_debrid' in form or 'use_usenet' in form:
         use_debrid = form.get('use_debrid') == 'on'
@@ -115,11 +131,39 @@ def _save_required_settings(form):
     usenet = config.setdefault('Usenet Provider', {})
     usenet['enabled'] = use_usenet
     if use_usenet:
-        backend = form.get('usenet_backend', 'climount').strip().lower()
-        usenet['provider'] = backend if backend in USENET_BACKENDS else 'climount'
+        backend = form.get('usenet_backend', 'builtin').strip().lower()
+        usenet['provider'] = backend if backend in USENET_BACKENDS else 'builtin'
         usenet['url'] = form.get('usenet_url', '').strip().rstrip('/')
         usenet['api_token'] = form.get('usenet_api_token', '').strip()
+        if usenet['provider'] == 'builtin':
+            # The engine runs in this container: no URL/token. Its files show
+            # under <mount_path>/__all__, which is the original-files path.
+            usenet['url'] = ''
+            usenet['api_token'] = ''
+            from utilities.builtin_engine import all_path as _builtin_all
+            all_path = _builtin_all(config.get('Built-in Mount', {}) or {})
+            fm = config.setdefault('File Management', {})
+            if not (fm.get('original_files_path') or '').strip():
+                fm['original_files_path'] = all_path
+                config.setdefault('Plex', {})['mounted_file_location'] = all_path
+            _save_builtin_server(config, form)
 
+    # The mount tool picked in step 2. Built-in turns the engine on even
+    # for debrid alone; any other tool turns that off again (usenet =
+    # builtin still runs it).
+    mount_tool = (form.get('mount_tool') or '').strip().lower()
+    if mount_tool:
+        bm = config.setdefault('Built-in Mount', {})
+        bm['enabled'] = mount_tool == 'builtin'
+        if mount_tool == 'builtin':
+            from utilities.builtin_engine import all_path as _builtin_all
+            all_path = _builtin_all(bm)
+            fm = config.setdefault('File Management', {})
+            if not (fm.get('original_files_path') or '').strip():
+                fm['original_files_path'] = all_path
+                config.setdefault('Plex', {})['mounted_file_location'] = all_path
+    builtin_selected = (use_usenet and usenet.get('provider') == 'builtin') \
+        or bool((config.get('Built-in Mount') or {}).get('enabled'))
     for section, field in (('TVDB', 'tvdb_api_key'), ('TMDB', 'tmdb_api_key')):
         if field in form:
             config.setdefault(section, {})['api_key'] = form.get(field, '').strip()
@@ -140,6 +184,65 @@ def _save_required_settings(form):
             reset_usenet_client()
         except Exception as e:
             logging.debug(f"Could not reset usenet client after onboarding save: {e}")
+    if builtin_selected or mount_tool:
+        # Start (or restart, or stop) the engine with what was just saved,
+        # before the page validates, so the check sees the new server.
+        try:
+            from utilities import builtin_engine
+            logging.info(f"Built-in mount after onboarding save: {builtin_engine.sync()}")
+        except Exception as e:
+            logging.debug(f"Could not start the built-in mount after onboarding save: {e}")
+
+
+def _builtin_first_server(config):
+    """The first built-in mount server for step 2's fields (no password)."""
+    from routes.mount_routes import _servers
+    rows = [r for r in _servers((config.get('Built-in Mount') or {}).get('servers')) if isinstance(r, dict)]
+    first = rows[0] if rows else {}
+    return {'host': first.get('host', ''), 'port': first.get('port') or 563,
+            'connections': first.get('connections') or 20, 'ssl': bool(first.get('ssl', True)),
+            'username': first.get('username', ''), 'password_set': bool(first.get('password'))}
+
+
+def _builtin_host_problems():
+    try:
+        from utilities.builtin_engine import host_problems
+        return host_problems()
+    except Exception as e:
+        return [str(e)]
+
+
+def _builtin_all_path(config):
+    from utilities.builtin_engine import all_path
+    return all_path(config.get('Built-in Mount') or {})
+
+
+def _save_builtin_server(config, form):
+    """Step 2's server fields become (or replace) the first server in the
+    Mount page's list; other servers are kept. An empty password keeps the
+    saved one. Raises ValueError on bad input."""
+    from routes.mount_routes import _merge_servers, _servers
+    host = form.get('bm_host', '').strip()
+    if not host:
+        return
+    bm = config.setdefault('Built-in Mount', {})
+    old = [r for r in _servers(bm.get('servers')) if isinstance(r, dict)]
+    try:
+        port = int(form.get('bm_port') or 563)
+        conns = int(form.get('bm_connections') or 20)
+    except ValueError:
+        raise ValueError('Usenet server port and connections must be numbers')
+    first = {'host': host, 'port': port, 'ssl': form.get('bm_ssl') in ('on', 'true', '1', True),
+             'username': form.get('bm_username', '').strip(), 'password': form.get('bm_password', ''),
+             'connections': conns, 'backup': bool(old[0].get('backup')) if old else False}
+    # Fields step 2 doesn't show stay as the Mount page set them (backbone,
+    # plan end, auto-renew, On/Off) while it is still the same server.
+    if old and str(old[0].get('host') or '').strip().lower() == host.lower():
+        for k in ('backbone', 'expires', 'auto_renew', 'enabled'):
+            if k in old[0]:
+                first[k] = old[0][k]
+    bm['servers'] = json.dumps(_merge_servers([first] + old[1:], old))
+
 
 def get_next_onboarding_step():
     """The first onboarding step that still needs doing, so a returning user resumes there."""
@@ -184,16 +287,14 @@ def onboarding():
 def onboarding_step(step):
     from routes.auth_routes import db
 
-    # Convert step to int if it's not '3a'
+    # Convert step to int unless it's one of the in-between steps ('3a', '5a')
     try:
-        step_num = int(step) if step != '3a' else step
+        step_num = step if step in ('3a', '5a') else int(step)
     except ValueError:
         abort(404)
 
     # Validate step range
     if isinstance(step_num, int) and (step_num < 1 or step_num > 6):
-        abort(404)
-    elif step_num == '3a' and step != '3a':
         abort(404)
     
     config = load_config()
@@ -256,7 +357,7 @@ def onboarding_step(step):
         trakt_status = json.loads(check_trakt_auth_status().get_data(as_text=True))
         allow_windows_symlinks_value = config.get('Debug', {}).get('use_symlinks_on_windows', False)
         usenet = config.get('Usenet Provider', {})
-        usenet_backend = (usenet.get('provider') or 'climount').strip().lower()
+        usenet_backend = (usenet.get('provider') or 'builtin').strip().lower()
 
         return render_template('onboarding_step_2.html', 
                                current_step=step_num, 
@@ -269,7 +370,11 @@ def onboarding_step(step):
                                use_debrid=bool(_real_debrid_key(config)),
                                debrid_api_key=_real_debrid_key(config),
                                use_usenet=bool(usenet.get('enabled')),
-                               usenet_backend=usenet_backend if usenet_backend in USENET_BACKENDS else 'climount')
+                               usenet_backend=usenet_backend if usenet_backend in USENET_BACKENDS else 'builtin',
+                               builtin_server=_builtin_first_server(config),
+                               builtin_all_path=_builtin_all_path(config),
+                               builtin_enabled=bool((config.get('Built-in Mount') or {}).get('enabled')),
+                               builtin_host_problems=_builtin_host_problems())
 
     elif step_num == 3:
         config = load_config()
@@ -336,8 +441,89 @@ def onboarding_step(step):
                              settings=config, 
                              is_onboarding=True)
 
+    elif step_num == '5a':
+        # Optional: subtitles. Always allowed to move on (skipping is fine).
+        return render_template('onboarding_step_5a.html',
+                               current_step=step_num,
+                               can_proceed=True,
+                               is_onboarding=True,
+                               subs=_subtitle_step_values(config))
+
     # If no matching step is found
     abort(404)
+
+
+def _subtitle_step_values(config):
+    """What the optional subtitle step shows (no secrets: only whether set)."""
+    sub = config.get('Subtitle Settings', {}) or {}
+    mode = (config.get('File Management', {}) or {}).get('file_collection_management', 'Plex')
+    return {
+        'enabled': bool(sub.get('enable_subtitles')),
+        'languages': sub.get('subtitle_languages') or 'eng',
+        'os_username': sub.get('opensubtitles_username') or '',
+        'os_password_set': bool(sub.get('opensubtitles_password')),
+        'subdl_key_set': bool(sub.get('subdl_api_key')),
+        'subsource_key_set': bool(sub.get('subsource_api_key')),
+        'plex_mode': mode == 'Plex',
+        'bazarr': bool((config.get('Bazarr Integration', {}) or {}).get('enabled')),
+    }
+
+
+def _save_subtitle_step(data):
+    """Save the optional subtitle step. Off: only turns downloads off. On:
+    languages, logins/keys (blank = keep the saved one) and providers: the
+    ones a key or login was given for are added to the selection."""
+    from utilities.settings import get_setting, set_setting
+    section = 'Subtitle Settings'
+    if not data.get('enable'):
+        set_setting(section, 'enable_subtitles', False)
+        return {'enabled': False}
+    from utilities.subtitle_lang import parse as parse_lang
+    langs = [c.strip() for c in str(data.get('languages') or '').split(',') if c.strip()]
+    if not langs:
+        raise ValueError('Pick at least one subtitle language (e.g. eng)')
+    unknown = [c for c in langs if parse_lang(c) is None]
+    if unknown:
+        raise ValueError(f"Unknown language code(s): {', '.join(unknown)} (use ISO codes like eng, spa, fre, pt-BR)")
+    user = str(data.get('os_username') or '').strip()
+    pwd = str(data.get('os_password') or '')
+    if user and not pwd and not get_setting(section, 'opensubtitles_password', ''):
+        raise ValueError('Enter the OpenSubtitles.com password too')
+    set_setting(section, 'subtitle_languages', ','.join(langs))
+    if user or 'os_username' in data:
+        set_setting(section, 'opensubtitles_username', user)
+    if pwd:
+        set_setting(section, 'opensubtitles_password', pwd)
+    for field, key in (('subdl_key', 'subdl_api_key'), ('subsource_key', 'subsource_api_key')):
+        value = str(data.get(field) or '').strip()
+        if value:
+            set_setting(section, key, value)
+    from utilities.downsub import DEFAULT_PROVIDERS, REMOVED_PROVIDERS
+    providers = [p for p in (get_setting(section, 'subtitle_providers', None) or DEFAULT_PROVIDERS)
+                 if p not in REMOVED_PROVIDERS]
+    wanted = [('opensubtitlescom', bool(user)),
+              ('subdl', bool(get_setting(section, 'subdl_api_key', ''))),
+              ('subsource', bool(get_setting(section, 'subsource_api_key', '')))]
+    for name, has_login in wanted:
+        if has_login and name not in providers:
+            providers.insert(0 if name == 'opensubtitlescom' else len(providers), name)
+    set_setting(section, 'subtitle_providers', providers)
+    set_setting(section, 'enable_subtitles', True)
+    return {'enabled': True, 'languages': langs, 'providers': providers}
+
+
+@onboarding_bp.route('/subtitles', methods=['POST'])
+@login_required
+@admin_required
+def onboarding_subtitles():
+    """Optional step 5a: let cli_debrid handle subtitles, or not."""
+    try:
+        return jsonify({'success': True, **_save_subtitle_step(request.get_json(silent=True) or {})})
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    except Exception as e:
+        logging.error(f"[Onboarding] Could not save subtitle settings: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @onboarding_bp.route('/complete', methods=['POST'])
 @login_required
@@ -592,9 +778,28 @@ def onboarding_test(what):
         ok, message = validate_tmdb_api_key(data.get('api_key'))
     elif what == 'mount':
         ok, message, warning = check_mount_path(data.get('path'))
+    elif what in ('opensubtitles', 'subdl', 'subsource'):
+        ok, message, warning = _test_subtitle_login(what, data)
     else:
         abort(404)
     return jsonify({'success': ok, 'message': message, 'warning': warning})
+
+def _test_subtitle_login(what, data):
+    """Step 5a's Test buttons. A blank field means the saved value."""
+    from utilities.settings import get_setting
+    from utilities import downsub
+    section = 'Subtitle Settings'
+    if what == 'opensubtitles':
+        user = (data.get('username') or '').strip() or get_setting(section, 'opensubtitles_username', '')
+        pwd = data.get('password') or get_setting(section, 'opensubtitles_password', '')
+        if not (user and pwd):
+            return False, 'enter the OpenSubtitles.com username and password', False
+        return downsub.test_provider('opensubtitlescom', {'username': user, 'password': pwd})
+    key = (data.get('api_key') or '').strip() or get_setting(section, f'{what}_api_key', '')
+    if not key:
+        return False, 'enter the API key', False
+    return downsub.test_provider(what, {'api_key': key})
+
 
 def _onboarding_summary(config):
     """What onboarding set up, in plain words, for the final step."""
@@ -605,19 +810,21 @@ def _onboarding_summary(config):
     providers = []
     if _real_debrid_key(config):
         providers.append(debrid.get('provider', 'RealDebrid'))
-    if usenet.get('enabled') and usenet.get('url'):
-        backend = (usenet.get('provider') or 'climount').lower()
-        providers.append({'climount': 'cli_mount', 'nzbdav': 'NzbDAV', 'zurg': 'Zurg'}.get(backend, backend)
-                         + ' (usenet)')
+    backend = (usenet.get('provider') or 'climount').lower()
+    if usenet.get('enabled') and (usenet.get('url') or backend == 'builtin'):
+        providers.append({'climount': 'cli_mount', 'nzbdav': 'NzbDAV', 'zurg': 'Zurg',
+                          'builtin': 'Built-in mount'}.get(backend, backend) + ' (usenet)')
     if mode == 'Symlinked/Local':
-        if config.get('Debug', {}).get('emby_jellyfin_url'):
+        if file_management.get('media_server_type') == 'silo':
+            media_server = 'Silo'
+        elif config.get('Debug', {}).get('emby_jellyfin_url'):
             media_server = 'Jellyfin / Emby'
         elif file_management.get('plex_url_for_symlink'):
             media_server = 'Plex'
         else:
             media_server = 'None'
     else:
-        media_server = 'Plex'
+        media_server = {'silo': 'Silo', 'jellyfin': 'Jellyfin / Emby'}.get(file_management.get('plex_mode_media_server'), 'Plex')
     if config.get('TVDB', {}).get('api_key'):
         metadata = 'TVDB' + (' + TMDB' if config.get('TMDB', {}).get('api_key') else '')
     elif config.get('Trakt', {}).get('client_id'):
@@ -643,6 +850,9 @@ def _onboarding_summary(config):
         ('Content sources', ', '.join(
             s.get('display_name') or sid for sid, s in config.get('Content Sources', {}).items()) or 'None'),
     ]
+    sub = config.get('Subtitle Settings', {}) or {}
+    rows.append(('Subtitles', f"Clyde downloads them ({sub.get('subtitle_languages') or 'eng'})"
+                 if sub.get('enable_subtitles') else 'Off'))
     return rows
 
 def _scraper_reachable(scraper):
@@ -681,8 +891,8 @@ def onboarding_health():
     if _real_debrid_key(config):
         add(f"Debrid ({debrid.get('provider', 'RealDebrid')})",
             *validate_debrid_api_key(_real_debrid_key(config), debrid.get('provider', 'RealDebrid')))
-    if usenet.get('enabled') and usenet.get('url'):
-        add('Usenet mount', *validate_usenet_provider(usenet.get('provider'), usenet['url'],
+    if usenet.get('enabled') and (usenet.get('url') or (usenet.get('provider') or '').lower() == 'builtin'):
+        add('Usenet mount', *validate_usenet_provider(usenet.get('provider'), usenet.get('url', ''),
                                                          usenet.get('api_token', '')))
     if not checks:
         add('Provider', False, 'No debrid or usenet provider is set up (step 2)')
@@ -693,7 +903,39 @@ def onboarding_health():
         ok, message, warning = check_mount_path(mount_path)
         add('Mount', ok, message, warning)
     else:
-        add('Mount', False, 'No mount path set. cli_debrid can\'t see your files without one (step 2)', True)
+        add('Mount', False, 'No mount path set. Clyde can\'t see your files without one (step 2)', True)
+
+    # Built-in mount without usenet (debrid only): its own row, since the
+    # usenet row above doesn't cover it.
+    try:
+        from utilities import builtin_engine
+        builtin_on = builtin_engine.selected(config)
+        if builtin_on and not builtin_engine.usenet_selected(config):
+            issues = builtin_engine.problems(config)
+            state = builtin_engine.state()
+            for _ in range(20):  # just saved in step 2: give it a moment to start
+                if issues or state not in ('STARTING', 'BACKOFF', 'UNKNOWN'):
+                    break
+                time.sleep(0.5)
+                state = builtin_engine.state()
+            add('Built-in mount', not issues and state == 'RUNNING',
+                '; '.join(issues) if issues else ('Running' if state == 'RUNNING' else f'Engine is {state.lower()}'))
+    except Exception as e:
+        builtin_on = False
+        logging.debug(f'Built-in mount check failed: {e}')
+
+    # Host paths: mapped to the host, and seen by the media server at the
+    # same path (utilities/path_checks.py).
+    try:
+        from utilities import path_checks
+        bm_path = None
+        if builtin_on:
+            from utilities.builtin_engine import mount_path as _bm_path
+            bm_path = _bm_path(config.get('Built-in Mount') or {})
+        for name, (ok, message, warning) in path_checks.onboarding_checks(config, bm_path):
+            add(name, ok, message, warning)
+    except Exception as e:
+        logging.warning(f'Host path checks failed: {e}')
 
     if file_management.get('file_collection_management') == 'Symlinked/Local':
         symlink_path = file_management.get('symlinked_files_path', '')
@@ -705,7 +947,11 @@ def onboarding_health():
                 'Will be created on first start' if parent_ok else f'Parent folder: {parent_msg}')
         jellyfin_url = config.get('Debug', {}).get('emby_jellyfin_url')
         plex_url = file_management.get('plex_url_for_symlink')
-        if plex_url:
+        if file_management.get('media_server_type') == 'silo':
+            from utilities.silo_functions import test_connection
+            add('Silo', *test_connection(config.get('Debug', {}).get('silo_url', ''),
+                                         config.get('Debug', {}).get('silo_api_key', '')))
+        elif plex_url:
             add('Plex', *validate_plex_settings(plex_url, file_management.get('plex_token_for_symlink', '')))
         elif jellyfin_url:
             from utilities.jellyfin_auth import jellyfin_auth_headers
@@ -718,6 +964,14 @@ def onboarding_health():
                 add('Jellyfin / Emby', False, f'Could not connect: {e}')
         else:
             add('Media server', True, 'None set, so new files won\'t trigger a library scan', True)
+    elif file_management.get('plex_mode_media_server') == 'silo':
+        from utilities.silo_functions import test_connection
+        add('Silo', *test_connection(config.get('Debug', {}).get('silo_url', ''),
+                                     config.get('Debug', {}).get('silo_api_key', '')))
+    elif file_management.get('plex_mode_media_server') == 'jellyfin':
+        from utilities.jellyfin_direct import test_connection as jellyfin_test
+        add('Jellyfin / Emby', *jellyfin_test(config.get('Debug', {}).get('emby_jellyfin_url', ''),
+                                             config.get('Debug', {}).get('emby_jellyfin_token', '')))
     else:
         plex = config.get('Plex', {})
         add('Plex', *validate_plex_settings(plex.get('url', ''), plex.get('token', '')))
@@ -1052,7 +1306,8 @@ def create_plex_pin():
         response = requests.post(
             'https://plex.tv/api/v2/pins',
             headers=headers,
-            json={'strong': True}
+            json={'strong': True},
+            timeout=15,
         )
         
         if response.status_code == 201:
@@ -1146,7 +1401,8 @@ def verify_plex_token():
                 'X-Plex-Token': token,
                 'X-Plex-Client-Identifier': client_id,
                 'X-Plex-Product': 'cli_debrid'
-            }
+            },
+            timeout=15,
         )
         
         if response.status_code == 200:
@@ -1202,7 +1458,8 @@ def check_plex_pin():
 
         response = requests.get(
             f'https://plex.tv/api/v2/pins/{pin_id}',
-            headers=headers
+            headers=headers,
+            timeout=15,
         )
 
         if response.status_code == 200:

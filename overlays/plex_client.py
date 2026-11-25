@@ -189,12 +189,14 @@ class PlexClient:
             self.logger.error(f"Failed to download poster for {rating_key}: {e}")
             return None
 
-    def get_poster_list(self, rating_key: str) -> list:
+    def get_poster_list(self, rating_key: str, strict: bool = False) -> list:
         """
         Get all poster versions for a media item.
 
         Args:
             rating_key: Plex rating key
+            strict: re-raise every error instead of returning [] (so a failed
+                lookup can't be mistaken for an item with no posters)
 
         Returns:
             List of poster dicts with 'thumb', 'selected', and other metadata keys.
@@ -208,9 +210,13 @@ class PlexClient:
         except requests.exceptions.HTTPError as e:
             if e.response is not None and e.response.status_code == 404:
                 raise  # Let caller handle stale rating key
+            if strict:
+                raise
             self.logger.error(f"Failed to get poster list for {rating_key}: {e}")
             return []
         except Exception as e:
+            if strict:
+                raise
             self.logger.error(f"Failed to get poster list for {rating_key}: {e}")
             return []
 

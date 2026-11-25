@@ -13,7 +13,7 @@ import requests
 from typing import List, Dict, Any, Tuple
 from datetime import datetime, timedelta
 from utilities.settings import get_setting
-from utilities.flixpatrol_api import fetch_top10 as fetch_flixpatrol_top10
+from utilities.streaming_top10_api import fetch_top10 as fetch_flixpatrol_top10
 from utilities.mdblist_api import fetch_list_items as fetch_mdblist_items
 
 REQUEST_TIMEOUT = 15  # seconds
@@ -314,7 +314,7 @@ def fetch_from_tmdb_discover(api_key: str, media_type: str, filters: Dict, list_
 
 def fetch_from_lists(api_key: str, filters: Dict, list_name: str, source_media_type: str = 'all') -> List[Dict[str, Any]]:
     """
-    Fetch items from FlixPatrol/MDBList sources and apply filters.
+    Fetch items from streaming Top 10 / MDBList sources and apply filters.
 
     Args:
         api_key: TMDB API key
@@ -347,7 +347,7 @@ def fetch_from_lists(api_key: str, filters: Dict, list_name: str, source_media_t
             source, list_id = parts
             
             if source == 'flixpatrol':
-                # FlixPatrol returns {'items': [...], 'platform': '...', 'date': '...'}
+                # Top 10 (JustWatch) returns {'items': [...], 'platform': '...', 'date': '...'}
                 result = fetch_flixpatrol_top10(list_id)
                 if result and 'items' in result:
                     # Enrich items with TMDB data
@@ -434,11 +434,11 @@ def fetch_from_lists(api_key: str, filters: Dict, list_name: str, source_media_t
 
 def enrich_list_items_with_tmdb(api_key: str, items: List[Dict]) -> List[Dict]:
     """
-    Enrich FlixPatrol items with TMDB data by searching for titles.
+    Enrich Top 10 items with TMDB details (uses their tmdb_id; title search only as a fallback).
     
     Args:
         api_key: TMDB API key
-        items: Raw FlixPatrol items with title and media_type
+        items: Raw Top 10 items with title, media_type and usually tmdb_id
     
     Returns:
         List of enriched items with TMDB data
@@ -456,8 +456,8 @@ def enrich_list_items_with_tmdb(api_key: str, items: List[Dict]) -> List[Dict]:
             # Search TMDB by title
             search_types = ['movie', 'tv'] if media_type == 'unknown' else [media_type if media_type == 'tv' else 'movie']
             
-            tmdb_id = None
-            for search_type in search_types:
+            tmdb_id = item.get('tmdb_id')
+            for search_type in ([] if tmdb_id else search_types):
                 search_url = f"https://api.themoviedb.org/3/search/{search_type}?api_key={api_key}&query={requests.utils.quote(title)}&page=1"
                 search_response = requests.get(search_url, timeout=5)
                 if search_response.status_code == 200:

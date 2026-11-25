@@ -32,6 +32,7 @@ _last_request_time: float = 0.0
 _MAX_GET_REQUESTS = 1000
 _GET_WINDOW = 300  # 5 min
 _MIN_INTERVAL = 0.5  # 500 ms — Cloudflare 429s below this in practice
+_not_connected_logged = False  # "Trakt not connected" is logged once, not per call
 
 
 def _check_rate_limit(method: str = 'GET') -> bool:
@@ -65,6 +66,15 @@ def _check_rate_limit(method: str = 'GET') -> bool:
 def _make_request(url: str, method: str = 'GET', max_retries: int = 4,
                   initial_delay: float = 5, extra_headers: dict | None = None):
     """Make an authenticated request to the Trakt API with retries."""
+    global _not_connected_logged
+    if not trakt_auth.is_connected():
+        # Trakt not set up: the TVDB/TMDB fallbacks still land here, and trying
+        # a refresh logged two ERRORs on every call with nothing to refresh.
+        if not _not_connected_logged:
+            logger.info("Trakt is not connected; skipping Trakt requests (TVDB/TMDB are used instead).")
+            _not_connected_logged = True
+        return None
+    _not_connected_logged = False
     if not trakt_auth.is_authenticated():
         logger.info("Not authenticated. Attempting token refresh.")
         if not trakt_auth.refresh_access_token():

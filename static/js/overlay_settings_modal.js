@@ -42,8 +42,9 @@
         contentCheckDaysInput = document.getElementById('overlaySettingsContentCheckDays');
         syncItemsPerRunInput = document.getElementById('overlaySettingsSyncItemsPerRun');
         textlessPosterInput = document.getElementById('overlaySettingsTextlessPoster');
-        textlessPosterInput = document.getElementById('overlaySettingsTextlessPoster');
-        textlessPosterInput = document.getElementById('overlaySettingsTextlessPoster');
+        if (mediaDataPathInput) {
+            mediaDataPathInput.addEventListener('change', () => checkDataPath(mediaDataPathInput.value.trim()));
+        }
 
         return true;
     }
@@ -80,12 +81,10 @@
                 textlessPosterInput.checked = overlaySettings.textless_posters || false;
             }
 
-            if (textlessPosterInput) {
-                textlessPosterInput.checked = overlaySettings.textless_posters || false;
-            }
-
             if (mediaDataPathInput) {
                 mediaDataPathInput.value = overlaySettings.plex_data_path || '';
+                pathWarnedFor = null;
+                checkDataPath(mediaDataPathInput.value.trim());
             }
 
             if (contentCheckDaysInput) {
@@ -124,6 +123,18 @@
             return;
         }
 
+        // A data path without Plex's Metadata folder makes poster cleanup skip.
+        // Stop the first Save to show why; saving again keeps the typed path.
+        const dataPath = mediaDataPathInput ? mediaDataPathInput.value.trim() : '';
+        if (dataPath && dataPath !== pathWarnedFor) {
+            const check = await checkDataPath(dataPath);
+            if (!check.ok) {
+                pathWarnedFor = dataPath;
+                showNotification('Check the Media Server Data Path, or click Save again to keep it', 'warning');
+                return;
+            }
+        }
+
         try {
             if (saveBtn) {
                 saveBtn.disabled = true;
@@ -140,15 +151,11 @@
             if (textlessPosterInput) {
                 updatedSettings['Overlay Settings'].textless_posters = textlessPosterInput.checked;
             }
-            if (textlessPosterInput) {
-                updatedSettings['Overlay Settings'].textless_posters = textlessPosterInput.checked;
-            }
-            if (textlessPosterInput) {
-                updatedSettings['Overlay Settings'].textless_posters = textlessPosterInput.checked;
-            }
             updatedSettings['Overlay Settings'].plex_data_path = mediaDataPathInput.value.trim();
             if (contentCheckDaysInput) {
-                updatedSettings['Overlay Settings'].overlay_content_check_interval_days = parseInt(contentCheckDaysInput.value) || 7;
+                const _days = parseInt(contentCheckDaysInput.value, 10);
+                // 0 is valid (refresh every sync), so only fall back to 7 for a blank/invalid value
+                updatedSettings['Overlay Settings'].overlay_content_check_interval_days = Number.isNaN(_days) || _days < 0 ? 7 : _days;
             }
             if (syncItemsPerRunInput) {
                 updatedSettings['Overlay Settings'].sync_items_per_run = parseInt(syncItemsPerRunInput.value) || 200;
@@ -178,6 +185,67 @@
                 saveBtn.textContent = 'Save Settings';
             }
         }
+    }
+
+    // ── Media Server Data Path check ──────────────────────────────────────────
+
+    let pathWarnedFor = null;   // path the user already chose to keep despite the hint
+
+    function pathHint() {
+        let hint = document.getElementById('overlaySettingsMediaDataPathHint');
+        if (!hint && mediaDataPathInput) {
+            hint = document.createElement('p');
+            hint.id = 'overlaySettingsMediaDataPathHint';
+            hint.className = 'overlay-setting-description overlay-setting-path-hint';
+            hint.hidden = true;
+            mediaDataPathInput.insertAdjacentElement('afterend', hint);
+        }
+        return hint;
+    }
+
+    /**
+     * Ask the server whether the path holds Plex's Metadata folder and show
+     * the result under the field. Resolves {ok, suggestion}; a failed check
+     * counts as ok so it never blocks saving.
+     */
+    async function checkDataPath(value) {
+        const hint = pathHint();
+        if (!hint) return { ok: true };
+        hint.replaceChildren();
+        hint.hidden = true;
+        if (!value) return { ok: true };
+        let result;
+        try {
+            const resp = await fetch('/api/overlays/plex-data-path-check?path=' + encodeURIComponent(value));
+            if (!resp.ok) return { ok: true };
+            result = await resp.json();
+        } catch (e) {
+            return { ok: true };
+        }
+        if (mediaDataPathInput.value.trim() !== value) return result;   // typed on meanwhile
+        if (result.ok) return result;
+
+        const strong = document.createElement('strong');
+        strong.textContent = 'No Plex Metadata folder in this folder, so poster cleanup will skip it.';
+        hint.append(strong);
+        if (result.suggestion) {
+            hint.append(' Did you mean ');
+            const code = document.createElement('code');
+            code.textContent = result.suggestion;
+            hint.append(code, '? ');
+            const use = document.createElement('button');
+            use.type = 'button';
+            use.className = 'overlay-setting-path-use';
+            use.textContent = 'Use this';
+            use.addEventListener('click', () => {
+                mediaDataPathInput.value = result.suggestion;
+                pathWarnedFor = null;
+                checkDataPath(result.suggestion);
+            });
+            hint.append(use);
+        }
+        hint.hidden = false;
+        return result;
     }
 
     function showNotification(message, type = 'info') {
@@ -211,7 +279,7 @@
             'This will replace ALL posters in your library with clean originals from TMDB.\n\n' +
             '• Any foreign overlays (Kometa, PMM, etc.) will be removed\n' +
             '• Custom posters you have set manually will also be overwritten\n' +
-            '• cli_debrid overlays will NOT be re-applied automatically\n' +
+            '• Clyde overlays will NOT be re-applied automatically\n' +
             '  — use Generate All on the overlay page when ready\n\n' +
             'Continue?';
         showPopup({

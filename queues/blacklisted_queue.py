@@ -351,8 +351,15 @@ class BlacklistedQueue:
         # --- End Notification Trigger ---
         return # End of standard blacklisting path
 
-    def blacklist_old_season_items(self, item: Dict[str, Any], queue_manager):
+    def blacklist_old_season_items(self, item: Dict[str, Any], queue_manager, exempt_episodes=None):
+        """Blacklist `item` and the old episodes of its season with the same version.
+
+        exempt_episodes: episode numbers the failed item's own scrape saw released
+        (e.g. single episodes rejected from its season-pack search). Those siblings
+        are left alone to get their own search instead of being blacklisted unsearched.
+        """
         item_identifier = queue_manager.generate_identifier(item)
+        exempt_episodes = set(exempt_episodes or ())
         logging.info(f"Blacklisting item {item_identifier} and related old season items with the same version")
 
         if queue_manager.get_item_queue(item) != 'Checking':
@@ -363,6 +370,10 @@ class BlacklistedQueue:
         related_items = self.find_related_season_items(item, queue_manager)
         for related_item in related_items:
             related_identifier = queue_manager.generate_identifier(related_item)
+            if related_item.get('episode_number') in exempt_episodes:
+                logging.info(f"Not blacklisting {related_identifier}: releases for it turned up in "
+                             f"{item_identifier}'s scrape, so it gets its own search")
+                continue
             if self.is_item_old(related_item) and related_item['version'] == item['version']:
                 if queue_manager.get_item_queue(related_item) != 'Checking':
                     self.blacklist_item(related_item, queue_manager)

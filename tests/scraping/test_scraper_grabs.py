@@ -270,6 +270,46 @@ class TestRecordAndOutcomes(_DbCase):
         sg.record_grab({'id': 1}, {}, trigger='manual', release_title='X')
         self.assertEqual(self.rows(1)[0]['scraper_instance'], 'Manual')
 
+    def test_reused_pack_inherits_the_source_that_grabbed_it(self):
+        # Episode 1 scraped the pack; episode 2 reused it from the debrid
+        # account, with a stand-in result that has only a title.
+        for item_id in (1, 2):
+            self.set_item(item_id, 'Adding')
+        sg.record_grab({'id': 1}, self.result('Show S01', instance='Zilean_1', indexer='DMM'))
+        sg.record_grab({'id': 2}, {'title': 'Show S01'}, kind='torrent', info_hash='shows01h')
+        row = self.rows(2)[0]
+        self.assertEqual((row['scraper_instance'], row['indexer'], row['scraper_type']),
+                         ('Zilean_1', 'DMM', 'Torrentio'))
+
+    def test_manual_grab_of_a_scraped_release_stays_manual(self):
+        for item_id in (1, 2):
+            self.set_item(item_id, 'Adding')
+        sg.record_grab({'id': 1}, self.result('Show S01', instance='Zilean_1', indexer='DMM'))
+        sg.record_grab({'id': 2}, {'title': 'Show S01'}, trigger='manual', kind='torrent', info_hash='shows01h')
+        self.assertEqual(self.rows(2)[0]['scraper_instance'], 'Manual')
+
+    def test_reused_release_without_a_known_grab_stays_unknown(self):
+        self.set_item(1, 'Adding')
+        sg.record_grab({'id': 1}, {'title': 'Old pack'}, kind='torrent', info_hash='neverseen')
+        self.assertEqual(self.rows(1)[0]['scraper_instance'], 'Unknown')
+
+    def test_startup_backfills_unknown_grabs_of_a_known_release(self):
+        for item_id in (1, 2, 3):
+            self.set_item(item_id, 'Adding')
+        sg.record_grab({'id': 1}, self.result('Pack', instance='Jackett_1', indexer='1337x'))
+        conn = get_db_connection()
+        # As logged before the fix: no source, same hash; and one that predates
+        # any known grab of its release, which has nothing to inherit.
+        conn.execute("INSERT INTO scraper_grabs (grabbed_at, item_id, scraper_instance, info_hash) "
+                     "VALUES ('2026-11-01', 2, 'Unknown', 'packh')")
+        conn.execute("INSERT INTO scraper_grabs (grabbed_at, item_id, scraper_instance, info_hash) "
+                     "VALUES ('2026-11-01', 3, 'Unknown', 'otherh')")
+        conn.commit()
+        conn.close()
+        sg.create_scraper_grabs_table()
+        self.assertEqual((self.rows(2)[0]['scraper_instance'], self.rows(2)[0]['indexer']), ('Jackett_1', '1337x'))
+        self.assertEqual(self.rows(3)[0]['scraper_instance'], 'Unknown')
+
     def test_never_raises(self):
         with mock.patch.object(sg, 'get_db_connection', side_effect=RuntimeError('db down')):
             self.assertIsNone(sg.record_grab({'id': 1}, self.result('A')))
@@ -328,6 +368,44 @@ class TestAggregation(_DbCase):
         self.delete_item(1)
         t = sg.get_scraper_stats()['scrapers'][0]
         self.assertEqual((t['removed'], t['in_library'], t['success_rate']), (1, 0, 100.0))
+
+    def test_trend_lists_every_day_with_grabs_and_failures(self):
+        from datetime import date, timedelta
+        today = date.today()
+        three_days_ago = (today - timedelta(days=3)).isoformat()
+        self.set_item(1, 'Adding')
+        sg.record_grab({'id': 1}, self.result('A'))
+        self.set_item(2, 'Adding')
+        sg.record_grab({'id': 2}, self.result('B'))
+        sg.mark_current_grab(2, 'failed', 'dead')
+        conn = get_db_connection()
+        conn.execute("UPDATE scraper_grabs SET grabbed_at = ? WHERE item_id = 2", (three_days_ago + ' 12:00:00',))
+        conn.commit()
+        conn.close()
+
+        trend = sg.get_scraper_trend(days=7)
+        # The same rolling 7 days as the stats table: the first bar is the
+        # partial day 7 days ago, so the chart's totals match the table.
+        self.assertEqual(len(trend['days']), 8)
+        self.assertEqual(trend['days'][-1], today.isoformat())
+        t = trend['series']['Torrentio']
+        self.assertEqual(t['grabs'], [0, 0, 0, 0, 1, 0, 0, 1])
+        self.assertEqual(t['failed'], [0, 0, 0, 0, 1, 0, 0, 0])
+        # Without a range it starts at the first grab.
+        self.assertEqual(sg.get_scraper_trend()['days'][0], three_days_ago)
+
+    def test_trend_counts_the_same_grabs_as_the_table(self):
+        from datetime import datetime, timedelta
+        self.set_item(1, 'Adding')
+        sg.record_grab({'id': 1}, self.result('A'))
+        # Inside the rolling 7 days but on the calendar day 7 days ago.
+        edge = (datetime.now() - timedelta(days=7) + timedelta(minutes=5)).strftime('%Y-%m-%d %H:%M:%S')
+        conn = get_db_connection()
+        conn.execute("UPDATE scraper_grabs SET grabbed_at = ? WHERE item_id = 1", (edge,))
+        conn.commit()
+        conn.close()
+        table = sg.get_scraper_stats(days=7)['scrapers'][0]['grabs']
+        self.assertEqual(sum(sg.get_scraper_trend(days=7)['series']['Torrentio']['grabs']), table)
 
     def test_recent_grabs_filter(self):
         self.set_item(1, 'Adding')

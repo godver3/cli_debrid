@@ -86,6 +86,13 @@ def _collect_secret_values(obj, out: set, depth: int = 0) -> None:
         return
     if isinstance(obj, dict):
         for key, value in obj.items():
+            if isinstance(value, str) and value.lstrip()[:1] in ('[', '{'):
+                # Settings stored as JSON text (Built-in Mount.servers holds
+                # every news server's username/password this way).
+                try:
+                    value = json.loads(value)
+                except ValueError:
+                    pass
             if isinstance(value, (dict, list)):
                 _collect_secret_values(value, out, depth + 1)
             elif _is_sensitive_key(key) and isinstance(value, str):

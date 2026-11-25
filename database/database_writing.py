@@ -1166,112 +1166,60 @@ def add_media_item(item: dict, user_initiated: bool = False) -> int:
         if conn:
             conn.close()
 
+# Version names on media_items may end in the reverse parser's '*' or '**'
+# marker. Both functions match on the name without it and keep it.
+_VERSION_MATCH = "RTRIM(version, '*') = ?"
+
+
 @retry_on_db_lock()
 def update_version_name(old_version: str, new_version: str) -> int:
-    """Update all media items with a specific version name to use a new version name,
-    preserving any trailing characters (like asterisks).
-    
-    Args:
-        old_version: The current version name prefix to update
-        new_version: The new version name prefix to set
-        
-    Returns:
-        int: Number of items updated
+    """Rename a version on every media item that has it. Returns the row count.
+
+    Raises on database errors so the caller leaves the config unchanged.
     """
     conn = get_db_connection()
     try:
-        conn.execute('BEGIN TRANSACTION')
-
-        # Construct the LIKE pattern to match versions starting with old_version
-        like_pattern = f"{old_version}%" 
-        
-        # Use SQLite's SUBSTR and LENGTH to preserve trailing characters
-        cursor = conn.execute("""
+        cursor = conn.execute(f"""
             UPDATE media_items
-            SET version = ? || SUBSTR(version, LENGTH(?) + 1), 
+            SET version = ? || SUBSTR(version, LENGTH(?) + 1),
                 last_updated = ?
-            WHERE version LIKE ?
-        """, (new_version, old_version, datetime.now(), like_pattern))
-        
-        updated_count = cursor.rowcount
+            WHERE {_VERSION_MATCH}
+        """, (new_version, old_version, datetime.now(), old_version))
         conn.commit()
-        logging.info(f"Updated version prefix from '{old_version}' to '{new_version}' for {updated_count} media items (preserving suffixes)")
-        return updated_count
-    except sqlite3.OperationalError as e:
-        logging.debug(f"OperationalError in update_version_name from '{old_version}' to '{new_version}': {e}. Handing over to retry_on_db_lock.")
-        try:
-            if conn: conn.rollback()
-        except Exception as rb_ex:
-            logging.error(f"Rollback failed in update_version_name after OperationalError: {rb_ex}")
+        logging.info(f"Renamed version '{old_version}' to '{new_version}' on {cursor.rowcount} media items")
+        return cursor.rowcount
+    except Exception:
+        conn.rollback()
         raise
-    except sqlite3.Error as e:
-        # conn.rollback() # Rollback is implicitly handled by the transaction context if commit isn't reached
-        logging.error(f"SQLite error updating version name prefix from '{old_version}' to '{new_version}': {str(e)}")
-        try:
-            if conn: conn.rollback() # Explicit rollback for clarity and safety
-        except Exception as rb_ex:
-            logging.error(f"Rollback failed in update_version_name after sqlite3.Error: {rb_ex}")
-        return 0
-    except Exception as e:
-        # conn.rollback() # Rollback is implicitly handled
-        logging.error(f"Unexpected error updating version name prefix from '{old_version}' to '{new_version}': {str(e)}")
-        try:
-            if conn: conn.rollback() # Explicit rollback
-        except Exception as rb_ex:
-            logging.error(f"Rollback failed in update_version_name after Exception: {rb_ex}")
-        return 0
     finally:
-        if conn:
-            conn.close()
+        conn.close()
+
 
 @retry_on_db_lock()
 def update_version_for_items(old_version_id: str, new_version_id: str | None) -> int:
-    """Update the version for all media items matching the old version ID.
-    
-    Args:
-        old_version_id: The version ID to find and replace.
-        new_version_id: The new version ID to set (can be None to make items versionless).
-        
-    Returns:
-        The number of rows updated.
+    """Move every media item on `old_version_id` to `new_version_id`, or make
+    them versionless when it is None. Returns the row count.
+
+    Raises on database errors so the caller leaves the config unchanged.
     """
     conn = get_db_connection()
-    updated_count = 0
     try:
-        cursor = conn.cursor()
-        cursor.execute("""
+        cursor = conn.execute(f"""
             UPDATE media_items
-            SET version = ?, last_updated = ?
-            WHERE version = ?
-        """, (new_version_id, datetime.now(), old_version_id))
-        updated_count = cursor.rowcount
+            SET version = CASE WHEN ? IS NULL THEN NULL
+                               ELSE ? || SUBSTR(version, LENGTH(?) + 1) END,
+                last_updated = ?
+            WHERE {_VERSION_MATCH}
+        """, (new_version_id, new_version_id, old_version_id, datetime.now(), old_version_id))
         conn.commit()
-        logging.info(f"Reassigned {updated_count} items from version '{old_version_id}' to '{new_version_id or 'None'}'")
-    except sqlite3.OperationalError as e:
-        logging.debug(f"OperationalError in update_version_for_items: {e}. Handing over to retry_on_db_lock.")
-        try:
-            if conn: conn.rollback()
-        except Exception as rb_ex:
-            logging.error(f"Rollback failed in update_version_for_items after OperationalError: {rb_ex}")
+        logging.info(f"Reassigned {cursor.rowcount} items from version '{old_version_id}' to '{new_version_id or 'None'}'")
+        return cursor.rowcount
+    except Exception:
+        conn.rollback()
         raise
-    except sqlite3.Error as e:
-        logging.error(f"SQLite error updating items from version '{old_version_id}' to '{new_version_id}': {str(e)}")
-        try:
-            if conn: conn.rollback() 
-        except Exception as rb_ex:
-            logging.error(f"Rollback failed in update_version_for_items after sqlite3.Error: {rb_ex}")
-        return 0 
-    except Exception as e:
-        logging.error(f"Unexpected error updating items from version '{old_version_id}' to '{new_version_id}': {str(e)}")
-        try:
-            if conn: conn.rollback()
-        except Exception as rb_ex:
-            logging.error(f"Rollback failed in update_version_for_items after Exception: {rb_ex}")
-        return 0
     finally:
-        if conn:
-            conn.close()
-    return updated_count
+        conn.close()
+
 
 @retry_on_db_lock()
 def update_media_items_state_batch(item_ids: List[int], state: str, **kwargs):

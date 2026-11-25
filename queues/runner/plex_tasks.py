@@ -21,7 +21,31 @@ import plexapi
 from utilities.plex_functions import remove_file_from_plex
 from utilities.plex_functions import claim_plex_mode_scan, plex_mode_scan_due, PLEX_MODE_SCAN_COOLDOWN
 from utilities import plex_health
+from utilities.paths import media_file_at
 from database.symlink_verification import update_removal_status
+
+
+class _SkipPlexConnect(Exception):
+    """Plex mode run with Silo: task_check_plex_files skips the Plex connection."""
+
+
+def _mount_file_candidates(item_dict, base_path):
+    """Where an item's file can be under the mount, in task_check_plex_files' order."""
+    filename = item_dict['filled_by_file']
+    names = []
+    for key in ('debrid_folder_name', 'original_scraped_torrent_title', 'real_debrid_original_title', 'filled_by_title'):
+        name = item_dict[key] or ''
+        if name:
+            names.append(name)
+            trimmed = os.path.splitext(name)[0]
+            if key != 'debrid_folder_name' and trimmed != name:
+                names.append(trimmed)
+    paths = [os.path.join(base_path, n, filename) for n in names]
+    paths.append(os.path.join(base_path, filename))
+    paths += [path for _name, path in _category_folder_paths(
+        base_path, [item_dict[k] or '' for k in ('debrid_folder_name', 'original_scraped_torrent_title',
+                                                 'real_debrid_original_title', 'filled_by_title')], filename)]
+    return paths
 
 
 def _category_folder_paths(base_path, folder_names, filename):
@@ -38,6 +62,41 @@ def _category_folder_paths(base_path, folder_names, filename):
             if job_dir and os.path.dirname(job_dir) != os.path.normpath(base_path):
                 found.append((candidate, os.path.join(job_dir, filename)))
     return found
+
+
+_TYPED_FOLDER_HINTS = {
+    'episode': ('shows', 'tv shows', 'tv', 'series'),
+    'movie': ('movies', 'films', 'movie'),
+}
+_MOUNT_SYSTEM_FOLDERS = {'__all__', '__bad__', 'nzbs', 'torrents'}
+
+
+def _typed_mount_path(raw_loc, item_type):
+    """Turn <mount>/__all__/<rest> into the typed folder that really holds the
+    file (e.g. <mount>/shows/<rest> or the built-in mount's "TV Shows"). The
+    folder names are the mount's own, so check which sibling has the file,
+    preferring the usual names for the item type. Falls back to the old fixed
+    movies/shows rewrite when none does (or the mount can't be listed)."""
+    base, rest = raw_loc.split('/__all__/', 1)
+    hints = _TYPED_FOLDER_HINTS['episode' if item_type == 'episode' else 'movie']
+    other = _TYPED_FOLDER_HINTS['movie' if item_type == 'episode' else 'episode']
+    try:
+        tops = [t for t in os.listdir(base) if t.lower() not in _MOUNT_SYSTEM_FOLDERS]
+    except OSError:
+        tops = []
+
+    def rank(name):
+        low = name.lower()
+        if low in hints:
+            return 0
+        return 2 if low in other else 1
+    for top in sorted(tops, key=rank):
+        if rank(top) == 2:
+            break
+        candidate = f'{base}/{top}/{rest}'
+        if os.path.exists(candidate):
+            return candidate
+    return f"{base}/{'shows' if item_type == 'episode' else 'movies'}/{rest}"
 
 
 class PlexTasks:
@@ -90,9 +149,18 @@ class PlexTasks:
         except Exception as e_work:
             logging.debug(f"Plex file check: work pre-check failed ({e_work}); continuing.")
 
+        # Direct Mount run with Silo or Jellyfin/Emby: no Plex connection
+        # (handled after the ffprobe gate below)
+        from utilities.direct_mount import direct_mount_server
+        library_server = direct_mount_server() if direct_mount_server() in ('silo', 'jellyfin') else None
+        silo_library = library_server is not None
+
         # Use centralized Plex connection setup if possible or ensure proper error handling
         plex = None
+        sections = []
         try:
+            if silo_library:
+                raise _SkipPlexConnect()
             plex_url = get_setting('Plex', 'url', default='')
             plex_token = get_setting('Plex', 'token', default='')
             
@@ -111,6 +179,8 @@ class PlexTasks:
             sections = plex.library.sections()
             logging.info(f"Connected to Plex server for file check, found {len(sections)} library sections.")
 
+        except _SkipPlexConnect:
+            pass
         except Exception as e:
             logging.error(f"Failed to connect to Plex for file check: {str(e)}")
             plex_health.record_contact_failure()
@@ -248,6 +318,9 @@ class PlexTasks:
                 del self.plex_scan_tick_counts[cache_key]
             return False
 
+        if silo_library:
+            return self._server_check_files(items, plex_file_location, _ffprobe_gate_or_reject, library_server)
+
         # Check if Plex library checks are disabled (file discovery only)
         if get_setting('Plex', 'disable_plex_library_checks', default=False):
             logging.info("Plex library checks disabled - marking found files as Collected")
@@ -382,9 +455,10 @@ class PlexTasks:
                 for idx, potential_path in enumerate(paths_to_check):
                     checked_paths_log.append(potential_path)
                     logging.debug(f"Plex Check Attempt {idx+1}: Checking path: {potential_path}")
-                    if os.path.exists(potential_path):
+                    found_path = media_file_at(potential_path)
+                    if found_path:
                         file_found_on_disk = True
-                        actual_file_path = potential_path
+                        actual_file_path = found_path
                         logging.info(f"Plex Check: Found file for item {item_id} at: {actual_file_path} (Attempt {idx+1})")
                         break # Found it, stop checking
 
@@ -652,9 +726,10 @@ class PlexTasks:
                     potential_path = p_info['path']
                     log_checked_paths.append(potential_path) 
                     logging.debug(f"Plex Check (checks enabled) Attempt {idx+1}: Checking path: {potential_path} (using folder '{p_info['name']}', type: {p_info['type']})")
-                    if os.path.exists(potential_path):
+                    found_path = media_file_at(potential_path)
+                    if found_path:
                         file_found_on_disk = True
-                        actual_file_path = potential_path
+                        actual_file_path = found_path
                         folder_name_for_plex_scan = p_info['name'] 
                         found_path_type_log = p_info['type']
                         item_title_for_log = (item_dict['title'] or 'N/A')
@@ -738,9 +813,7 @@ class PlexTasks:
                             # Never store __all__ paths — replace with typed folder (movies/shows).
                             _raw_loc = _plex_location or actual_file_path
                             if _raw_loc and '/__all__/' in _raw_loc:
-                                _typed = 'shows' if item_dict.get('type') == 'episode' else 'movies'
-                                _mount_base = _raw_loc.split('/__all__/')[0]
-                                _raw_loc = _raw_loc.replace('/__all__/', f'/{_typed}/', 1)
+                                _raw_loc = _typed_mount_path(_raw_loc, item_dict.get('type'))
                             _location_to_store = _raw_loc
                             if _location_to_store:
                                 if _plex_rating_key:
@@ -822,7 +895,8 @@ class PlexTasks:
                                                         try:
                                                             from usenet import get_usenet_client
                                                             _dc = get_usenet_client()
-                                                            if not hasattr(_dc, 'rename_nzb'):
+                                                            from usenet.base import supports, RENAME
+                                                            if not supports(_dc, RENAME):
                                                                 return  # active usenet provider (e.g. nzbdav) has no rename semantics
                                                             for _a in range(5):
                                                                 # This short loop (5 attempts x 10s = 50s total) isn't long
@@ -1347,9 +1421,122 @@ class PlexTasks:
             logging.info(f"Plex check summary (checks enabled): Processed {processed_items_count} items. Identified {updated_items} found items potentially needing scans (within tick limit). {not_found_items} items not found on disk.")
 
 
+
+    # Ticks a found file waits for Silo to list it before it is collected anyway,
+    # like task_check_plex_files' tick fallback for Plex.
+    SILO_COLLECT_AFTER_TICKS = 3
+
+    def _silo_check_files(self, items, base_path, ffprobe_gate):
+        """task_check_plex_files for Direct Mount run with Silo."""
+        return self._server_check_files(items, base_path, ffprobe_gate, 'silo')
+
+    def _server_check_files(self, items, base_path, ffprobe_gate, server):
+        """task_check_plex_files for Direct Mount run with Silo or Jellyfin/Emby
+        (`server` 'silo' or 'jellyfin'). A file found on the mount (and through
+        the same ffprobe gate) gets its folder scanned in the server; then the
+        found items are collected from its library. One the server hasn't
+        listed after SILO_COLLECT_AFTER_TICKS passes is collected with its mount
+        path. With library checks disabled, found files are collected at once."""
+        if server == 'jellyfin':
+            from utilities.jellyfin_direct import scan_path, collect_from_jellyfin as collect_from_server
+            label = 'Jellyfin/Emby'
+        else:
+            from utilities.silo_functions import scan_path, collect_from_silo as collect_from_server
+            label = 'Silo'
+        checks_off = get_setting('Plex', 'disable_plex_library_checks', default=False)
+        found, scanned = [], set()
+        for row in items:
+            item = dict(row)
+            if not item.get('filled_by_title') or not item.get('filled_by_file'):
+                continue
+            path = None
+            if base_path:
+                path = next((p for p in map(media_file_at, _mount_file_candidates(item, base_path)) if p), None)
+            if not path:
+                continue
+            cache_key = f"{item['filled_by_title']}:{item['filled_by_file']}"
+            if not ffprobe_gate(item, path, cache_key):
+                continue
+            found.append((item, path, cache_key))
+            folder = os.path.dirname(path)
+            if folder not in scanned and plex_mode_scan_due(folder) and claim_plex_mode_scan(folder):
+                scanned.add(folder)
+                scan_path(folder, item.get('type') or '')
+        if not found:
+            logging.info(f"{label} file check: {len(items)} Checking item(s), none found on the mount yet")
+            return
+        if not checks_off:
+            result = collect_from_server([i for i, _, _ in found])
+            if result is not None:
+                logging.info(f"{label} file check: {label} has {result[0]} of {len(found)} found file(s); "
+                             f"{result[1]} item(s) collected")
+        # Items Silo just collected are done: drop their tick count, so a later
+        # re-check of the same file (repair) waits for Silo again
+        still_checking = self._ids_still_checking([i['id'] for i, _, _ in found])
+        collected = 0
+        for item, path, cache_key in found:
+            if item['id'] not in still_checking:
+                self.plex_scan_tick_counts.pop(cache_key, None)
+                continue
+            tick = self.plex_scan_tick_counts.get(cache_key, 0) + 1
+            self.plex_scan_tick_counts[cache_key] = tick
+            if not checks_off and tick <= self.SILO_COLLECT_AFTER_TICKS:
+                continue
+            if self._mark_collected_on_mount(item, path):
+                collected += 1
+                self.plex_scan_tick_counts.pop(cache_key, None)
+        if collected:
+            logging.info(f"{label} file check: {collected} item(s) collected with their mount path "
+                         f"({'library checks disabled' if checks_off else f'{label} did not list them'})")
+
+    @staticmethod
+    def _ids_still_checking(ids):
+        if not ids:
+            return set()
+        conn = get_db_connection()
+        try:
+            rows = conn.execute(
+                f"SELECT id FROM media_items WHERE id IN ({','.join('?' * len(ids))}) AND state = 'Checking'",
+                ids).fetchall()
+        finally:
+            conn.close()
+        return {r[0] for r in rows}
+
+    def _mark_collected_on_mount(self, item, path):
+        """Checking -> Collected with the file's mount path (when Silo didn't collect it)."""
+        conn = get_db_connection()
+        try:
+            now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            cur = conn.execute(
+                'UPDATE media_items SET state = "Collected", collected_at = ?, location_on_disk = ? '
+                'WHERE id = ? AND state = "Checking" AND (ghostlisted IS NULL OR ghostlisted = 0)',
+                (now, path, item['id']))
+            conn.commit()
+            if not cur.rowcount:
+                return False
+        finally:
+            conn.close()
+        updated = get_media_item_by_id(item['id'])
+        if updated:
+            handle_state_change(dict(updated))
+            from database.database_writing import add_to_collected_notifications
+            note = dict(updated)
+            note['is_upgrade'] = False
+            note['new_state'] = 'Collected'
+            add_to_collected_notifications(note)
+        return True
     def task_verify_plex_removals(self):
         """Verify that files marked for removal are actually gone from the configured media server (Plex or Jellyfin/Emby) using title-based search."""
         logging.info("[TASK] Running media server removal verification task.")
+
+        from utilities.silo_functions import is_silo_selected
+        from utilities.direct_mount import is_direct_mount_jellyfin
+        if is_silo_selected():
+            logging.debug("[VERIFY] Silo is the media server: removals are rescans, nothing to check in Plex.")
+            return
+        if is_direct_mount_jellyfin():
+            logging.debug("[VERIFY] Direct Mount runs with Jellyfin/Emby: removals are rescans, nothing to check in Plex.")
+            return
 
         # Determine Plex connection details based on settings
         plex_url, plex_token = None, None

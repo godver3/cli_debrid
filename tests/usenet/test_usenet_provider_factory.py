@@ -101,6 +101,62 @@ class TestIsNzbJobAliveDispatch(unittest.TestCase):
         self.assertFalse(self.usenet.is_nzb_job_alive('gonejob'))
 
 
+class TestLegacyClimountFactoryDelegation(unittest.TestCase):
+    """get_climount_client()/reset_climount_client() are still called directly at
+    ~13 sites. They used to redirect only 'nzbdav', so with 'zurg' selected those
+    sites got a CliMountClient and sent cli_mount-only requests to Zurg."""
+
+    def setUp(self):
+        modules = mock.patch.dict(sys.modules)
+        modules.start()
+        self.addCleanup(modules.stop)
+        for name in list(sys.modules):
+            if name == 'usenet' or name.startswith('usenet.'):
+                del sys.modules[name]
+        if 'utilities' not in sys.modules:
+            sys.modules['utilities'] = types.ModuleType('utilities')
+        uss = types.ModuleType('utilities.settings')
+        self._provider = {'provider': 'climount'}
+        uss.get_setting = lambda key, *a, **k: (self._provider if key == 'Usenet Provider' else {})
+        sys.modules['utilities.settings'] = uss
+        if 'routes' not in sys.modules:
+            sys.modules['routes'] = types.ModuleType('routes')
+        rta = types.ModuleType('routes.api_tracker')
+        rta.api = types.SimpleNamespace(get=None, post=None)
+        sys.modules['routes.api_tracker'] = rta
+
+        self.nzbdav_sentinel = object()
+        self.nzbdav_resets = []
+        fake_nzbdav = types.ModuleType('usenet.nzbdav_client')
+        fake_nzbdav.get_nzbdav_client = lambda: self.nzbdav_sentinel
+        fake_nzbdav.reset_nzbdav_client = lambda: self.nzbdav_resets.append(1)
+        sys.modules['usenet.nzbdav_client'] = fake_nzbdav
+
+        import usenet.climount_client as cc
+        self.cc = cc
+        self.usenet = sys.modules['usenet']
+
+    def test_every_sab_style_provider_delegates(self):
+        for provider in self.usenet.SAB_STYLE_PROVIDERS:
+            with self.subTest(provider=provider):
+                self._provider['provider'] = provider
+                self.assertIs(self.cc.get_climount_client(), self.nzbdav_sentinel)
+                self.assertIs(self.usenet.get_usenet_client(), self.nzbdav_sentinel)
+
+    def test_zurg_reset_resets_nzbdav_client(self):
+        self._provider['provider'] = 'zurg'
+        self.cc.reset_climount_client()
+        self.assertEqual(self.nzbdav_resets, [1])
+
+    def test_climount_and_unknown_provider_get_climount_client_without_recursion(self):
+        for provider in ('climount', 'typo-provider'):
+            with self.subTest(provider=provider):
+                self._provider['provider'] = provider
+                self.cc.reset_climount_client()
+                self.assertIsInstance(self.cc.get_climount_client(), self.cc.CliMountClient)
+                self.assertIsInstance(self.usenet.get_usenet_client(), self.cc.CliMountClient)
+
+
 @isolated_modules
 def _load_nzbdav_module():
     if 'utilities' not in sys.modules:

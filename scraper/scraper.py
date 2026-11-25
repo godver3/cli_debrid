@@ -31,26 +31,10 @@ except ImportError:
     ZoneInfo = None # Define ZoneInfo as None to handle checks later
     ZoneInfoNotFoundError = Exception # Use base Exception for catch block
 
+from scraper.functions.deduplicate_results import dedupe_passed_results
+
 # Initialize DirectAPI at module level
 direct_api = DirectAPI()
-
-def normalize_episode_format_for_dedup(episode_format: str) -> str:
-    """
-    Normalize episode format for deduplication purposes.
-    Considers E123 and 123 as the same format.
-    """
-    if not episode_format:
-        return ""
-    
-    # Remove leading 'E' and leading zeros
-    normalized = episode_format.strip()
-    if normalized.startswith('E'):
-        normalized = normalized[1:]
-    
-    # Remove leading zeros
-    normalized = normalized.lstrip('0')
-    
-    return normalized
 
 def _predates_show(result: Dict[str, Any], show_year: Optional[int]) -> bool:
     """True if every year in the release name is before the show's first year."""
@@ -1017,6 +1001,11 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 normalized_result['original_title'] = original_title  # Keep original torrent title
                 normalized_result['parsed_title'] = parsed_info.get('title', original_title)  # Store parsed title separately
                 normalized_result['resolution'] = parsed_info.get('resolution', 'Unknown')
+                # The indexer's own IMDb id for an NZB (newznab extended=1) survives
+                # the re-parse: the country filter trusts it for untagged releases.
+                _indexer_imdb = (result.get('parsed_info') or {}).get('newznab_imdb')
+                if _indexer_imdb:
+                    parsed_info['newznab_imdb'] = _indexer_imdb
                 normalized_result['parsed_info'] = parsed_info
                 # --- Pass through original target absolute episode (for anime XEM reverse look-up) ---
                 if episode_formats and isinstance(episode_formats, dict):
@@ -1322,32 +1311,8 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
 
         # Deduplicate final results while preserving order
         logging.debug(f"[scrape_main] Before final deduplication: all_filtered_results: {len(all_filtered_results)}")
-        seen = set()
-        deduplicated_results = []
-        
-        for result in all_filtered_results:
-            # For anime, use normalized episode format for deduplication
-            if is_anime and episode_formats:
-                # Create a more sophisticated key that includes title and normalized episode format
-                title = result.get('parsed_title', result.get('original_title', ''))
-                episode_info = result.get('parsed_info', {})
-                
-                # Try to extract episode number from parsed info
-                episode_num = episode_info.get('episode')
-                if episode_num:
-                    normalized_ep = normalize_episode_format_for_dedup(str(episode_num))
-                    result_key = f"{title.lower()}_{normalized_ep}"
-                else:
-                    # Fallback to original title if no episode info
-                    result_key = result.get('original_title', '')
-            else:
-                # For non-anime, use original title
-                result_key = result.get('original_title', '')
-            
-            if result_key not in seen:
-                seen.add(result_key)
-                deduplicated_results.append(result)
-        
+        deduplicated_results = dedupe_passed_results(all_filtered_results, is_anime, episode_formats)
+
         logging.debug(f"[scrape_main] After final deduplication (these are 'passed' results): deduplicated_results: {len(deduplicated_results)}")
 
         # Parse scraping settings for final sorting

@@ -14,6 +14,7 @@ import unittest
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest import mock
+from tests._patching import patch_in_package
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
@@ -59,9 +60,9 @@ class DeadVersionSweepTests(unittest.TestCase):
     def _sweep(self, owner_media, new_media, tracked=()):
         owner = SimpleNamespace(media=owner_media)
         tracked = {os.path.normpath(p) for p in tracked}
-        with mock.patch.object(self.pf, '_file_management_plex', return_value=object()), \
-             mock.patch.object(self.pf, '_wait_for_plex_file', return_value=(owner, new_media)), \
-             mock.patch.object(self.pf, '_paths_tracked_in_db',
+        with patch_in_package(self.pf, '_file_management_plex', return_value=object()), \
+             patch_in_package(self.pf, '_wait_for_plex_file', return_value=(owner, new_media)), \
+             patch_in_package(self.pf, '_paths_tracked_in_db',
                                side_effect=lambda paths: {os.path.normpath(p) for p in paths} & tracked):
             return self.pf.remove_dead_plex_versions_after_scan('Jim Gaffigan: Obsessed', self.new)
 
@@ -99,9 +100,9 @@ class DeadVersionSweepTests(unittest.TestCase):
     def test_db_error_skips_removal(self):
         new_m, old_m = _Media(self.new), _Media(self.old)
         owner = SimpleNamespace(media=[old_m, new_m])
-        with mock.patch.object(self.pf, '_file_management_plex', return_value=object()), \
-             mock.patch.object(self.pf, '_wait_for_plex_file', return_value=(owner, new_m)), \
-             mock.patch.object(self.pf, '_paths_tracked_in_db', side_effect=RuntimeError('db locked')):
+        with patch_in_package(self.pf, '_file_management_plex', return_value=object()), \
+             patch_in_package(self.pf, '_wait_for_plex_file', return_value=(owner, new_m)), \
+             patch_in_package(self.pf, '_paths_tracked_in_db', side_effect=RuntimeError('db locked')):
             self.assertEqual(self.pf.remove_dead_plex_versions_after_scan('Jim', self.new), 0)
         self.assertFalse(old_m.deleted)
         self.assertTrue(os.path.lexists(self.old))
@@ -110,7 +111,7 @@ class DeadVersionSweepTests(unittest.TestCase):
         # Mount down: the new symlink doesn't resolve, so nothing may be judged dead.
         os.unlink(self.new)
         os.symlink(os.path.join(self.tmp, 'also-gone.mkv'), self.new)
-        with mock.patch.object(self.pf, '_file_management_plex') as plex:
+        with patch_in_package(self.pf, '_file_management_plex') as plex:
             self.assertEqual(self.pf.remove_dead_plex_versions_after_scan('Jim', self.new), 0)
             plex.assert_not_called()
 

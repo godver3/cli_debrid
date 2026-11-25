@@ -12,6 +12,11 @@ from routes.debrid_manager_routes import (
 )
 
 
+def _http_error(status):
+    """Error text for a failed cli_mount call (status None = never answered)."""
+    return 'cli_mount unreachable' if status is None else f'cli_mount returned HTTP {status}'
+
+
 _repair_thread = None
 
 
@@ -72,14 +77,12 @@ def usenet_scan_status():
     """Check if cli_mount is currently running a health sweep (active_run != null and running)."""
     try:
         from usenet.climount_client import get_climount_client
-        from routes.api_tracker import api as _api
         client = get_climount_client()
         if not client.is_enabled():
             return jsonify(success=True, is_scanning=False)
-        r = _api.get(f'{client.base_url}/api/repair/status', headers=client._headers(), timeout=10)
-        if r.status_code != 200:
+        data = client.get_repair_status()
+        if data is None:
             return jsonify(success=True, is_scanning=False)
-        data = r.json()
         active_run = data.get('active_run') or data.get('value', {}).get('active_run')
         run_status = (active_run or {}).get('status', '') if active_run else ''
         is_scanning = active_run is not None and run_status in ('running', 'pending', '')
@@ -107,15 +110,14 @@ def usenet_trigger_health_scan():
 def usenet_stop_health_scan():
     """Stop a running NZB health scan in cli_mount."""
     try:
-        from usenet.debrid_repair_engine import _dcy_cfg, _dcy_headers
-        from routes.api_tracker import api
+        from usenet.debrid_repair_engine import _dcy_cfg, _client
         url, _ = _dcy_cfg()
         if not url:
             return jsonify(success=False, error='cli_mount not configured')
-        r = api.post(f'{url}/api/repair/stop', headers=_dcy_headers(), timeout=10)
-        if r.status_code == 200:
+        status = _client().stop_repair()
+        if status == 200:
             return jsonify(success=True, message='Health scan stop requested')
-        return jsonify(success=False, error=f'cli_mount returned HTTP {r.status_code}')
+        return jsonify(success=False, error=_http_error(status))
     except Exception as e:
         logging.error(f'[UsenetRepair] stop_scan error: {e}')
         return jsonify(success=False, error=str(e))
@@ -327,12 +329,15 @@ def usenet_repair_settings_save():
 
 @debrid_manager_bp.route('/api/debrid/repair/stats')
 def debrid_repair_stats():
-    """Stats for the Debrid repair tab: cli_mount torrent health summary + 30-day activity counts."""
+    """Stats for the Debrid repair tab: cli_mount torrent health summary + 30-day activity
+    counts + the version list for the repair version picker (shared with the Usenet tab)."""
     try:
         from usenet.debrid_repair_engine import get_health_summary, get_repair_stats
+        from usenet.repair_engine import get_available_versions, get_repair_version
         health = get_health_summary()
         activity = get_repair_stats(days=30)
-        return jsonify(success=True, health=health, activity=activity)
+        return jsonify(success=True, health=health, activity=activity,
+                       versions=get_available_versions(), repair_version=get_repair_version())
     except Exception as e:
         logging.error(f'[DebridRepair] stats error: {e}')
         return jsonify(success=False, error=str(e))
@@ -372,14 +377,12 @@ def debrid_scan_status():
     """Check if cli_mount is currently running a health sweep."""
     try:
         from usenet.climount_client import get_climount_client
-        from routes.api_tracker import api as _api
         client = get_climount_client()
         if not client.is_enabled():
             return jsonify(success=True, is_scanning=False)
-        r = _api.get(f'{client.base_url}/api/repair/status', headers=client._headers(), timeout=10)
-        if r.status_code != 200:
+        data = client.get_repair_status()
+        if data is None:
             return jsonify(success=True, is_scanning=False)
-        data = r.json()
         active_run = data.get('active_run') or data.get('value', {}).get('active_run')
         run_status = (active_run or {}).get('status', '') if active_run else ''
         is_scanning = active_run is not None and run_status in ('running', 'pending', '')
@@ -407,15 +410,14 @@ def debrid_trigger_health_scan():
 def debrid_stop_health_scan():
     """Stop a running torrent health scan in cli_mount."""
     try:
-        from usenet.debrid_repair_engine import _dcy_cfg, _dcy_headers
-        from routes.api_tracker import api
+        from usenet.debrid_repair_engine import _dcy_cfg, _client
         url, _ = _dcy_cfg()
         if not url:
             return jsonify(success=False, error='cli_mount not configured')
-        r = api.post(f'{url}/api/repair/stop', headers=_dcy_headers(), timeout=10)
-        if r.status_code == 200:
+        status = _client().stop_repair()
+        if status == 200:
             return jsonify(success=True, message='Health scan stop requested')
-        return jsonify(success=False, error=f'cli_mount returned HTTP {r.status_code}')
+        return jsonify(success=False, error=_http_error(status))
     except Exception as e:
         logging.error(f'[DebridRepair] stop_scan error: {e}')
         return jsonify(success=False, error=str(e))
@@ -524,20 +526,17 @@ def debrid_clear_bad_flags():
     """Clear Bad=true flag on all cli_mount torrent entries by calling the sync endpoint.
     This recovers entries that cli_mount marked as bad after failed repair attempts."""
     try:
-        from usenet.debrid_repair_engine import _dcy_cfg, _dcy_headers
-        from routes.api_tracker import api
+        from usenet.debrid_repair_engine import _dcy_cfg, _client
 
         url, _ = _dcy_cfg()
         if not url:
             return jsonify(success=False, error='cli_mount not configured')
+        client = _client()
 
         # Get all torrent entries from cli_mount
-        r = api.get(f'{url}/api/repair/health', headers=_dcy_headers(), timeout=60)
-        if r.status_code != 200:
-            return jsonify(success=False, error=f'Health API returned {r.status_code}')
-
-        data = r.json()
-        entries = data if isinstance(data, list) else data.get('entries', [])
+        entries = client.list_repair_health(timeout=60)
+        if entries is None:
+            return jsonify(success=False, error='Health API call failed')
         torrent_entries = [e for e in entries if (e.get('protocol') or '').lower() == 'torrent']
 
         cleared = 0
@@ -549,9 +548,7 @@ def debrid_clear_bad_flags():
             if not info_hash:
                 continue
             try:
-                sr = api.post(f'{url}/api/torrents/{info_hash}/sync',
-                              headers=_dcy_headers(), timeout=15)
-                if sr.status_code == 200:
+                if client.sync_torrent(info_hash) == 200:
                     cleared += 1
                 else:
                     errors += 1
@@ -583,9 +580,7 @@ def debrid_delete_ghost_entries():
 def debrid_delete_ghost_single():
     """Delete a single ghost health record by entry name."""
     try:
-        import urllib.parse as _up
-        from usenet.debrid_repair_engine import _dcy_cfg, _dcy_headers
-        from routes.api_tracker import api
+        from usenet.debrid_repair_engine import _dcy_cfg, _client
         body = request.get_json(silent=True) or {}
         entry_name = (body.get('entry_name') or '').strip()
         if not entry_name:
@@ -593,12 +588,11 @@ def debrid_delete_ghost_single():
         url, _ = _dcy_cfg()
         if not url:
             return jsonify(success=False, error='cli_mount not configured')
-        encoded = _up.quote(entry_name, safe='')
-        r = api.delete(f'{url}/api/repair/health/{encoded}', headers=_dcy_headers(), timeout=15)
-        if r.status_code == 200:
+        status = _client().delete_repair_health(entry_name)
+        if status == 200:
             logging.info(f'[DebridRepair] Deleted ghost health record: {entry_name!r}')
             return jsonify(success=True)
-        return jsonify(success=False, error=f'cli_mount returned HTTP {r.status_code}')
+        return jsonify(success=False, error=_http_error(status))
     except Exception as e:
         logging.error(f'[DebridRepair] delete_ghost_single error: {e}', exc_info=True)
         return jsonify(success=False, error=str(e))

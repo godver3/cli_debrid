@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_inline.css') }}">
+{% endblock %}
+{% block title %}Onboarding - Subtitles{% endblock %}
+{% block content %}
+<div class="onboarding-container">
+    <h2 class="onboarding-title">Optional: Subtitles</h2>
+    <p class="ob-section-intro">Clyde can find subtitles for everything it collects, so you don't need Bazarr. This step is optional: skip it and you can turn subtitles on later in <b>Settings → Subtitles</b>.</p>
+
+    <div class="ob-section">
+        <h3>How it works</h3>
+        <ul class="ob-sub-list">
+            <li><b>When an item is collected</b>, Clyde searches the subtitle providers for each language you pick.</li>
+            <li><b>It picks the subtitle made for your exact file</b> first (an OpenSubtitles file-hash match, so it's in sync), then one for the same release group, then the same Blu-ray or streaming source. A subtitle for a different episode or movie is never used.</li>
+            <li><b>Languages the file already has</b> as an embedded text track can be skipped (Settings → Subtitles → <i>Probe for embedded subtitles</i>).</li>
+            {% if subs.plex_mode %}
+            <li><b>Direct Mount:</b> the media is on a read-only mount, so subtitles are uploaded to the Plex item and show up in its subtitle menu.</li>
+            {% else %}
+            <li><b>Symlinks mode:</b> subtitles are saved next to the library file (<code>Movie (2020).en.srt</code>), so Plex, Jellyfin and Emby all pick them up.</li>
+            {% endif %}
+            <li><b>Tools → Subtitle Manager</b> shows what's missing, lets you search and pick by hand, fill in your whole library at once, and import your Bazarr settings.</li>
+        </ul>
+        {% if subs.bazarr %}
+        <div class="ob-callout">You already send new items to Bazarr. You can keep it, or turn subtitles on here and use <b>Subtitle Manager → Import from Bazarr</b> later to bring over its languages and logins.</div>
+        {% endif %}
+    </div>
+
+    <div class="ob-section">
+        <h3>Do you want Clyde to handle subtitles?</h3>
+        <div class="ob-choice-row">
+            <label class="ob-choice">
+                <input type="radio" name="subs_enable" value="on" {% if subs.enabled %}checked{% endif %}>
+                <span>Yes, download subtitles<small>Set up your languages and logins below</small></span>
+            </label>
+            <label class="ob-choice">
+                <input type="radio" name="subs_enable" value="off" {% if not subs.enabled %}checked{% endif %}>
+                <span>No thanks<small>Skip, or keep using Bazarr</small></span>
+            </label>
+        </div>
+
+        <div id="subs-panel" {% if not subs.enabled %}hidden{% endif %}>
+            <label for="subs_languages" class="onboarding-label">Languages:</label>
+            <div class="settings-description">Comma-separated codes, in the order you prefer, e.g. <code>eng</code> or <code>eng,spa</code> (<code>fre</code>, <code>ger</code>, <code>pt-BR</code>, <code>zho</code> …).</div>
+            <input type="text" id="subs_languages" class="onboarding-input" autocomplete="off" value="{{ subs.languages }}">
+
+            <h4 class="ob-sub-h">OpenSubtitles.com <span class="ob-sub-tag">recommended</span></h4>
+            <div class="settings-description">The largest catalog, and the only one with file-hash matches. Searching works without an account, but <b>downloading needs a free login</b>: sign up at <a href="https://www.opensubtitles.com/en/users/sign_up" target="_blank" rel="noopener">opensubtitles.com</a>. A free account can download about 20 subtitles a day; Clyde pauses it when that runs out and uses the other providers.</div>
+            <label for="os_username" class="onboarding-label">Username:</label>
+            <input type="text" id="os_username" class="onboarding-input" autocomplete="off" value="{{ subs.os_username }}">
+            <label for="os_password" class="onboarding-label">Password:</label>
+            <div class="ob-inline">
+                <input type="password" id="os_password" class="onboarding-input" autocomplete="new-password" placeholder="{{ '(saved, leave blank to keep)' if subs.os_password_set else '' }}">
+                <button type="button" class="ob-test-btn" data-test="opensubtitles">Test login</button>
+            </div>
+            <div class="ob-test-result" data-result="opensubtitles"></div>
+
+            <h4 class="ob-sub-h">More providers <span class="ob-sub-tag">optional, free</span></h4>
+            <div class="settings-description">Each one adds more subtitles, especially for TV. Leave a field blank to skip it. Gestdown (Addic7ed) and TVsubtitles are used without a key.</div>
+            <label for="subdl_key" class="onboarding-label">SubDL API key:</label>
+            <div class="settings-description">Make a free account at <a href="https://subdl.com" target="_blank" rel="noopener">subdl.com</a>, then open your account page → <b>API</b>.</div>
+            <div class="ob-inline">
+                <input type="text" id="subdl_key" class="onboarding-input" autocomplete="off" placeholder="{{ '(saved, leave blank to keep)' if subs.subdl_key_set else '' }}">
+                <button type="button" class="ob-test-btn" data-test="subdl">Test key</button>
+            </div>
+            <div class="ob-test-result" data-result="subdl"></div>
+
+            <label for="subsource_key" class="onboarding-label">SubSource API key:</label>
+            <div class="settings-description">Make a free account at <a href="https://subsource.net" target="_blank" rel="noopener">subsource.net</a>, then open your profile → <b>API</b>.</div>
+            <div class="ob-inline">
+                <input type="text" id="subsource_key" class="onboarding-input" autocomplete="off" placeholder="{{ '(saved, leave blank to keep)' if subs.subsource_key_set else '' }}">
+                <button type="button" class="ob-test-btn" data-test="subsource">Test key</button>
+            </div>
+            <div class="ob-test-result" data-result="subsource"></div>
+
+            <p class="ob-section-intro" style="margin-top:14px">Already have a library? After setup, <b>Tools → Subtitle Manager → Search all missing</b> fills it in.</p>
+        </div>
+        <p class="ob-msg" id="subs-msg"></p>
+    </div>
+</div>
+
+<style>
+.ob-sub-list{margin:0 0 6px 18px;padding:0;line-height:1.55}
+.ob-sub-list li{margin-bottom:6px}
+.ob-sub-h{margin:18px 0 4px;font-size:1rem}
+.ob-sub-tag{font-weight:400;font-size:.78em;opacity:.7}
+#subs-msg.ok{color:#4ade80}#subs-msg.bad{color:#f87171}
+</style>
+
+{% include 'onboarding_navigation.html' %}
+
+<script>
+(function () {
+    const panel = document.getElementById('subs-panel');
+    const msg = document.getElementById('subs-msg');
+    const val = id => document.getElementById(id).value;
+    const enabled = () => document.querySelector('input[name="subs_enable"]:checked').value === 'on';
+
+    document.querySelectorAll('input[name="subs_enable"]').forEach(r =>
+        r.addEventListener('change', () => { panel.hidden = !enabled(); msg.textContent = ''; }));
+
+    const payloads = {
+        opensubtitles: () => ({ username: val('os_username'), password: val('os_password') }),
+        subdl: () => ({ api_key: val('subdl_key') }),
+        subsource: () => ({ api_key: val('subsource_key') }),
+    };
+    document.querySelectorAll('.ob-test-btn[data-test]').forEach(button => {
+        button.addEventListener('click', async () => {
+            const what = button.dataset.test;
+            const result = document.querySelector(`.ob-test-result[data-result="${what}"]`);
+            const label = button.textContent;
+            button.disabled = true; button.textContent = 'Testing…';
+            result.className = 'ob-test-result'; result.textContent = '';
+            try {
+                const r = await fetch(`/onboarding/test/${what}`, { method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payloads[what]()) });
+                const d = await r.json();
+                result.classList.add(d.success ? (d.warning ? 'ob-warn' : 'ob-ok') : 'ob-err');
+                result.textContent = (d.success ? (d.warning ? '⚠ ' : '✓ ') : '✗ ') + d.message;
+            } catch (e) {
+                result.classList.add('ob-err'); result.textContent = '✗ Test failed: ' + e.message;
+            } finally { button.disabled = false; button.textContent = label; }
+        });
+    });
+
+    // Called by Next Step (onboarding_navigation.html): save, then move on.
+    window.saveSubtitleStep = async function () {
+        const body = enabled()
+            ? { enable: true, languages: val('subs_languages'), os_username: val('os_username'),
+                os_password: val('os_password'), subdl_key: val('subdl_key'), subsource_key: val('subsource_key') }
+            : { enable: false };
+        msg.className = 'ob-msg'; msg.textContent = 'Saving…';
+        try {
+            const r = await fetch('/onboarding/subtitles', { method: 'POST',
+                headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            const d = await r.json();
+            if (!d.success) throw new Error(d.error || 'failed');
+            msg.textContent = '';
+            return true;
+        } catch (e) {
+            msg.className = 'ob-msg bad'; msg.textContent = 'Could not save: ' + e.message;
+            return false;
+        }
+    };
+})();
+</script>
+{% endblock %}

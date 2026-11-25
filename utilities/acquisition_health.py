@@ -190,12 +190,14 @@ def _check_acquisition_providers(get_setting, providers_factory, usenet_factory)
 
     if nzb_configured:
         usenet_url = get_setting('Usenet Provider', 'url', '')
-        if not usenet_url:
+        builtin = (get_setting('Usenet Provider', 'provider', '') or '').strip().lower() == 'builtin'
+        if not usenet_url and not builtin:  # the built-in engine needs no URL
             failure('Usenet Provider', 'CONFIG_ERROR', 'Usenet provider is enabled but no URL is configured')
         else:
             try:
                 client = usenet_factory()
                 label = getattr(client, 'PROVIDER_NAME', 'Usenet Provider')
+                usenet_url = usenet_url or getattr(client, 'base_url', '')
                 ok, err = client.check_connectivity()
                 if ok:
                     statuses['usenet'] = True

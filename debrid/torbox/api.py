@@ -101,6 +101,12 @@ def make_request(
         if remaining > 0:
             raise ProviderUnavailableError(
                 f"Torbox torrent adds paused for another {int(remaining) + 1}s after rate limiting")
+        # TorBox's allow_zip defaults to true: a torrent with 100+ files
+        # (big anime / complete-series packs) is then stored as one .zip,
+        # which can't be symlinked or streamed per episode. Every add path
+        # (magnet, .torrent upload, URL) goes through here.
+        data = dict(data or {})
+        data.setdefault('allow_zip', 'false')
     headers = kwargs.get('headers', {})
     headers['Authorization'] = f'Bearer {api_key}'
     kwargs['headers'] = headers
@@ -201,11 +207,28 @@ def get_data_payload(result: Any) -> Any:
     return result
 
 
+MYLIST_PAGE = 1000  # TorBox's mylist answers at most this many per call
+MYLIST_MAX_PAGES = 100
+
+
 def get_all_torrents(api_key: str) -> List[Dict]:
-    result = make_request('GET', '/torrents/mylist', api_key, params={'bypass_cache': 'true'})
-    data = get_data_payload(result)
-    if isinstance(data, list):
-        return data
-    if isinstance(data, dict):
-        return [data]
-    return []
+    """Every torrent on the account. mylist returns up to 1000 per call, so
+    larger accounts are read page by page (offset/limit)."""
+    out: List[Dict] = []
+    seen = set()
+    for page in range(MYLIST_MAX_PAGES):
+        result = make_request('GET', '/torrents/mylist', api_key,
+                              params={'bypass_cache': 'true', 'offset': page * MYLIST_PAGE, 'limit': MYLIST_PAGE})
+        data = get_data_payload(result)
+        if isinstance(data, dict):
+            data = [data]
+        if not isinstance(data, list) or not data:
+            break
+        new = [t for t in data if not isinstance(t, dict) or t.get('id') not in seen]
+        if not new:
+            break  # offset ignored: the same page again
+        seen.update(t.get('id') for t in new if isinstance(t, dict))
+        out.extend(new)
+        if len(data) < MYLIST_PAGE:
+            break
+    return out

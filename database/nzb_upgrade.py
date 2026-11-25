@@ -1,11 +1,10 @@
 """
 NZB Upgrade Scanner — Upgrade Hub backend for Newznab indexers
 
-Fetches the latest NZBs from all enabled Newznab indexers (browse mode,
-up to 1000 per category per indexer) once per scan trigger, then matches
-candidates to library items using PTT-parsed title + year.
+Matches library items against the NZB feed history (database/nzb_feed_history.py),
+which keeps every release the enabled Newznab indexers post for the library.
 
-Matching strategy (no IMDB ID in feed):
+Matching strategy (when the indexer doesn't tag the release with an IMDb id):
   - PTT parses the NZB release name to extract title and year
   - Match requires BOTH:
       1. token_sort_ratio(query_title, nzb_title) >= 0.90
@@ -18,29 +17,17 @@ the year (2020 vs 2022) and strict title threshold would reject it.
 """
 
 import logging
-import threading
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional, Tuple
 
 from utilities.settings import load_config
+from utilities.hdr_tags import hdr_tags_mean_hdr
 
 logger = logging.getLogger(__name__)
 
 _CAT_MOVIE = '2000,2030,2040,2045,2050,2060'
 _CAT_TV    = '5000,5010,5020,5030,5040,5045,5060,5070'
-
-# Per-scan in-memory pool — reset at start of each scan trigger
-_nzb_pool_lock = threading.Lock()
-_nzb_pool: Dict[str, List[Dict]] = {}  # 'movie' | 'tv' -> results
-_nzb_pool_ready = False
-
-
-def _reset_pool() -> None:
-    global _nzb_pool, _nzb_pool_ready
-    with _nzb_pool_lock:
-        _nzb_pool = {}
-        _nzb_pool_ready = False
 
 
 def get_newznab_scrapers() -> List[Tuple[str, Dict]]:
@@ -55,36 +42,87 @@ def get_newznab_scrapers() -> List[Tuple[str, Dict]]:
     return scrapers
 
 
+# Ways to ask an indexer for its latest releases, tried in order until one
+# returns a feed. Indexers differ: AltHUB, NinjaCentral and NZBPlanet answer an
+# empty q= with 'Missing parameter' but accept t=search with no q; others may
+# only browse through t=movie / t=tvsearch.
+_BROWSE_MODES = {
+    'movie': ({'t': 'search'}, {'t': 'movie'}, {'t': 'search', 'q': ''}),
+    'tv':    ({'t': 'search'}, {'t': 'tvsearch'}, {'t': 'search', 'q': ''}),
+}
+_browse_mode_for: Dict[Tuple[str, str], int] = {}   # (url, kind) -> index that worked
+_browse_refused_logged: set = set()
+
+
+def _browse_kind(cats: str) -> str:
+    return 'tv' if str(cats).strip().startswith('5') else 'movie'
+
+
+def _read_feed(text: str) -> Tuple[Optional[List[ET.Element]], int, str]:
+    """(items, total, error). items is None when the indexer refused the request."""
+    root = ET.fromstring(text)
+    if root.tag == 'error':
+        return None, 0, root.get('description') or f"error {root.get('code', '')}".strip()
+    channel = root.find('channel')
+    if channel is None:
+        return None, 0, 'no feed in the response'
+    ns = 'http://www.newznab.com/DTD/2010/feeds/attributes/'
+    total = 0
+    resp_el = channel.find(f'{{{ns}}}response')
+    if resp_el is not None:
+        try:
+            total = int(resp_el.get('total', 0))
+        except (ValueError, TypeError):
+            pass
+    return channel.findall('item'), total, ''
+
+
 def _fetch_browse_page(url: str, api_key: str, cats: str, limit: int,
                         offset: int, timeout: int = 30) -> Tuple[List[ET.Element], int]:
-    """Fetch one browse page. Returns (items, total)."""
+    """Fetch one page of an indexer's latest releases. Returns (items, total)."""
     from routes.api_tracker import api as _api
     from usenet import indexer_quota
     if not indexer_quota.allow_url(url, 'api'):
         return [], 0
-    try:
-        r = _api.get(f'{url}/api', params={
-            'apikey': api_key, 't': 'search', 'q': '',
-            'cat': cats, 'limit': limit, 'offset': offset,
-        }, timeout=timeout)
-        if r.status_code != 200:
+    kind = _browse_kind(cats)
+    modes = _BROWSE_MODES[kind]
+    known = _browse_mode_for.get((url, kind))
+    order = [known] if known is not None else list(range(len(modes)))
+    errors = []
+    for i in order:
+        params = {'apikey': api_key, **modes[i], 'cat': cats, 'limit': limit, 'offset': offset,
+                  # extended=1: each release carries the indexer's own IMDb id
+                  'extended': 1}
+        try:
+            r = _api.get(f'{url}/api', params=params, timeout=timeout)
+            if r.status_code != 200:
+                # Rate limit / outage, not a refusal of this request: try later.
+                logger.warning(f'[NZB_UPGRADE] Browse {url}: HTTP {r.status_code}')
+                return [], 0
+            items, total, err = _read_feed(r.text)
+        except Exception as e:
+            logger.warning(f'[NZB_UPGRADE] Browse error {url}: {e}')
             return [], 0
-        root = ET.fromstring(r.text)
-        channel = root.find('channel')
-        if channel is None:
-            return [], 0
-        ns = 'http://www.newznab.com/DTD/2010/feeds/attributes/'
-        total = 0
-        resp_el = channel.find(f'{{{ns}}}response')
-        if resp_el is not None:
-            try:
-                total = int(resp_el.get('total', 0))
-            except (ValueError, TypeError):
-                pass
-        return channel.findall('item'), total
-    except Exception as e:
-        logger.warning(f'[NZB_UPGRADE] Browse error {url}: {e}')
+        if items is None:
+            errors.append(f"{modes[i]['t']}{'' if 'q' not in modes[i] else ' q='}: {err}")
+            continue
+        if known is None:
+            _browse_mode_for[(url, kind)] = i
+            if i:
+                logger.info(f"[NZB_UPGRADE] {url}: latest {kind} releases read with "
+                            f"t={modes[i]['t']}{' q=' if 'q' in modes[i] else ''}")
+        return items, total
+    if known is not None:
+        # What worked before was refused now: try every way again next time.
+        _browse_mode_for.pop((url, kind), None)
+        logger.info(f"[NZB_UPGRADE] {url} refused its usual latest-{kind} request ({errors[0]})")
         return [], 0
+    if (url, kind) not in _browse_refused_logged:
+        _browse_refused_logged.add((url, kind))
+        logger.warning(f"[NZB_UPGRADE] {url} refused every way of listing its latest {kind} "
+                       f"releases ({'; '.join(errors)}), so the Upgrade Hub can't use it. "
+                       f"Please report this with the indexer's name.")
+    return [], 0
 
 
 def _parse_items(items: List[ET.Element], instance: str) -> List[Dict]:
@@ -130,6 +168,13 @@ def _parse_items(items: List[ET.Element], instance: str) -> List[Dict]:
         pub_date = pub_date_el.text.strip() if pub_date_el is not None and pub_date_el.text else ''
         size_gb = round(size_bytes / (1024 ** 3), 2) if size_bytes else 0.0
 
+        release_imdb = ''
+        for attr in item.findall('newznab:attr', ns):
+            if attr.get('name') == 'imdb':
+                from scraper.newznab import _normalize_imdb
+                release_imdb = _normalize_imdb(attr.get('value', ''))
+                break
+
         try:
             ptt = ptt_parse(title)
         except Exception:
@@ -152,9 +197,10 @@ def _parse_items(items: List[ET.Element], instance: str) -> List[Dict]:
             'episode': ptt.get('episodes', [None])[0] if ptt.get('episodes') else None,
             'episodes': ptt.get('episodes', []),
             'hdr': ptt.get('hdr', []),
-            'is_hdr': bool(ptt.get('hdr')),
+            'is_hdr': hdr_tags_mean_hdr(ptt.get('hdr')),  # 'SDR' is not HDR
             'trash': ptt.get('trash', False),
             'original_title': title,
+            'newznab_imdb': release_imdb,
         }
 
         # Skip results outside usenet retention window
@@ -178,78 +224,6 @@ def _parse_items(items: List[ET.Element], instance: str) -> List[Dict]:
     return results
 
 
-def _fetch_instance_category(instance: str, settings: Dict, cats: str,
-                              max_items: int = 1000) -> List[Dict]:
-    """Fetch up to max_items NZBs from one indexer for one category, paginating as needed."""
-    url = settings.get('url', '').rstrip('/')
-    api_key = settings.get('api_key', '').strip()
-    if not url or not api_key:
-        return []
-
-    page_limit = min(int(settings.get('browse_limit', 100)), 1000)
-    all_results: List[Dict] = []
-    offset = 0
-
-    while len(all_results) < max_items:
-        fetch_size = min(page_limit, max_items - len(all_results))
-        items, total = _fetch_browse_page(url, api_key, cats, fetch_size, offset)
-        if not items:
-            break
-        all_results.extend(_parse_items(items, instance))
-        offset += len(items)
-        if offset >= min(total, max_items) or len(items) < fetch_size:
-            break
-
-    logger.info(f'[NZB_UPGRADE] {instance} ({cats[:4]}…): fetched {len(all_results)} NZBs')
-    return all_results
-
-
-def fetch_nzb_pool(scrapers: List[Tuple[str, Dict]], max_items: int = 1000) -> Dict[str, List[Dict]]:
-    """Fetch latest NZBs from all indexers in parallel. Returns {'movie': [...], 'tv': [...]}."""
-    global _nzb_pool, _nzb_pool_ready
-    _reset_pool()
-
-    if not scrapers:
-        return {'movie': [], 'tv': []}
-
-    tasks = [(inst, cfg, 'movie', _CAT_MOVIE) for inst, cfg in scrapers] + \
-            [(inst, cfg, 'tv', _CAT_TV)    for inst, cfg in scrapers]
-
-    raw: Dict[str, List[Dict]] = {'movie': [], 'tv': []}
-    with ThreadPoolExecutor(max_workers=min(len(tasks), 8)) as pool:
-        future_map = {
-            pool.submit(_fetch_instance_category, inst, cfg, cats, max_items): cat
-            for inst, cfg, cat, cats in tasks
-        }
-        for fut in as_completed(future_map):
-            cat = future_map[fut]
-            try:
-                raw[cat].extend(fut.result())
-            except Exception as e:
-                logger.warning(f'[NZB_UPGRADE] Pool fetch error: {e}')
-
-    # Deduplicate by guid across indexers
-    deduped: Dict[str, List[Dict]] = {}
-    for cat, results in raw.items():
-        seen: set = set()
-        unique = []
-        for r in results:
-            guid = (r.get('parsed_info') or {}).get('guid') or r.get('nzb_url', '')
-            if guid and guid not in seen:
-                seen.add(guid)
-                unique.append(r)
-            elif not guid:
-                unique.append(r)
-        deduped[cat] = unique
-        logger.info(f'[NZB_UPGRADE] Pool ready: {len(unique)} unique {cat} NZBs')
-
-    with _nzb_pool_lock:
-        _nzb_pool = deduped
-        _nzb_pool_ready = True
-
-    return deduped
-
-
 # ---------------------------------------------------------------------------
 # Title + year matching against pool
 # ---------------------------------------------------------------------------
@@ -263,9 +237,16 @@ def _norm(s: str) -> str:
 
 
 def _filter_pool_for_item(pool: List[Dict], title: str, year: Optional[int],
-                           title_threshold: float = 0.90) -> List[Dict]:
+                           title_threshold: float = 0.90, imdb_id: str = '',
+                           trust_imdb: bool = True) -> List[Dict]:
     """
     Filter pool to candidates matching title + year.
+
+    A release the indexer tags with the item's IMDb id matches whatever its
+    title. With trust_imdb (movies), a release tagged with another title's id
+    never matches. TV tags are less reliable (NZBGeek has tagged a show's
+    episode with an unrelated id), so for TV a different id falls back to the
+    title + year match below, like an untagged release.
 
     Requires:
       1. token_sort_ratio(query_title, nzb_ptt_title) >= title_threshold
@@ -275,10 +256,19 @@ def _filter_pool_for_item(pool: List[Dict], title: str, year: Optional[int],
     0.90 to reject unrelated titles that share only common words like "The".
     """
     from rapidfuzz import fuzz as _fuzz
+    from scraper.newznab import _normalize_imdb
     norm_query = _norm(title)
+    want_imdb = _normalize_imdb(imdb_id or '')
     candidates = []
     for r in pool:
         pi = r.get('parsed_info') or {}
+        release_imdb = pi.get('newznab_imdb') or ''
+        if release_imdb and want_imdb:
+            if release_imdb == want_imdb:
+                candidates.append(r)
+                continue
+            if trust_imdb:
+                continue
         nzb_title = pi.get('title') or r.get('title', '')
         nzb_year  = pi.get('year')
 
@@ -337,7 +327,8 @@ def scan_nzb_movie(item: Dict, pool_movie: List[Dict],
     version = (item.get('version') or default_version).rstrip('*').strip()
     vs = _get_version_settings(version)
 
-    candidates = _filter_pool_for_item(pool_movie, item['title'], item.get('year'))
+    candidates = _filter_pool_for_item(pool_movie, item['title'], item.get('year'),
+                                       imdb_id=item.get('imdb_id') or '')
     if not candidates:
         return None
 
@@ -405,7 +396,8 @@ def scan_nzb_episode(item: Dict, pool_tv: List[Dict],
     if season is None or episode is None:
         return None
 
-    title_candidates = _filter_pool_for_item(pool_tv, item['title'], item.get('year'))
+    title_candidates = _filter_pool_for_item(pool_tv, item['title'], item.get('year'),
+                                             imdb_id=item.get('imdb_id') or '', trust_imdb=False)
     candidates = _filter_pool_for_episode(title_candidates, season, episode)
     if not candidates:
         return None
@@ -502,7 +494,8 @@ def scan_nzb_season_pack(imdb_id: str, season_num: int, season_eps: List[Dict],
     version = (sample.get('version') or default_version).rstrip('*').strip()
     vs = _get_version_settings(version)
 
-    title_candidates = _filter_pool_for_item(pool_tv, sample['title'], sample.get('year'))
+    title_candidates = _filter_pool_for_item(pool_tv, sample['title'], sample.get('year'),
+                                             imdb_id=imdb_id or '', trust_imdb=False)
     pack_results = _filter_pool_for_pack(title_candidates, season_num)
     if not pack_results:
         return None
@@ -570,21 +563,24 @@ def scan_nzb_upgrades(
     progress_callback=None,
 ) -> Tuple[List[Dict], List[Dict]]:
     """
-    Fetch latest NZBs once (bulk pool), then score each library item against
-    matching candidates using title+year filtering.
+    Bring the NZB feed history up to date (only what's new since the last sync),
+    then score each library item against the history's releases for it.
     """
+    from database.nzb_feed_history import sync_feeds, load_pool, HISTORY_DAYS
     scrapers = get_newznab_scrapers()
     if not scrapers:
         logger.info('[NZB_UPGRADE] No enabled Newznab scrapers — skipping NZB scan')
         return [], []
 
-    logger.info(f'[NZB_UPGRADE] Fetching NZB pool from {len(scrapers)} indexer(s)…')
-    pool = fetch_nzb_pool(scrapers, max_items=1000)
+    sync_feeds(scrapers)
+    pool = load_pool()
     pool_movie = pool.get('movie', [])
     pool_tv    = pool.get('tv', [])
+    logger.info(f'[NZB_UPGRADE] Feed history: {len(pool_movie)} movie and {len(pool_tv)} TV '
+                f'release(s) from the last {HISTORY_DAYS} days')
 
     if not pool_movie and not pool_tv:
-        logger.info('[NZB_UPGRADE] NZB pool empty — skipping NZB scan')
+        logger.info('[NZB_UPGRADE] NZB feed history has nothing for the library yet — skipping NZB scan')
         return [], []
 
     upgrade_candidates: List[Dict] = []

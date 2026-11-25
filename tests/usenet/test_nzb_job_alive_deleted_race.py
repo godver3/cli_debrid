@@ -91,6 +91,9 @@ def _load():
     spec = importlib.util.spec_from_file_location('climount_client_alive_test', path)
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
+    # These tests are about cli_mount: pin the backend, whatever config an
+    # earlier test left behind (new installs default to the built-in mount).
+    m._provider_key = lambda: "climount"
     return m, get_calls
 
 
