@@ -398,6 +398,28 @@ class UpgradingQueue:
                 del self.upgrades_data[item_id]
         self.save_upgrades_data()
 
+    def _pass_order(self):
+        """Items in the order one pass should reach them.
+
+        Hub-queued magnets first, then never-searched items, then the longest
+        since their last search. With a fixed order, a pass that ran out of
+        budget always stopped at the same place and the items after it were
+        never searched.
+        """
+        try:
+            from database.zilean_upgrade import _queued_magnets, _ensure_cache_initialized
+            _ensure_cache_initialized()
+            hub = set(_queued_magnets)
+        except Exception:
+            hub = set()
+        never = datetime.min
+
+        def key(item):
+            item_id = item.get('id')
+            return (0 if item_id in hub else 1, self.last_scrape_times.get(item_id) or never)
+
+        return sorted(self.items, key=key)
+
     def process(self, queue_manager=None):
         current_time = datetime.now()
         # Each upgrade search is a full scrape. Doing every due item in one pass
@@ -419,7 +441,7 @@ class UpgradingQueue:
                     self._run_daily_delayed_upgrade_scrape(delayed_days)
                 finally:
                     self._last_delayed_upgrade_run_date = today
-        for item in self.items[:]:  # Create a copy of the list to iterate over
+        for item in self._pass_order():
             try:
                 item_id = item['id']
 
@@ -465,10 +487,11 @@ class UpgradingQueue:
                     logging.debug(f"Item {item_id} has been in the Upgrading queue for {time_in_queue}.")
 
                     # Get the configured duration from settings, default to 24 hours if blank or invalid
+                    # Stored as text by the old Settings page, as a number by the Upgrade Hub.
                     try:
-                        setting_value = get_setting('Debug', 'upgrade_queue_duration_hours', '24')
-                        queue_duration_hours = int(setting_value) if setting_value.strip() else 24
-                    except (ValueError, AttributeError):
+                        setting_value = str(get_setting('Debug', 'upgrade_queue_duration_hours', '24') or '').strip()
+                        queue_duration_hours = int(float(setting_value)) if setting_value else 24
+                    except (ValueError, TypeError):
                         queue_duration_hours = 24
                     max_duration = timedelta(hours=queue_duration_hours)
 

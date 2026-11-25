@@ -176,6 +176,25 @@ def test_full_scan_with_only_the_scraper_source(hub_db, app_settings, monkeypatc
     assert iid in uhs.last_checked_map([iid])
 
 
+def test_scan_limit_does_not_pin_the_scraper_rotation_to_the_first_rows(hub_db, app_settings, monkeypatch):
+    # Scan Limit caps the Zilean/NZB phases; the scraper phase picks its own
+    # oldest-checked slice from the whole library.
+    import database.zilean_upgrade as zu
+    import database.upgrade_hub_scrapers as uhs
+    app_settings['Upgrade Hub'] = {'upgrade_source': 'none', 'use_scrapers': True, 'scraper_checks_per_scan': 10}
+    conn = hub_db()
+    ids = [_insert(conn, type='movie', title=f'M{n}', imdb_id=f'tt{n}', tmdb_id=str(n), year=2025,
+                   filled_by_file=f'M{n}.2025.1080p.WEB.mkv', size=5.0) for n in (1, 2, 3)]
+    conn.close()
+    monkeypatch.setattr(zu, '_save_scan_results_to_db', lambda *a, **k: None)
+    seen = []
+    with mock.patch.object(uhs, '_scan_item', side_effect=lambda it, *a, **k: seen.append(it['id'])), \
+         mock.patch('database.upgrade_hub_activity.log_hub_activity'):
+        out = zu.scan_for_upgrades(scan_limit=1)
+    assert 'error' not in out, out
+    assert sorted(seen) == sorted(ids)
+
+
 def test_scan_with_no_source_at_all_says_so(hub_db, app_settings):
     import database.zilean_upgrade as zu
     app_settings['Upgrade Hub'] = {'upgrade_source': 'none', 'use_scrapers': False}
@@ -248,6 +267,67 @@ def test_upgrading_pass_stops_starting_searches_after_its_budget(hub_db, app_set
         # Next pass picks up where it left off: item 1 isn't due again for an hour.
         q.process()
         assert searched == [1, 2]
+
+
+def _queue_with(app_settings, ids, duration='24'):
+    import queues.upgrading_queue as uq
+    app_settings['Scraping'] = {'enable_upgrading': True}
+    app_settings['Debug'] = {'upgrade_queue_duration_hours': duration}
+    q = uq.UpgradingQueue()
+    q.items = [{'id': i, 'title': f'T{i}', 'type': 'movie', 'imdb_id': f'tt{i}', 'version': '1080p'}
+               for i in ids]
+    return uq, q
+
+
+def test_items_cut_off_by_the_budget_go_first_next_time(hub_db, app_settings):
+    # With a fixed order, an hour later item 1 was due again and took the whole
+    # budget, so items after it were never searched.
+    from datetime import datetime, timedelta
+    uq, q = _queue_with(app_settings, (1, 2, 3))
+    t0 = datetime(2026, 1, 1, 12, 0)
+    q.upgrade_times = {i: {'start_time': t0, 'time_added': 'x'} for i in (1, 2, 3)}
+    clock = [0.0]
+    searched = []
+
+    def fake_scrape(item, queue_manager=None):
+        searched.append(item['id'])
+        clock[0] += uq.PASS_BUDGET_SECONDS + 1
+
+    class FakeDT(datetime):
+        now_val = t0
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls.now_val
+
+    with mock.patch.object(uq.time, 'monotonic', side_effect=lambda: clock[0]), \
+         mock.patch.object(uq, 'datetime', FakeDT), \
+         mock.patch.object(q, 'hourly_scrape', side_effect=fake_scrape), \
+         mock.patch.object(q, 'save_upgrade_times'), mock.patch.object(q, 'save_upgrades_data'):
+        for minutes in (0, 61, 122):  # item 1 is due again on every one of these passes
+            FakeDT.now_val = t0 + timedelta(minutes=minutes)
+            q.process()
+    assert searched == [1, 2, 3]
+
+
+def test_hub_queued_magnets_go_before_ordinary_searches(hub_db, app_settings):
+    import database.zilean_upgrade as zu
+    uq, q = _queue_with(app_settings, (1, 2, 3))
+    zu._queued_magnets[3] = {'new_magnet': 'magnet:?xt=urn:btih:' + 'e' * 40}
+    assert [i['id'] for i in q._pass_order()] == [3, 1, 2]
+
+
+@pytest.mark.parametrize('stored', ['48', 48, 48.0])
+def test_upgrade_window_reads_text_and_numbers(hub_db, app_settings, stored):
+    # The old Settings page stored '48'; the Upgrade Hub stores 48.
+    from datetime import datetime, timedelta
+    uq, q = _queue_with(app_settings, (7,), duration=stored)
+    q.upgrade_times = {7: {'start_time': datetime.now() - timedelta(hours=30), 'time_added': 'x'}}
+    q.last_scrape_times = {7: datetime.now()}  # not due, so only the timeout check runs
+    with mock.patch.object(q, 'save_upgrade_times'), mock.patch.object(q, 'save_upgrades_data'), \
+         mock.patch('database.update_media_item_state') as set_state:
+        q.process()
+    assert not set_state.called  # 30h is inside a 48h window
 
 
 def test_upgrading_queue_runs_every_five_minutes():
@@ -331,8 +411,18 @@ def test_status_counts_scrapers_as_a_source(hub_db):
     assert body['scrapers_enabled'] is True
 
 
-def test_collection_uses_the_release_age_setting_not_a_fixed_7():
+@pytest.mark.parametrize('stored, expected', [(None, 7), ('30', 30), (60, 60), ('', 7), ('x', 7), (-5, 0)])
+def test_release_age_setting(app_settings, stored, expected):
+    from utilities.settings import get_upgrade_max_release_age_days
+    if stored is not None:
+        app_settings['Scraping'] = {'upgrade_max_release_age_days': stored}
+    assert get_upgrade_max_release_age_days() == expected
+
+
+@pytest.mark.parametrize('path', ['database/collected_items.py', 'utilities/local_library_scan.py'])
+def test_both_collection_paths_use_the_release_age_setting(path):
+    # Items collected by the Plex/symlink check and by the local library scan.
     from pathlib import Path
-    src = (Path(__file__).resolve().parents[2] / 'database' / 'collected_items.py').read_text()
+    src = (Path(__file__).resolve().parents[2] / path).read_text()
     assert 'days_since_release <= 7' not in src
-    assert "'upgrade_max_release_age_days'" in src or '"upgrade_max_release_age_days"' in src
+    assert 'days_since_release <= get_upgrade_max_release_age_days()' in src

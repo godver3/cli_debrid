@@ -1357,26 +1357,34 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
                     logger.info(f"[UPGRADE_HUB] NAS exclusion: skipped {skipped} items "
                                 f"(matched configured NAS path prefixes)")
 
-        # Apply scan limit before splitting by type
+        # Deduplicate movies by (imdb_id, version): keep only the largest file per
+        # group. Torrents often contain extras (interviews, samples, featurettes)
+        # that end up as separate Collected rows with the same imdb_id. Scanning
+        # them individually produces spurious high-% upgrades (a 0.09 GB Sample.mkv
+        # looks like a +300% improvement vs. any real release).
+        def _dedupe_movies(items):
+            best: dict = {}
+            for _m in items:
+                _key = (_m['imdb_id'], (_m.get('version') or default_version).rstrip('*').strip())
+                _existing = best.get(_key)
+                if _existing is None or _item_size_gb(_m) > _item_size_gb(_existing):
+                    best[_key] = _m
+            return list(best.values())
+
+        # The scraper phase picks its own slice (oldest-checked first, capped by
+        # "Items Searched Per Scan"), so it gets the whole filtered library. Cutting
+        # it to the scan limit first kept it on the same first N rows forever.
+        scraper_pool = (_dedupe_movies([i for i in all_collected if i['type'] == 'movie'])
+                        + [i for i in all_collected if i['type'] == 'episode'])
+
+        # Apply scan limit before splitting by type (Zilean / NZB phases)
         if scan_limit and scan_limit > 0 and len(all_collected) > scan_limit:
             logger.info(f"[UPGRADE_HUB] Scan limit {scan_limit}: scanning {scan_limit}/{len(all_collected)} items")
             all_collected = all_collected[:scan_limit]
 
         movies_raw = [i for i in all_collected if i['type'] == 'movie']
         episodes   = [i for i in all_collected if i['type'] == 'episode']
-
-        # Deduplicate movies by (imdb_id, version): keep only the largest file per
-        # group. Torrents often contain extras (interviews, samples, featurettes)
-        # that end up as separate Collected rows with the same imdb_id. Scanning
-        # them individually produces spurious high-% upgrades (a 0.09 GB Sample.mkv
-        # looks like a +300% improvement vs. any real release).
-        _movie_best: dict = {}
-        for _m in movies_raw:
-            _key = (_m['imdb_id'], (_m.get('version') or default_version).rstrip('*').strip())
-            _existing = _movie_best.get(_key)
-            if _existing is None or _item_size_gb(_m) > _item_size_gb(_existing):
-                _movie_best[_key] = _m
-        movies = list(_movie_best.values())
+        movies = _dedupe_movies(movies_raw)
         _dedup_removed = len(movies_raw) - len(movies)
         if _dedup_removed:
             logger.info(f"[UPGRADE_HUB] Deduped {_dedup_removed} extra/duplicate movie files "
@@ -1702,11 +1710,11 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
         # ── Phase D: search with the user's own scrapers ─────────────────────
         # A rotating slice of the library (oldest-checked first), so releases
         # that never reach Zilean or the NZB browse feed are still found.
-        if use_scrapers and (movies or episodes):
+        if use_scrapers and scraper_pool:
             try:
                 from database.upgrade_hub_scrapers import scan_with_scrapers
                 _scan_progress.update({'phase': 'scrapers', 'done': 0,
-                                       'total': min(_scr['limit'], len(movies) + len(episodes))})
+                                       'total': min(_scr['limit'], len(scraper_pool))})
 
                 def _scr_progress(done, total):
                     with _state_lock:
@@ -1714,7 +1722,7 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
                         _scan_progress['total'] = total
 
                 scr_upgrades = scan_with_scrapers(
-                    movies + episodes, threshold, default_version,
+                    scraper_pool, threshold, default_version,
                     not_wanted_hashes=_not_wanted_hashes, limit=_scr['limit'],
                     progress_callback=_scr_progress, errors=errors,
                 )
