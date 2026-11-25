@@ -182,3 +182,14 @@ def test_nzb_scan_syncs_then_matches_against_history(feed_db, app_settings):
     sync.assert_called_once_with(SCRAPERS)
     [c] = upgrades
     assert c['item_id'] == movie['id'] and c['new_magnet'] == 'https://idx/get/a'
+
+
+def test_browse_request_leaves_out_q():
+    # An empty q= gets 'Missing parameter' from several indexers.
+    import database.nzb_upgrade as nu
+    resp = mock.Mock(status_code=200, text='<rss><channel></channel></rss>')
+    with mock.patch('routes.api_tracker.api.get', return_value=resp) as get, \
+         mock.patch('usenet.indexer_quota.allow_url', return_value=True):
+        nu._fetch_browse_page('https://idx', 'k', '2000', 100, 0)
+    params = get.call_args.kwargs['params']
+    assert 'q' not in params and params['t'] == 'search' and params['extended'] == 1

@@ -50,8 +50,10 @@ def _fetch_browse_page(url: str, api_key: str, cats: str, limit: int,
     if not indexer_quota.allow_url(url, 'api'):
         return [], 0
     try:
+        # No q at all: several indexers (AltHUB, NinjaCentral, NZBPlanet) answer
+        # an empty q= with 'Missing parameter' and no results.
         r = _api.get(f'{url}/api', params={
-            'apikey': api_key, 't': 'search', 'q': '',
+            'apikey': api_key, 't': 'search',
             'cat': cats, 'limit': limit, 'offset': offset,
             # extended=1: each release carries the indexer's own IMDb id
             'extended': 1,
