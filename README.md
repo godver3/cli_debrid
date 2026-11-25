@@ -197,7 +197,7 @@ Clyde will always be free.
 
 cli_debrid is now called Clyde. Only the name and logo changed:
 
-- **Updating needs nothing from you.** The Docker image is still `godver3/cli_debrid`, and your config, database and logs stay where they are.
+- **Updating needs nothing from you.** The Docker image is still `godver3/cli_debrid`, and your config, database and logs stay where they are. Every build is also published as `godver3/clyde` with the same tags, so either name works.
 - **Environment variables, folder names and the GitHub address** keep the `cli_debrid` name for now, so existing compose files, scripts and links keep working.
 - **The Firefox extension** is still listed as *cli_debrid magnet assign*.
 
