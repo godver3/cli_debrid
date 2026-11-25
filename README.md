@@ -32,7 +32,7 @@ The easiest setup is a single container: Clyde with its **built-in mount**, whic
 
 ```bash
 # Linux with Docker Engine
-mkdir -p ${HOME}/cli_debrid && cd ${HOME}/cli_debrid
+mkdir -p ${HOME}/clyde && cd ${HOME}/clyde
 curl -o docker-compose.yml https://raw.githubusercontent.com/godver3/cli_debrid/dev/docker-compose.builtin.yml
 docker compose up -d
 ```
@@ -46,7 +46,7 @@ Then open Clyde at `http://your-server-ip:5000` and follow the onboarding wizard
 sudo mkdir -p /mnt/cli_mount /mnt/symlinks
 sudo chown 1000:1000 /mnt/cli_mount
 
-mkdir -p ${HOME}/cli_debrid && cd ${HOME}/cli_debrid
+mkdir -p ${HOME}/clyde && cd ${HOME}/clyde
 curl -o docker-compose.yml https://raw.githubusercontent.com/godver3/cli_debrid/dev/docker-compose.cli_mount.yml
 docker compose up -d
 ```
