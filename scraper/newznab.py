@@ -194,6 +194,32 @@ def _cache_set(key: str, results: List) -> None:
         _NZB_CACHE[key] = (time.monotonic(), results)
 
 
+# Native spellings in the country map; the English name is the one release
+# names use ("The.Traitors.India", "The.Traitors.Italy").
+_NATIVE_COUNTRY_NAMES = {'italia', 'brasil', 'deutschland', 'espana', 'nederland', 'sverige',
+                         'norge', 'danmark', 'suomi', 'polska', 'turkiye', 'srbija'}
+# Versions whose releases are tagged with the code itself ("The Traitors UK").
+_CODE_IN_RELEASE_NAMES = {'US', 'UK', 'GB', 'AU', 'NZ', 'CA'}
+
+
+def _text_search_title(title: str) -> str:
+    """The show title for a text search. "The Traitors (IN)" was searched as
+    "The Traitors IN S02E01", which matches none of its releases: they spell
+    the country out ("The.Traitors.India.S02..."). Codes releases use as-is
+    (UK, US, AU...) and titles without a tag are unchanged."""
+    from scraper.functions.filter_results import _COUNTRY_NAMES, _TRAILING_COUNTRY_TAG
+    m = _TRAILING_COUNTRY_TAG.search(title or '')
+    if not m:
+        return title
+    code = m.group(1).upper()
+    if code in _CODE_IN_RELEASE_NAMES:
+        return title
+    names = [n for n, c in _COUNTRY_NAMES.items() if c == code and n not in _NATIVE_COUNTRY_NAMES]
+    if not names:
+        return title
+    return f"{title[:m.start()].rstrip()} {names[0].replace('.', ' ').title()}"
+
+
 def _build_params_list(
     api_key: str,
     clean_imdb: str,
@@ -238,7 +264,7 @@ def _build_params_list(
                 id_params['ep'] = episode
             params_list.append(id_params)
         # 2. Title text search
-        query_parts = [title]
+        query_parts = [_text_search_title(title)]
         if season is not None:
             if episode is not None and not multi:
                 query_parts.append(f'S{season:02d}E{episode:02d}')
@@ -535,7 +561,7 @@ def prefetch_season(
                 continue
             if raw < _SEASON_PAGE:
                 break
-    q = _SANITIZE_RE.sub('', f'{title} S{season:02d}').strip()
+    q = _SANITIZE_RE.sub('', f'{_text_search_title(title)} S{season:02d}').strip()
     got = _get({'apikey': api_key, 't': 'search', 'q': q, 'cat': _CAT_TV, 'limit': _SEASON_PAGE})
     if got is None:
         complete = False
@@ -854,7 +880,7 @@ def scrape_newznab_season_aggregate(
                 except Exception:
                     pass
         # Title text search
-        q = _SANITIZE_RE.sub('', f'{title} S{season:02d}E{ep_num:02d}').strip()
+        q = _SANITIZE_RE.sub('', f'{_text_search_title(title)} S{season:02d}E{ep_num:02d}').strip()
         txt_params = {'apikey': api_key, 't': 'search', 'q': q, 'cat': cats, 'limit': 20}
         ck = _cache_key(ep_endpoint, txt_params)
         cached = _cache_get(ck)

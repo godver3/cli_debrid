@@ -119,3 +119,26 @@ class HelperTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class CountryTextSearchTests(unittest.TestCase):
+    """Newznab text searches spell a national version's country the way its
+    releases do: "The Traitors (IN)" was searched as "The Traitors IN S02E01"
+    and found none of the "The.Traitors.India.S02..." packs on DrunkenSlug."""
+
+    def test_search_title(self):
+        from scraper.newznab import _text_search_title
+        cases = {'The Traitors (IN)': 'The Traitors India', 'The Traitors (IT)': 'The Traitors Italy',
+                 'The Traitors (BR)': 'The Traitors Brazil', 'The Traitors (RS)': 'The Traitors Serbia',
+                 'The Traitors (IE)': 'The Traitors Ireland',
+                 # releases use these codes as-is
+                 'The Traitors (UK)': 'The Traitors (UK)', 'The Traitors (NZ)': 'The Traitors (NZ)',
+                 'The Traitors': 'The Traitors', 'Show (ZZ)': 'Show (ZZ)'}
+        for title, expected in cases.items():
+            with self.subTest(title=title):
+                self.assertEqual(expected, _text_search_title(title))
+
+    def test_episode_query_uses_it(self):
+        from scraper.newznab import _build_params_list
+        params = _build_params_list('k', '33347879', 'The Traitors (IN)', 2025, 'episode', 2, 1, True)
+        self.assertEqual(['The Traitors India S02'], [p['q'] for p in params if p.get('t') == 'search'])
