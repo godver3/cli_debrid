@@ -247,9 +247,10 @@ jobs:
       # version.txt, goes on top of the release, ended by a release-notes
       # marker (the in-app Release notes popup lists releases that have it).
       # A second marker records that this branch's build posted it to Discord,
-      # so a rebuild of the same version doesn't post twice; it is only written
-      # when the webhook is set, so a version built before the secret existed
-      # still posts on its next build. The main build posts once more, as stable.
+      # so a rebuild of the same version doesn't post twice. The post step adds
+      # it only after Discord accepted every message, so a failed post (or a
+      # version built before the webhook secret existed) is retried on the next
+      # build of that version. The main build posts once more, as stable.
       - name: Build release body
         id: notes
         run: |
@@ -265,7 +266,7 @@ jobs:
               cat "$NOTES"
               printf '\n\n---\n\n'
               echo "<!-- release-notes -->"
-              if [ "$POST" = true ] || [ "$ALREADY" = true ]; then echo "$POSTED"; fi
+              if [ "$ALREADY" = true ]; then echo "$POSTED"; fi
             fi
             echo "Version ${VERSION} (${{ github.ref_name }} branch), commit ${{ github.sha }}"
             echo ""
@@ -310,7 +311,7 @@ jobs:
             exit 0
           fi
           python3 - <<'EOF'
-          import json, os, time, urllib.request
+          import json, os, sys, time, urllib.error, urllib.request
 
           version = os.environ['VERSION']
           stable = os.environ['REF_NAME'] == 'main'
@@ -362,26 +363,40 @@ jobs:
                   embed.update(title=title, url=url)
               else:
                   embed['title'] = f"{title} ({i}/{len(chunks)})"
-              body = json.dumps({'username': 'Clyde releases', 'embeds': [embed],
+              # Discord refuses webhook names containing "clyde" (its old
+              # built-in bot) with a 400; the title carries the name instead.
+              body = json.dumps({'username': 'Release notes', 'embeds': [embed],
                                  'allowed_mentions': {'parse': []}}).encode()
               req = urllib.request.Request(os.environ['WEBHOOK'], data=body,
                                            headers={'Content-Type': 'application/json',
-                                                    'User-Agent': 'cli_debrid-release'})
-              urllib.request.urlopen(req, timeout=30).read()
+                                                    'User-Agent': 'clyde-release'})
+              try:
+                  urllib.request.urlopen(req, timeout=30).read()
+              except urllib.error.HTTPError as e:
+                  print(f"::error::Discord refused part {i}/{len(chunks)}: HTTP {e.code} "
+                        f"{e.read().decode('utf-8', 'replace')[:500]}")
+                  sys.exit(1)
               print(f"posted part {i}/{len(chunks)} ({len(chunk)} chars)")
               time.sleep(1)  # stay under the webhook rate limit
           EOF
+          # Posted: record it on the release so a rebuild doesn't post again.
+          POSTED="<!-- discord-posted:${REF_NAME} -->"
+          sed "s|^<!-- release-notes -->\$|&\n${POSTED}|" release_body.md > release_body_posted.md
+          gh release edit "v${VERSION}" --repo "$REPO" --notes-file release_body_posted.md
         env:
           WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
           REF_NAME: ${{ github.ref_name }}
           SERVER_URL: ${{ github.server_url }}
           REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # The dev build creates v<version> first, as a pre-release; the main build
       # only updates it to a full release, and GitHub doesn't move the "Latest"
       # badge on an update. Set it explicitly.
       - name: Mark main release as latest
-        if: github.ref_name == 'main'
+        # Also after a failed Discord post: that shouldn't keep the release
+        # from being marked latest.
+        if: ${{ !cancelled() && github.ref_name == 'main' && steps.release.outcome == 'success' }}
         run: gh release edit "v${{ env.VERSION }}" --latest --repo "${{ github.repository }}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
