@@ -1001,6 +1001,11 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 normalized_result['original_title'] = original_title  # Keep original torrent title
                 normalized_result['parsed_title'] = parsed_info.get('title', original_title)  # Store parsed title separately
                 normalized_result['resolution'] = parsed_info.get('resolution', 'Unknown')
+                # The indexer's own IMDb id for an NZB (newznab extended=1) survives
+                # the re-parse: the country filter trusts it for untagged releases.
+                _indexer_imdb = (result.get('parsed_info') or {}).get('newznab_imdb')
+                if _indexer_imdb:
+                    parsed_info['newznab_imdb'] = _indexer_imdb
                 normalized_result['parsed_info'] = parsed_info
                 # --- Pass through original target absolute episode (for anime XEM reverse look-up) ---
                 if episode_formats and isinstance(episode_formats, dict):
