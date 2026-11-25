@@ -112,10 +112,25 @@ MIN_MOVIE_SCORE = 162 + 54
 MIN_MOVIE_SCORE_NO_YEAR = 162
 
 
-# provider -> (monotonic until, reason). A provider that hit its download
-# quota or failed its login is skipped until then, so a bulk run doesn't ask
-# it again for every item.
+# provider -> (monotonic until, reason[, credentials fingerprint]). A provider
+# that hit its download quota or failed its login is skipped until then, so a
+# bulk run doesn't ask it again for every item. A login pause also records the
+# credentials it failed with and ends as soon as the saved ones change.
 _BLOCKED = {}
+
+#: Subtitle Settings keys holding provider logins / API keys.
+_CREDENTIAL_KEYS = ('opensubtitles_username', 'opensubtitles_password',
+                    'opensubtitles_org_username', 'opensubtitles_org_password',
+                    'subdl_api_key', 'subsource_api_key')
+
+
+def _credentials_fingerprint():
+    """Hash of the saved provider credentials, read from settings (not the
+    cached config), so a fix saved mid-run is seen at once."""
+    import hashlib
+    from utilities.settings import get_setting
+    raw = '\0'.join(str(get_setting('Subtitle Settings', k, '') or '') for k in _CREDENTIAL_KEYS)
+    return hashlib.sha256(raw.encode('utf-8', 'replace')).hexdigest()
 
 
 #: Prefix of the ServiceUnavailable a search raises when the site can't be
@@ -164,6 +179,23 @@ def blocked_providers():
     now = time.monotonic()
     for k in [k for k, v in _BLOCKED.items() if v[0] <= now]:
         _BLOCKED.pop(k, None)
+    login_paused = [k for k, v in _BLOCKED.items() if len(v) > 2 and v[2]]
+    if login_paused:
+        try:
+            current = _credentials_fingerprint()
+        except Exception:
+            current = None
+        changed = [k for k in login_paused if current and _BLOCKED[k][2] != current]
+        if changed:
+            # New login saved: try it on the next search instead of waiting
+            # out the pause, with the new credentials loaded.
+            for k in changed:
+                _BLOCKED.pop(k, None)
+            logging.info(f"[subs] credentials changed; resuming {', '.join(changed)}")
+            try:
+                config.reload()
+            except Exception as e:
+                logging.debug(f"[subs] config reload failed: {e}")
     return {k: v[1] for k, v in _BLOCKED.items()}
 
 
@@ -221,7 +253,14 @@ def _pool_class():
             secs, reason = _block_seconds(exc, name)
             if name not in _BLOCKED:
                 logging.warning(f"[subs] pausing provider {name} for {secs // 60} min: {reason}")
-            _BLOCKED[name] = (time.monotonic() + secs, reason)
+            fingerprint = None
+            from subliminal.exceptions import AuthenticationError, ConfigurationError
+            if isinstance(exc, (AuthenticationError, ConfigurationError)):
+                try:
+                    fingerprint = _credentials_fingerprint()
+                except Exception:
+                    fingerprint = None
+            _BLOCKED[name] = (time.monotonic() + secs, reason, fingerprint)
     return _TrackingPool
 
 

@@ -85,6 +85,36 @@ def test_quota_error_pauses_provider():
     assert 'opensubtitlescom' not in downsub.blocked_providers()
 
 
+def test_login_pause_ends_when_credentials_change():
+    """A login failure pauses the provider for an hour, but saving a new
+    login resumes it at once (Discord 2026-11-25: fixed password, still
+    'Paused providers: opensubtitlescom (login failed ...)')."""
+    from subliminal.exceptions import AuthenticationError, DownloadLimitExceeded
+    from utilities import downsub
+    downsub._BLOCKED.clear()
+    creds = {'opensubtitles_password': 'old'}
+    fake_get = lambda section, key, default=None: creds.get(key, default)
+    with mock.patch('utilities.settings.get_setting', side_effect=fake_get), \
+            mock.patch.object(downsub.config, 'reload') as reload:
+        pool = downsub._pool_class()(providers=['opensubtitlescom', 'subdl'])
+        try:
+            raise AuthenticationError('bad login')
+        except AuthenticationError:
+            pool._discard_provider('opensubtitlescom')
+        try:
+            raise DownloadLimitExceeded()
+        except DownloadLimitExceeded:
+            pool._discard_provider('subdl')
+        assert 'login failed' in downsub.blocked_providers()['opensubtitlescom']
+        assert not reload.called
+        creds['opensubtitles_password'] = 'new'
+        paused = downsub.blocked_providers()
+        assert 'opensubtitlescom' not in paused
+        assert 'subdl' in paused          # quota pauses don't care about logins
+        assert reload.called
+    downsub._BLOCKED.clear()
+
+
 def test_search_time_quota_error_pauses_with_its_reason():
     """subliminal discards a provider whose search failed outside the except
     block; the pool still knows why (quota: 6 h, not a 10-min 'unknown')."""

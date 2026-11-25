@@ -5,9 +5,9 @@
   </picture>
 </p>
 
-# Clyde
+# Clyde (formerly cli_debrid)
 
-*Formerly **cli_debrid**. Same app, same images and settings, new name. See [Renamed from cli_debrid](#renamed-from-cli_debrid).*
+*Same app, same images and settings, new name. See [Renamed from cli_debrid](#renamed-from-cli_debrid).*
 
 [![Dev version](https://img.shields.io/github/v/release/godver3/cli_debrid?include_prereleases&label=dev&color=orange)](https://github.com/godver3/cli_debrid/releases)
 [![Main version](https://img.shields.io/github/v/release/godver3/cli_debrid?label=main)](https://github.com/godver3/cli_debrid/releases/latest)
@@ -68,7 +68,7 @@ Clyde needs a mount for your debrid and/or Usenet files: its own built-in mount,
 |---|---|---|---|
 | [Built-in mount](https://godver3.github.io/cli_docs/integrations/builtin-mount/) | ✓ | ✓ | **Easiest.** Runs inside Clyde, no extra container |
 | [cli_mount](https://github.com/mash2k3/decypharr/tree/dev) ([setup](https://godver3.github.io/cli_docs/integrations/cli_mount/)) | ✓ | ✓ | All-in-one in its own container, built for Clyde |
-| [Decypharr](https://godver3.github.io/cli_docs/integrations/decypharr/) | ✓ | | All-in-one debrid mount |
+| [Decypharr](https://godver3.github.io/cli_docs/integrations/decypharr/) | ✓ | ✓ | All-in-one debrid and Usenet mount |
 | [Zurg](https://godver3.github.io/cli_docs/integrations/zurg/) + rclone | ✓ | ✓ (Zurg 2.0) | Long-standing Real-Debrid favourite |
 
 *If running on Windows, Developer Mode must be enabled to allow symlinking. Plex does not support symlinks on Windows, so Jellyfin is the better choice there when using symlinks.*
@@ -133,6 +133,7 @@ Content sources ──> Scrapers ──> Debrid / Usenet ──> Mount ──> L
 - **Mount page:** queue, file browser, live streams, per-server stats and the mount log, with Start and Stop that don't depend on the rest of the app.
 - **Health and repair:** missing Usenet articles and dead debrid links are proven, not guessed, and the release is replaced automatically.
 - **Extras:** WebDAV for a media server on another machine, Movies and TV Shows folders out of the box, password-protected RAR and 7z releases (password from the NZB), and a Migrate from cli_mount tab that keeps your existing jobs. See the [built-in mount guide](https://godver3.github.io/cli_docs/integrations/builtin-mount/).
+- **Built on Decypharr:** the mount engine adapts parts of [Decypharr](https://github.com/sirrobot01/decypharr) by way of mash2k3's [cli_mount](https://github.com/mash2k3/decypharr/tree/dev) fork (Usenet decoding and RAR / par2 handling); see [engine/NOTICE.md](engine/NOTICE.md).
 
 ### Getting content
 - **Debrid providers:** Real-Debrid, AllDebrid, Premiumize, TorBox, Debrid-Link and HighWay.
@@ -229,7 +230,7 @@ Thanks to:
 
 - Various other projects that have come before this one, and likely do things better in many ways
 - Specific thanks to the NyaaPy, PTT/Parsett, and downsub libraries (https://github.com/JuanjoSalvador/NyaaPy, https://github.com/dreulavelle/PTT, and https://github.com/ericvlog/Downsub)
-- mash2k3 for [cli_mount](https://github.com/mash2k3/decypharr/tree/dev), the Decypharr fork that powers Clyde's debrid and Usenet mounting, and sirrobot01 for the original [Decypharr](https://github.com/sirrobot01/decypharr)
+- mash2k3 for [cli_mount](https://github.com/mash2k3/decypharr/tree/dev), the Decypharr fork built alongside Clyde, which parts of the built-in mount are adapted from, and sirrobot01 for the original [Decypharr](https://github.com/sirrobot01/decypharr)
 - The original creator of plex_debrid.
 - Helpful communities of content creators
 
