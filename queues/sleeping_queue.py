@@ -140,13 +140,23 @@ class SleepingQueue:
         sleep_duration = timedelta(minutes=sleep_duration_minutes) # Use the setting
 
         items_to_wake = []
+        items_to_wake_uncounted = []
         items_to_blacklist = []
         config = load_config()
+        from queues.release_timing import in_release_day_window, RELEASE_DAY_RETRY
 
         for item in self.items:
             item_id = item['id']
             item_identifier = queue_manager.generate_identifier(item)
             #logging.debug(f"Processing sleeping item: {item_identifier}")
+
+            # A movie on its release day is searched hourly, and those wakes
+            # don't count toward the wake limit (release_timing.py).
+            if in_release_day_window(item, current_time):
+                time_asleep = current_time - self.sleeping_queue_times.setdefault(item_id, current_time)
+                if time_asleep >= RELEASE_DAY_RETRY:
+                    items_to_wake_uncounted.append(item)
+                continue
 
             # Get version-specific wake limit if it exists
             version = item.get('version', 'Default')
@@ -169,10 +179,12 @@ class SleepingQueue:
                 else:
                     items_to_blacklist.append(item)
 
+        if items_to_wake_uncounted:
+            self.wake_items(queue_manager, items_to_wake_uncounted, count=False)
         self.wake_items(queue_manager, items_to_wake)
         self.blacklist_items(queue_manager, items_to_blacklist)
 
-    def wake_items(self, queue_manager, items):
+    def wake_items(self, queue_manager, items, count=True):
         logging.debug(f"Attempting to wake {len(items)} items")
         for item in items:
             item_id = item['id']
@@ -182,8 +194,8 @@ class SleepingQueue:
             old_wake_count = get_wake_count(item_id) 
             logging.debug(f"Waking item: {item_identifier} (Current wake count: {old_wake_count})")
 
-            # Increment wake count in DB
-            new_wake_count = increment_wake_count(item_id) 
+            # Increment wake count in DB (not for a movie's release-day retries)
+            new_wake_count = increment_wake_count(item_id) if count else old_wake_count
             queue_manager.move_to_wanted(item, "Sleeping")
             # self.remove_item(item) # remove_item is called within move_to_wanted
             logging.info(f"Moved item {item_identifier} from Sleeping to Wanted queue (Wake count: {old_wake_count} -> {new_wake_count})")

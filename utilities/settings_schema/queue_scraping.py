@@ -38,7 +38,7 @@ SECTIONS = {
         },
         "movie_airtime_offset": {
             "type": "string",
-            "description": "Hours after midnight to start scraping for new movies",
+            "description": "Hours after midnight at the start of a movie's release date to start searching for it (movies have no release time). Searches that find nothing in the first 24 hours after that are retried hourly and don't count toward the wake limit. Negative values start earlier.",
             "default": "0"
         },
         "episode_airtime_offset": {
