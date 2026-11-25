@@ -14,7 +14,7 @@ whole library over time instead of re-searching the same items.
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Callable, Dict, List, Optional
 
 from database.core import get_db_connection
@@ -116,6 +116,48 @@ def pick_items_to_check(items: List[Dict], limit: int) -> List[Dict]:
         )
 
     return sorted(items, key=key)[:limit]
+
+
+def _release_age_days(item: Dict, today: date) -> Optional[int]:
+    raw = item.get('release_date')
+    if not raw:
+        return None
+    try:
+        released = raw if isinstance(raw, date) else datetime.strptime(str(raw)[:10], '%Y-%m-%d').date()
+    except ValueError:
+        return None
+    return (today - released).days
+
+
+def released_within(items: List[Dict], days: int, today: Optional[date] = None) -> List[Dict]:
+    """Items released in the last ``days`` days (today included); unknown or
+    future release dates are left out."""
+    today = today or datetime.now().date()
+    days = max(0, int(days))
+    out = []
+    for item in items:
+        age = _release_age_days(item, today)
+        if age is not None and 0 <= age <= days:
+            out.append(item)
+    return out
+
+
+def count_recent_items(days: int) -> Dict[str, int]:
+    """How many Collected items "Search recent releases" would search for ``days``.
+
+    A preview: it skips the genre / NAS exclusions and the duplicate-movie-file
+    dedupe the scan applies, so the scan may search a few fewer.
+    """
+    from database.database_reading import get_all_media_items
+    rows = [dict(r) for r in get_all_media_items(
+        state='Collected', columns=['id', 'type', 'imdb_id', 'release_date']) if r['imdb_id']]
+    recent = released_within(rows, days)
+    return {
+        'items': len(recent),
+        'movies': sum(1 for r in recent if r['type'] == 'movie'),
+        'episodes': sum(1 for r in recent if r['type'] == 'episode'),
+        'cap': MAX_CHECKS_PER_SCAN,
+    }
 
 
 class _Ident:

@@ -426,3 +426,87 @@ def test_both_collection_paths_use_the_release_age_setting(path):
     src = (Path(__file__).resolve().parents[2] / path).read_text()
     assert 'days_since_release <= 7' not in src
     assert 'days_since_release <= get_upgrade_max_release_age_days()' in src
+
+
+# ── Search recent releases ───────────────────────────────────────────────────
+
+def test_released_within_keeps_only_known_dates_in_the_window():
+    from datetime import date
+    import database.upgrade_hub_scrapers as uhs
+    today = date(2026, 11, 24)
+    items = [{'id': 1, 'release_date': '2026-11-24'},   # today
+             {'id': 2, 'release_date': '2026-10-25'},   # 30 days ago
+             {'id': 3, 'release_date': '2026-10-24'},   # 31 days ago
+             {'id': 4, 'release_date': '2026-12-01'},   # not out yet
+             {'id': 5, 'release_date': None},
+             {'id': 6, 'release_date': 'Unknown'}]
+    assert [i['id'] for i in uhs.released_within(items, 30, today)] == [1, 2]
+    assert [i['id'] for i in uhs.released_within(items, 0, today)] == [1]
+
+
+def test_recent_search_covers_every_recent_item_past_the_cap_and_toggle(hub_db, app_settings, monkeypatch):
+    from datetime import date, timedelta
+    import database.zilean_upgrade as zu
+    import database.upgrade_hub_scrapers as uhs
+    # Scraper search off and capped at 1: the recent search ignores both.
+    app_settings['Upgrade Hub'] = {'upgrade_source': 'none', 'use_scrapers': False, 'scraper_checks_per_scan': 1}
+    recent = (date.today() - timedelta(days=3)).isoformat()
+    old = (date.today() - timedelta(days=400)).isoformat()
+    conn = hub_db()
+    new_ids = [_insert(conn, type='episode', title='S', imdb_id='tt9', tmdb_id='9', season_number=1,
+                       episode_number=n, filled_by_file=f'S.S01E0{n}.1080p.WEB.mkv', size=2.0,
+                       release_date=recent) for n in (1, 2, 3)]
+    old_id = _insert(conn, type='movie', title='Old', imdb_id='tt8', tmdb_id='8', year=2020,
+                     filled_by_file='Old.2020.1080p.mkv', size=5.0, release_date=old)
+    conn.close()
+    monkeypatch.setattr(zu, '_save_scan_results_to_db', lambda *a, **k: None)
+    seen = []
+    with mock.patch.object(uhs, '_scan_item', side_effect=lambda it, *a, **k: seen.append(it['id'])), \
+         mock.patch('database.upgrade_hub_activity.log_hub_activity'):
+        out = zu.scan_for_upgrades(recent_release_days=7)
+    assert 'error' not in out, out
+    assert sorted(seen) == sorted(new_ids)
+    assert old_id not in seen
+    assert uhs.count_recent_items(7) == {'items': 3, 'movies': 0, 'episodes': 3, 'cap': uhs.MAX_CHECKS_PER_SCAN}
+
+
+def _start_scan(json, **settings):
+    from routes import upgrade_hub_routes as r
+    started = {}
+
+    class FakeThread:
+        def __init__(self, target=None, **kw):
+            self.target = target
+
+        def start(self):
+            self.target()
+
+    store = {('Upgrade Hub', 'upgrade_source'): 'none', ('Upgrade Hub', 'use_scrapers'): False}
+    store.update(settings)
+    with mock.patch.object(r, 'get_setting', side_effect=lambda s, k, d=None: store.get((s, k), d)), \
+         mock.patch('database.upgrade_hub_scrapers.get_setting', side_effect=lambda s, k, d=None: store.get((s, k), d)), \
+         mock.patch('database.zilean_upgrade.get_scan_status', return_value={'in_progress': False}), \
+         mock.patch('database.zilean_upgrade.get_zilean_config', return_value=None), \
+         mock.patch('database.nzb_upgrade.get_newznab_scrapers', return_value=[]), \
+         mock.patch('database.zilean_upgrade.scan_for_upgrades',
+                    side_effect=lambda **kw: started.update(kw)), \
+         mock.patch.object(r.threading, 'Thread', FakeThread):
+        body, status = _call(r.start_scan, method='POST', json=json)
+    return body, status, started
+
+
+def test_recent_search_route_starts_even_with_no_other_source():
+    body, status, started = _start_scan({'recent_release_days': 30})
+    assert status == 200 and body['success'] is True
+    assert started['recent_release_days'] == 30
+
+
+def test_plain_scan_route_still_needs_a_source():
+    body, status, started = _start_scan({})
+    assert status == 400 and not started
+
+
+@pytest.mark.parametrize('days', [-1, 'abc', 99999])
+def test_recent_search_route_rejects_bad_days(days):
+    body, status, started = _start_scan({'recent_release_days': days})
+    assert status == 400 and not started
