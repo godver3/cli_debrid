@@ -277,16 +277,6 @@ async function resetFailedStats(e) {
     } catch (_) {}
 }
 
-// Load movies
-function _posterSrc(item) {
-    // Applied items with a Plex key use the proxy route (disk-cached server-side).
-    // Non-applied items fall back to TMDB poster path or placeholder.
-    if (item.overlay_status === 'applied' && item.ms_item_id) {
-        return `/api/overlays/poster_applied/${encodeURIComponent(item.ms_item_id)}`;
-    }
-    return item.poster_path ? `/scraper/tmdb_image/w185${item.poster_path}` : '/static/images/placeholder.png';
-}
-
 function _posterAttrs(item, mediaType) {
     // Applied poster: lazy-load via IntersectionObserver to avoid firing hundreds
     // of simultaneous requests when the grid first renders.
@@ -1285,49 +1275,6 @@ async function regenerateLibrary(scope) {
     });
 }
 
-async function regenerateAll(mediaType) {
-    const templateSelector = document.getElementById(`${mediaType === 'movie' ? 'movies' : 'shows'}-layout-selector`);
-    const layoutId = templateSelector.value ? parseInt(templateSelector.value) : null;
-
-    showPopup({
-        type: 'confirm',
-        title: 'Regenerate All Overlays',
-        message: `Regenerate ALL overlays for ${mediaType === 'movie' ? 'movies' : 'TV shows'}? This will overwrite existing overlays.`,
-        confirmText: 'Regenerate',
-        cancelText: 'Cancel',
-        onConfirm: async function() {
-            _showProgress(`Regenerating ${mediaType === 'movie' ? 'movies' : 'TV shows'}…`, 'Starting job…');
-            try {
-                const response = await fetch('/api/overlays/generate/regenerate-all', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({media_type: mediaType, layout_id: layoutId, force: true})
-                });
-                const data = await response.json();
-                if (!data.success) {
-                    _hideProgress();
-                    showPopup({ type: 'error', title: 'Error', message: 'Failed to start: ' + (data.error || 'Unknown error'), autoClose: 5000 });
-                    return;
-                }
-                document.getElementById('task-progress-title').textContent = data.label || `Regenerating ${mediaType === 'movie' ? 'movies' : 'TV shows'}…`;
-                _pollUntilDone(
-                    '/api/overlays/generate/status',
-                    s => _updateProgressCounter(s.done, s.total, [s.failed > 0 ? `${s.failed} failed` : '', (s.current || '').substring(0, 40)].filter(Boolean).join(' · ')),
-                    s => {
-                        _hideProgress();
-                        showPopup({ type: 'success', title: 'Success', message: `Regenerated ${s.applied} overlay${s.applied !== 1 ? 's' : ''}${s.failed > 0 ? `, ${s.failed} failed` : ''}`, autoClose: 4000 });
-                        _refreshGrids(mediaType);
-                    }
-                );
-            } catch (error) {
-                _hideProgress();
-                console.error('Regenerate all failed:', error);
-                showPopup({ type: 'error', title: 'Error', message: 'Failed to start regeneration', autoClose: 5000 });
-            }
-        }
-    });
-}
-
 // Load badge stats for the Badges tab preview
 async function loadBadgeStats() {
     try {
@@ -1836,40 +1783,6 @@ async function generateAllSeasons() {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({layout_id: layoutId, force: false})
-                });
-                const data = await resp.json();
-                if (data.success) {
-                    showPopup({ type: 'success', title: 'Success', message: `Applied: ${data.applied}, Skipped: ${data.skipped}, Failed: ${data.failed}`, autoClose: 4000 });
-                    await _loadSeasonsIntoModal();
-                } else {
-                    showPopup({ type: 'error', title: 'Error', message: 'Failed: ' + (data.error || 'Unknown error'), autoClose: 5000 });
-                }
-            } catch (e) {
-                showPopup({ type: 'error', title: 'Error', message: 'Request failed: ' + e, autoClose: 5000 });
-            } finally {
-                btn.textContent = orig; btn.disabled = false;
-            }
-        }
-    });
-}
-
-async function regenerateAllSeasons() {
-    if (!_seasonsShowKey) return;
-    showPopup({
-        type: 'confirm',
-        title: 'Regenerate All Season Overlays',
-        message: `Regenerate ALL season poster overlays for "${_escHtml(_seasonsShowTitle)}"? This will overwrite existing season overlays.`,
-        confirmText: 'Regenerate',
-        cancelText: 'Cancel',
-        onConfirm: async function() {
-            const layoutId = _getSeasonsLayoutId();
-            const btn = document.querySelector('#seasons-modal-controls .btn-warning');
-            const orig = btn.textContent; btn.disabled = true; btn.textContent = '…';
-            try {
-                const resp = await fetch(`/api/overlays/seasons/${_seasonsShowKey}/generate`, {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({layout_id: layoutId, force: true})
                 });
                 const data = await resp.json();
                 if (data.success) {

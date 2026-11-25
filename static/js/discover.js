@@ -1603,63 +1603,6 @@ function renderChips(name, wrapper, includeArray, excludeArray, dropdown, hidden
 }
 
 /**
- * Clear a chips input by name (both include and exclude)
- */
-function clearChipsInput(name) {
-    const state = window.discoverState;
-    const container = document.getElementById(`${name}-container`);
-    if (!container) return;
-
-    const chipsWrapper = container.querySelector(`#${name}-chips`);
-    const dropdown = container.querySelector(`#${name}-dropdown`);
-    const hiddenInput = document.getElementById(`selected-${name}`) || document.getElementById(`selected-${name}s`);
-
-    // Clear both include and exclude filter arrays
-    if (name === 'genres') {
-        state.filters.selectedGenres = [];
-        state.filters.excludedGenres = [];
-    } else if (name === 'language') {
-        state.filters.selectedLanguages = [];
-        state.filters.excludedLanguages = [];
-    } else if (name === 'country') {
-        state.filters.selectedCountries = [];
-        state.filters.excludedCountries = [];
-    } else if (name === 'provider') {
-        state.filters.selectedProviders = [];
-        state.filters.excludedProviders = [];
-    } else if (name === 'network') {
-        state.filters.selectedNetworks = [];
-        state.filters.excludedNetworks = [];
-    } else if (name === 'company') {
-        state.filters.selectedCompanies = [];
-        state.filters.excludedCompanies = [];
-    } else if (name === 'certification') {
-        state.filters.selectedCertifications = [];
-        state.filters.excludedCertifications = [];
-    }
-
-    // Clear chips display
-    if (chipsWrapper) chipsWrapper.innerHTML = '';
-
-    // Clear hidden input
-    if (hiddenInput) hiddenInput.value = '';
-
-    // Clear dropdown selection states (include, exclude, and legacy selected)
-    if (dropdown) {
-        dropdown.querySelectorAll('.chips-dropdown-item.selected, .chips-dropdown-item.included, .chips-dropdown-item.excluded').forEach(item => {
-            item.classList.remove('selected', 'included', 'excluded');
-        });
-    }
-}
-
-/**
- * Legacy function - no longer used
- */
-function initializeCustomDropdown() {
-    // No longer used
-}
-
-/**
  * Legacy function - kept for compatibility
  */
 function initializeMultiSelect(dropdownElement, onChange) {
@@ -3682,55 +3625,6 @@ function setSortBy(sortBy) {
 }
 
 /**
- * Toggle genre filter
- */
-function toggleGenre(genreId) {
-    const genres = window.discoverState.filters.genres;
-    const index = genres.indexOf(parseInt(genreId));
-    
-    if (index > -1) {
-        genres.splice(index, 1);
-    } else {
-        genres.push(parseInt(genreId));
-    }
-    
-    // Update UI
-    const btn = document.querySelector(`[data-genre="${genreId}"]`);
-    if (btn) {
-        btn.classList.toggle('active', index === -1);
-    }
-}
-
-/**
- * Clear all filters
- */
-function clearFilters() {
-    window.discoverState.filters.genres = [];
-    window.discoverState.filters.minRating = 0;
-    window.discoverState.filters.yearFrom = 1900;
-    window.discoverState.filters.yearTo = new Date().getFullYear();
-    window.discoverState.sortBy = 'relevance';
-
-    // Reset UI
-    if (ratingSlider) {
-        ratingSlider.value = 0;
-        ratingDisplay.textContent = '0.0';
-    }
-
-    if (yearFromInput) yearFromInput.value = 1900;
-    if (yearToInput) yearToInput.value = new Date().getFullYear();
-
-    document.querySelectorAll('[data-filter="genre"]').forEach(btn => {
-        btn.classList.remove('active');
-    });
-
-    // Reset sort UI
-    document.querySelectorAll('[data-filter="sort"]').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.value === 'relevance');
-    });
-}
-
-/**
  * Apply filters and re-search
  */
 function applyFilters() {
@@ -4795,27 +4689,6 @@ function bindResultEvents() {
 }
 
 /**
- * Convert genre IDs to genre names for scraper compatibility
- * @param {Array<number>} genreIds - Array of genre IDs
- * @returns {Array<string>} - Array of genre names
- */
-function convertGenreIdsToNames(genreIds) {
-    if (!genreIds || genreIds.length === 0) return [];
-
-    const state = window.discoverState;
-    const allGenres = new Map();
-
-    // Build genre mapping from both movie and TV genres
-    (state.genres.movie || []).forEach(g => allGenres.set(g.id, g.name));
-    (state.genres.tv || []).forEach(g => allGenres.set(g.id, g.name));
-
-    // Convert IDs to names
-    return genreIds
-        .map(id => allGenres.get(id))
-        .filter(name => name); // Remove undefined entries
-}
-
-/**
  * Handle infinite scroll - triggered when user scrolls near bottom
  */
 function handleInfiniteScroll() {
@@ -5034,53 +4907,6 @@ function debounce(func, wait) {
 }
 
 /**
- * Add item to library
- */
-async function addToLibrary(tmdbId, mediaType, title) {
-    try {
-        const response = await fetch('/discover/api/add', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                tmdb_id: tmdbId,
-                media_type: mediaType,
-                title: title
-            })
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-            // Show success toast/notification
-            showNotification(`Added "${title}" to library`, 'success');
-
-            // Update the card's status badge
-            const itemElement = document.querySelector(`[data-id="${tmdbId}"]`);
-            if (itemElement) {
-                const badge = itemElement.querySelector('.db-status-badge');
-                if (badge) {
-                    badge.className = 'db-status-badge wanted';
-                    badge.textContent = 'wanted';
-                }
-            }
-
-            // If we have an IMDB ID, optionally redirect to scraper
-            if (data.imdb_id) {
-                console.log(`[Discover] IMDB ID: ${data.imdb_id}`);
-            }
-        } else {
-            showNotification(data.error || 'Failed to add to library', 'error');
-        }
-
-    } catch (error) {
-        console.error('[Discover] Add to library error:', error);
-        showNotification('Failed to add to library', 'error');
-    }
-}
-
-/**
  * Show notification toast
  */
 function showNotification(message, type = 'info') {
@@ -5113,59 +4939,6 @@ function showNotification(message, type = 'info') {
         notification.style.animation = 'slideOut 0.3s ease-in';
         setTimeout(() => notification.remove(), 300);
     }, 3000);
-}
-
-/**
- * Filter content using advanced filters
- */
-async function filterContent() {
-    try {
-        setLoadingFlag();
-
-        const params = new URLSearchParams({
-            type: window.discoverState.mediaType === 'all' ? 'movie' : window.discoverState.mediaType,
-            page: window.discoverState.page
-        });
-
-        // Add filters
-        if (window.discoverState.filters.genres.length > 0) {
-            params.append('genres', window.discoverState.filters.genres.join(','));
-        }
-
-        if (window.discoverState.filters.minRating > 0) {
-            params.append('min_rating', window.discoverState.filters.minRating);
-        }
-
-        if (window.discoverState.filters.yearFrom > 1900) {
-            params.append('year_from', window.discoverState.filters.yearFrom);
-        }
-
-        if (window.discoverState.filters.yearTo < new Date().getFullYear()) {
-            params.append('year_to', window.discoverState.filters.yearTo);
-        }
-
-        const response = await fetch(`/discover/api/filter?${params}`);
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        const data = await response.json();
-        window.discoverState.hasMore = data.page < data.total_pages;
-
-        if (window.discoverState.page === 1) {
-            renderResults(data.results);
-        } else {
-            appendResults(data.results);
-        }
-
-        updatePagination();
-
-    } catch (error) {
-        console.error('[Discover] Filter error:', error);
-        showError();
-    } finally {
-        clearLoadingFlag();
-    }
 }
 
 // =============================================================================
@@ -8489,39 +8262,6 @@ function getPlatformIcon(iconName) {
 }
 
 /**
- * Select a list without needing the itemElement (for programmatic selection)
- */
-function selectSidebarList(source, listId, listName) {
-    const state = window.sidebarListsState;
-
-    // Check if already selected
-    const existingIndex = state.selectedLists.findIndex(l => l.source === source && l.listId === listId);
-
-    if (existingIndex < 0) {
-        // Add to selection if not already present
-        state.selectedLists.push({ source, listId, listName });
-    }
-
-    // Update chips display
-    renderSidebarListChips();
-
-    // Update filter availability based on list selection
-    updateFilterAvailability();
-
-    // Update active filters display — suppress live filtering here: rawResults is still empty
-    // and the list load below will populate it and render correctly on its own.
-    window.discoverState.isClearing = true;
-    updateActiveFilters();
-    window.discoverState.isClearing = false;
-
-    // Save lists selection to localStorage
-    saveSidebarListsToStorage();
-
-    // Reload content with selected list
-    loadSidebarListContent(source, listId);
-}
-
-/**
  * Toggle a list selection (add/remove chip)
  */
 function toggleSidebarList(itemElement, source, listId, listName) {
@@ -9043,35 +8783,6 @@ async function loadSidebarListContent(source, listId) {
         showError();
     } finally {
         clearLoadingFlag();
-    }
-}
-
-/**
- * Apply list filter from saved preset/adaptive list
- */
-function applySidebarListFilter(listValue) {
-    if (!listValue) {
-        clearSidebarListSelection();
-        return;
-    }
-
-    // Parse "source:listId" format
-    const [source, ...listIdParts] = listValue.split(':');
-    const listId = listIdParts.join(':'); // Handle list IDs that might contain colons
-
-    if (source && listId) {
-        // Find the list name
-        let listName = listId;
-
-        if (source === 'flixpatrol') {
-            const platform = window.sidebarListsState.flixpatrolPlatforms.find(p => p.id === listId);
-            if (platform) listName = platform.name;
-        } else if (source === 'mdblist') {
-            const list = window.sidebarListsState.mdblistLists.find(l => l.key === listId);
-            if (list) listName = list.name;
-        }
-
-        selectSidebarList(source, listId, listName);
     }
 }
 

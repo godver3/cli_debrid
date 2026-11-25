@@ -108,15 +108,6 @@ def detect_hdr(parsed_info: Dict[str, Any]) -> bool:
     # No title-based fallback - removed to prevent false positives with titles like "Devil's Advocate"
     return hdr_tags_mean_hdr(parsed_info.get('hdr'))
 
-def match_any_title(release_title: str, official_titles: List[str], threshold: float = 0.35) -> float:
-    max_similarity = 0
-    for title in official_titles:
-        partial_score = partial_title_match(release_title, title)
-        fuzzy_score = fuzzy_title_match(release_title, title) / 100
-        similarity = max(partial_score, fuzzy_score)
-        max_similarity = max(max_similarity, similarity)
-        #logging.debug(f"Matching '{release_title}' with '{title}': Partial: {partial_score:.2f}, Fuzzy: {fuzzy_score:.2f}, Max: {similarity:.2f}")
-    return max_similarity
 
 def partial_title_match(title1: str, title2: str) -> float:
     words1 = set(title1.lower().split())

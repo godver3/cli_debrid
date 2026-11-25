@@ -115,59 +115,6 @@ function updateFilenameVisibility() {
     });
 }
 
-// Optimized consolidation with better performance
-function generateConsolidatedItems(items, queueName) {
-    const consolidatedMap = new Map();
-    
-    // Use for loop for better performance with large arrays
-    for (let i = 0; i < items.length; i++) {
-        const item = items[i];
-        const key = `${item.title}_${item.year}`;
-        
-        if (!consolidatedMap.has(key)) {
-            consolidatedMap.set(key, {
-                title: item.title,
-                year: item.year,
-                versions: new Set([item.version]),
-                seasons: new Set(),
-                release_date: item.release_date,
-                physical_release_date: item.physical_release_date,
-                scraping_versions: item.scraping_versions,
-                version: item.version
-            });
-        } else {
-            consolidatedMap.get(key).versions.add(item.version);
-        }
-        
-        if (item.type === 'episode') {
-            consolidatedMap.get(key).seasons.add(item.season_number);
-        }
-    }
-
-    // Build HTML in chunks for better performance
-    const htmlChunks = [];
-    consolidatedMap.forEach(item => {
-        let releaseInfo = item.release_date;
-        
-        // Check if version requires physical release using the new backend flag
-        const require_physical = item.require_physical_release || false;
-        
-        if (require_physical) {
-            releaseInfo += ` <span class="physical-release">(Physical: ${item.physical_release_date || 'Unknown'})</span>`;
-        }
-        
-        htmlChunks.push(`
-            <div class="item">
-                ${escapeHtml(item.title)} (${item.year}) - Version(s): ${Array.from(item.versions).join(', ')}
-                ${item.seasons.size > 0 ? ` - Season(s): ${Array.from(item.seasons).join(', ')}` : ''}
-                ${queueName === 'Unreleased' ? ` - Release Date: ${releaseInfo}` : ''}
-            </div>
-        `);
-    });
-    
-    return htmlChunks.join('');
-}
-
 function generateQueueContent(queueName, items) {
     // For count-only queues, return empty content since we only show the count
     if (queueName === 'Blacklisted' || queueName === 'Unreleased' || queueName === 'Collected') {
@@ -962,13 +909,6 @@ function showConnectionStatus(message, type = 'reconnecting', duration = 3000) {
     }
 }
 
-function hideConnectionStatus() {
-    const statusEl = document.getElementById('connection-status');
-    if (statusEl) {
-        statusEl.classList.remove('show');
-    }
-}
-
 function showError(message) {
     const errorDiv = document.createElement('div');
     errorDiv.className = 'alert alert-danger';
@@ -993,20 +933,6 @@ function escapeHtml(unsafe) {
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#039;");
-}
-
-function increasePageSize() {
-    // Increase page size and reload the stream for the current session
-    currentPageSize += 50; // Increase by 50
-    
-    // Add a loading indicator to the button
-    const showMoreButton = document.querySelector('.show-more-container button');
-    if (showMoreButton) {
-        showMoreButton.disabled = true;
-        showMoreButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading...';
-    }
-    
-    setupQueueStream();
 }
 
 function copyItemToClipboard(element, event) {

@@ -11,33 +11,6 @@ const DELETION_PROGRESS_INTERVAL_MS = 800;      // How often to update progress 
 const DELETION_TIMEOUT_WARNING_MS = 10000;      // When to show "taking longer than expected" message
 const API_COOLDOWN_MAX_SECONDS = 96;            // Maximum API cooldown period (Trakt rate limit)
 
-/**
- * Format a file path for display with 25 character limit, rounded down to nearest folder
- * Example: /192.168.1.124_Movies/2.Fast.2.Furious.2003.PROPER.2160p.BluRay.REMUX.HEVC.DTS-X.7.1-FGT.mkv
- *   -> Truncate to 25 chars: "/192.168.1.124_Movies/2.F"
- *   -> Find last "/" before char 25: position 21
- *   -> Result: "/192.168.1.124_Movies"
- * @param {string} path - Full file path
- * @returns {string} Formatted path truncated to 25 chars at nearest folder break
- */
-function formatPathDisplay(path) {
-    if (!path) return '';
-
-    const MAX_LENGTH = 25;
-
-    // If path is already short enough, return as-is
-    if (path.length <= MAX_LENGTH) return path;
-
-    // Truncate to MAX_LENGTH
-    let truncated = path.substring(0, MAX_LENGTH);
-
-    // Find the last "/" in the truncated string
-    const lastSlash = truncated.lastIndexOf('/');
-
-    // If we found a slash, truncate there, otherwise use the full truncated string
-    return lastSlash > 0 ? truncated.substring(0, lastSlash) : truncated;
-}
-
 // Deletion wrapper functions - these call shared deletion utilities from notifications.js
 // Using movie-specific names for clarity, but internally use the same shared functions
 // These functions are exposed globally via window object from notifications.js module

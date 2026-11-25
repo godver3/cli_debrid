@@ -59,10 +59,6 @@ def silo_server(get_setting: Callable) -> tuple:
     return (url, key) if url and key else ('', '')
 
 
-def any_server(get_setting: Callable) -> bool:
-    return all(np.plex_server(get_setting)) or all(jellyfin_server(get_setting)) or all(silo_server(get_setting))
-
-
 # ---- Jellyfin / Emby -------------------------------------------------------
 
 def _jf_get(url: str, token: str, path: str, timeout: float = 5):

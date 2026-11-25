@@ -481,11 +481,6 @@ const CLIMOUNT_LEVEL_CLASS = {
 // Format: "2026-08-22 18:48:32 | INFO  | [component] rest of message key=value ..."
 const CLIMOUNT_LINE_RE = /^(\S+\s+\S+)\s*\|\s*(DEBUG|INFO|WARN|ERROR|FATAL|PANIC)\s*\|\s*(?:\[([^\]]+)\]\s*)?(.*)$/i;
 
-function extractClimountComponent(line) {
-    const m = line.match(CLIMOUNT_LINE_RE);
-    return m ? m[3] || null : null;
-}
-
 function renderClimountLogLine(line) {
     const div = document.createElement('div');
     const match = line.match(CLIMOUNT_LINE_RE);
