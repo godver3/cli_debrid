@@ -250,7 +250,8 @@ jobs:
       # so a rebuild of the same version doesn't post twice. The post step adds
       # it only after Discord accepted every message, so a failed post (or a
       # version built before the webhook secret existed) is retried on the next
-      # build of that version. The main build posts once more, as stable.
+      # build of that version. Only dev builds post: the main build doesn't
+      # post the same notes again.
       - name: Build release body
         id: notes
         run: |
@@ -260,7 +261,8 @@ jobs:
           ALREADY=false
           if printf '%s' "$PREV" | grep -qF "$POSTED"; then ALREADY=true; fi
           POST=false
-          if [ -f "$NOTES" ] && [ -n "$WEBHOOK" ] && [ "$ALREADY" = false ]; then POST=true; fi
+          if [ -f "$NOTES" ] && [ -n "$WEBHOOK" ] && [ "$ALREADY" = false ] \
+             && [ "${{ github.ref_name }}" != main ]; then POST=true; fi
           {
             if [ -f "$NOTES" ]; then
               cat "$NOTES"
