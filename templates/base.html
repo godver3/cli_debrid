@@ -511,7 +511,7 @@
                     {% set version_str = get_version_with_branch() %}
                     {% set evil = version_str.count('6') >= 3 %}
                     <div class="version-container">
-                        <a href="https://github.com/godver3/cli_debrid" target="_blank" class="version-info{% if evil %} version-evil{% endif %}" id="versionInfo">v{{ version_str }}</a>
+                        <a href="https://github.com/godver3/clyde" target="_blank" class="version-info{% if evil %} version-evil{% endif %}" id="versionInfo">v{{ version_str }}</a>
                         {% if evil %}
                         <button id="disableEvilButton" class="disable-evil-btn" title="Disable spooky effects">✖</button>
                         {% endif %}

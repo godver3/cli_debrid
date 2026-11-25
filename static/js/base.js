@@ -913,7 +913,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Add click handler for update button
     document.getElementById('updateAvailableButton')?.addEventListener('click', () => {
         // Open GitHub repository in new tab
-        window.open('https://github.com/godver3/cli_debrid', '_blank');
+        window.open('https://github.com/godver3/clyde', '_blank');
     });
 
     // Add observer for task monitor visibility changes

@@ -233,7 +233,7 @@ def get_release_notes():
                 and time.time() - _notes_cache['at'] < _NOTES_TTL):
             return jsonify({'success': True, 'branch': branch, 'releases': _notes_cache['data']})
     try:
-        r = requests.get('https://api.github.com/repos/godver3/cli_debrid/releases',
+        r = requests.get('https://api.github.com/repos/godver3/clyde/releases',
                          params={'per_page': 50}, timeout=10,
                          headers={'User-Agent': 'cli-debrid-app', 'Accept': 'application/vnd.github+json'})
         r.raise_for_status()
@@ -261,7 +261,7 @@ def check_for_update():
         current_version = get_version_with_branch()
         
         # GitHub API endpoint for commits
-        api_url = f"https://api.github.com/repos/godver3/cli_debrid/commits"
+        api_url = f"https://api.github.com/repos/godver3/clyde/commits"
         headers = {'User-Agent': 'cli-debrid-app'}
         params = {
             'per_page': 1,
