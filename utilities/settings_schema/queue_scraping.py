@@ -38,7 +38,7 @@ SECTIONS = {
         },
         "movie_airtime_offset": {
             "type": "string",
-            "description": "Hours after midnight to start scraping for new movies",
+            "description": "Hours after midnight at the start of a movie's release date to start searching for it (movies have no release time). Searches that find nothing in the first 24 hours after that are retried hourly and don't count toward the wake limit. Negative values start earlier.",
             "default": "0"
         },
         "episode_airtime_offset": {
@@ -143,6 +143,12 @@ SECTIONS = {
             "min": 0.0,
             "max": 1.0
         },
+        "upgrade_max_release_age_days": {
+            "type": "integer",
+            "description": "Only items released this many days ago or less go to the Upgrading queue when collected (default: 7). Edited on the Upgrade Hub.",
+            "default": 7,
+            "min": 0
+        },
         "delayed_upgrade_scrape_days": {
             "type": "integer",
             "description": "Number of days to wait before attempting a single upgrade scrape on an item. Set to 0 to disable delayed upgrade scraping.",
@@ -161,7 +167,7 @@ SECTIONS = {
         },
         "enable_seadex_priority": {
             "type": "boolean",
-            "description": "For anime, prefer the release SeaDex (releases.moe) has confirmed as best for that title over cli-debrid's own scoring. Only applies to items detected as anime, and only within versions whose Anime Filter Mode is not 'Non-Anime Only'. Requires an internet connection to releases.moe and api.ani.zip during scraping.",
+            "description": "For anime, prefer the release SeaDex (releases.moe) has confirmed as best for that title over Clyde's own scoring. Only applies to items detected as anime, and only within versions whose Anime Filter Mode is not 'Non-Anime Only'. Requires an internet connection to releases.moe and api.ani.zip during scraping.",
             "default": False
         },
         "trakt_early_releases": {

@@ -145,7 +145,7 @@ def format_notification_content(notifications, notification_type, notification_c
                 return f"{emoji} **Upgrade Failed**\nTitle: {title} ({year})\nReason: {reason}"
         if notification_category == 'program_info':
             return f"{emoji} {notifications}"
-        return f"{emoji} **cli_debrid {notification_category.replace('_', ' ').title()}**\n{notifications}"
+        return f"{emoji} **Clyde {notification_category.replace('_', ' ').title()}**\n{notifications}"
 
     # --- START: Deduplicate notifications within this batch ---
     unique_notifications = []

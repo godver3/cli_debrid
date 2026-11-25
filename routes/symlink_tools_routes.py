@@ -124,7 +124,7 @@ def handle_symlink_creation():
                 flash(f'Successfully created symlink: {symlink_path}', 'success')
             else:
                 flash(f'Created symlink: {symlink_path}. Without an IMDb ID it is not added to the '
-                      'library, so cli_debrid will not track, verify or repair it.', 'warning')
+                      'library, so Clyde will not track, verify or repair it.', 'warning')
             _scan_media_server(symlink_path, media_type)
         else:
             flash('Failed to create symlink. Check the logs for details.', 'error')

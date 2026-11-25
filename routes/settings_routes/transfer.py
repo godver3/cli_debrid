@@ -30,7 +30,7 @@ def settings_transfer_export():
     raw = request.args.get('groups', '')
     groups = [g for g in raw.split(',') if g] or None
     data = settings_transfer.build_export(groups, app_version=get_app_version())
-    name = f"cli_debrid-settings-{datetime.now().strftime('%Y%m%d')}.json"
+    name = f"clyde-settings-{datetime.now().strftime('%Y%m%d')}.json"
     return Response(json.dumps(data, indent=2), mimetype='application/json',
                     headers={'Content-Disposition': f'attachment; filename="{name}"'})
 

@@ -269,13 +269,13 @@ const SOURCE_CATALOG = [
         ['Adaptive List', 'TMDB filters (genre, year, rating...) whose results change over time. Built and edited on Discover.', 'TMDB API key'],
     ]},
     { group: 'Collections', items: [
-        ['Collected', 'Every show cli_debrid already has episodes of keeps getting new episodes, even after it leaves your watchlist or came from a request or list. Redundant if your watchlist keeps shows.', 'Nothing'],
+        ['Collected', 'Every show Clyde already has episodes of keeps getting new episodes, even after it leaves your watchlist or came from a request or list. Redundant if your watchlist keeps shows.', 'Nothing'],
         ['Trakt Collection', 'Everything in your Trakt collection.', 'Trakt sign-in (Settings → Tracking accounts)'],
         ['Scrob Collection', 'Everything in your Scrob collection.', 'Scrob URL and API key (Settings → Tracking accounts)'],
     ]},
     { group: 'Requests', items: [
         ['Overseerr', 'Approved requests from Seerr (Overseerr / Jellyseerr).', 'Seerr URL and API key'],
-        ['Agregarr', 'Agregarr sends its requests to cli_debrid as if it were Overseerr.', 'Point Agregarr at this cli_debrid'],
+        ['Agregarr', 'Agregarr sends its requests to Clyde as if it were Overseerr.', 'Point Agregarr at this Clyde'],
         ['Silo Requests', 'Approved requests from Silo\'s own request feature (pending ones optional).', 'Silo as the media server (Settings → File Management)'],
     ]},
 ];
@@ -313,7 +313,7 @@ function openSourcePicker(sourceTypes) {
             <div class="csp-head">
                 <div>
                     <h3 id="csp-title">Add a content source</h3>
-                    <p>Content sources tell cli_debrid what to get. Pick one; you set it up on the next screen.</p>
+                    <p>Content sources tell Clyde what to get. Pick one; you set it up on the next screen.</p>
                 </div>
                 <button type="button" class="csp-close" aria-label="Close">&times;</button>
             </div>

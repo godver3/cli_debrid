@@ -1340,7 +1340,7 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
             base_response['connected'] = True
             base_response['details'].update({
                 'webhook_mode': 'receive_only',
-                'note': 'Agregarr sends webhooks to CLI Debrid. No outbound connection required.',
+                'note': 'Agregarr sends webhooks to Clyde. No outbound connection required.',
                 'media_type': source_config.get('media_type', 'All')
             })
 

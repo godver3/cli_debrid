@@ -1,6 +1,6 @@
 // Top bar bug report (admins): the user describes the problem, the report adds
 // their version and setup (/logs/api/bug-report/context, nothing personal) and
-// links to freshly uploaded, redacted logs: cli_debrid's (plus the built-in
+// links to freshly uploaded, redacted logs: Clyde's (plus the built-in
 // mount engine's) and, with an external cli_mount, cli_mount's own. The result
 // opens as a prefilled GitHub issue or is copied for Discord.
 (function () {
@@ -59,7 +59,7 @@
                     setup.appendChild(line);
                 });
                 const names = { engine: 'built-in mount', climount: 'cli_mount' };
-                $('bugReportLogsWhich').textContent = '(' + ['cli_debrid'].concat((data.log_sources || []).map(k => names[k] || k)).join(' + ') + ')';
+                $('bugReportLogsWhich').textContent = '(' + ['Clyde'].concat((data.log_sources || []).map(k => names[k] || k)).join(' + ') + ')';
             })
             .catch(() => {
                 context = null;
@@ -100,7 +100,7 @@
             if ($('bugReportLogs').checked) {
                 const sources = (context && context.log_sources) || [];
                 // Each log gets its own upload and link, all started together.
-                const jobs = [['cli_debrid logs', '/logs/api/logs/share']];
+                const jobs = [['Clyde logs', '/logs/api/logs/share']];
                 if (sources.includes('engine')) jobs.push(['Built-in mount logs', '/logs/api/engine/logs/share']);
                 if (sources.includes('climount')) jobs.push(['cli_mount logs', '/logs/api/climount/logs/share']);
                 const results = await Promise.allSettled(jobs.map(([label, url]) => upload(url, {}, label)));
@@ -131,7 +131,7 @@
         if (r.steps) out.push('### When / how', r.steps, '');
         if (context) out.push('### Setup', ...setupLines('- '), '');
         if (r.logs.length) out.push('### Logs', ...r.logs.map(([label, url]) => `- ${label}: ${url}`), '');
-        out.push('<sub>Made with the bug report button in cli_debrid.</sub>');
+        out.push('<sub>Made with the bug report button in Clyde.</sub>');
         return out.join('\n');
     }
 

@@ -41,9 +41,9 @@
       "runs": "Always on."
     },
     "Upgrading": {
-      "description": "With Enable Upgrading on, items collected within 7 days of release stay here for 24 hours (Upgrade Queue Duration Hours, Debug settings) and are re-scraped about once an hour. A result that beats the current file by the upgrade threshold is added and replaces it. The old file is removed only if Enable Upgrading Cleanup is on. When the window ends, the item becomes Collected. Manually assigned items never upgrade. Upgrades queued from the Upgrade Hub also run here.",
+      "description": "With Keep Searching After Collecting on, items released within the Release Age (default 7 days) stay here for the Upgrade Window (default 24 hours) and are re-scraped about once an hour. All of these are set in the Upgrading group of the Upgrade Hub's Settings tab. A result that beats the current file by Score Improvement Needed is added and replaces it. The old file is removed only if Remove the Old Copy is on. When the window ends, the item becomes Collected. Manually assigned items never upgrade. Upgrades queued from the Upgrade Hub also run here, ahead of ordinary searches. Each run searches for at most about 2 minutes; items it doesn't reach go first on the next run.",
       "action": "Re-scrape the Upgrading items that are due and finish the ones whose window has ended.",
-      "runs": "Always on. Items only enter it when Enable Upgrading is on."
+      "runs": "Always on. Items only enter it when Keep Searching After Collecting is on."
     },
     "final_check_queue": {
       "description": "Only used when Blacklist Final Scrape Delay Hours is above 0. Items that would be blacklisted wait here for that many hours and then get one last scrape. If it finds something, the item goes to Adding. If not, it's blacklisted. If you set the delay back to 0, items still waiting here are blacklisted.",
@@ -81,17 +81,17 @@
       "runs": "On by default. Needs cli_mount."
     },
     "task_sync_cli_mount_changes": {
-      "description": "Pulls changes from cli_mount (renamed folders, new provider IDs, magnets, file names) into the cli_debrid database so both agree on where each file lives. The first run does a full sync and pauses the queue until it's done.",
+      "description": "Pulls changes from cli_mount (renamed folders, new provider IDs, magnets, file names) into the Clyde database so both agree on where each file lives. The first run does a full sync and pauses the queue until it's done.",
       "action": "Fetch the changes from cli_mount since the last sync.",
       "runs": "On by default. Does nothing unless cli_mount is set up."
     },
     "task_push_pending_climount_tags": {
-      "description": "Sends tags you changed in cli_debrid (for example with Database → Assign Tags) to cli_mount. Sync cli_mount Changes only brings changes the other way, so without this a tag edited only in cli_debrid would never reach cli_mount.",
+      "description": "Sends tags you changed in Clyde (for example with Database → Assign Tags) to cli_mount. Sync cli_mount Changes only brings changes the other way, so without this a tag edited only in Clyde would never reach cli_mount.",
       "action": "Push the changed tags to cli_mount.",
       "runs": "On by default. Does nothing unless cli_mount is set up."
     },
     "task_scan_mount_for_external_adds": {
-      "description": "Imports content that showed up on the debrid mount without cli_debrid putting it there, such as torrents added through DMM or the provider's website. New folders go through the same symlink pipeline as Zurg's library-update webhook. The first run only records what's already on the mount, so turning this on doesn't import your whole existing library. Leftovers from cli_debrid's own rejected grabs are skipped.",
+      "description": "Imports content that showed up on the debrid mount without Clyde putting it there, such as torrents added through DMM or the provider's website. New folders go through the same symlink pipeline as Zurg's library-update webhook. The first run only records what's already on the mount, so turning this on doesn't import your whole existing library. Leftovers from Clyde's own rejected grabs are skipped.",
       "action": "Scan the mount and import new external content.",
       "runs": "Symlinked/Local mode only, when File Management → Scan Mount for External Adds is on. Zurg users don't need it."
     },
@@ -101,7 +101,7 @@
       "runs": "Off by default. Run it once. Needs cli_mount as the usenet provider."
     },
     "task_check_service_connectivity": {
-      "description": "Checks that the services cli_debrid depends on are reachable: your debrid service or usenet provider, Plex or Jellyfin/Emby, and the mount and symlink folders in Symlinked/Local mode. If one is down, the queue pauses and resumes on its own once it's back. If Trakt is set up, its login is checked and refreshed too, but a Trakt problem never pauses the queue.",
+      "description": "Checks that the services Clyde depends on are reachable: your debrid service or usenet provider, Plex or Jellyfin/Emby, and the mount and symlink folders in Symlinked/Local mode. If one is down, the queue pauses and resumes on its own once it's back. If Trakt is set up, its login is checked and refreshed too, but a Trakt problem never pauses the queue.",
       "action": "Check every required service and pause or resume the queue.",
       "runs": "Always on."
     },
@@ -196,7 +196,7 @@
       "runs": "Symlinked/Local mode, when a Plex or Jellyfin/Emby server is set up for symlinks."
     },
     "task_verify_plex_removals": {
-      "description": "After cli_debrid removes a file, checks that its title is gone from Plex. Items still listed get more tries with growing waits (1 minute up to 30 minutes) and are marked failed after the max attempts (Plex Removal Max Attempts, default 5).",
+      "description": "After Clyde removes a file, checks that its title is gone from Plex. Items still listed get more tries with growing waits (1 minute up to 30 minutes) and are marked failed after the max attempts (Plex Removal Max Attempts, default 5).",
       "action": "Check that removed files are gone from Plex.",
       "runs": "On by default. Does nothing without a Plex server set up."
     },
@@ -326,14 +326,19 @@
       "runs": "Off by default. While this task is on, it runs even if the cleanup's own enable switch is off."
     },
     "task_upgrade_hub_scan": {
-      "description": "Searches Zilean for better-quality releases of your collected items and saves the upgrade and season-pack candidates for the Upgrade Hub page. Scan Limit caps how many items are checked.",
+      "description": "Looks for better-quality releases of your collected items and saves the upgrade and season-pack candidates for the Upgrade Hub page. It checks Zilean and the NZB feed history (kept up to date by the Upgrade Hub NZB feed sync task), depending on Bulk Sources, and searches your scrapers for a few recently released items (Fresh Release Search). Scan Limit caps how many items Zilean and the NZB history check.",
       "action": "Scan for upgrade candidates.",
-      "runs": "Off by default. Needs Zilean."
+      "runs": "Off by default. Needs Zilean or a Newznab indexer, or Fresh Release Search on."
+    },
+    "task_upgrade_hub_feed_sync": {
+      "description": "Reads what's new on each Newznab indexer since the last run (movies and TV, usually one or two API calls each) and keeps the releases that match your library for 90 days. Upgrade Hub scans match against this history, so a release posted between scans isn't missed.",
+      "action": "Read new releases from your Newznab indexers.",
+      "runs": "Only while the Upgrade Hub scan task is on and Bulk Sources includes the NZB indexers."
     },
     "task_upgrade_hub_auto_queue": {
-      "description": "Takes the candidates from the last Upgrade Hub scan (and scans first if there are none) and queues the ones that meet the Min Improvement Threshold for upgrading, up to Max Upgrades per Run. Season packs come first, and items already upgrading are skipped. Show Recent Only limits it to recently added items.",
+      "description": "Takes the candidates from the last Upgrade Hub scan (and scans first if there are none) and queues the ones that meet the Min Improvement Threshold for upgrading, up to Max Upgrades per Run. Season packs come first, then candidates your debrid service reports cached. Ones reported not cached are skipped unless you accept uncached results, and items already upgrading are skipped. Show Recent Only limits it to recently added items.",
       "action": "Queue the best upgrade candidates.",
-      "runs": "Off by default. Needs Zilean."
+      "runs": "Off by default. Needs an upgrade source, like the scan."
     }
   },
   "content_source": {

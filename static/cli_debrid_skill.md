@@ -1,11 +1,11 @@
 ---
 name: cli-debrid
-description: Query and control the cli_debrid media automation application. Provides live queue status, library search, recently collected items, ability to add movies or shows to the download queue, and actions like starting/stopping the queue, triggering Plex scans, upgrade scans, running tasks, maintenance operations, and a rich live context snapshot for awareness of app state, errors, and upgrade activity.
+description: Query and control the Clyde media automation application. Provides live queue status, library search, recently collected items, ability to add movies or shows to the download queue, and actions like starting/stopping the queue, triggering Plex scans, upgrade scans, running tasks, maintenance operations, and a rich live context snapshot for awareness of app state, errors, and upgrade activity.
 ---
 
-# cli_debrid Integration
+# Clyde Integration
 
-You have access to a cli_debrid instance via HTTP. Use the `web_fetch` tool to call these endpoints.
+You have access to a Clyde instance via HTTP. Use the `web_fetch` tool to call these endpoints.
 
 **Base URL:** {{CLI_DEBRID_URL}}
 **Token:** {{CLI_DEBRID_TOKEN}}
@@ -222,10 +222,10 @@ Use for: "notify me", "send me a message about X", "ping me when done"
 - For destructive actions (stop queue, remove duplicates), confirm with the user first.
 - For queue_start/stop, inform the user of the impact before proceeding.
 - For run_task, always call available_tasks first to verify the task name exists.
-- If a request fails with 401, the token is wrong or missing in cli_debrid settings.
-- If a request fails with 503, cli_debrid AI Assistant is disabled in settings.
+- If a request fails with 401, the token is wrong or missing in Clyde settings.
+- If a request fails with 503, Clyde AI Assistant is disabled in settings.
 
-## cli_debrid feature reference
+## Clyde feature reference
 - **Upgrade Hub**: Scans collected items to find better quality versions. Items move to Upgrading state while waiting.
 - **Queues**: Wanted → Scraping → Adding → Checking → Collecting → Collected (or Blacklisted/Sleeping)
 - **Blacklisted**: Items that failed after all retries. High rates indicate a scraper source problem.

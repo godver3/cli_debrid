@@ -434,7 +434,7 @@ def ai_chat():
         system_prompt = build_system_prompt(page=page, page_data=page_data, is_admin=_caller()[1])
     except Exception as e:
         logger.error(f"AI Butler: failed to build system prompt: {e}")
-        system_prompt = f"You are the cli_debrid {_get_display_name()}. Help users configure and use the application."
+        system_prompt = f"You are the Clyde {_get_display_name()}. Help users configure and use the application."
 
     if is_user_system_enabled() and cu.is_authenticated:
         base_id = f"clidebrid_{cu.id}"

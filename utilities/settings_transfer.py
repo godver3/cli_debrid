@@ -323,7 +323,7 @@ def parse_import(payload):
         except Exception:
             raise ValueError('The file is not valid JSON.')
     if not isinstance(payload, dict) or payload.get('format') != FORMAT:
-        raise ValueError('This is not a cli_debrid settings export.')
+        raise ValueError('This is not a Clyde settings export.')
     try:
         fv = int(payload.get('format_version') or 0)
     except (TypeError, ValueError):

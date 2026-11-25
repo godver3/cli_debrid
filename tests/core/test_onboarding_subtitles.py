@@ -47,12 +47,12 @@ def test_on_saves_logins_and_adds_their_providers(settings):
 
 def test_blank_secret_keeps_saved_one(settings):
     settings['Subtitle Settings'] = {'opensubtitles_password': 'old', 'subsource_api_key': 'ss',
-                                     'subtitle_providers': ['podnapisi']}
+                                     'subtitle_providers': ['podnapisi', 'gestdown']}
     out = _routes()._save_subtitle_step({'enable': True, 'languages': 'eng', 'os_username': 'me',
                                          'os_password': '', 'subdl_key': '', 'subsource_key': ''})
     sub = settings['Subtitle Settings']
     assert sub['opensubtitles_password'] == 'old' and sub['subsource_api_key'] == 'ss'
-    assert out['providers'] == ['opensubtitlescom', 'podnapisi', 'subsource']
+    assert out['providers'] == ['opensubtitlescom', 'gestdown', 'subsource']   # podnapisi (gone) dropped
 
 
 def test_bad_input_is_refused(settings):

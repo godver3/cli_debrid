@@ -12,7 +12,7 @@ services:
       - /host/location/logs:/user/logs
       - /mnt:/mnt
     # For an existing mount (Zurg, Decypharr, cli_mount, NzbDAV...). To use
-    # cli_debrid's built-in mount instead, start from docker-compose.builtin.yml.
+    # Clyde's built-in mount instead, start from docker-compose.builtin.yml.
     environment:
       - TZ=America/Edmonton
     restart: unless-stopped

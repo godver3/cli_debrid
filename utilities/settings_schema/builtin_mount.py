@@ -115,12 +115,12 @@ SECTIONS = {
         },
         "plex_url": {
             "type": "string",
-            "description": "Built-in mount only. Plex URL for stream protection, show precache and Now playing, e.g. http://192.168.1.10:32400. Leave empty to use the Plex URL from your other cli_debrid settings (Plex, or Symlink Plex settings).",
+            "description": "Built-in mount only. Plex URL for stream protection, show precache and Now playing, e.g. http://192.168.1.10:32400. Leave empty to use the Plex URL from your other Clyde settings (Plex, or Symlink Plex settings).",
             "default": ""
         },
         "plex_token": {
             "type": "string",
-            "description": "Built-in mount only. Plex token for the URL above. Leave empty to use the token from your other cli_debrid settings.",
+            "description": "Built-in mount only. Plex token for the URL above. Leave empty to use the token from your other Clyde settings.",
             "default": "",
             "sensitive": True
         },
@@ -285,7 +285,7 @@ SECTIONS = {
         },
         "api_token": {
             "type": "string",
-            "description": "Built-in mount only. Shared secret between cli_debrid and the engine. Generated automatically when empty.",
+            "description": "Built-in mount only. Shared secret between Clyde and the engine. Generated automatically when empty.",
             "default": "",
             "sensitive": True
         },

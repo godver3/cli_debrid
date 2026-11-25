@@ -495,7 +495,7 @@
   }
   function updateSel() { $('#qDeleteSel').hidden = !document.querySelector('.qSel:checked'); }
   async function del(ids) {
-    if (!ids.length || !confirm('Delete ' + ids.length + ' job(s) from the mount? Their files disappear (cli_debrid sees them as removed). This cannot be undone.')) return;
+    if (!ids.length || !confirm('Delete ' + ids.length + ' job(s) from the mount? Their files disappear (Clyde sees them as removed). This cannot be undone.')) return;
     const r = await fetch(TPL_MOUNT.url_for, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ids})});
     const d = await r.json();
     if (!d.success) alert('Could not delete ' + d.failed.length + ' job(s).');

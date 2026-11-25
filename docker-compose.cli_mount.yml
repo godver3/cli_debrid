@@ -1,4 +1,4 @@
-# cli_debrid + cli_mount in one stack (Linux, Docker Engine).
+# Clyde + cli_mount in one stack (Linux, Docker Engine).
 #
 # Before the first start, create the two shared folders on the host and give
 # the mount folder to the user cli_mount runs as (PUID below, 1000 by default):
@@ -51,7 +51,7 @@ services:
       - ./cli_debrid/logs:/user/logs
       - ./cli_mount:/climount_data                # cli_mount's data folder (database backups, log checks)
       - /mnt/cli_mount:/mnt/cli_mount:rslave      # rslave: sees the mount, and sees it again after cli_mount restarts
-      - /mnt/symlinks:/mnt/symlinks               # Symlink mode only: where cli_debrid writes symlinks
+      - /mnt/symlinks:/mnt/symlinks               # Symlink mode only: where Clyde writes symlinks
     environment:
       - TZ=America/New_York                       # your timezone
       - MALLOC_ARENA_MAX=2

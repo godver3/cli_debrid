@@ -10,10 +10,11 @@
     </div>
     <div class="settings-section-content">
         <p class="settings-description">Scraping settings that apply to every version. Per-version settings are on the Version Settings page.</p>
+        <p class="settings-description">Upgrade settings (searching for better releases after collecting) are on the <a href="/upgrade_hub/#settings">Upgrade Hub</a>'s Settings tab.</p>
         <div class="settings-subsection">
             <!-- Debug: environment_mode = {{ environment_mode }} -->
             {% for key, value in settings_schema.Scraping.items() %}
-                {% if key not in ['versions', 'tab', 'hybrid_mode', 'ultimate_sort_order'] %}
+                {% if key not in ['versions', 'tab', 'hybrid_mode', 'ultimate_sort_order', 'enable_upgrading', 'upgrade_max_release_age_days', 'upgrading_percentage_threshold', 'delayed_upgrade_scrape_days', 'enable_upgrading_cleanup'] %}
                     <!-- Debug: Processing key "{{ key }}" -->
                     {% if environment_mode is not defined or environment_mode == 'full' or key not in ['uncached_content_handling', 'accept_uncached_within_hours'] %}
                     <div class="settings-form-group" {% if key == 'hybrid_mode' or key == 'ultimate_sort_order' %}style="display: none !important;"{% endif %}>

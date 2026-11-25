@@ -177,7 +177,7 @@ _SPECS = [
     _q('Unreleased', 'Unreleased', 300),
     _q('Blacklisted', 'Blacklisted', 2 * HOUR),
     _q('Pending Uncached', 'Pending Uncached', HOUR),
-    _q('Upgrading', 'Upgrading', HOUR),
+    _q('Upgrading', 'Upgrading', 300),
     _q('final_check_queue', 'Final Scrape', 900),
     _q('Pre_release', 'Pre-release', DAY),
 
@@ -192,7 +192,7 @@ _SPECS = [
     TaskSpec('task_verify_symlinked_files', 'Verify symlinks are in the media server', 'media_server', 2 * HOUR,
              default=_verify_symlinks_default,
              controlled_by='On in Symlinked/Local mode when a media server is configured'),
-    TaskSpec('task_scan_mount_for_external_adds', 'Pick up files added outside cli_debrid', 'media_server', 900,
+    TaskSpec('task_scan_mount_for_external_adds', 'Pick up files added outside Clyde', 'media_server', 900,
              default=_external_adds_default,
              controlled_by='Settings → Required → File Management (Scan mount for external adds)'),
     TaskSpec('task_sync_library_metadata', 'Sync library metadata', 'media_server', DAY),
@@ -247,6 +247,10 @@ _SPECS = [
     TaskSpec('task_cleanup_debrid', 'Clean up debrid account', 'library', DAY, default=False, destructive=True),
     TaskSpec('task_upgrade_hub_scan', 'Upgrade Hub scan', 'library', DAY, default=False),
     TaskSpec('task_upgrade_hub_auto_queue', 'Upgrade Hub auto-queue', 'library', DAY, default=False),
+    # Runs only while 'Upgrade Hub scan' is on (checked in the task), so it
+    # follows that switch; its interval is adjustable here.
+    TaskSpec('task_upgrade_hub_feed_sync', 'Upgrade Hub NZB feed sync', 'library', HOUR,
+             controlled_by='Runs while Upgrade Hub scan is on'),
 
     # System
     TaskSpec('task_send_notifications', 'Send notifications', 'system', 15, INTERNAL, executor='queue'),

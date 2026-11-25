@@ -36,7 +36,7 @@
   <div class="pt-field" data-role="src" data-kind="climount">
     <label for="pt-src-nzbpath">cli_mount nzb-store path:</label>
     <input type="text" id="pt-src-nzbpath" placeholder="/climount_data/usenet/nzbs">
-    <p class="description">Path <em>inside this cli-debrid container</em> to cli_mount's stored <code>.nzb</code> files. Bind cli_mount's appdata into cli-debrid (the same <code>data_path</code> bind the cli_mount DB tools use) and point this at its <code>usenet/nzbs</code> folder. Example compose volume: <code>- /host/cli_mount/appdata:/climount_data</code> → then this path is <code>/climount_data/usenet/nzbs</code>.</p>
+    <p class="description">Path <em>inside this Clyde container</em> to cli_mount's stored <code>.nzb</code> files. Bind cli_mount's appdata into Clyde (the same <code>data_path</code> bind the cli_mount DB tools use) and point this at its <code>usenet/nzbs</code> folder. Example compose volume: <code>- /host/cli_mount/appdata:/climount_data</code> → then this path is <code>/climount_data/usenet/nzbs</code>.</p>
   </div>
   <div class="pt-field" data-role="src" data-kind="climount nzbdav">
     <label for="pt-src-url"><span class="pt-src-name">Source</span> URL:</label>
@@ -79,7 +79,7 @@
   <div id="pt-preview-result" style="margin-top:8px;"></div>
   <div id="pt-progress" style="margin-top:8px;"></div>
   <div id="pt-next" class="description" style="display:none; margin-top:8px; border-left:3px solid #3a6ea5; padding-left:10px;">
-    <strong>Next steps.</strong> The items now exist on the target, but cli_debrid still points at the old backend:
+    <strong>Next steps.</strong> The items now exist on the target, but Clyde still points at the old backend:
     <ol style="margin:4px 0 0 18px; line-height:1.5;">
       <li>Settings → Usenet Provider: switch to the new backend (URL, token, mount path).</li>
       <li>If the mount path changed, use Tools → Symlinks → <em>Modify Symlink Base Paths</em> (or update File Management's original files path), then <em>Resync Symlinks</em>.</li>

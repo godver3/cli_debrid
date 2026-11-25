@@ -310,9 +310,9 @@ def handle_report(report: Dict[str, Any], plex_url: str, token: str, machine_id:
         return 'replacing'
 
     logging.info(f"{log_prefix} no cli_debrid item uses the file Plex plays")
-    reports_db.save_report(report, 'no_match', "cli_debrid doesn't manage the file Plex plays", title)
+    reports_db.save_report(report, 'no_match', "Clyde doesn't manage the file Plex plays", title)
     _notify_owner(f"Plex issue reported by {report['reporter']}: {title}{quoted}. "
-                  "cli_debrid doesn't manage that file, so nothing was replaced.")
+                  "Clyde doesn't manage that file, so nothing was replaced.")
     return 'no_match'
 
 

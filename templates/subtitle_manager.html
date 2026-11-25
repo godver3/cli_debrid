@@ -84,8 +84,8 @@
 <div class="sm-wrap">
   <h1 class="sm-title">Subtitle Manager</h1>
   <p class="sm-intro">
-    Subtitle status for collected movies and episodes. A language counts as present when there's a subtitle file, one cli_debrid saved, or an embedded text track your media server found (not forced, not commentary, not an image/styled format that makes players transcode). Click an item to see its subtitles, search every provider by hand, or let the best match download automatically.
-    {% if plex_mode %}In Direct Mount subtitles are uploaded to Plex, so the list shows what cli_debrid downloaded; open an item to see every subtitle Plex has.{% endif %}
+    Subtitle status for collected movies and episodes. A language counts as present when there's a subtitle file, one Clyde saved, or an embedded text track your media server found (not forced, not commentary, not an image/styled format that makes players transcode). Click an item to see its subtitles, search every provider by hand, or let the best match download automatically.
+    {% if plex_mode %}In Direct Mount subtitles are uploaded to Plex, so the list shows what Clyde downloaded; open an item to see every subtitle Plex has.{% endif %}
     Languages, providers and the text-only (no transcoding) option are in <a href="{{ url_for('settings.index') }}#subtitles">Settings → Subtitle Settings</a>.
   </p>
 
@@ -192,7 +192,7 @@
       <div class="sm-kv" id="sm-bz-kv"></div>
       <div id="sm-bz-not" class="sm-muted" style="margin-top:10px"></div>
       <div style="margin-top:12px;display:flex;flex-direction:column;gap:6px">
-        <label><input type="checkbox" id="sm-bz-enable" checked> Turn on subtitle downloads in cli_debrid</label>
+        <label><input type="checkbox" id="sm-bz-enable" checked> Turn on subtitle downloads in Clyde</label>
         <label><input type="checkbox" id="sm-bz-stopfeed"> Stop sending new items to Bazarr (turns off Bazarr Integration), so both don't download</label>
       </div>
       <div style="margin-top:12px"><button class="sm-btn sm-btn-accent" id="sm-bz-apply">Import</button> <span class="sm-muted" id="sm-bz-status"></span></div>
@@ -203,11 +203,11 @@
   <div class="sm-dialog" style="max-width:760px">
     <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">
       <div><h3>Remove orphaned subtitles</h3>
-        <div class="sm-muted">Subtitle files in your library named after a video that is no longer in their folder: left behind when a file was replaced, upgraded or repaired (by Bazarr or cli_debrid). Plex can still offer them for that movie or episode and pick the wrong one.</div></div>
+        <div class="sm-muted">Subtitle files in your library named after a video that is no longer in their folder: left behind when a file was replaced, upgraded or repaired (by Bazarr or Clyde). Plex can still offer them for that movie or episode and pick the wrong one.</div></div>
       <button class="sm-btn" id="sm-or-close">Close</button>
     </div>
     <div class="sm-sec">
-      <p class="sm-warnbox"><b>This permanently deletes files and can't be undone.</b> It only removes separate subtitle files (.srt, .ass, ...) that match no video in their folder. Subtitles inside your videos, ones that came with a release (linked into the library), and subtitles of videos still in the folder are never touched. A leftover that was still right for a renamed file is removed too; cli_debrid searches again the next time that item is collected, or use Search on this page.</p>
+      <p class="sm-warnbox"><b>This permanently deletes files and can't be undone.</b> It only removes separate subtitle files (.srt, .ass, ...) that match no video in their folder. Subtitles inside your videos, ones that came with a release (linked into the library), and subtitles of videos still in the folder are never touched. A leftover that was still right for a renamed file is removed too; Clyde searches again the next time that item is collected, or use Search on this page.</p>
       <button class="sm-btn" id="sm-or-scan">Scan library</button> <span class="sm-muted" id="sm-or-status"></span>
     </div>
     <div class="sm-sec" id="sm-or-result" style="display:none">

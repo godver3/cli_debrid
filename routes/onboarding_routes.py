@@ -498,8 +498,9 @@ def _save_subtitle_step(data):
         value = str(data.get(field) or '').strip()
         if value:
             set_setting(section, key, value)
-    from utilities.downsub import DEFAULT_PROVIDERS
-    providers = list(get_setting(section, 'subtitle_providers', None) or DEFAULT_PROVIDERS)
+    from utilities.downsub import DEFAULT_PROVIDERS, REMOVED_PROVIDERS
+    providers = [p for p in (get_setting(section, 'subtitle_providers', None) or DEFAULT_PROVIDERS)
+                 if p not in REMOVED_PROVIDERS]
     wanted = [('opensubtitlescom', bool(user)),
               ('subdl', bool(get_setting(section, 'subdl_api_key', ''))),
               ('subsource', bool(get_setting(section, 'subsource_api_key', '')))]
@@ -850,7 +851,7 @@ def _onboarding_summary(config):
             s.get('display_name') or sid for sid, s in config.get('Content Sources', {}).items()) or 'None'),
     ]
     sub = config.get('Subtitle Settings', {}) or {}
-    rows.append(('Subtitles', f"cli_debrid downloads them ({sub.get('subtitle_languages') or 'eng'})"
+    rows.append(('Subtitles', f"Clyde downloads them ({sub.get('subtitle_languages') or 'eng'})"
                  if sub.get('enable_subtitles') else 'Off'))
     return rows
 
@@ -902,7 +903,7 @@ def onboarding_health():
         ok, message, warning = check_mount_path(mount_path)
         add('Mount', ok, message, warning)
     else:
-        add('Mount', False, 'No mount path set. cli_debrid can\'t see your files without one (step 2)', True)
+        add('Mount', False, 'No mount path set. Clyde can\'t see your files without one (step 2)', True)
 
     # Built-in mount without usenet (debrid only): its own row, since the
     # usenet row above doesn't cover it.

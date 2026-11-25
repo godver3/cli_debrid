@@ -32,7 +32,7 @@ class ProtocolTests(unittest.TestCase):
         r = mcp.handle({'jsonrpc': '2.0', 'id': 1, 'method': 'initialize',
                         'params': {'protocolVersion': '2025-03-26', 'capabilities': {}, 'clientInfo': {'name': 't'}}}, '0.7.89')
         self.assertEqual(r['result']['protocolVersion'], '2025-03-26')
-        self.assertEqual(r['result']['serverInfo'], {'name': 'cli_debrid', 'version': '0.7.89'})
+        self.assertEqual(r['result']['serverInfo'], {'name': 'clyde', 'version': '0.7.89'})
         self.assertIn('tools', r['result']['capabilities'])
         r = mcp.handle({'jsonrpc': '2.0', 'id': 2, 'method': 'initialize', 'params': {'protocolVersion': '1999-01-01'}})
         self.assertEqual(r['result']['protocolVersion'], mcp.PROTOCOL_VERSIONS[0])
@@ -74,7 +74,7 @@ class HelpAndReportTests(unittest.TestCase):
                 mock.patch.object(mcp, 'tool_lookup_item', return_value={'items': []}) as item:
             out = mcp.tool_prepare_issue_report('Friends S10 plays the wrong episode', 'Friends')
         self.assertIn('Friends S10 plays the wrong episode', out['draft'])
-        self.assertIn('cli_debrid 0.7.89, Symlinked/Local', out['draft'])
+        self.assertIn('Clyde 0.7.89, Symlinked/Local', out['draft'])
         self.assertEqual(out['settings_snapshot'], 'App version: 0.7.89')
         self.assertEqual({c.args[2] for c in logs.call_args_list}, {'app', 'mount'})
         item.assert_called_once_with('Friends', limit=5)

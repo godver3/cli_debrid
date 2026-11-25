@@ -157,7 +157,7 @@ def list_source_items(direction, source_url='', source_token='', source_nzb_path
         return None, 'No cli_mount nzb-store path.'
     if not os.path.isdir(path):
         return None, (f'Path not found in this container: {path}. Bind cli_mount\'s '
-                      f'appdata into cli-debrid and point this at its usenet/nzbs folder.')
+                      f'appdata into Clyde and point this at its usenet/nzbs folder.')
     # cli_mount names the files by NZB id: map ids to release names, or every
     # job at the target would be named after a UUID.
     names = {h: n for n, h in _climount_library(source_url, source_token) if h}

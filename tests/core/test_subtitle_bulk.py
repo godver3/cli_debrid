@@ -78,11 +78,41 @@ def test_quota_error_pauses_provider():
     except DownloadLimitExceeded:
         pool._discard_provider('opensubtitlescom')
     assert 'daily download limit' in downsub.blocked_providers()['opensubtitlescom']
-    with mock.patch.object(downsub.config, 'SUBTITLE_PROVIDERS', ['opensubtitlescom', 'podnapisi']):
-        assert downsub.selected_providers() == ['podnapisi']
-        assert downsub.selected_providers(include_blocked=True) == ['opensubtitlescom', 'podnapisi']
+    with mock.patch.object(downsub.config, 'SUBTITLE_PROVIDERS', ['opensubtitlescom', 'gestdown']):
+        assert downsub.selected_providers() == ['gestdown']
+        assert downsub.selected_providers(include_blocked=True) == ['opensubtitlescom', 'gestdown']
     downsub._BLOCKED['opensubtitlescom'] = (time.monotonic() - 1, 'x')
     assert 'opensubtitlescom' not in downsub.blocked_providers()
+
+
+def test_login_pause_ends_when_credentials_change():
+    """A login failure pauses the provider for an hour, but saving a new
+    login resumes it at once (Discord 2026-11-25: fixed password, still
+    'Paused providers: opensubtitlescom (login failed ...)')."""
+    from subliminal.exceptions import AuthenticationError, DownloadLimitExceeded
+    from utilities import downsub
+    downsub._BLOCKED.clear()
+    creds = {'opensubtitles_password': 'old'}
+    fake_get = lambda section, key, default=None: creds.get(key, default)
+    with mock.patch('utilities.settings.get_setting', side_effect=fake_get), \
+            mock.patch.object(downsub.config, 'reload') as reload:
+        pool = downsub._pool_class()(providers=['opensubtitlescom', 'subdl'])
+        try:
+            raise AuthenticationError('bad login')
+        except AuthenticationError:
+            pool._discard_provider('opensubtitlescom')
+        try:
+            raise DownloadLimitExceeded()
+        except DownloadLimitExceeded:
+            pool._discard_provider('subdl')
+        assert 'login failed' in downsub.blocked_providers()['opensubtitlescom']
+        assert not reload.called
+        creds['opensubtitles_password'] = 'new'
+        paused = downsub.blocked_providers()
+        assert 'opensubtitlescom' not in paused
+        assert 'subdl' in paused          # quota pauses don't care about logins
+        assert reload.called
+    downsub._BLOCKED.clear()
 
 
 def test_search_time_quota_error_pauses_with_its_reason():
@@ -380,4 +410,91 @@ def test_provider_answering_403_is_paused_not_retried():
         assert pool.list_subtitles(Episode('Show.S01E01.mkv', 'Show', 1, 1), {Language('eng')}) == []
     assert 'HTTP 403' in downsub.blocked_providers()['tvsubtitles']
     assert downsub._BLOCKED['tvsubtitles'][0] - time.monotonic() > 3 * 3600
+    downsub._BLOCKED.clear()
+
+
+def _search_raising(name, exc):
+    from subliminal.core import ProviderPool
+    from subliminal.video import Episode
+    from babelfish import Language
+    from utilities import downsub
+
+    class Failing:
+        def list_subtitles(self, video, languages):
+            raise exc
+    pool = downsub._pool_class()(providers=[name])
+    with mock.patch.object(ProviderPool, '__getitem__', return_value=Failing()):
+        assert pool.list_subtitles(Episode('Show.S01E01.mkv', 'Show', 1, 1), {Language('eng')}) == []
+
+
+def test_unreachable_provider_is_paused_not_retried():
+    """podnapisi.net stopped resolving: every search raised ConnectionError,
+    logged a traceback and was tried again for the next item."""
+    import requests
+    from utilities import downsub
+    downsub._BLOCKED.clear()
+    _search_raising('podnapisi', requests.ConnectionError(
+        "Failed to resolve 'www.podnapisi.net' ([Errno -2] Name or service not known)"))
+    assert "can't reach the site" in downsub.blocked_providers()['podnapisi']
+    assert downsub._BLOCKED['podnapisi'][0] - time.monotonic() > 50 * 60
+    downsub._BLOCKED.clear()
+
+
+def test_timing_out_provider_is_paused_briefly():
+    import requests
+    from utilities import downsub
+    downsub._BLOCKED.clear()
+    _search_raising('podnapisi', requests.ReadTimeout('read timed out'))
+    assert 'timing out' in downsub.blocked_providers()['podnapisi']
+    assert downsub._BLOCKED['podnapisi'][0] - time.monotonic() <= 600
+    downsub._BLOCKED.clear()
+
+
+def test_legacy_opensubtitles_login_refusal_points_to_com(monkeypatch):
+    from subliminal.providers.opensubtitles import Unauthorized
+    from utilities import downsub
+    monkeypatch.setattr(downsub.config, 'OPENSUBTITLES_ORG_USERNAME', '', raising=False)
+    secs, reason = downsub._block_seconds(Unauthorized(), 'opensubtitles')
+    assert 'OpenSubtitles.com instead' in reason and 'username/password' not in reason
+    assert 'username/password' in downsub._block_seconds(Unauthorized(), 'opensubtitlescom')[1]
+    # with its own .org login set, a refusal is that login's problem
+    monkeypatch.setattr(downsub.config, 'OPENSUBTITLES_ORG_USERNAME', 'orguser', raising=False)
+    assert 'OpenSubtitles.org username/password' in downsub._block_seconds(Unauthorized(), 'opensubtitles')[1]
+
+
+def test_org_login_used_for_legacy_provider_only(monkeypatch):
+    from utilities import downsub
+    for k, v in {'OPENSUBTITLES_USERNAME': 'com', 'OPENSUBTITLES_PASSWORD': 'cp',
+                 'OPENSUBTITLES_ORG_USERNAME': '', 'OPENSUBTITLES_ORG_PASSWORD': ''}.items():
+        monkeypatch.setattr(downsub.config, k, v, raising=False)
+    pc = downsub.build_provider_configs()
+    assert pc['opensubtitles'] == pc['opensubtitlescom'] == {'username': 'com', 'password': 'cp'}
+    monkeypatch.setattr(downsub.config, 'OPENSUBTITLES_ORG_USERNAME', 'org', raising=False)
+    monkeypatch.setattr(downsub.config, 'OPENSUBTITLES_ORG_PASSWORD', 'op', raising=False)
+    pc = downsub.build_provider_configs()
+    assert pc['opensubtitles'] == {'username': 'org', 'password': 'op'}
+    assert pc['opensubtitlescom'] == {'username': 'com', 'password': 'cp'}
+
+
+def test_note_does_not_list_providers_that_failed(db, tmp_path):
+    """'nothing passed the match threshold (podnapisi, tvsubtitles)' when
+    podnapisi never answered: the failed one is named as paused instead."""
+    from utilities import downsub
+    downsub._BLOCKED.clear()
+    video = mock.Mock(season=None, episodes=None)
+    item = {'id': 7, 'title': 'Movie', 'type': 'movie'}
+    ctx = {'video': video, 'item': item, 'original_path': str(tmp_path / 'm.mkv'),
+           'languages': [], 'min_score': 1, 'parse_name': 'Movie.2010'}
+
+    def search(*a, **kw):
+        downsub._BLOCKED['podnapisi'] = (time.monotonic() + 3600, "can't reach the site (DNS or connection failed)")
+        return {video: []}
+    with mock.patch.object(downsub, 'prepare_video', return_value=ctx), \
+            mock.patch.object(downsub, 'selected_providers', return_value=['podnapisi', 'gestdown']), \
+            mock.patch.object(downsub, 'download_best_subtitles', side_effect=search), \
+            mock.patch.object(downsub, 'alternative_numberings', return_value=[]):
+        assert downsub.download_subtitles_for_video(str(tmp_path / 'm.mkv'), item=item) is False
+    note = downsub.last_result_note(item)
+    assert note.startswith('nothing passed the match threshold (gestdown)')
+    assert "podnapisi paused: can't reach the site" in note
     downsub._BLOCKED.clear()

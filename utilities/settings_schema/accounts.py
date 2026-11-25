@@ -18,7 +18,7 @@ SECTIONS = {
         },
         "discovery_url": {
             "type": "string",
-            "description": "OIDC discovery URL (e.g. https://auth.example.com/application/o/cli-debrid/.well-known/openid-configuration)",
+            "description": "OIDC discovery URL (e.g. https://auth.example.com/application/o/clyde/.well-known/openid-configuration)",
             "default": ""
         },
         "client_id": {
@@ -165,12 +165,12 @@ SECTIONS = {
         },
         "update_plex_on_file_discovery": {
             "type": "boolean",
-            "description": "Update Plex on file discovery (cli_debrid must be able to access mount at the below location)",
+            "description": "Update Plex on file discovery (Clyde must be able to access mount at the below location)",
             "default": False
         },
         "mounted_file_location": {
             "type": "string",
-            "description": "The single path cli-debrid checks for file presence (in Zurg use the /__all__ folder). When you run more than one provider (e.g. Real-Debrid via zurg AND Usenet via NzbDAV), point this at one combined mount that contains all of them — e.g. a mergerfs union of the providers' mounts — so file checks succeed regardless of which provider holds the item. May differ from the per-provider mount path set under Usenet Provider.",
+            "description": "The single path Clyde checks for file presence (in Zurg use the /__all__ folder). When you run more than one provider (e.g. Real-Debrid via zurg AND Usenet via NzbDAV), point this at one combined mount that contains all of them — e.g. a mergerfs union of the providers' mounts — so file checks succeed regardless of which provider holds the item. May differ from the per-provider mount path set under Usenet Provider.",
             "default": "/mnt/zurg/__all__"
         },
         "disable_plex_library_checks": {
@@ -183,7 +183,7 @@ SECTIONS = {
         "tab": "Required Settings",
         "file_collection_management": {
             "type": "string",
-            "description": "How your library is built. Direct Mount: your media server (Plex, Silo, Jellyfin or Emby) reads the mount directly. Symlinked/Local: cli_debrid makes a folder of symlinks into the mount, and your media server (Plex, Jellyfin, Emby or Silo) scans that. On Windows with Plex use Direct Mount: Plex Media Server for Windows skips symlinked files, so a Symlinked/Local library never appears in it.",
+            "description": "How your library is built. Direct Mount: your media server (Plex, Silo, Jellyfin or Emby) reads the mount directly. Symlinked/Local: Clyde makes a folder of symlinks into the mount, and your media server (Plex, Jellyfin, Emby or Silo) scans that. On Windows with Plex use Direct Mount: Plex Media Server for Windows skips symlinked files, so a Symlinked/Local library never appears in it.",
             "default": "Plex",
             "choices": ["Plex", "Symlinked/Local"],
             # Shown instead of the stored value ('Plex' stays the saved value)
@@ -221,7 +221,7 @@ SECTIONS = {
         },
         "scan_mount_for_external_adds": {
             "type": "boolean",
-            "description": "Periodically scan the original files path for content added outside cli_debrid (e.g. via DMM or the debrid provider's own UI) and import it - symlink it and trigger a media server scan. Use this when your mount provider has no library-update webhook (Decypharr, plain rclone); zurg users already get this via its on_library_update hook. The first run records existing mount content as a baseline without importing it.",
+            "description": "Periodically scan the original files path for content added outside Clyde (e.g. via DMM or the debrid provider's own UI) and import it - symlink it and trigger a media server scan. Use this when your mount provider has no library-update webhook (Decypharr, plain rclone); zurg users already get this via its on_library_update hook. The first run records existing mount content as a baseline without importing it.",
             "default": False
         },
         "plex_url_for_symlink": {
@@ -244,7 +244,7 @@ SECTIONS = {
         },
         "plex_mode_media_server": {
             "type": "string",
-            "description": "Direct Mount: the media server that reads the mount and tracks your library. Silo, Jellyfin and Emby work like Plex here: they read the mount's folders, and cli_debrid asks them what they have. Silo needs its URL and an admin API key; Jellyfin/Emby its URL and an API key.",
+            "description": "Direct Mount: the media server that reads the mount and tracks your library. Silo, Jellyfin and Emby work like Plex here: they read the mount's folders, and Clyde asks them what they have. Silo needs its URL and an admin API key; Jellyfin/Emby its URL and an API key.",
             "default": "plex",
             "choices": ["plex", "silo", "jellyfin"]
         }
@@ -253,7 +253,7 @@ SECTIONS = {
         "tab": "Required Settings",
         "provider": {
             "type": "string",
-            "description": "Debrid service provider. AllDebrid note: AllDebrid can't report whether a release is cached without adding it to your account, and it has suspended accounts that add many releases without downloading them. cli_debrid limits AllDebrid cache checks to 150 per hour and 10 per item and removes the ones it doesn't use; items over the limit wait in Adding. When another provider is also set up, AllDebrid is only checked if the providers ranked above it don't have the release cached.",
+            "description": "Debrid service provider. AllDebrid note: AllDebrid can't report whether a release is cached without adding it to your account, and it has suspended accounts that add many releases without downloading them. Clyde limits AllDebrid cache checks to 150 per hour and 10 per item and removes the ones it doesn't use; items over the limit wait in Adding. When another provider is also set up, AllDebrid is only checked if the providers ranked above it don't have the release cached.",
             "default": "RealDebrid",
             "choices": ["RealDebrid", "AllDebrid", "Premiumize", "Torbox", "DebridLink", "HighWay"]
         },
@@ -280,7 +280,7 @@ SECTIONS = {
         },
         "ffprobe_all_debrid_additions": {
             "type": "boolean",
-            "description": "Before collecting a debrid (Real-Debrid/etc.) file, probe it with ffprobe to confirm it's actually playable, on top of the normal checks. Works in both Symlinked/Local and Direct Mount — in Direct Mount it runs the moment the file is found on the mount, before cli_debrid tells Plex about it, so a confirmed-broken file is rejected and re-scraped before it ever shows up in Plex. Requires ffprobe to be installed. This will slow down how long it takes items to reach Collected.",
+            "description": "Before collecting a debrid (Real-Debrid/etc.) file, probe it with ffprobe to confirm it's actually playable, on top of the normal checks. Works in both Symlinked/Local and Direct Mount — in Direct Mount it runs the moment the file is found on the mount, before Clyde tells Plex about it, so a confirmed-broken file is rejected and re-scraped before it ever shows up in Plex. Requires ffprobe to be installed. This will slow down how long it takes items to reach Collected.",
             "default": False
         }
     },
@@ -293,7 +293,7 @@ SECTIONS = {
         },
         "url": {
             "type": "string",
-            "description": "Mount URL: where cli_debrid reaches the usenet mount (cli_mount, NzbDAV or Zurg). Settings → Required → Usenet Mount → Detect looks for it. For cli_mount use its host or container name and port, e.g. http://cli_mount:8282, not localhost:8888 (that is cli_debrid's own Phalanx DB).",
+            "description": "Mount URL: where Clyde reaches the usenet mount (cli_mount, NzbDAV or Zurg). Settings → Required → Usenet Mount → Detect looks for it. For cli_mount use its host or container name and port, e.g. http://cli_mount:8282, not localhost:8888 (that is Clyde's own Phalanx DB).",
             "default": ""
         },
         "api_token": {
@@ -339,23 +339,23 @@ SECTIONS = {
         },
         "ffprobe_all_nzbs": {
             "type": "boolean",
-            "description": "Before collecting an NZB file, probe it with ffprobe to confirm it's actually playable, on top of the existing missing-article/segment health check. Works in both Symlinked/Local and Direct Mount — in Direct Mount it runs the moment the file is found on the mount, before cli_debrid tells Plex about it, so a confirmed-broken file is rejected and re-scraped before it ever shows up in Plex. Requires ffprobe to be installed. This will slow down how long it takes NZB items to reach Collected.",
+            "description": "Before collecting an NZB file, probe it with ffprobe to confirm it's actually playable, on top of the existing missing-article/segment health check. Works in both Symlinked/Local and Direct Mount — in Direct Mount it runs the moment the file is found on the mount, before Clyde tells Plex about it, so a confirmed-broken file is rejected and re-scraped before it ever shows up in Plex. Requires ffprobe to be installed. This will slow down how long it takes NZB items to reach Collected.",
             "default": False
         },
         "provider": {
             "type": "string",
-            "description": "Which usenet backend to use: cli_mount, NzbDAV, Zurg (Zurg 2.0's SABnzbd-compatible endpoint, or any other flat-layout SAB-emulation mount), or builtin (cli_debrid's own optional mount engine, configured under Built-in Mount; the container needs /dev/fuse). Zurg reuses the NzbDAV submit/poll/health-check logic unchanged, but resolves the job folder directly under the mount root instead of walking a <category>/<job> subfolder layout — required because Zurg's mount stores content flat and has no per-category subdirectories.",
+            "description": "Which usenet backend to use: cli_mount, NzbDAV, Zurg (Zurg 2.0's SABnzbd-compatible endpoint, or any other flat-layout SAB-emulation mount), or builtin (Clyde's own optional mount engine, configured under Built-in Mount; the container needs /dev/fuse). Zurg reuses the NzbDAV submit/poll/health-check logic unchanged, but resolves the job folder directly under the mount root instead of walking a <category>/<job> subfolder layout — required because Zurg's mount stores content flat and has no per-category subdirectories.",
             "default": "builtin",
             "choices": ["climount", "nzbdav", "zurg", "builtin"]
         },
         "owned_categories": {
             "type": "string",
-            "description": "NzbDAV/Zurg only. Comma-separated list of nzbdav categories the repair/health tool may act on. nzbdav history is shared with other SAB clients (e.g. Lidarr music), and repair can only re-acquire content cli-debrid manages — so it must never touch another app's entries. Leave empty to auto-pick the categories cli-debrid grabs into (movies, shows, movies_1080p_264, shows_1080p_264, plus the download-folder fallback). Set this only if your category names differ.",
+            "description": "NzbDAV/Zurg only. Comma-separated list of nzbdav categories the repair/health tool may act on. nzbdav history is shared with other SAB clients (e.g. Lidarr music), and repair can only re-acquire content Clyde manages — so it must never touch another app's entries. Leave empty to auto-pick the categories Clyde grabs into (movies, shows, movies_1080p_264, shows_1080p_264, plus the download-folder fallback). Set this only if your category names differ.",
             "default": ""
         },
         "exclude_categories": {
             "type": "string",
-            "description": "NzbDAV/Zurg only. Comma-separated nzbdav categories the repair/health tool must ignore, subtracted from the included set. Use this if you point Radarr/Sonarr at the same nzbdav and don't want cli-debrid touching their categories.",
+            "description": "NzbDAV/Zurg only. Comma-separated nzbdav categories the repair/health tool must ignore, subtracted from the included set. Use this if you point Radarr/Sonarr at the same nzbdav and don't want Clyde touching their categories.",
             "default": ""
         },
         "nzbdav_category_map": {

@@ -37,7 +37,7 @@ W, H = 1000, 1500
 SOURCE_ICONS = {
     'Trakt Lists':   str(ASSETS_LOGOS / 'rating' / 'trakt_square.png'),
     'MDBList':       str(ASSETS_LOGOS / 'rating' / 'MDBList.png'),
-    'Adaptive List': str(STATIC_DIR / 'color-icon.png'),
+    'Adaptive List': str(STATIC_DIR / 'clyde-icon.png'),
 }
 
 # Design metadata

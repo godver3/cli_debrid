@@ -99,7 +99,7 @@ def setup_api():
     url, token = _public_url(), _token()
     return jsonify({
         'enabled': _enabled(), 'url': url, 'token': token,
-        'claude_code': f'claude mcp add --transport http cli_debrid {url} --header "Authorization: Bearer {token}"',
-        'json_config': {'mcpServers': {'cli_debrid': {'type': 'http', 'url': url,
+        'claude_code': f'claude mcp add --transport http clyde {url} --header "Authorization: Bearer {token}"',
+        'json_config': {'mcpServers': {'clyde': {'type': 'http', 'url': url,
                                                       'headers': {'Authorization': f'Bearer {token}'}}}},
     })

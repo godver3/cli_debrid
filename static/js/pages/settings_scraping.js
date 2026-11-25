@@ -250,7 +250,7 @@ function showImportVersionsDialog() {
     window.showPopup({
         type: POPUP_TYPES.CONFIRM,
         title: 'Import Versions',
-        message: 'Select a JSON file exported from cli_debrid. If a version name already exists you can choose to: <b>Rename</b> (import as a copy), <b>Overwrite</b>, or <b>Skip</b>.',
+        message: 'Select a JSON file exported from Clyde. If a version name already exists you can choose to: <b>Rename</b> (import as a copy), <b>Overwrite</b>, or <b>Skip</b>.',
         confirmText: 'Choose File',
         cancelText: 'Cancel',
         onConfirm: () => {

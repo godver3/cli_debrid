@@ -35,7 +35,7 @@ _state_lock = threading.Lock()
 
 TMDB_BASE = 'https://api.themoviedb.org/3'
 TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p/w500'
-BOXSET_ICON = 'static/color-icon.png'
+BOXSET_ICON = 'static/clyde-icon.png'
 
 # Suffixes stripped from TMDB collection names before applying the user pattern.
 # e.g. "The Godfather Collection" → "The Godfather" → "{title} Collection" → "The Godfather Collection"
@@ -512,7 +512,7 @@ def apply_boxset_posters(boxsets: List[dict], plex_map: Dict[str, str],
                          plex_url: str, token: str, state: dict) -> dict:
     """
     For each boxset with a TMDB poster: download and upload it directly.
-    For boxsets without: render a Design 1 poster with the cli_debrid icon.
+    For boxsets without: render a Design 1 poster with the Clyde icon.
     Skips collections whose owned-movie fingerprint hasn't changed.
     Returns updated state dict.
     """
@@ -563,7 +563,7 @@ def apply_boxset_posters(boxsets: List[dict], plex_map: Dict[str, str],
                     bs['poster_path'] = None  # Fall through to rendered poster
 
             if not bs['poster_path']:
-                # Render fallback: Design 1 with cli_debrid icon, no accent/eyebrow
+                # Render fallback: Design 1 with Clyde icon, no accent/eyebrow
                 thumbs = fetch_movie_thumbs(plex_url, token, collection_rk, limit=4)
                 poster_bytes = render_collection_poster(
                     design_id=1,

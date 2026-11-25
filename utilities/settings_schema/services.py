@@ -65,18 +65,18 @@ SECTIONS = {
         },
         "api_key": {
             "type": "string",
-            "description": "Scrob API key (Settings → Connections → API Key in the Scrob UI). Shared by all Scrob content sources (Lists, Collection, Special) below. Used for all read operations (syncing Lists, Collection, and Special Lists into cli_debrid).",
+            "description": "Scrob API key (Settings → Connections → API Key in the Scrob UI). Shared by all Scrob content sources (Lists, Collection, Special) below. Used for all read operations (syncing Lists, Collection, and Special Lists into Clyde).",
             "default": "",
             "sensitive": True
         },
         "username": {
             "type": "string",
-            "description": "Optional: your Scrob login username. Only needed if you want cli_debrid to remove items from Scrob Lists/Collection when you delete them from your library — Scrob's API key cannot authorize deletions, only a logged-in session can. Leave blank to skip deletion sync (syncing content in still works fine with just the API key above).",
+            "description": "Optional: your Scrob login username. Only needed if you want Clyde to remove items from Scrob Lists/Collection when you delete them from your library — Scrob's API key cannot authorize deletions, only a logged-in session can. Leave blank to skip deletion sync (syncing content in still works fine with just the API key above).",
             "default": ""
         },
         "password": {
             "type": "string",
-            "description": "Optional: your Scrob login password, paired with the username above. Only used to obtain a session token for removing items from Scrob when deleted in cli_debrid — never sent anywhere else. Leave blank to skip deletion sync.",
+            "description": "Optional: your Scrob login password, paired with the username above. Only used to obtain a session token for removing items from Scrob when deleted in Clyde — never sent anywhere else. Leave blank to skip deletion sync.",
             "default": "",
             "sensitive": True
         }

@@ -201,7 +201,7 @@
                     <option value="silo" {% if settings.get('File Management', {}).get('plex_mode_media_server', 'plex') == 'silo' %}selected{% endif %}>Silo</option>
                     <option value="jellyfin" {% if settings.get('File Management', {}).get('plex_mode_media_server', 'plex') == 'jellyfin' %}selected{% endif %}>Jellyfin / Emby</option>
                 </select>
-                <p class="settings-description">The server that reads the mount and tracks your library. Silo, Jellyfin and Emby work like Plex here: point their libraries at the mount's Movies and TV Shows folders, and cli_debrid asks the server what it has. Its URL and API key go in the fields that appear below.</p>
+                <p class="settings-description">The server that reads the mount and tracks your library. Silo, Jellyfin and Emby work like Plex here: point their libraries at the mount's Movies and TV Shows folders, and Clyde asks the server what it has. Its URL and API key go in the fields that appear below.</p>
             </div>
             {% for key, value in settings_schema['Plex'].items() %}
                 {% if key != 'tab' %}
@@ -270,7 +270,7 @@
                        value="{{ settings.get('Debug', {}).get('silo_api_key', '') }}" class="settings-input"
                        data-section="Debug" data-key="silo_api_key"
                        autocomplete="new-password">
-                <p class="settings-description">An admin API key (starts with sa_), from Silo's Settings → API Keys. Silo's libraries must point at the folders cli_debrid fills: the symlink folder's Movies/TV Shows in Symlinked/Local mode, the mount's folders in Direct Mount. If Silo sees them at a different path, name each Silo library folder the same as the folder here.</p>
+                <p class="settings-description">An admin API key (starts with sa_), from Silo's Settings → API Keys. Silo's libraries must point at the folders Clyde fills: the symlink folder's Movies/TV Shows in Symlinked/Local mode, the mount's folders in Direct Mount. If Silo sees them at a different path, name each Silo library folder the same as the folder here.</p>
             </div>
         </div>
     </div>
@@ -294,7 +294,7 @@
            rest as fallback_providers, so existing configs need no migration. #}
         <div class="settings-form-group">
             <label class="settings-title">Debrid Providers:</label>
-            <p class="settings-description">Every provider here is used. For each release cli_debrid checks them in this order and adds it to the first one that has it cached; if a provider fails (DMCA block, rate limit, outage) the next one is tried. Each needs its own API key. Change the order with the arrows. AllDebrid can only check cache by adding, so put it last.</p>
+            <p class="settings-description">Every provider here is used. For each release Clyde checks them in this order and adds it to the first one that has it cached; if a provider fails (DMCA block, rate limit, outage) the next one is tried. Each needs its own API key. Change the order with the arrows. AllDebrid can only check cache by adding, so put it last.</p>
             <input type="hidden" id="debrid provider-provider" name="Debrid Provider.provider" data-section="Debrid Provider" data-key="provider" value="{{ _dp.get('provider', '') }}">
             <input type="hidden" id="debrid provider-api_key" name="Debrid Provider.api_key" data-section="Debrid Provider" data-key="api_key" value="{{ _dp.get('api_key', '') }}">
             <input type="hidden" id="fallback-providers-hidden" name="Debrid Provider.fallback_providers" data-section="Debrid Provider" data-key="fallback_providers" value="">
@@ -458,7 +458,7 @@
             <svg class="info-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
             </svg>
-            <div class="info-banner-content">Pick a usenet backend — the <strong>built-in mount</strong> (runs inside cli_debrid; no extra container), or an external one: <strong>cli_mount</strong> (custom API, default port 8888), <strong>NzbDAV</strong> (SAB-compatible API, default port 3000) or <strong>Zurg</strong> (SABnzbd-emulation endpoint, e.g. Zurg 2.0).</div>
+            <div class="info-banner-content">Pick a usenet backend — the <strong>built-in mount</strong> (runs inside Clyde; no extra container), or an external one: <strong>cli_mount</strong> (custom API, default port 8888), <strong>NzbDAV</strong> (SAB-compatible API, default port 3000) or <strong>Zurg</strong> (SABnzbd-emulation endpoint, e.g. Zurg 2.0).</div>
         </div>
         <div class="settings-form-group">
             <label for="usenet_provider-enabled" class="settings-title">Enable Usenet Mount:</label>
@@ -484,22 +484,22 @@
             {% if _provider == 'climount' %}
             <p class="settings-description"><strong>Moving from cli_mount to the built-in mount?</strong> Use <a href="{{ url_for('mount.index') }}#migrate"><strong>Mount → Migrate from cli_mount</strong></a> instead of switching Provider here: it copies your library across (same job ids and paths) and switches for you.</p>
             {% endif %}
-            <p class="settings-description" data-provider-only="builtin">cli_debrid runs its own mount: no cli_mount container, no URL or token. It streams your debrid account through the same mount, so no Zurg or rclone either. Set your usenet servers, mount path and cache on the <a href="{{ url_for('mount.index') }}"><strong>Mount</strong></a> page (top menu, shown once this is saved). The container needs <code>/dev/fuse</code> and <code>SYS_ADMIN</code>; the Mount page says what's missing.</p>
+            <p class="settings-description" data-provider-only="builtin">Clyde runs its own mount: no cli_mount container, no URL or token. It streams your debrid account through the same mount, so no Zurg or rclone either. Set your usenet servers, mount path and cache on the <a href="{{ url_for('mount.index') }}"><strong>Mount</strong></a> page (top menu, shown once this is saved). The container needs <code>/dev/fuse</code> and <code>SYS_ADMIN</code>; the Mount page says what's missing.</p>
             <p class="settings-description" data-provider-only="climount,nzbdav,zurg">Backend type. cli_mount uses custom endpoints (<code>/api/add</code>, <code>/api/browse/nzbs</code>); NzbDAV uses standard SAB query-string API (<code>?mode=…</code>). Zurg selects the same SAB-compatible logic as NzbDAV but resolves job folders directly under the mount root instead of a <code>&lt;category&gt;/&lt;job&gt;</code> layout — use it for Zurg 2.0's usenet SAB emulation, or any other flat-layout SAB-compatible mount. All three expose the same client interface internally.</p>
         </div>
         <details data-provider-only="nzbdav" class="settings-form-group" style="border:1px solid #444;border-radius:6px;padding:8px 12px;">
             <summary style="cursor:pointer;font-weight:600;">How to set up NzbDAV (click to expand)</summary>
-            <p class="settings-description" style="margin-top:8px;"><strong>Two containers, one backend (same pattern as zurg + zurg_rclone):</strong> the <code>nzbdav</code> container is the downloader + WebDAV server; an <code>rclone</code> container mounts that WebDAV as a normal folder (e.g. <code>/mnt/nzbdav</code>) so Plex and cli-debrid can read the files as a path. You need both — cli_mount only looked simpler because it bundled the mount internally.</p>
+            <p class="settings-description" style="margin-top:8px;"><strong>Two containers, one backend (same pattern as zurg + zurg_rclone):</strong> the <code>nzbdav</code> container is the downloader + WebDAV server; an <code>rclone</code> container mounts that WebDAV as a normal folder (e.g. <code>/mnt/nzbdav</code>) so Plex and Clyde can read the files as a path. You need both — cli_mount only looked simpler because it bundled the mount internally.</p>
             <p class="settings-description"><strong>Don't write these by hand:</strong> use the <strong>setup helper</strong> below — it generates the <code>docker-compose.yml</code> (both containers) + <code>rclone.conf</code> + the config block for you, and can test the connection and create the required categories. The steps below are what it sets up:</p>
             <ol class="settings-description" style="margin-top:8px;line-height:1.6;">
                 <li><strong>Deploy the NzbDAV stack</strong> (nzbdav + rclone) — copy the files from the setup helper below, then <code>docker compose up -d</code>.</li>
                 <li><strong>In NzbDAV:</strong> add your usenet (NNTP) provider + indexers, then copy the SAB <strong>API key</strong> (NzbDAV → Settings → API).</li>
-                <li><strong>Add the categories cli-debrid uses</strong> — NzbDAV → Settings → Categories: <code>movies</code>, <code>shows</code>, <code>movies_1080p_264</code>, <code>shows_1080p_264</code>, <code>__unplayable__</code>. Missing categories ⇒ grabs are rejected and loop in "Wanted".</li>
+                <li><strong>Add the categories Clyde uses</strong> — NzbDAV → Settings → Categories: <code>movies</code>, <code>shows</code>, <code>movies_1080p_264</code>, <code>shows_1080p_264</code>, <code>__unplayable__</code>. Missing categories ⇒ grabs are rejected and loop in "Wanted".</li>
                 <li><strong>Fill the fields below:</strong> Provider URL (e.g. <code>http://host:3000</code>), API Token (the key from step 2), Download Folder = <code>__unplayable__</code>, NzbDAV Mount Path — the <code>content</code> folder <strong>inside</strong> the rclone mount as it appears in this container, e.g. <code>/mnt/nzbdav/content</code> (not <code>/mnt/nzbdav</code> itself).</li>
                 <li><strong>Bind the mount + Plex:</strong> bind the nzbdav rclone mount into this container (e.g. at <code>/mnt/nzbdav</code>), and add the <code>movies</code>, <code>shows</code> (+ <code>_1080p_264</code>) folders under its <code>content/</code> subfolder to your Plex libraries.</li>
                 <li><strong>Verify</strong> with the helper's <em>Test connection &amp; ensure categories</em> button below, then toggle <em>Enable Usenet</em> above.</li>
             </ol>
-            <p class="settings-description" style="margin-top:4px;"><strong>Switching from cli_mount?</strong> Just set Provider to NzbDAV and update the URL/Token here — your existing cli_mount files don't move. Run NzbDAV in parallel and let new grabs fill it (a hard mount-swap can make Plex purge "missing" items). To move existing downloads across, use <strong>Tools → Usenet → "Migrate between usenet providers"</strong> (in-app, both directions). For the cli_mount→NzbDAV direction it reads cli_mount's stored <code>.nzb</code> files, so bind cli_mount's appdata into cli-debrid (set <em>cli_mount Data Path</em> below) and the tool reads them from <code>&lt;data_path&gt;/usenet/nzbs</code>. (The host CLI <code>nzbdav_setup.py migrate-files</code> does the same from the shell.)</p>
+            <p class="settings-description" style="margin-top:4px;"><strong>Switching from cli_mount?</strong> Just set Provider to NzbDAV and update the URL/Token here — your existing cli_mount files don't move. Run NzbDAV in parallel and let new grabs fill it (a hard mount-swap can make Plex purge "missing" items). To move existing downloads across, use <strong>Tools → Usenet → "Migrate between usenet providers"</strong> (in-app, both directions). For the cli_mount→NzbDAV direction it reads cli_mount's stored <code>.nzb</code> files, so bind cli_mount's appdata into Clyde (set <em>cli_mount Data Path</em> below) and the tool reads them from <code>&lt;data_path&gt;/usenet/nzbs</code>. (The host CLI <code>nzbdav_setup.py migrate-files</code> does the same from the shell.)</p>
         </details>
         {% include '_nzbdav_setup_helper.html' %}
         <details data-provider-only="zurg" class="settings-form-group" style="border:1px solid #444;border-radius:6px;padding:8px 12px;">
@@ -633,8 +633,8 @@
   sel.addEventListener('change', detect);
 })();
 </script>
-            <p class="settings-description" data-provider-only="nzbdav">Path inside <em>this</em> container to the <code>content</code> folder <strong>inside</strong> the NzbDAV rclone-mount (e.g. <code>/mnt/nzbdav/content</code>, not <code>/mnt/nzbdav</code> itself) — the folder that directly contains your category subdirectories (<code>movies/</code>, <code>shows/</code>, etc.). NzbDAV has no <code>/browse</code> API, so folder lookups walk the filesystem under <code>&lt;this path&gt;/&lt;category&gt;/</code>. Bind-mount the nzbdav-rclone mount into the cli-debrid container, then point this at its <code>content</code> subfolder. A trailing <code>/__all__</code> is stripped automatically. Effectively required when provider is NzbDAV.</p>
-            <p class="settings-description" data-provider-only="zurg">Path inside <em>this</em> container where the Zurg rclone-mount appears. Zurg's mount is flat — content lives directly at <code>&lt;this path&gt;/&lt;job name&gt;/</code>, with no per-category subfolder — so folder lookups resolve the job name directly under this path instead of walking a category layout. Bind-mount Zurg's rclone mount into the cli-debrid container and point this at its <code>__all__</code> folder (e.g. <code>/mnt/zurg/__all__</code>, or <code>Z:\__all__</code> on Windows) — that is the folder holding the release folders, so it is used as-is and not stripped. Effectively required when provider is Zurg.</p>
+            <p class="settings-description" data-provider-only="nzbdav">Path inside <em>this</em> container to the <code>content</code> folder <strong>inside</strong> the NzbDAV rclone-mount (e.g. <code>/mnt/nzbdav/content</code>, not <code>/mnt/nzbdav</code> itself) — the folder that directly contains your category subdirectories (<code>movies/</code>, <code>shows/</code>, etc.). NzbDAV has no <code>/browse</code> API, so folder lookups walk the filesystem under <code>&lt;this path&gt;/&lt;category&gt;/</code>. Bind-mount the nzbdav-rclone mount into the Clyde container, then point this at its <code>content</code> subfolder. A trailing <code>/__all__</code> is stripped automatically. Effectively required when provider is NzbDAV.</p>
+            <p class="settings-description" data-provider-only="zurg">Path inside <em>this</em> container where the Zurg rclone-mount appears. Zurg's mount is flat — content lives directly at <code>&lt;this path&gt;/&lt;job name&gt;/</code>, with no per-category subfolder — so folder lookups resolve the job name directly under this path instead of walking a category layout. Bind-mount Zurg's rclone mount into the Clyde container and point this at its <code>__all__</code> folder (e.g. <code>/mnt/zurg/__all__</code>, or <code>Z:\__all__</code> on Windows) — that is the folder holding the release folders, so it is used as-is and not stripped. Effectively required when provider is Zurg.</p>
         </div>
         <div class="settings-form-group" data-provider-only="nzbdav,zurg">
             <label for="usenet_provider-owned_categories" class="settings-title">Repair: Owned Categories <span style="color: #888; font-size: 0.85em;">(advanced)</span>:</label>
@@ -642,7 +642,7 @@
                    value="{{ settings.get('Usenet Provider', {}).get('owned_categories', '') }}"
                    class="settings-input" data-section="Usenet Provider" data-key="owned_categories"
                    placeholder="auto: movies,shows,movies_1080p_264,shows_1080p_264,__unplayable__">
-            <p class="settings-description">Comma-separated categories the broken-NZB repair tool may act on. History on a shared instance can include other SAB clients (e.g. Lidarr music) — repair only re-acquires content cli-debrid manages, so it must never touch another app's entries. Leave empty to auto-pick the categories cli-debrid grabs into (plus the Download Folder fallback). Set only if your category names differ.</p>
+            <p class="settings-description">Comma-separated categories the broken-NZB repair tool may act on. History on a shared instance can include other SAB clients (e.g. Lidarr music) — repair only re-acquires content Clyde manages, so it must never touch another app's entries. Leave empty to auto-pick the categories Clyde grabs into (plus the Download Folder fallback). Set only if your category names differ.</p>
         </div>
         <div class="settings-form-group" data-provider-only="nzbdav,zurg">
             <label for="usenet_provider-exclude_categories" class="settings-title">Repair: Exclude Categories <span style="color: #888; font-size: 0.85em;">(advanced)</span>:</label>
@@ -650,7 +650,7 @@
                    value="{{ settings.get('Usenet Provider', {}).get('exclude_categories', '') }}"
                    class="settings-input" data-section="Usenet Provider" data-key="exclude_categories"
                    placeholder="e.g. music,lidarr (optional)">
-            <p class="settings-description">Comma-separated categories the repair tool must ignore (subtracted from the owned set). Use this if you point Radarr/Sonarr at the same backend and don't want cli-debrid touching their categories.</p>
+            <p class="settings-description">Comma-separated categories the repair tool must ignore (subtracted from the owned set). Use this if you point Radarr/Sonarr at the same backend and don't want Clyde touching their categories.</p>
         </div>
         <div class="settings-form-group">
             <label for="usenet_provider-retention_days" class="settings-title">Usenet Retention Days:</label>
@@ -672,7 +672,7 @@
             <input type="checkbox" id="usenet_provider-ffprobe_all_nzbs" name="Usenet Provider.ffprobe_all_nzbs"
                    data-section="Usenet Provider" data-key="ffprobe_all_nzbs"
                    {% if settings.get('Usenet Provider', {}).get('ffprobe_all_nzbs') %}checked{% endif %}>
-            <p class="settings-description">Before collecting an NZB file, probe it with ffprobe to confirm it's actually playable, on top of the existing missing-article/segment health check. Works in both Symlinked/Local and Direct Mount — in Direct Mount it runs the moment the file is found on the mount, before cli_debrid tells Plex about it, so a confirmed-broken file is rejected and re-scraped before it ever shows up in Plex. Requires ffprobe to be installed. This will slow down how long it takes NZB items to reach Collected.</p>
+            <p class="settings-description">Before collecting an NZB file, probe it with ffprobe to confirm it's actually playable, on top of the existing missing-article/segment health check. Works in both Symlinked/Local and Direct Mount — in Direct Mount it runs the moment the file is found on the mount, before Clyde tells Plex about it, so a confirmed-broken file is rejected and re-scraped before it ever shows up in Plex. Requires ffprobe to be installed. This will slow down how long it takes NZB items to reach Collected.</p>
         </div>
         {% if settings.get('File Management', {}).get('file_collection_management', '') != 'Symlinked/Local' %}
         <div class="settings-form-group">

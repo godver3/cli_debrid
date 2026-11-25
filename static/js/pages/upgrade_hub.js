@@ -24,7 +24,10 @@ document.querySelectorAll('.uh-tab').forEach(btn => {
 
 // Restore last active tab
 (function() {
-    const saved = sessionStorage.getItem('uh_active_tab');
+    // A #<tab> link (e.g. /upgrade_hub/#settings from the Settings page) wins.
+    const fromHash = (location.hash || '').replace('#', '');
+    const saved = (fromHash && document.querySelector(`.uh-tab[data-tab="${fromHash}"]`))
+        ? fromHash : sessionStorage.getItem('uh_active_tab');
     if (saved) {
         const btn = document.querySelector(`.uh-tab[data-tab="${saved}"]`);
         if (btn) btn.click();
@@ -173,16 +176,7 @@ function buildUpgradeRow(u) {
         const days = Math.round((Date.now() - new Date(iatStr)) / 86400000);
         iatLabel = days < 1 ? 'today' : days + 'd ago';
     }
-    const cacheBadge = u.rd_cached_bypass
-        ? '<span class="uh-cache-badge uh-cache-bypass" title="No recent Zilean result — included because Phalanx confirms this torrent is cached on RD">⚡ Cached Bypass</span>'
-        : u.is_recent
-            ? '<span class="uh-cache-badge uh-cache-yes">Recent</span>'
-            : '<span class="uh-cache-badge uh-cache-no">Older' + (iatLabel ? ' · ' + iatLabel : '') + '</span>';
-    const rdBadge = u.rd_cached === true && !u.rd_cached_bypass
-        ? '<span class="uh-cache-badge uh-rd-cached">⚡ RD Cached</span>'
-        : u.rd_cached === false
-            ? '<span class="uh-cache-badge uh-rd-uncached">✗ Not Cached</span>'
-            : '';
+    const [cacheBadge, rdBadge] = cacheBadges(u, iatLabel);
     const chk = _Selected.upgrades.has(String(u.item_id)) ? 'checked' : '';
     return `<tr data-item-id="${u.item_id}">
         <td class="uh-col-check"><input type="checkbox" class="uh-row-check" data-id="${u.item_id}" ${chk} onchange="onRowCheck(event,'upgrades',${u.item_id})"></td>
@@ -204,6 +198,27 @@ function buildUpgradeRow(u) {
     </tr>`;
 }
 
+// Freshness badge + cache badge for a candidate. Scan results saved by older
+// versions carry rd_cached / rd_cached_bypass instead of cached / cached_bypass.
+function cacheBadges(x, iatLabel) {
+    const cached  = x.cached !== undefined ? x.cached : x.rd_cached;
+    const bypass  = x.cached_bypass || x.rd_cached_bypass;
+    const service = x.cache_service || (x.rd_cached !== undefined ? 'Real-Debrid' : '');
+    const fresh = bypass
+        ? `<span class="uh-cache-badge uh-cache-bypass" title="No recent Zilean result — kept because ${escAttr(service || 'the debrid service')} reports this torrent cached">⚡ Cached Bypass</span>`
+        : x.found_by === 'scrapers'
+            ? '<span class="uh-cache-badge uh-cache-yes" title="Found by searching with your scrapers during this scan">Live search</span>'
+            : x.is_recent
+                ? '<span class="uh-cache-badge uh-cache-yes">Recent</span>'
+                : '<span class="uh-cache-badge uh-cache-no">Older' + (iatLabel ? ' · ' + iatLabel : '') + '</span>';
+    const cache = cached === true && !bypass
+        ? `<span class="uh-cache-badge uh-rd-cached" title="${escAttr(service)} reports this torrent cached">⚡ Cached</span>`
+        : cached === false
+            ? `<span class="uh-cache-badge uh-rd-uncached" title="${escAttr(service)} reports this torrent not cached">✗ Not Cached</span>`
+            : '';
+    return [fresh, cache];
+}
+
 function buildPackRow(p) {
     const ids    = (p.item_ids || []).join(',');
     const iatStr = p.new_ingested_at || '';
@@ -212,16 +227,7 @@ function buildPackRow(p) {
         const days = Math.round((Date.now() - new Date(iatStr)) / 86400000);
         iatLabel = days < 1 ? 'today' : days + 'd ago';
     }
-    const cacheBadge = p.rd_cached_bypass
-        ? '<span class="uh-cache-badge uh-cache-bypass" title="No recent Zilean result — included because Phalanx confirms this torrent is cached on RD">⚡ Cached Bypass</span>'
-        : p.is_recent
-            ? '<span class="uh-cache-badge uh-cache-yes">Recent</span>'
-            : '<span class="uh-cache-badge uh-cache-no">Older' + (iatLabel ? ' · ' + iatLabel : '') + '</span>';
-    const rdBadge = p.rd_cached === true && !p.rd_cached_bypass
-        ? '<span class="uh-cache-badge uh-rd-cached">⚡ RD Cached</span>'
-        : p.rd_cached === false
-            ? '<span class="uh-cache-badge uh-rd-uncached">✗ Not Cached</span>'
-            : '';
+    const [cacheBadge, rdBadge] = cacheBadges(p, iatLabel);
     const chk     = _Selected.packs.has(ids) ? 'checked' : '';
     const safeIds = escAttr(ids);
 
@@ -278,9 +284,10 @@ function togglePackExpand(btn) {
 // ---------------------------------------------------------------------------
 // Scan
 // ---------------------------------------------------------------------------
-async function startScan() {
+async function startScan(body = {}) {
     const btn = document.getElementById('scan-btn');
     btn.disabled = true;
+    setRecentBtnDisabled(true);
     btn.innerHTML = '<span class="uh-spinner"></span> Scanning…';
     showProgress('starting', 0, 0);
 
@@ -288,13 +295,12 @@ async function startScan() {
         const res = await fetch('/upgrade_hub/api/scan', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({}),
+            body: JSON.stringify(body),
         });
         const data = await res.json();
         if (!data.success) {
             showStatus('error', data.error || 'Failed to start scan');
-            btn.disabled = false;
-            btn.innerHTML = svgSearch() + ' Scan for Upgrades';
+            resetScanBtn();
             hideProgress();
             return;
         }
@@ -302,10 +308,65 @@ async function startScan() {
         pollStatus();
     } catch(e) {
         showStatus('error', 'Network error: ' + e.message);
-        btn.disabled = false;
-        btn.innerHTML = svgSearch() + ' Scan for Upgrades';
+        resetScanBtn();
         hideProgress();
     }
+}
+
+function setRecentBtnDisabled(disabled) {
+    const b = document.getElementById('recent-btn');
+    if (b) b.disabled = disabled;
+}
+
+// "Search Recent Releases": a scrapers-only run over every item released in
+// the last N days (default: the Release Age setting). Its finds are merged
+// into the current results.
+function searchRecentReleases() {
+    const upg = _settings.upgrading || {};
+    const def = upg.upgrade_max_release_age_days ?? 7;
+    showPopup({
+        type: 'prompt',
+        title: 'Search Recent Releases',
+        message: 'Search your scrapers for a better release of every collected item released in the last:',
+        formHtml: `<form onsubmit="return false"><input type="number" name="days" min="0" max="3650" step="1" value="${escAttr(String(def))}" style="width:90px"> days</form>`,
+        confirmText: 'Next',
+        cancelText: 'Cancel',
+        onConfirm: async (vals) => {
+            const days = parseInt((vals || {}).days, 10);
+            if (isNaN(days) || days < 0) {
+                showStatus('error', 'Enter a number of days (0 or more)');
+                return;
+            }
+            let p;
+            try {
+                const res = await fetch(`/upgrade_hub/api/recent_preview?days=${days}`);
+                p = await res.json();
+            } catch (e) {
+                showStatus('error', 'Network error: ' + e.message);
+                return;
+            }
+            if (!p.success) { showStatus('error', p.error || 'Could not count items'); return; }
+            if (!p.items) {
+                showPopup({ type: 'info', title: 'Search Recent Releases',
+                            message: `No collected items were released in the last ${days} day(s).` });
+                return;
+            }
+            const capped = p.items > p.cap
+                ? ` Only ${p.cap} are searched per run (the ones checked longest ago); run it again for the rest.`
+                : '';
+            showPopup({
+                type: 'confirm',
+                title: 'Search Recent Releases',
+                message: `Search ${p.items} item(s) released in the last ${days} day(s) `
+                       + `(${p.movies} movie(s), ${p.episodes} episode(s))? Each one is a full search with `
+                       + `your scrapers, two at a time; Zilean and the NZB feed are skipped.${capped} `
+                       + 'Better releases are added to your current results; candidates for other items stay.',
+                confirmText: 'Search',
+                cancelText: 'Cancel',
+                onConfirm: () => startScan({ recent_release_days: days }),
+            });
+        },
+    });
 }
 
 function pollStatus() {
@@ -350,6 +411,7 @@ setInterval(() => { if (_lastScanAt && !_scanInProgress) updateScanBtnAge(); }, 
 function resetScanBtn() {
     const btn = document.getElementById('scan-btn');
     btn.disabled = false;
+    setRecentBtnDisabled(false);
     if (_lastScanAt) {
         updateScanBtnAge();
     } else {
@@ -627,6 +689,8 @@ const PHASE_LABELS = {
     prefetch:  'Loading Zilean data…',
     scoring:   'Scoring episodes & packs…',
     scanning:  'Scanning movies…',
+    nzb_scan:  'Checking NZB indexers…',
+    scrapers:  'Searching fresh releases with your scrapers…',
     done:      'Done',
     error:     'Error',
 };
@@ -832,6 +896,26 @@ function applySettingsToUI() {
     const upgradeSourceSel = document.getElementById('settings-upgrade-source');
     if (upgradeSourceSel) upgradeSourceSel.value = _settings.upgrade_source || 'both';
 
+    // Scraper search
+    const freshDays = document.getElementById('settings-fresh-days');
+    if (freshDays) freshDays.value = _settings.fresh_search_days ?? 30;
+    const freshEnabled = document.getElementById('settings-fresh-enabled');
+    if (freshEnabled) freshEnabled.checked = !!_settings.fresh_search_enabled;
+    const freshLimit = document.getElementById('settings-fresh-limit');
+    if (freshLimit) freshLimit.value = _settings.fresh_search_limit ?? 20;
+
+    // Upgrading (Scraping / Debug settings shown here)
+    const upg = _settings.upgrading || {};
+    const setChk = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
+    const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+    setChk('upg-enable', upg.enable_upgrading);
+    setVal('upg-max-age-days', upg.upgrade_max_release_age_days ?? 7);
+    setVal('upg-window-hours', upg.upgrade_queue_duration_hours ?? 24);
+    setVal('upg-threshold-pct', Math.round((upg.upgrading_percentage_threshold ?? 0.1) * 100));
+    setVal('upg-max-score', upg.max_upgrading_score ?? 0);
+    setVal('upg-delayed-days', upg.delayed_upgrade_scrape_days ?? 0);
+    setChk('upg-cleanup', upg.enable_upgrading_cleanup !== false);
+
     // Excluded genres chips
     const rawGenres = _settings.excluded_genres || '';
     _uhExcludedGenres = rawGenres ? rawGenres.split(',').map(g => g.trim()).filter(Boolean) : [];
@@ -940,6 +1024,19 @@ async function saveSettings() {
         excluded_genres:        _uhExcludedGenres.join(','),
         exclude_nas_items:      excludeNasChk ? excludeNasChk.checked : false,
         upgrade_source:         (document.getElementById('settings-upgrade-source') || {}).value || 'both',
+        fresh_search_enabled:   !!(document.getElementById('settings-fresh-enabled') || {}).checked,
+        fresh_search_days:      (v => isNaN(v) ? 30 : Math.max(0, v))(parseInt((document.getElementById('settings-fresh-days') || {}).value)),
+        fresh_search_limit:     (v => isNaN(v) ? 20 : Math.max(0, v))(parseInt((document.getElementById('settings-fresh-limit') || {}).value)),
+        // Only sent once loaded, so a failed load can't save blank defaults over them.
+        upgrading: !_settings.upgrading ? undefined : {
+            enable_upgrading:               !!(document.getElementById('upg-enable') || {}).checked,
+            upgrade_max_release_age_days:   (v => isNaN(v) ? 7 : v)(parseInt((document.getElementById('upg-max-age-days') || {}).value)),
+            upgrade_queue_duration_hours:   parseInt((document.getElementById('upg-window-hours') || {}).value) || 24,
+            upgrading_percentage_threshold: (parseFloat((document.getElementById('upg-threshold-pct') || {}).value) || 0) / 100,
+            max_upgrading_score:            parseFloat((document.getElementById('upg-max-score') || {}).value) || 0,
+            delayed_upgrade_scrape_days:    parseInt((document.getElementById('upg-delayed-days') || {}).value) || 0,
+            enable_upgrading_cleanup:       !!(document.getElementById('upg-cleanup') || {}).checked,
+        },
     };
     try {
         const res = await fetch('/upgrade_hub/api/settings', {
@@ -1213,13 +1310,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         const s = await res.json();
 
         if (!s.any_source_configured) {
-            showStatus('error', 'No upgrade source configured — enable Zilean or a Newznab indexer in Settings → Scrapers');
+            showStatus('error', 'No upgrade source — enable Zilean or a Newznab indexer in Settings → Scrapers, or turn on Fresh Release Search in the Settings tab');
             document.getElementById('scan-btn').disabled = true;
         }
 
         if (s.in_progress) {
             _scanInProgress = true;
             document.getElementById('scan-btn').disabled = true;
+            setRecentBtnDisabled(true);
             document.getElementById('scan-btn').innerHTML = '<span class="uh-spinner"></span> Scanning…';
             const _initP = s.progress || {};
             const _initPct = _initP.total > 0 ? Math.round((_initP.done || 0) / _initP.total * 100) : 0;

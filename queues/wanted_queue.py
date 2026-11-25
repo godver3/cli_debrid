@@ -206,11 +206,10 @@ class WantedQueue:
                 
                 release_datetime = datetime.combine(release_date, airtime)
 
-                # If a movie has no specific airtime, shift the base release time to the start of the next day.
-                # The user-defined offset will then be applied to this adjusted time.
-                if item['type'] == 'movie' and not airtime_str:
-                    release_datetime += timedelta(days=1)
-                    # logging.debug(f"[{item_identifier}] Movie with no airtime. Base release shifted to next day before applying offset.")
+                # A movie with no air time starts at 00:00 on its release date
+                # plus the offset (it used to wait until the next day). Empty
+                # searches during its first 24 hours don't count toward the wake
+                # limit; see queues/release_timing.py.
 
                 offset_hours = 0.0
                 offset_setting_key = "movie_airtime_offset" if item['type'] == 'movie' else "episode_airtime_offset"

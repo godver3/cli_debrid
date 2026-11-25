@@ -531,7 +531,7 @@ def agregarr_get_user():
         "id": 1,
         "email": "agregarr@cli-debrid",
         "username": "cli_debrid",
-        "displayName": "CLI Debrid",
+        "displayName": "Clyde",
         "permissions": 2,  # Admin permissions
         "avatar": ""
     }), 200
@@ -555,7 +555,7 @@ def agregarr_get_settings():
     """
     return jsonify({
         "initialized": True,
-        "applicationTitle": "CLI Debrid",
+        "applicationTitle": "Clyde",
         "applicationUrl": "",
         "hideAvailable": False,
         "localLogin": True,
@@ -580,7 +580,7 @@ def agregarr_get_main_settings():
     """
     return jsonify({
         "apiKey": "cli_debrid_dummy_key",
-        "applicationTitle": "CLI Debrid",
+        "applicationTitle": "Clyde",
         "applicationUrl": "",
         "csrfProtection": False,
         "defaultPermissions": 2,

@@ -2160,6 +2160,18 @@ class ScrapingQueue:
                 self.reset_not_wanted_check(item['id'])
                 self.remove_item(item) # Remove from current queue
         else: # Item is NOT old, check wake limits
+            # A movie on its release day: its release may just not be posted
+            # yet. Retry from Sleeping whatever the wake limit, and before any
+            # switch to a fallback version (release_timing.py).
+            from queues.release_timing import in_release_day_window
+            if in_release_day_window(item):
+                logging.info(f"No results yet for {item_identifier} on its release day. "
+                             f"Moving to Sleeping to retry hourly (not counted toward the wake limit).")
+                queue_manager.move_to_sleeping(item, "Scraping")
+                self.reset_not_wanted_check(item['id'])
+                if self.contains_item_id(item.get('id')):
+                    self.remove_item(item)
+                return
             if self._try_scrape_time_fallback(item, queue_manager):
                 return
             logging.warning(f"No results found for {item_identifier}. Checking wake count limits before moving to Sleeping or Final_Check/Blacklisted.")

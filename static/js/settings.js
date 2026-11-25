@@ -548,13 +548,14 @@ export function updateSettings() {
         }
     });
 
-    // Handle subtitle providers multi-select
-    const subtitleProvidersSelect = document.getElementById('additional-subtitle_providers');
-    if (subtitleProvidersSelect) {
+    // Subtitle providers: one checkbox each
+    const subtitleProviderList = document.getElementById('additional-subtitle_providers');
+    if (subtitleProviderList) {
         if (!settingsData['Subtitle Settings']) {
             settingsData['Subtitle Settings'] = {};
         }
-        settingsData['Subtitle Settings']['subtitle_providers'] = Array.from(subtitleProvidersSelect.selectedOptions).map(option => option.value);
+        settingsData['Subtitle Settings']['subtitle_providers'] = Array.from(
+            subtitleProviderList.querySelectorAll('input.subtitle-provider-option:checked')).map(box => box.value);
     }
 
     // Set default values for Subtitle Settings if not set
@@ -571,7 +572,7 @@ export function updateSettings() {
     }
     
     if (!settingsData['Subtitle Settings']['subtitle_providers'] || !settingsData['Subtitle Settings']['subtitle_providers'].length) {
-        settingsData['Subtitle Settings']['subtitle_providers'] = ['opensubtitlescom', 'podnapisi', 'gestdown', 'tvsubtitles'];
+        settingsData['Subtitle Settings']['subtitle_providers'] = ['opensubtitlescom', 'gestdown', 'tvsubtitles'];
     }
     
     if (!settingsData['Subtitle Settings']['user_agent']) {
@@ -798,22 +799,6 @@ export function updateSettings() {
 
     if (emphasizeNumberOfItemsOverQuality) {
         settingsData['Debug']['emphasize_number_of_items_over_quality'] = emphasizeNumberOfItemsOverQuality.checked;
-    }
-
-    const enableUpgrading = document.getElementById('scraping-enable_upgrading');
-    
-    if (enableUpgrading) {
-        settingsData['Scraping']['enable_upgrading'] = enableUpgrading.checked;
-
-    } else {
-    }
-
-    const enableUpgradingCleanup = document.getElementById('scraping-enable_upgrading_cleanup');
-    
-    if (enableUpgradingCleanup) {
-        settingsData['Scraping']['enable_upgrading_cleanup'] = enableUpgradingCleanup.checked;
-
-    } else {
     }
 
 
@@ -1048,11 +1033,9 @@ export function updateSettings() {
         });
     }
 
-    // Set default values for enable_upgrading, disable_adult, and trakt_early_releases
-    if (settingsData['Scraping']['enable_upgrading'] === undefined) {
-        settingsData['Scraping']['enable_upgrading'] = false;
-    }
-        
+    // Set default values for disable_adult and trakt_early_releases.
+    // (enable_upgrading is edited on the Upgrade Hub, not here: defaulting it
+    // to false on every save would switch upgrading off.)
     if (settingsData['Scraping']['disable_adult'] === undefined) {
         settingsData['Scraping']['disable_adult'] = true;
     }
@@ -1095,7 +1078,7 @@ export function updateSettings() {
             let successMessage;
             if (data.requires_restart) {
                 const reasons = data.restart_reasons ? data.restart_reasons.join(', ') : 'critical settings';
-                successMessage = `Settings saved successfully.<br><br><strong>⚠️ Restart Required</strong><br>Changes to ${reasons} require restarting CLI Debrid to take effect.`;
+                successMessage = `Settings saved successfully.<br><br><strong>⚠️ Restart Required</strong><br>Changes to ${reasons} require restarting Clyde to take effect.`;
             } else {
                 successMessage = 'Settings saved successfully.<br>Program runner restarted if running.';
             }

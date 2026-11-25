@@ -140,8 +140,11 @@ def test_embedded_probe_skips_forced_and_image_tracks(monkeypatch):
 
 
 def test_selected_providers_honours_setting(monkeypatch):
-    monkeypatch.setattr(downsub.config, 'SUBTITLE_PROVIDERS', ['podnapisi', 'bogus', 'gestdown'])
-    assert downsub.selected_providers() == ['podnapisi', 'gestdown']
+    monkeypatch.setattr(downsub.config, 'SUBTITLE_PROVIDERS', ['tvsubtitles', 'bogus', 'gestdown'])
+    assert downsub.selected_providers() == ['tvsubtitles', 'gestdown']
+    # a provider whose site is gone is skipped even if saved
+    monkeypatch.setattr(downsub.config, 'SUBTITLE_PROVIDERS', ['podnapisi', 'gestdown'])
+    assert downsub.selected_providers() == ['gestdown']
     monkeypatch.setattr(downsub.config, 'SUBTITLE_PROVIDERS', [])
     assert downsub.selected_providers() == downsub.DEFAULT_PROVIDERS
 

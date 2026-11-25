@@ -52,11 +52,14 @@ class Config:
         self.APPLY_TO_ANIME_TV_SHOWS = get_setting('Subtitle Settings', 'apply_to_anime_tv_shows', True)
         self.OPENSUBTITLES_USERNAME = get_setting('Subtitle Settings', 'opensubtitles_username')
         self.OPENSUBTITLES_PASSWORD = get_setting('Subtitle Settings', 'opensubtitles_password')
+        # Legacy OpenSubtitles.org account; blank = use the .com login above
+        self.OPENSUBTITLES_ORG_USERNAME = get_setting('Subtitle Settings', 'opensubtitles_org_username', '')
+        self.OPENSUBTITLES_ORG_PASSWORD = get_setting('Subtitle Settings', 'opensubtitles_org_password', '')
 
         languages_str = get_setting('Subtitle Settings', 'subtitle_languages', 'eng,zho')
         self.SUBTITLE_LANGUAGES = [lang.strip() for lang in languages_str.split(',') if lang.strip()]
 
-        self.SUBTITLE_PROVIDERS = get_setting('Subtitle Settings', 'subtitle_providers', ["opensubtitlescom", "podnapisi", "gestdown", "tvsubtitles"])
+        self.SUBTITLE_PROVIDERS = get_setting('Subtitle Settings', 'subtitle_providers', ["opensubtitlescom", "gestdown", "tvsubtitles"])
         self.TEXT_SUBTITLES_ONLY = get_setting('Subtitle Settings', 'text_subtitles_only', False)
         self.IGNORE_EMBEDDED = bool(get_setting('Subtitle Settings', 'ignore_embedded_subtitles', False))
         self.SUBDL_API_KEY = (get_setting('Subtitle Settings', 'subdl_api_key', '') or '').strip()

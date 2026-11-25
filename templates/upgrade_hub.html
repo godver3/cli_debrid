@@ -19,6 +19,14 @@
                 </svg>
                 Scan for Upgrades
             </button>
+            <button class="uh-btn" id="recent-btn" onclick="searchRecentReleases()"
+                    title="Search your scrapers for every item released in the last N days (default: Release Age)">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                Search Recent Releases
+            </button>
         </div>
     </div>
 
@@ -38,10 +46,11 @@
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
         </svg>
-        <span><strong>Note:</strong> Requires at least one upgrade source — a local
-        <a href="/settings#scrapers" class="uh-note-link">Zilean</a> instance and/or enabled
-        <a href="/settings#scrapers" class="uh-note-link">Newznab indexers</a>. Configure sources in
-        Settings → Scraper Settings. Select which source(s) to use in the Settings tab below.</span>
+        <span><strong>Note:</strong> Scans search with your
+        <a href="/settings#scrapers" class="uh-note-link">configured scrapers</a> (a set number of items per scan,
+        longest-unchecked first), and can also read a <a href="/settings#scrapers" class="uh-note-link">Zilean</a>
+        instance and <a href="/settings#scrapers" class="uh-note-link">Newznab indexers'</a> latest releases.
+        Choose sources in the Settings tab below.</span>
     </div>
 
     <!-- Progress bar (shown during scan) -->
@@ -242,6 +251,87 @@
     <div id="settings-tab" class="uh-panel">
         <div class="uh-settings-grid">
 
+            <!-- ── GROUP 0: Upgrading (after collection) ── -->
+            <div class="uh-maint-section">
+                <div class="uh-settings-section">
+                    <div class="uh-settings-card-header">
+                        <h3>Upgrading</h3>
+                    </div>
+                    <p class="uh-settings-desc">What happens right after a new release is collected: for a while it keeps being searched hourly, and a better release replaces it. Older items are covered by the scans below.</p>
+                </div>
+
+                <div class="uh-settings-section">
+                    <div class="uh-settings-card-header">
+                        <div>
+                            <div class="uh-settings-subsection-title">Keep Searching After Collecting</div>
+                            <p class="uh-settings-desc" style="margin:4px 0 0">Newly collected items that are recent releases (see Release Age below) go to the Upgrading queue and are searched again every hour for the window below.</p>
+                        </div>
+                        <label class="uh-settings-toggle">
+                            <input type="checkbox" id="upg-enable">
+                            <span class="uh-settings-toggle-track"><span class="uh-settings-toggle-thumb"></span></span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="uh-settings-section">
+                    <div class="uh-settings-subsection-title">Release Age</div>
+                    <p class="uh-settings-desc">Only items released this many days ago or less get the upgrade window when collected. Raise it to cover older titles too; each one is searched hourly for the whole window, so a large value adds a lot of searches. Older items are better covered by the scans below.</p>
+                    <div class="uh-number-input-wrap">
+                        <input type="number" id="upg-max-age-days" class="uh-number-input" min="0" step="1">
+                        <span class="uh-settings-unit">days</span>
+                    </div>
+                </div>
+
+                <div class="uh-settings-section">
+                    <div class="uh-settings-subsection-title">Upgrade Window</div>
+                    <p class="uh-settings-desc">How long a newly collected item keeps being searched before it settles as Collected.</p>
+                    <div class="uh-number-input-wrap">
+                        <input type="number" id="upg-window-hours" class="uh-number-input" min="1" step="1">
+                        <span class="uh-settings-unit">hours</span>
+                    </div>
+                </div>
+
+                <div class="uh-settings-section">
+                    <div class="uh-settings-subsection-title">Score Improvement Needed</div>
+                    <p class="uh-settings-desc">How much higher a release must score than the current file to replace it. Also used by scans to decide what counts as an upgrade.</p>
+                    <div class="uh-number-input-wrap">
+                        <input type="number" id="upg-threshold-pct" class="uh-number-input" min="0" max="100" step="1">
+                        <span class="uh-settings-unit">%</span>
+                    </div>
+                </div>
+
+                <div class="uh-settings-section">
+                    <div class="uh-settings-subsection-title">Stop at Score</div>
+                    <p class="uh-settings-desc">Items already scoring this or higher are not searched again. 0 means no limit.</p>
+                    <div class="uh-number-input-wrap">
+                        <input type="number" id="upg-max-score" class="uh-number-input" min="0" step="any">
+                        
+                    </div>
+                </div>
+
+                <div class="uh-settings-section">
+                    <div class="uh-settings-subsection-title">One Extra Search After Release</div>
+                    <p class="uh-settings-desc">Search once more this many days after release, when better encodes have usually appeared. 0 turns it off.</p>
+                    <div class="uh-number-input-wrap">
+                        <input type="number" id="upg-delayed-days" class="uh-number-input" min="0" step="1">
+                        <span class="uh-settings-unit">days</span>
+                    </div>
+                </div>
+
+                <div class="uh-settings-section">
+                    <div class="uh-settings-card-header">
+                        <div>
+                            <div class="uh-settings-subsection-title">Remove the Old Copy</div>
+                            <p class="uh-settings-desc" style="margin:4px 0 0">After an upgrade is collected, remove the original from the media server and the debrid service.</p>
+                        </div>
+                        <label class="uh-settings-toggle">
+                            <input type="checkbox" id="upg-cleanup">
+                            <span class="uh-settings-toggle-track"><span class="uh-settings-toggle-thumb"></span></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
             <!-- ── GROUP 1: Automatic Scan ── -->
             <div class="uh-maint-section">
                 <!-- Header card -->
@@ -283,6 +373,26 @@
                         <input type="number" id="settings-recent-days" min="1" max="3650" value="90" class="uh-number-input">
                         <button class="uh-btn uh-numstep" onclick="stepRecentDays(10)">+</button>
                         <span class="uh-settings-unit">days</span>
+                    </div>
+                </div>
+
+                <div class="uh-settings-section">
+                    <div class="uh-settings-card-header">
+                        <div>
+                            <div class="uh-settings-subsection-title">Fresh Release Search</div>
+                            <p class="uh-settings-desc" style="margin:4px 0 0">Off by default. When on, each scan also searches your scrapers for items released recently, when better encodes keep appearing. Each item is one full search (one API call per indexer), so it's capped. Items checked longest ago go first.</p>
+                        </div>
+                        <label class="uh-settings-toggle">
+                            <input type="checkbox" id="settings-fresh-enabled">
+                            <span class="uh-settings-toggle-track"><span class="uh-settings-toggle-thumb"></span></span>
+                        </label>
+                    </div>
+                    <div class="uh-number-input-wrap">
+                        <span class="uh-settings-unit">Released within</span>
+                        <input type="number" id="settings-fresh-days" class="uh-number-input" min="0" max="3650" step="1">
+                        <span class="uh-settings-unit">days, up to</span>
+                        <input type="number" id="settings-fresh-limit" class="uh-number-input" min="0" max="2000" step="5">
+                        <span class="uh-settings-unit">items per scan</span>
                     </div>
                 </div>
 
@@ -352,12 +462,13 @@
 
                 <!-- Sub-card: Upgrade Source -->
                 <div class="uh-settings-section">
-                    <div class="uh-settings-subsection-title">Upgrade Source</div>
-                    <p class="uh-settings-desc">Which sources to scan for upgrade candidates.</p>
+                    <div class="uh-settings-subsection-title">Bulk Sources</div>
+                    <p class="uh-settings-desc">Optional sources that check the whole library each scan, on top of the scraper search. Zilean reads its database (fast with the direct DB connection in Settings → Scrapers, slow without it); NZB indexers read the latest releases.</p>
                     <select id="settings-upgrade-source" class="uh-filter-select" style="margin-top:6px">
                         <option value="both">Both (Zilean + NZB Indexers)</option>
                         <option value="zilean_only">Zilean Only</option>
                         <option value="nzb_only">NZB Indexers Only</option>
+                        <option value="none">None (fresh-release search only)</option>
                     </select>
                 </div>
 

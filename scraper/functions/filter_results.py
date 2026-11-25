@@ -1180,6 +1180,13 @@ def filter_results(
                         continue
                     else:
                         logging.info(f"Language code match for '{original_title}': {result_language_code} matches expected {expected_language_code}")
+                elif (imdb_id and parsed_info.get('newznab_imdb')
+                        and parsed_info['newznab_imdb'] == str(imdb_id).lower().removeprefix('tt').lstrip('0')):
+                    # No country in the name, but the indexer files this NZB under
+                    # this show's own IMDb id: The Traitors (IN) S02 packs are
+                    # named plain "The.Traitors.S02...", and the UK/US shows
+                    # have their own ids.
+                    logging.info(f"Country version accepted by indexer IMDb id for untagged '{original_title}'")
                 elif (query_country_tag and expected_language_code == query_country_tag
                         and query_country_tag in _COUNTRY_LANGUAGES
                         and not set(parsed_info.get('languages') or []) & _COUNTRY_LANGUAGES[query_country_tag]):

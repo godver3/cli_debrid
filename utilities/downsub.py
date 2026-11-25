@@ -91,9 +91,13 @@ def expand_languages(codes):
 
 #: Providers that work without a captcha. Order is only a tie-break: every
 #: selected provider is queried and the best-scoring subtitle wins.
-KNOWN_PROVIDERS = ('opensubtitlescom', 'subdl', 'subsource', 'podnapisi', 'gestdown', 'tvsubtitles',
+KNOWN_PROVIDERS = ('opensubtitlescom', 'subdl', 'subsource', 'gestdown', 'tvsubtitles',
                    'subtitulamos', 'bsplayer', 'opensubtitles')
-DEFAULT_PROVIDERS = ['opensubtitlescom', 'podnapisi', 'gestdown', 'tvsubtitles']
+DEFAULT_PROVIDERS = ['opensubtitlescom', 'gestdown', 'tvsubtitles']
+#: Providers whose site is gone. Still in subliminal, so saved settings may
+#: list them; they're skipped. podnapisi.net stopped resolving in Nov 2026
+#: (Bazarr removed it too).
+REMOVED_PROVIDERS = frozenset({'podnapisi'})
 
 #: Subtitle codecs every Plex/Jellyfin/Emby client can draw without the server
 #: burning them into the video. Styled ASS/SSA and image subs (PGS, VobSub,
@@ -108,13 +112,35 @@ MIN_MOVIE_SCORE = 162 + 54
 MIN_MOVIE_SCORE_NO_YEAR = 162
 
 
-# provider -> (monotonic until, reason). A provider that hit its download
-# quota or failed its login is skipped until then, so a bulk run doesn't ask
-# it again for every item.
+# provider -> (monotonic until, reason[, credentials fingerprint]). A provider
+# that hit its download quota or failed its login is skipped until then, so a
+# bulk run doesn't ask it again for every item. A login pause also records the
+# credentials it failed with and ends as soon as the saved ones change.
 _BLOCKED = {}
 
+#: Subtitle Settings keys holding provider logins / API keys.
+_CREDENTIAL_KEYS = ('opensubtitles_username', 'opensubtitles_password',
+                    'opensubtitles_org_username', 'opensubtitles_org_password',
+                    'subdl_api_key', 'subsource_api_key')
 
-def _block_seconds(exc):
+
+def _credentials_fingerprint():
+    """Hash of the saved provider credentials, read from settings (not the
+    cached config), so a fix saved mid-run is seen at once."""
+    import hashlib
+    from utilities.settings import get_setting
+    raw = '\0'.join(str(get_setting('Subtitle Settings', k, '') or '') for k in _CREDENTIAL_KEYS)
+    return hashlib.sha256(raw.encode('utf-8', 'replace')).hexdigest()
+
+
+#: Prefix of the ServiceUnavailable a search raises when the site can't be
+#: reached at all (DNS failure, connection refused): paused longer than an
+#: ordinary outage, since every search would fail the same way.
+UNREACHABLE = "can't reach the site"
+TIMED_OUT = 'timed out'
+
+
+def _block_seconds(exc, name=None):
     """(seconds, reason) to pause a provider after exc. By class, so the
     providers' own subclasses (OpenSubtitles Unauthorized, DownloadLimitReached)
     count too."""
@@ -129,10 +155,22 @@ def _block_seconds(exc):
     if isinstance(exc, DownloadLimitExceeded):
         return 6 * 3600, 'daily download limit reached'
     if isinstance(exc, (AuthenticationError, ConfigurationError)):
+        if name == 'opensubtitles':
+            if (getattr(config, 'OPENSUBTITLES_ORG_USERNAME', '') or '').strip():
+                return 3600, 'login failed (check the OpenSubtitles.org username/password)'
+            # Using the .com login: the old .org API refuses logins that work
+            # on OpenSubtitles.com, so the password is usually not the problem.
+            return 6 * 3600, ('login refused by the old OpenSubtitles.org API, which refuses accounts '
+                              'that work on OpenSubtitles.com; enter an OpenSubtitles.org login or '
+                              'use OpenSubtitles.com instead')
         return 3600, 'login failed (check the OpenSubtitles username/password)'
     if isinstance(exc, ServiceUnavailable):
         if 'HTTP 403' in str(exc):
             return 6 * 3600, 'the site refuses requests (HTTP 403)'
+        if UNREACHABLE in str(exc):
+            return 3600, f'{UNREACHABLE} (DNS or connection failed)'
+        if TIMED_OUT in str(exc):
+            return 600, 'searches are timing out'
         return 600, 'service unavailable'
     return 600, f'error ({type(exc).__name__ if exc else "unknown"})'
 
@@ -141,6 +179,23 @@ def blocked_providers():
     now = time.monotonic()
     for k in [k for k, v in _BLOCKED.items() if v[0] <= now]:
         _BLOCKED.pop(k, None)
+    login_paused = [k for k, v in _BLOCKED.items() if len(v) > 2 and v[2]]
+    if login_paused:
+        try:
+            current = _credentials_fingerprint()
+        except Exception:
+            current = None
+        changed = [k for k in login_paused if current and _BLOCKED[k][2] != current]
+        if changed:
+            # New login saved: try it on the next search instead of waiting
+            # out the pause, with the new credentials loaded.
+            for k in changed:
+                _BLOCKED.pop(k, None)
+            logging.info(f"[subs] credentials changed; resuming {', '.join(changed)}")
+            try:
+                config.reload()
+            except Exception as e:
+                logging.debug(f"[subs] config reload failed: {e}")
     return {k: v[1] for k, v in _BLOCKED.items()}
 
 
@@ -159,12 +214,21 @@ def _pool_class():
             try:
                 return self._prov.list_subtitles(*a, **kw)
             except Exception as e:
+                import requests
+                from subliminal.exceptions import ServiceUnavailable
+                if isinstance(e, (requests.Timeout, requests.ConnectionError)):
+                    # A site that's down (podnapisi.net stopped resolving) or
+                    # not answering: subliminal would log a traceback and
+                    # retry it for every item. Paused instead.
+                    why = TIMED_OUT if isinstance(e, requests.Timeout) else UNREACHABLE
+                    err = ServiceUnavailable(f'{self._name}: {why}')
+                    self._errors[self._name] = err
+                    raise err from e
                 code = getattr(getattr(e, 'response', None), 'status_code', None)
                 if code in (403, 503):
                     # The site refuses us (tvsubtitles.net answers 403 to every
                     # search): subliminal would log a traceback per search and
                     # keep asking. As ServiceUnavailable it is paused instead.
-                    from subliminal.exceptions import ServiceUnavailable
                     err = ServiceUnavailable(f'{self._name}: HTTP {code}')
                     self._errors[self._name] = err
                     raise err from e
@@ -186,10 +250,17 @@ def _pool_class():
         def _discard_provider(self, name):
             super()._discard_provider(name)
             exc = sys.exc_info()[1] or self.__dict__.get('_last_errors', {}).get(name)
-            secs, reason = _block_seconds(exc)
+            secs, reason = _block_seconds(exc, name)
             if name not in _BLOCKED:
                 logging.warning(f"[subs] pausing provider {name} for {secs // 60} min: {reason}")
-            _BLOCKED[name] = (time.monotonic() + secs, reason)
+            fingerprint = None
+            from subliminal.exceptions import AuthenticationError, ConfigurationError
+            if isinstance(exc, (AuthenticationError, ConfigurationError)):
+                try:
+                    fingerprint = _credentials_fingerprint()
+                except Exception:
+                    fingerprint = None
+            _BLOCKED[name] = (time.monotonic() + secs, reason, fingerprint)
     return _TrackingPool
 
 
@@ -204,7 +275,7 @@ def selected_providers(include_blocked=False):
     chosen = config.SUBTITLE_PROVIDERS or DEFAULT_PROVIDERS
     if isinstance(chosen, str):
         chosen = [c.strip() for c in chosen.split(',')]
-    out = [p for p in chosen if p in available]
+    out = [p for p in chosen if p in available and p not in REMOVED_PROVIDERS]
     if not out:
         out = [p for p in DEFAULT_PROVIDERS if p in available]
     if include_blocked:
@@ -214,14 +285,19 @@ def selected_providers(include_blocked=False):
 
 
 def build_provider_configs():
-    """Credentials per provider. One OpenSubtitles account works for both the
-    .com API (required to download there) and the legacy .org provider."""
+    """Credentials per provider. The legacy OpenSubtitles.org provider uses its
+    own login when one is set (.org and .com accounts can differ, and the old
+    API refuses .com logins), else the OpenSubtitles.com one."""
     pc = {}
     user = config.OPENSUBTITLES_USERNAME
     pwd = config.OPENSUBTITLES_PASSWORD
     if user and pwd:
         pc['opensubtitles'] = {'username': user, 'password': pwd}
         pc['opensubtitlescom'] = {'username': user, 'password': pwd}
+    org_user = (getattr(config, 'OPENSUBTITLES_ORG_USERNAME', '') or '').strip()
+    org_pwd = getattr(config, 'OPENSUBTITLES_ORG_PASSWORD', '') or ''
+    if org_user and org_pwd:
+        pc['opensubtitles'] = {'username': org_user, 'password': org_pwd}
     if getattr(config, 'SUBDL_API_KEY', ''):
         pc['subdl'] = {'api_key': config.SUBDL_API_KEY}
     if getattr(config, 'SUBSOURCE_API_KEY', ''):
@@ -1409,8 +1485,17 @@ def download_subtitles_for_video(video_path, rating_key=None, name_hint=None, it
         took = time.time() - start_time
         item_id = (ctx.get('item') or {}).get('id')
         if not subtitles[video]:
+            # Providers paused during this search never answered it: say so
+            # instead of listing them as searched.
+            now_paused = blocked_providers()
+            failed = [p for p in providers if p in now_paused]
+            searched = [p for p in providers if p not in now_paused]
             logging.info(f"[subs] {name}: nothing passed the match threshold ({took:.1f}s)")
-            _note(ctx, f"nothing passed the match threshold ({', '.join(providers)})")
+            note = (f"nothing passed the match threshold ({', '.join(searched)})" if searched
+                    else 'no provider answered')
+            if failed:
+                note += '; ' + ', '.join(f'{p} paused: {now_paused[p]}' for p in failed)
+            _note(ctx, note)
             _record_attempt(item_id, False)
             return False
         for sub in subtitles[video]:
