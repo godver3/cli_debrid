@@ -249,7 +249,7 @@ _SPECS = [
     TaskSpec('task_upgrade_hub_auto_queue', 'Upgrade Hub auto-queue', 'library', DAY, default=False),
     # Runs only while 'Upgrade Hub scan' is on (checked in the task), so it
     # follows that switch; its interval is adjustable here.
-    TaskSpec('task_upgrade_hub_feed_sync', 'Upgrade Hub NZB feed sync', 'library', 1800,
+    TaskSpec('task_upgrade_hub_feed_sync', 'Upgrade Hub NZB feed sync', 'library', HOUR,
              controlled_by='Runs while Upgrade Hub scan is on'),
 
     # System

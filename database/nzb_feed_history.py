@@ -4,7 +4,7 @@ Upgrade Hub — NZB feed history.
 The NZB phase used to read each indexer's newest releases (up to 1000 per
 category) only when a scan ran, and forgot them afterwards, so anything posted
 and pushed out of that list between scans was never seen. Instead, a sync
-(every 30 minutes while the Upgrade Hub scan task is on, and at the start of
+(every hour while the Upgrade Hub scan task is on, and at the start of
 each scan) reads only what's new on each indexer since the last sync and keeps
 it here for HISTORY_DAYS. Scans match against this history.
 
