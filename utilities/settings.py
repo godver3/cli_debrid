@@ -424,6 +424,14 @@ def get_setting(section, key=None, default=None):
 
     return value
 
+def get_upgrade_max_release_age_days() -> int:
+    """Scraping.upgrade_max_release_age_days: newly collected items released this
+    many days ago or less go to the Upgrading queue (default 7)."""
+    try:
+        return max(0, int(float(str(get_setting('Scraping', 'upgrade_max_release_age_days', 7)).strip())))
+    except (TypeError, ValueError):
+        return 7
+
 # Update the set_setting function to handle boolean values correctly
 def set_setting(section, key, value):
     # Load config dynamically

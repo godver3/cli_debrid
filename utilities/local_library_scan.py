@@ -1909,7 +1909,8 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
             
             # Add check for content_source to prevent manual assignments from triggering upgrades
             is_manually_assigned = item.get('content_source') == 'Magnet_Assigner'
-            is_upgrade_candidate = (days_since_release <= 7 and 
+            from utilities.settings import get_upgrade_max_release_age_days
+            is_upgrade_candidate = (days_since_release <= get_upgrade_max_release_age_days() and
                                     get_setting("Scraping", "enable_upgrading", default=False) and
                                     not is_manually_assigned) # Check if NOT manually assigned
             

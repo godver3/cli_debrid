@@ -617,11 +617,8 @@ def _add_collected_items_impl(media_items_batch, recent=False, backfill=False, d
                             is_manually_assigned = existing_db_item.get('content_source') == 'Magnet_Assigner'
 
                             # Determine the new state, preventing upgrade for manual assignments
-                            try:
-                                _max_age = int(get_setting("Scraping", "upgrade_max_release_age_days", 7))
-                            except (TypeError, ValueError):
-                                _max_age = 7
-                            should_upgrade = (days_since_release <= _max_age and
+                            from utilities.settings import get_upgrade_max_release_age_days
+                            should_upgrade = (days_since_release <= get_upgrade_max_release_age_days() and
                                               get_setting("Scraping", "enable_upgrading", default=False) and
                                               not is_manually_assigned) # Check if NOT manually assigned
 
