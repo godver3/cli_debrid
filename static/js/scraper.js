@@ -504,7 +504,7 @@ function renderEpisodeBatch() {
         episodeDiv.innerHTML = `
             <button ${metadata.isRequester ? 'disabled' : ''}><span class="episode-rating">${(item.vote_average || 0).toFixed(1)}</span>
             <img src="${item.still_path ? `/scraper/tmdb_image/w300${item.still_path}` : '/static/image/placeholder-horizontal.png'}"
-                alt="${item.episode_title || ''}"
+                alt="${scrEsc(item.episode_title || '')}"
                 loading="${loadingAttr}"
                 class="${item.still_path ? '' : 'placeholder-episode'}">
             <div class="episode-info">

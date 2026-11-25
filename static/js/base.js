@@ -1106,12 +1106,12 @@ document.addEventListener('DOMContentLoaded', function() {
                 return `
                 <div class="notification ${readClass}" data-id="${notification.id}">
                     <div class="notification-header">
-                        <span class="notification-type ${notification.type || 'info'}">${notification.type || 'info'}</span>
+                        <span class="notification-type ${escapeNotesHtml(notification.type || 'info')}">${escapeNotesHtml(notification.type || 'info')}</span>
                         <span class="notification-time">${formatTimestamp(notification.timestamp)}</span>
                     </div>
                     <div class="notification-title">${escapeNotesHtml(notification.title)}</div>
                     <div class="notification-message">${escapeNotesHtml(notification.message)}</div>
-                    ${notification.link ? `<a href="${escapeNotesHtml(notification.link)}" class="notification-link">View Details</a>` : ''}
+                    ${(typeof notification.link === 'string' && /^(https?:\/\/|\/(?!\/))/i.test(notification.link)) ? `<a href="${escapeNotesHtml(notification.link)}" class="notification-link">View Details</a>` : ''}
                 </div>
             `;
             }).join('');

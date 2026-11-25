@@ -2914,11 +2914,11 @@ function displayCast(cast) {
     castGrid.innerHTML = cast.map(person => `
         <div class="cast-card">
             <img src="${person.profile_path ? `https://image.tmdb.org/t/p/w185${person.profile_path}` : '/static/images/placeholder.png'}"
-                 alt="${person.name}"
+                 alt="${escapeHtml(person.name)}"
                  class="cast-photo"
                  onerror="this.src='/static/images/placeholder.png'">
             <div class="cast-name">${escapeHtml(person.name)}</div>
-            <div class="cast-character">${person.character || ''}</div>
+            <div class="cast-character">${escapeHtml(person.character || '')}</div>
         </div>
     `).join('');
 

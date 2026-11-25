@@ -1450,8 +1450,8 @@
                                 data.preview.forEach(item => {
                                     previewHtml += `<tr>
                                         <td>${item.id}</td>
-                                        <td class="path-cell">${item.old_location || 'N/A'}</td>
-                                        <td class="path-cell">${item.new_location || 'N/A'}</td>
+                                        <td class="path-cell">${_tcEsc(item.old_location || 'N/A')}</td>
+                                        <td class="path-cell">${_tcEsc(item.new_location || 'N/A')}</td>
                                         <td class="path-cell">${_tcEsc(item.old_original || 'N/A')}</td>
                                         <td class="path-cell">${_tcEsc(item.new_original || 'N/A')}</td>
                                     </tr>`;
@@ -2264,8 +2264,8 @@
                                             const ghostlistedStatus = item.ghostlisted !== undefined ? (item.ghostlisted ? 'True' : 'False') : 'N/A';
                                             const fileLocation = item.location && item.location !== 'N/A' ? item.location : 'No file location';
                                             resultsHtml += `<div style="margin-bottom:8px;"><span style="font-weight:600;color:#e0e0e0;">${_tcEsc(item.title)}${episode}</span><br>`;
-                                            resultsHtml += `<span style="color:#aaa;font-size:11px;">ID: ${item.id} | State: ${item.state} | Version: ${item.version} | Ghostlisted: ${ghostlistedStatus}${scoreDisplay}</span><br>`;
-                                            resultsHtml += `<span style="color:#666;font-size:11px;font-family:monospace;word-break:break-all;">File: ${fileLocation}</span></div>`;
+                                            resultsHtml += `<span style="color:#aaa;font-size:11px;">ID: ${_tcEsc(item.id)} | State: ${_tcEsc(item.state)} | Version: ${_tcEsc(item.version)} | Ghostlisted: ${ghostlistedStatus}${scoreDisplay}</span><br>`;
+                                            resultsHtml += `<span style="color:#666;font-size:11px;font-family:monospace;word-break:break-all;">File: ${_tcEsc(fileLocation)}</span></div>`;
                                         });
                                         resultsHtml += `</td>`;
 
@@ -2279,7 +2279,7 @@
 
                                             const isExcluded = item.action === 'excluded';
                                             const itemStyle = isExcluded ? 'background:rgba(34,197,94,.08);padding:7px 9px;border-radius:4px;border-left:2px solid rgba(34,197,94,.4);' : '';
-                                            const statusText = isExcluded ? `🛡️ Excluded from deletion (pattern: ${item.excluded_pattern})` : '';
+                                            const statusText = isExcluded ? `🛡️ Excluded from deletion (pattern: ${_tcEsc(item.excluded_pattern)})` : '';
                                             const excludedClass = isExcluded ? ' excluded-item' : '';
 
                                             resultsHtml += `<div class="duplicate-item${excludedClass}" style="margin-bottom:8px;${itemStyle}">`;
@@ -2287,8 +2287,8 @@
                                                 resultsHtml += `<div style="color:#22c55e;font-weight:600;margin-bottom:4px;font-size:11px;">${statusText}</div>`;
                                             }
                                             resultsHtml += `<span style="font-weight:600;color:#e0e0e0;">${_tcEsc(item.title)}${episode}</span><br>`;
-                                            resultsHtml += `<span style="color:#aaa;font-size:11px;">ID: ${item.id} | State: ${item.state} | Version: ${item.version} | Ghostlisted: ${ghostlistedStatus}${scoreDisplay}</span><br>`;
-                                            resultsHtml += `<span style="color:#666;font-size:11px;font-family:monospace;word-break:break-all;">File: ${fileLocation}</span></div>`;
+                                            resultsHtml += `<span style="color:#aaa;font-size:11px;">ID: ${_tcEsc(item.id)} | State: ${_tcEsc(item.state)} | Version: ${_tcEsc(item.version)} | Ghostlisted: ${ghostlistedStatus}${scoreDisplay}</span><br>`;
+                                            resultsHtml += `<span style="color:#666;font-size:11px;font-family:monospace;word-break:break-all;">File: ${_tcEsc(fileLocation)}</span></div>`;
                                         });
                                         resultsHtml += `</td>`;
                                         resultsHtml += `</tr>`;

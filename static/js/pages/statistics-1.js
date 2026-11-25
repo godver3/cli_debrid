@@ -335,7 +335,7 @@ function updateUIWithTimePreference(data) {
                     <div class="file-details">
                         <span class="title">${_statEsc(movie.title)} (${movie.year})</span>
                         <span class="metadata">${meta}</span>
-                        <span class="filename">${movie.filled_by_file}</span>
+                        <span class="filename">${_statEsc(movie.filled_by_file)}</span>
                     </div>
                 ` : `
                     <div class="stats-poster-container">
@@ -343,7 +343,7 @@ function updateUIWithTimePreference(data) {
                         <div class="stats-poster-hover">
                             <span class="title">${_statEsc(movie.title)} (${movie.year})</span>
                             <span class="metadata">${meta}</span>
-                            <span class="filename">${movie.filled_by_file}</span>
+                            <span class="filename">${_statEsc(movie.filled_by_file)}</span>
                         </div>
                     </div>
                 `}
@@ -370,7 +370,7 @@ function updateUIWithTimePreference(data) {
                     <div class="file-details">
                         <span class="title">${_statEsc(show.title)}${show.year ? ` (${show.year})` : ''}</span>
                         <span class="metadata">${meta}</span>
-                        <span class="filename">${show.filled_by_file}</span>
+                        <span class="filename">${_statEsc(show.filled_by_file)}</span>
                     </div>
                 ` : `
                     <div class="stats-poster-container">
@@ -378,7 +378,7 @@ function updateUIWithTimePreference(data) {
                         <div class="stats-poster-hover">
                             <span class="title">${_statEsc(show.title)}${show.year ? ` (${show.year})` : ''}</span>
                             <span class="metadata">${meta}</span>
-                            <span class="filename">${show.filled_by_file}</span>
+                            <span class="filename">${_statEsc(show.filled_by_file)}</span>
                         </div>
                     </div>
                 `}
@@ -420,8 +420,8 @@ function updateUIWithTimePreference(data) {
                     <div class="file-details">
                         <span class="title">${_statEsc(item.title)}${yearInfo}</span>
                         <span class="metadata">${episodeInfo}${versionInfo} - ${toDate}</span>
-                        <span class="filename" data-label="From:">${item.upgrading_from || 'Unknown'}</span>
-                        <span class="filename" data-label="To:">${item.filled_by_file || 'Unknown'}</span>
+                        <span class="filename" data-label="From:">${_statEsc(item.upgrading_from || 'Unknown')}</span>
+                        <span class="filename" data-label="To:">${_statEsc(item.filled_by_file || 'Unknown')}</span>
                     </div>
                 </div>`;
             } else {
@@ -431,8 +431,8 @@ function updateUIWithTimePreference(data) {
                         <div class="stats-poster-hover">
                             <span class="title">${_statEsc(item.title)}${yearInfo}</span>
                             <span class="metadata">${episodeInfo}${versionInfo} - ${toDate}</span>
-                            <span class="filename" data-label="From:">${item.upgrading_from || 'Unknown'}</span>
-                            <span class="filename" data-label="To:">${item.filled_by_file || 'Unknown'}</span>
+                            <span class="filename" data-label="From:">${_statEsc(item.upgrading_from || 'Unknown')}</span>
+                            <span class="filename" data-label="To:">${_statEsc(item.filled_by_file || 'Unknown')}</span>
                         </div>
                     </div>
                 </div>`;

@@ -83,7 +83,7 @@ function updateTorrentStatus() {
                             item.className = 'download-item';
                             item.innerHTML = `
                                 <div class="download-name">${_tsEsc(filename.replace('- ', ''))}</div>
-                                <div class="download-progress">${progressInfo.trim()}</div>
+                                <div class="download-progress">${_tsEsc(progressInfo.trim())}</div>
                             `;
                             activeContent.appendChild(item);
                         }

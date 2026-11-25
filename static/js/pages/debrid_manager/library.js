@@ -361,9 +361,9 @@ function renderLibPage() {
         const dupeCount = _hashCounts[t.hash] || 0;
         const titleDupeCount = _titleCounts[_titleKey(t)] || 0;
         const dupeBadge = dupeCount > 1
-            ? `<span class="dm-dupe-badge dm-dupe-badge-click" title="Click to see all ${dupeCount} copies" onclick="event.stopPropagation();libOpenDupes('hash','${t.hash}','${t.id}')">${dupeCount}× dupe</span>`
+            ? `<span class="dm-dupe-badge dm-dupe-badge-click" title="Click to see all ${dupeCount} copies" onclick="event.stopPropagation();libOpenDupes('hash',${_jsArg(t.hash)},${_jsArg(t.id)})">${dupeCount}× dupe</span>`
             : titleDupeCount > 1
-                ? `<span class="dm-dupe-badge dm-title-dupe-badge dm-dupe-badge-click" title="Click to see all ${titleDupeCount} title matches" onclick="event.stopPropagation();libOpenDupes('title','${_titleKey(t).replace(/'/g,"\\'")}','${t.id}')">${titleDupeCount}× title</span>`
+                ? `<span class="dm-dupe-badge dm-title-dupe-badge dm-dupe-badge-click" title="Click to see all ${titleDupeCount} title matches" onclick="event.stopPropagation();libOpenDupes('title',${_jsArg(_titleKey(t))},${_jsArg(t.id)})">${titleDupeCount}× title</span>`
                 : '';
         const typeBadge = `<span class="dm-type-badge dm-type-${t._type}">${t._type === 'tv' ? 'Show' : t._type === 'movie' ? 'Movie' : 'Other'}</span>`;
         const orphanedBadge = (_libPlexTrash && _plexTrashOrphanedFilenames.has((t.filename || '').split('/')[0]))
