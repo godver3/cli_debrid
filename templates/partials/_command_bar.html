@@ -1,15 +1,16 @@
 {# Home page command line: /request, /rescrape, /run and friends. Collapsible; type /help. #}
+{# The terminal keeps the cli_debrid name on purpose, as a nod to the original name. Leave it out of rename sweeps. #}
 <div class="cmdbar" id="cmdbar">
   <div class="cmdbar-head" id="cmdbarHead">
     <span class="cmdbar-dots"><i></i><i></i><i></i></span>
-    <span class="cmdbar-title">Clyde — terminal</span>
+    <span class="cmdbar-title">cli_debrid — terminal</span>
     <button type="button" class="cmdbar-help-btn" id="cmdbarHelpBtn" title="Show commands">help</button>
     <span class="cmdbar-caret">▾</span>
   </div>
   <div class="cmdbar-body" id="cmdbarBody">
     <div class="cmdbar-out" id="cmdbarOut" aria-live="polite"></div>
     <form class="cmdbar-form" id="cmdbarForm" autocomplete="off">
-      <span class="cmdbar-ps1">user@clyde:~$</span>
+      <span class="cmdbar-ps1">user@cli_debrid:~$</span>
       <input type="text" id="cmdbarInput" class="cmdbar-input" spellcheck="false" autocapitalize="off"
              placeholder="/request the matrix   (type /help)" aria-label="Command">
     </form>
@@ -373,9 +374,9 @@
       if (results && selected >= 0) return pick(selected);
       return;
     }
-    if (/^\d+$/.test(line) && results) { print('<b>user@clyde:~$</b> ' + esc(line), 'c-in'); return pick(parseInt(line, 10) - 1); }
+    if (/^\d+$/.test(line) && results) { print('<b>user@cli_debrid:~$</b> ' + esc(line), 'c-in'); return pick(parseInt(line, 10) - 1); }
     if (!line.startsWith('/')) line = '/request ' + line;
-    print('<b>user@clyde:~$</b> ' + esc(line), 'c-in');
+    print('<b>user@cli_debrid:~$</b> ' + esc(line), 'c-in');
     if (history[history.length - 1] !== line) { history.push(line); history = history.slice(-50); LS('cmdbar.history', JSON.stringify(history)); }
     hIdx = history.length;
     picked = null;
