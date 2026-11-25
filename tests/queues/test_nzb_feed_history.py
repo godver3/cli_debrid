@@ -194,15 +194,67 @@ def test_nzb_scan_syncs_then_matches_against_history(feed_db, app_settings):
     assert c['item_id'] == movie['id'] and c['new_magnet'] == 'https://idx/get/a'
 
 
-def test_browse_request_leaves_out_q():
-    # An empty q= gets 'Missing parameter' from several indexers.
+FEED = '<rss><channel><item><title>A</title></item></channel></rss>'
+REFUSED = '<?xml version="1.0"?><error code="200" description="Missing parameter"/>'
+
+
+@pytest.fixture
+def browse(monkeypatch):
+    """Calls _fetch_browse_page against a fake indexer; returns (call, requests)."""
     import database.nzb_upgrade as nu
-    resp = mock.Mock(status_code=200, text='<rss><channel></channel></rss>')
-    with mock.patch('routes.api_tracker.api.get', return_value=resp) as get, \
-         mock.patch('usenet.indexer_quota.allow_url', return_value=True):
-        nu._fetch_browse_page('https://idx', 'k', '2000', 100, 0)
-    params = get.call_args.kwargs['params']
-    assert 'q' not in params and params['t'] == 'search' and params['extended'] == 1
+    monkeypatch.setattr(nu, '_browse_mode_for', {})
+    monkeypatch.setattr(nu, '_browse_refused_logged', set())
+    requests, replies = [], {}
+
+    def fake_get(url, params=None, timeout=None):
+        requests.append(dict(params))
+        key = (params['t'], 'q' in params)
+        status, text = replies.get(key, (200, REFUSED))
+        return mock.Mock(status_code=status, text=text)
+
+    def call(cats='2000', **reply):
+        replies.clear()
+        replies.update(reply.get('replies', {}))
+        with mock.patch('routes.api_tracker.api.get', side_effect=fake_get), \
+             mock.patch('usenet.indexer_quota.allow_url', return_value=True):
+            return nu._fetch_browse_page('https://idx', 'k', cats, 100, 0)
+    return call, requests
+
+
+def test_browse_asks_without_q_first_and_remembers_it(browse):
+    call, requests = browse
+    items, _ = call(replies={('search', False): (200, FEED)})
+    assert len(items) == 1
+    assert 'q' not in requests[0] and requests[0]['t'] == 'search' and requests[0]['extended'] == 1
+    requests.clear()
+    call(replies={('search', False): (200, FEED)})
+    assert len(requests) == 1  # straight to what worked
+
+
+def test_browse_falls_back_to_a_category_browse(browse, caplog):
+    call, requests = browse
+    items, _ = call(replies={('movie', False): (200, FEED)})
+    assert len(items) == 1
+    assert [r['t'] for r in requests] == ['search', 'movie']
+    requests.clear()
+    call('5000', replies={('tvsearch', False): (200, FEED)})
+    assert [r['t'] for r in requests] == ['search', 'tvsearch']
+
+
+def test_indexer_refusing_everything_is_named_once(browse, caplog):
+    call, requests = browse
+    with caplog.at_level('WARNING'):
+        assert call() == ([], 0)
+        assert call() == ([], 0)
+    assert len(requests) == 6  # three ways, twice
+    warnings = [r.getMessage() for r in caplog.records if 'refused every way' in r.getMessage()]
+    assert len(warnings) == 1 and 'https://idx' in warnings[0] and 'Missing parameter' in warnings[0]
+
+
+def test_rate_limited_reply_doesnt_try_other_ways(browse):
+    call, requests = browse
+    assert call(replies={('search', False): (429, '')}) == ([], 0)
+    assert len(requests) == 1
 
 
 # ── Version filters honour debrid-only / NZB-only patterns ──────────────────

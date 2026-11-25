@@ -42,40 +42,87 @@ def get_newznab_scrapers() -> List[Tuple[str, Dict]]:
     return scrapers
 
 
+# Ways to ask an indexer for its latest releases, tried in order until one
+# returns a feed. Indexers differ: AltHUB, NinjaCentral and NZBPlanet answer an
+# empty q= with 'Missing parameter' but accept t=search with no q; others may
+# only browse through t=movie / t=tvsearch.
+_BROWSE_MODES = {
+    'movie': ({'t': 'search'}, {'t': 'movie'}, {'t': 'search', 'q': ''}),
+    'tv':    ({'t': 'search'}, {'t': 'tvsearch'}, {'t': 'search', 'q': ''}),
+}
+_browse_mode_for: Dict[Tuple[str, str], int] = {}   # (url, kind) -> index that worked
+_browse_refused_logged: set = set()
+
+
+def _browse_kind(cats: str) -> str:
+    return 'tv' if str(cats).strip().startswith('5') else 'movie'
+
+
+def _read_feed(text: str) -> Tuple[Optional[List[ET.Element]], int, str]:
+    """(items, total, error). items is None when the indexer refused the request."""
+    root = ET.fromstring(text)
+    if root.tag == 'error':
+        return None, 0, root.get('description') or f"error {root.get('code', '')}".strip()
+    channel = root.find('channel')
+    if channel is None:
+        return None, 0, 'no feed in the response'
+    ns = 'http://www.newznab.com/DTD/2010/feeds/attributes/'
+    total = 0
+    resp_el = channel.find(f'{{{ns}}}response')
+    if resp_el is not None:
+        try:
+            total = int(resp_el.get('total', 0))
+        except (ValueError, TypeError):
+            pass
+    return channel.findall('item'), total, ''
+
+
 def _fetch_browse_page(url: str, api_key: str, cats: str, limit: int,
                         offset: int, timeout: int = 30) -> Tuple[List[ET.Element], int]:
-    """Fetch one browse page. Returns (items, total)."""
+    """Fetch one page of an indexer's latest releases. Returns (items, total)."""
     from routes.api_tracker import api as _api
     from usenet import indexer_quota
     if not indexer_quota.allow_url(url, 'api'):
         return [], 0
-    try:
-        # No q at all: several indexers (AltHUB, NinjaCentral, NZBPlanet) answer
-        # an empty q= with 'Missing parameter' and no results.
-        r = _api.get(f'{url}/api', params={
-            'apikey': api_key, 't': 'search',
-            'cat': cats, 'limit': limit, 'offset': offset,
-            # extended=1: each release carries the indexer's own IMDb id
-            'extended': 1,
-        }, timeout=timeout)
-        if r.status_code != 200:
+    kind = _browse_kind(cats)
+    modes = _BROWSE_MODES[kind]
+    known = _browse_mode_for.get((url, kind))
+    order = [known] if known is not None else list(range(len(modes)))
+    errors = []
+    for i in order:
+        params = {'apikey': api_key, **modes[i], 'cat': cats, 'limit': limit, 'offset': offset,
+                  # extended=1: each release carries the indexer's own IMDb id
+                  'extended': 1}
+        try:
+            r = _api.get(f'{url}/api', params=params, timeout=timeout)
+            if r.status_code != 200:
+                # Rate limit / outage, not a refusal of this request: try later.
+                logger.warning(f'[NZB_UPGRADE] Browse {url}: HTTP {r.status_code}')
+                return [], 0
+            items, total, err = _read_feed(r.text)
+        except Exception as e:
+            logger.warning(f'[NZB_UPGRADE] Browse error {url}: {e}')
             return [], 0
-        root = ET.fromstring(r.text)
-        channel = root.find('channel')
-        if channel is None:
-            return [], 0
-        ns = 'http://www.newznab.com/DTD/2010/feeds/attributes/'
-        total = 0
-        resp_el = channel.find(f'{{{ns}}}response')
-        if resp_el is not None:
-            try:
-                total = int(resp_el.get('total', 0))
-            except (ValueError, TypeError):
-                pass
-        return channel.findall('item'), total
-    except Exception as e:
-        logger.warning(f'[NZB_UPGRADE] Browse error {url}: {e}')
+        if items is None:
+            errors.append(f"{modes[i]['t']}{'' if 'q' not in modes[i] else ' q='}: {err}")
+            continue
+        if known is None:
+            _browse_mode_for[(url, kind)] = i
+            if i:
+                logger.info(f"[NZB_UPGRADE] {url}: latest {kind} releases read with "
+                            f"t={modes[i]['t']}{' q=' if 'q' in modes[i] else ''}")
+        return items, total
+    if known is not None:
+        # What worked before was refused now: try every way again next time.
+        _browse_mode_for.pop((url, kind), None)
+        logger.info(f"[NZB_UPGRADE] {url} refused its usual latest-{kind} request ({errors[0]})")
         return [], 0
+    if (url, kind) not in _browse_refused_logged:
+        _browse_refused_logged.add((url, kind))
+        logger.warning(f"[NZB_UPGRADE] {url} refused every way of listing its latest {kind} "
+                       f"releases ({'; '.join(errors)}), so the Upgrade Hub can't use it. "
+                       f"Please report this with the indexer's name.")
+    return [], 0
 
 
 def _parse_items(items: List[ET.Element], instance: str) -> List[Dict]:
