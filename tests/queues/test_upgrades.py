@@ -160,7 +160,7 @@ def _days_ago(n):
 def test_full_scan_with_only_the_fresh_release_search(hub_db, app_settings, monkeypatch):
     import database.zilean_upgrade as zu
     import database.upgrade_hub_scrapers as uhs
-    app_settings['Upgrade Hub'] = {'upgrade_source': 'none', 'fresh_search_days': 30, 'fresh_search_limit': 10}
+    app_settings['Upgrade Hub'] = {'upgrade_source': 'none', 'fresh_search_enabled': True, 'fresh_search_days': 30, 'fresh_search_limit': 10}
     conn = hub_db()
     iid = _insert(conn, type='movie', title='The Long Walk', imdb_id='tt1', tmdb_id='1', year=2025,
                   filled_by_file='The.Long.Walk.2025.1080p.WEB-DL-FLUX.mkv', size=5.0, release_date=_days_ago(10))
@@ -186,7 +186,7 @@ def test_fresh_search_covers_recent_items_only_up_to_its_cap(hub_db, app_setting
     # (for Zilean / NZB) doesn't narrow it.
     import database.zilean_upgrade as zu
     import database.upgrade_hub_scrapers as uhs
-    app_settings['Upgrade Hub'] = {'upgrade_source': 'none', 'fresh_search_days': 30, 'fresh_search_limit': 2}
+    app_settings['Upgrade Hub'] = {'upgrade_source': 'none', 'fresh_search_enabled': True, 'fresh_search_days': 30, 'fresh_search_limit': 2}
     conn = hub_db()
     recent = [_insert(conn, type='movie', title=f'M{n}', imdb_id=f'tt{n}', tmdb_id=str(n), year=2025,
                       filled_by_file=f'M{n}.2025.1080p.WEB.mkv', size=5.0, release_date=_days_ago(n))
@@ -583,3 +583,14 @@ def test_bulk_sources_default_to_both(app_settings, stored, expected):
     import database.upgrade_hub_scrapers as uhs
     app_settings['Upgrade Hub'] = {} if stored is None else {'upgrade_source': stored}
     assert uhs.upgrade_source() == expected
+
+
+def test_fresh_release_search_is_off_unless_turned_on(app_settings):
+    """Optional: it spends indexer API calls every scan."""
+    from database.upgrade_hub_scrapers import fresh_search_settings
+    app_settings['Upgrade Hub'] = {}
+    assert fresh_search_settings()['enabled'] is False
+    app_settings['Upgrade Hub'] = {'fresh_search_enabled': True}
+    assert fresh_search_settings() == {'days': 30, 'limit': 20, 'enabled': True}
+    app_settings['Upgrade Hub'] = {'fresh_search_enabled': 'true', 'fresh_search_limit': 0}
+    assert fresh_search_settings()['enabled'] is False

@@ -899,6 +899,8 @@ function applySettingsToUI() {
     // Scraper search
     const freshDays = document.getElementById('settings-fresh-days');
     if (freshDays) freshDays.value = _settings.fresh_search_days ?? 30;
+    const freshEnabled = document.getElementById('settings-fresh-enabled');
+    if (freshEnabled) freshEnabled.checked = !!_settings.fresh_search_enabled;
     const freshLimit = document.getElementById('settings-fresh-limit');
     if (freshLimit) freshLimit.value = _settings.fresh_search_limit ?? 20;
 
@@ -1022,6 +1024,7 @@ async function saveSettings() {
         excluded_genres:        _uhExcludedGenres.join(','),
         exclude_nas_items:      excludeNasChk ? excludeNasChk.checked : false,
         upgrade_source:         (document.getElementById('settings-upgrade-source') || {}).value || 'both',
+        fresh_search_enabled:   !!(document.getElementById('settings-fresh-enabled') || {}).checked,
         fresh_search_days:      (v => isNaN(v) ? 30 : Math.max(0, v))(parseInt((document.getElementById('settings-fresh-days') || {}).value)),
         fresh_search_limit:     (v => isNaN(v) ? 20 : Math.max(0, v))(parseInt((document.getElementById('settings-fresh-limit') || {}).value)),
         // Only sent once loaded, so a failed load can't save blank defaults over them.

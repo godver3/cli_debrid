@@ -67,7 +67,9 @@ def upgrade_source() -> str:
 
 
 def fresh_search_settings() -> Dict:
-    """Fresh-release search: {'days', 'limit', 'enabled'}. A limit of 0 turns it off."""
+    """Fresh-release search: {'days', 'limit', 'enabled'}. Off unless
+    Upgrade Hub.fresh_search_enabled is on (it spends indexer API calls on
+    every scan); a limit of 0 also turns it off."""
     def _int(key, default, hi):
         try:
             return max(0, min(hi, int(get_setting('Upgrade Hub', key, default))))
@@ -75,7 +77,9 @@ def fresh_search_settings() -> Dict:
             return default
     days = _int('fresh_search_days', DEFAULT_FRESH_DAYS, 3650)
     limit = _int('fresh_search_limit', DEFAULT_FRESH_LIMIT, MAX_CHECKS_PER_SCAN)
-    return {'days': days, 'limit': limit, 'enabled': limit > 0}
+    on = get_setting('Upgrade Hub', 'fresh_search_enabled', False)
+    on = on if isinstance(on, bool) else str(on).strip().lower() in ('true', '1', 'yes', 'on')
+    return {'days': days, 'limit': limit, 'enabled': on and limit > 0}
 
 
 def last_checked_map(item_ids: List[int]) -> Dict[int, str]:

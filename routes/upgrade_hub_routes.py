@@ -274,6 +274,7 @@ _SETTINGS_KEYS = {
     'excluded_genres': str,
     'exclude_nas_items': bool,
     'upgrade_source': str,
+    'fresh_search_enabled': bool,
     'fresh_search_days': int,
     'fresh_search_limit': int,
 }
@@ -287,10 +288,11 @@ _SETTINGS_DEFAULTS = {
     'excluded_genres': '',
     'exclude_nas_items': False,
     'upgrade_source': 'both',
+    'fresh_search_enabled': False,
     'fresh_search_days': 30,
     'fresh_search_limit': 20,
 }
-_BOOL_KEYS = ('show_recent_only', 'hide_pack_episodes', 'exclude_nas_items')
+_BOOL_KEYS = ('show_recent_only', 'hide_pack_episodes', 'exclude_nas_items', 'fresh_search_enabled')
 
 # Upgrading settings that live in other config sections (Scraping / Debug) but
 # are edited on the Upgrade Hub's Settings tab: key -> (section, type, default).

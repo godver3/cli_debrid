@@ -377,8 +377,16 @@
                 </div>
 
                 <div class="uh-settings-section">
-                    <div class="uh-settings-subsection-title">Fresh Release Search</div>
-                    <p class="uh-settings-desc">Each scan also searches your scrapers for items released recently, when better encodes keep appearing. Each item is one full search (one API call per indexer), so it's capped. Items checked longest ago go first. Set items to 0 to turn it off.</p>
+                    <div class="uh-settings-card-header">
+                        <div>
+                            <div class="uh-settings-subsection-title">Fresh Release Search</div>
+                            <p class="uh-settings-desc" style="margin:4px 0 0">Off by default. When on, each scan also searches your scrapers for items released recently, when better encodes keep appearing. Each item is one full search (one API call per indexer), so it's capped. Items checked longest ago go first.</p>
+                        </div>
+                        <label class="uh-settings-toggle">
+                            <input type="checkbox" id="settings-fresh-enabled">
+                            <span class="uh-settings-toggle-track"><span class="uh-settings-toggle-thumb"></span></span>
+                        </label>
+                    </div>
                     <div class="uh-number-input-wrap">
                         <span class="uh-settings-unit">Released within</span>
                         <input type="number" id="settings-fresh-days" class="uh-number-input" min="0" max="3650" step="1">
