@@ -800,22 +800,6 @@ export function updateSettings() {
         settingsData['Debug']['emphasize_number_of_items_over_quality'] = emphasizeNumberOfItemsOverQuality.checked;
     }
 
-    const enableUpgrading = document.getElementById('scraping-enable_upgrading');
-    
-    if (enableUpgrading) {
-        settingsData['Scraping']['enable_upgrading'] = enableUpgrading.checked;
-
-    } else {
-    }
-
-    const enableUpgradingCleanup = document.getElementById('scraping-enable_upgrading_cleanup');
-    
-    if (enableUpgradingCleanup) {
-        settingsData['Scraping']['enable_upgrading_cleanup'] = enableUpgradingCleanup.checked;
-
-    } else {
-    }
-
 
     const stalenessThreshold = document.getElementById('debug-staleness_threshold');
     
@@ -1048,11 +1032,9 @@ export function updateSettings() {
         });
     }
 
-    // Set default values for enable_upgrading, disable_adult, and trakt_early_releases
-    if (settingsData['Scraping']['enable_upgrading'] === undefined) {
-        settingsData['Scraping']['enable_upgrading'] = false;
-    }
-        
+    // Set default values for disable_adult and trakt_early_releases.
+    // (enable_upgrading is edited on the Upgrade Hub, not here: defaulting it
+    // to false on every save would switch upgrading off.)
     if (settingsData['Scraping']['disable_adult'] === undefined) {
         settingsData['Scraping']['disable_adult'] = true;
     }

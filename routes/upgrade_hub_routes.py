@@ -47,7 +47,10 @@ def status():
     s = get_scan_status()
     s['zilean_configured'] = get_zilean_config() is not None
     s['nzb_configured'] = len(get_newznab_scrapers()) > 0
-    s['any_source_configured'] = s['zilean_configured'] or s['nzb_configured']
+    from database.upgrade_hub_scrapers import scraper_settings
+    _scr = scraper_settings()
+    s['scrapers_enabled'] = _scr['enabled'] and _scr['limit'] > 0
+    s['any_source_configured'] = s['zilean_configured'] or s['nzb_configured'] or s['scrapers_enabled']
     results = get_last_results()
     if results and 'error' not in results:
         try:
@@ -75,19 +78,22 @@ def start_scan():
     if get_scan_status()['in_progress']:
         return jsonify({'success': False, 'error': 'Scan already in progress'}), 409
 
+    from database.upgrade_hub_scrapers import scraper_settings
+    _scr = scraper_settings()
+    use_scrapers = _scr['enabled'] and _scr['limit'] > 0
     upgrade_source = get_setting('Upgrade Hub', 'upgrade_source', 'both') or 'both'
-    use_zilean = upgrade_source in ('both', 'zilean_only')
-    use_nzb    = upgrade_source in ('both', 'nzb_only')
+    use_zilean = upgrade_source in ('both', 'zilean_only') and bool(get_zilean_config())
+    use_nzb    = upgrade_source in ('both', 'nzb_only') and bool(get_newznab_scrapers())
 
-    if use_zilean and not use_nzb and not get_zilean_config():
-        return jsonify({'success': False,
-                        'error': 'Zilean scraper not enabled or URL not configured in Settings → Scrapers'}), 400
-    if use_nzb and not use_zilean and not get_newznab_scrapers():
-        return jsonify({'success': False,
-                        'error': 'No enabled Newznab indexers configured in Settings → Scrapers'}), 400
-    if not get_zilean_config() and not get_newznab_scrapers():
-        return jsonify({'success': False,
-                        'error': 'No upgrade sources configured. Enable Zilean or a Newznab indexer in Settings → Scrapers'}), 400
+    if not (use_scrapers or use_zilean or use_nzb):
+        if upgrade_source == 'zilean_only':
+            err = 'Zilean scraper not enabled or URL not configured in Settings → Scrapers'
+        elif upgrade_source == 'nzb_only':
+            err = 'No enabled Newznab indexers configured in Settings → Scrapers'
+        else:
+            err = ('No upgrade source. Turn on "Search with my scrapers" below, or enable '
+                   'Zilean or a Newznab indexer in Settings → Scrapers')
+        return jsonify({'success': False, 'error': err}), 400
 
     scan_limit = get_setting('Upgrade Hub', 'scan_limit', None)
     if scan_limit is not None:
@@ -239,6 +245,8 @@ _SETTINGS_KEYS = {
     'excluded_genres': str,
     'exclude_nas_items': bool,
     'upgrade_source': str,
+    'use_scrapers': bool,
+    'scraper_checks_per_scan': int,
 }
 _SETTINGS_DEFAULTS = {
     'min_improvement_threshold': 0,
@@ -250,7 +258,37 @@ _SETTINGS_DEFAULTS = {
     'excluded_genres': '',
     'exclude_nas_items': False,
     'upgrade_source': 'both',
+    'use_scrapers': True,
+    'scraper_checks_per_scan': 50,
 }
+_BOOL_KEYS = ('show_recent_only', 'hide_pack_episodes', 'exclude_nas_items', 'use_scrapers')
+
+# Upgrading settings that live in other config sections (Scraping / Debug) but
+# are edited on the Upgrade Hub's Settings tab: key -> (section, type, default).
+_UPGRADING_KEYS = {
+    'enable_upgrading':               ('Scraping', bool,  False),
+    'upgrade_queue_duration_hours':   ('Debug',    int,   24),
+    'upgrade_max_release_age_days':   ('Scraping', int,   7),
+    'upgrading_percentage_threshold': ('Scraping', float, 0.1),
+    'max_upgrading_score':            ('Debug',    float, 0.0),
+    'delayed_upgrade_scrape_days':    ('Scraping', int,   0),
+    'enable_upgrading_cleanup':       ('Scraping', bool,  True),
+}
+
+
+def _coerce(kind, value, default):
+    if kind is bool:
+        if isinstance(value, bool):
+            return value
+        if value is None or value == '':
+            return default
+        return str(value).strip().lower() in ('true', '1', 'yes', 'on')
+    try:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return default
+        return kind(value)
+    except (TypeError, ValueError):
+        return default
 
 
 @upgrade_hub_bp.route('/api/settings', methods=['GET'])
@@ -262,15 +300,19 @@ def get_settings():
         # Coerce stored strings back to correct types
         if key == 'scan_limit':
             settings[key] = int(val) if val not in (None, '', 'null', 0) else None
-        elif key in ('min_improvement_threshold', 'max_upgrades_per_run'):
+        elif key in ('min_improvement_threshold', 'max_upgrades_per_run', 'scraper_checks_per_scan'):
             try:
                 settings[key] = int(val or default)
             except (TypeError, ValueError):
                 settings[key] = default
-        elif key in ('show_recent_only', 'hide_pack_episodes', 'exclude_nas_items'):
+        elif key in _BOOL_KEYS:
             settings[key] = bool(val) if not isinstance(val, str) else val.lower() == 'true'
         else:
             settings[key] = val
+    settings['upgrading'] = {
+        key: _coerce(kind, get_setting(section, key, default), default)
+        for key, (section, kind, default) in _UPGRADING_KEYS.items()
+    }
     return jsonify({'success': True, 'settings': settings})
 
 
@@ -285,13 +327,26 @@ def save_settings():
         # Normalise scan_limit: None/null → store as empty string so get_setting returns None
         if key == 'scan_limit':
             set_setting('Upgrade Hub', key, '' if value is None else int(value))
-        elif key in ('show_recent_only', 'hide_pack_episodes', 'exclude_nas_items'):
+        elif key in _BOOL_KEYS:
             set_setting('Upgrade Hub', key, bool(value))
         else:
             try:
                 set_setting('Upgrade Hub', key, int(value))
             except (TypeError, ValueError):
                 set_setting('Upgrade Hub', key, value)
+    upgrading = data.get('upgrading')
+    if isinstance(upgrading, dict):
+        for key, (section, kind, default) in _UPGRADING_KEYS.items():
+            if key not in upgrading:
+                continue
+            value = _coerce(kind, upgrading[key], default)
+            if key == 'upgrading_percentage_threshold':
+                value = max(0.0, min(1.0, value))
+            elif key == 'upgrade_queue_duration_hours':
+                value = max(1, value)
+            elif key in ('delayed_upgrade_scrape_days', 'max_upgrading_score', 'upgrade_max_release_age_days'):
+                value = max(0, value)
+            set_setting(section, key, value)
     return jsonify({'success': True})
 
 

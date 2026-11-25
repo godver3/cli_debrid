@@ -5,11 +5,12 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
         </svg>
         <div class="settings-header-left">
-            <h4>Queue & Upgrade Management</h4>
+            <h4>Queue Management</h4>
         </div>
     </div>
     <div class="settings-section-content">
-        {% for key in ['checking_queue_period', 'ignore_wanted_queue_throttling', 'disable_not_wanted_check', 'max_upgrading_score', 'upgrade_queue_duration_hours'] %}
+        <p class="settings-description">Upgrade settings (upgrade window, score limit) are on the <a href="/upgrade_hub/#settings">Upgrade Hub</a>'s Settings tab.</p>
+        {% for key in ['checking_queue_period', 'ignore_wanted_queue_throttling', 'disable_not_wanted_check'] %}
             {% set value = settings_schema.Debug.get(key) %}
             {% if value %}
             <div class="settings-form-group">
