@@ -14,7 +14,6 @@ import requests
 # Bazarr provider name -> cli_debrid (subliminal) provider name
 PROVIDER_MAP = {
     'opensubtitlescom': 'opensubtitlescom',
-    'podnapisi': 'podnapisi',
     'gestdown': 'gestdown',
     'tvsubtitles': 'tvsubtitles',
     'subtitulamostv': 'subtitulamos',

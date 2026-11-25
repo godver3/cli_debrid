@@ -56,7 +56,7 @@ class Config:
         languages_str = get_setting('Subtitle Settings', 'subtitle_languages', 'eng,zho')
         self.SUBTITLE_LANGUAGES = [lang.strip() for lang in languages_str.split(',') if lang.strip()]
 
-        self.SUBTITLE_PROVIDERS = get_setting('Subtitle Settings', 'subtitle_providers', ["opensubtitlescom", "podnapisi", "gestdown", "tvsubtitles"])
+        self.SUBTITLE_PROVIDERS = get_setting('Subtitle Settings', 'subtitle_providers', ["opensubtitlescom", "gestdown", "tvsubtitles"])
         self.TEXT_SUBTITLES_ONLY = get_setting('Subtitle Settings', 'text_subtitles_only', False)
         self.IGNORE_EMBEDDED = bool(get_setting('Subtitle Settings', 'ignore_embedded_subtitles', False))
         self.SUBDL_API_KEY = (get_setting('Subtitle Settings', 'subdl_api_key', '') or '').strip()

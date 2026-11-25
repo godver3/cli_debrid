@@ -196,8 +196,8 @@ SECTIONS = {
         "subtitle_providers": {
             "type": "list",
             "description": "Subtitle providers to search (none need a captcha). All selected providers are searched; the best match wins, then the closest release name, then the most downloaded. opensubtitlescom needs the OpenSubtitles login above to download; gestdown is an Addic7ed mirror (TV only); subtitulamos is Spanish; opensubtitles is the legacy .org API.",
-            "default": ["opensubtitlescom", "podnapisi", "gestdown", "tvsubtitles"],
-            "choices": ["opensubtitlescom", "subdl", "subsource", "podnapisi", "gestdown", "tvsubtitles", "subtitulamos", "bsplayer", "opensubtitles"]
+            "default": ["opensubtitlescom", "gestdown", "tvsubtitles"],
+            "choices": ["opensubtitlescom", "subdl", "subsource", "gestdown", "tvsubtitles", "subtitulamos", "bsplayer", "opensubtitles"]
         },
         "subdl_api_key": {
             "type": "string",

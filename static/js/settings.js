@@ -548,13 +548,14 @@ export function updateSettings() {
         }
     });
 
-    // Handle subtitle providers multi-select
-    const subtitleProvidersSelect = document.getElementById('additional-subtitle_providers');
-    if (subtitleProvidersSelect) {
+    // Subtitle providers: one checkbox each
+    const subtitleProviderList = document.getElementById('additional-subtitle_providers');
+    if (subtitleProviderList) {
         if (!settingsData['Subtitle Settings']) {
             settingsData['Subtitle Settings'] = {};
         }
-        settingsData['Subtitle Settings']['subtitle_providers'] = Array.from(subtitleProvidersSelect.selectedOptions).map(option => option.value);
+        settingsData['Subtitle Settings']['subtitle_providers'] = Array.from(
+            subtitleProviderList.querySelectorAll('input.subtitle-provider-option:checked')).map(box => box.value);
     }
 
     // Set default values for Subtitle Settings if not set
@@ -571,7 +572,7 @@ export function updateSettings() {
     }
     
     if (!settingsData['Subtitle Settings']['subtitle_providers'] || !settingsData['Subtitle Settings']['subtitle_providers'].length) {
-        settingsData['Subtitle Settings']['subtitle_providers'] = ['opensubtitlescom', 'podnapisi', 'gestdown', 'tvsubtitles'];
+        settingsData['Subtitle Settings']['subtitle_providers'] = ['opensubtitlescom', 'gestdown', 'tvsubtitles'];
     }
     
     if (!settingsData['Subtitle Settings']['user_agent']) {

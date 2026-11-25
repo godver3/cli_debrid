@@ -498,8 +498,9 @@ def _save_subtitle_step(data):
         value = str(data.get(field) or '').strip()
         if value:
             set_setting(section, key, value)
-    from utilities.downsub import DEFAULT_PROVIDERS
-    providers = list(get_setting(section, 'subtitle_providers', None) or DEFAULT_PROVIDERS)
+    from utilities.downsub import DEFAULT_PROVIDERS, REMOVED_PROVIDERS
+    providers = [p for p in (get_setting(section, 'subtitle_providers', None) or DEFAULT_PROVIDERS)
+                 if p not in REMOVED_PROVIDERS]
     wanted = [('opensubtitlescom', bool(user)),
               ('subdl', bool(get_setting(section, 'subdl_api_key', ''))),
               ('subsource', bool(get_setting(section, 'subsource_api_key', '')))]

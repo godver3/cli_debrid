@@ -78,9 +78,9 @@ def test_quota_error_pauses_provider():
     except DownloadLimitExceeded:
         pool._discard_provider('opensubtitlescom')
     assert 'daily download limit' in downsub.blocked_providers()['opensubtitlescom']
-    with mock.patch.object(downsub.config, 'SUBTITLE_PROVIDERS', ['opensubtitlescom', 'podnapisi']):
-        assert downsub.selected_providers() == ['podnapisi']
-        assert downsub.selected_providers(include_blocked=True) == ['opensubtitlescom', 'podnapisi']
+    with mock.patch.object(downsub.config, 'SUBTITLE_PROVIDERS', ['opensubtitlescom', 'gestdown']):
+        assert downsub.selected_providers() == ['gestdown']
+        assert downsub.selected_providers(include_blocked=True) == ['opensubtitlescom', 'gestdown']
     downsub._BLOCKED['opensubtitlescom'] = (time.monotonic() - 1, 'x')
     assert 'opensubtitlescom' not in downsub.blocked_providers()
 

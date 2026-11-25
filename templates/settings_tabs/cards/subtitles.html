@@ -105,22 +105,30 @@
             </script>
         </div>
 
-        {% set _sel = settings.get('Subtitle Settings', {}).get('subtitle_providers') or ['opensubtitlescom', 'podnapisi', 'gestdown', 'tvsubtitles'] %}
+        {% set _sel = settings.get('Subtitle Settings', {}).get('subtitle_providers') or ['opensubtitlescom', 'gestdown', 'tvsubtitles'] %}
         <div class="settings-form-group">
-            <label for="additional-subtitle_providers" class="settings-title">Subtitle Providers:</label>
-            <select id="additional-subtitle_providers" multiple size="9" class="settings-input"
-                    data-section="Subtitle Settings" data-key="subtitle_providers">
-                <option value="opensubtitlescom" {% if 'opensubtitlescom' in _sel %}selected{% endif %}>OpenSubtitles.com (login above)</option>
-                <option value="subdl" {% if 'subdl' in _sel %}selected{% endif %}>SubDL (API key below)</option>
-                <option value="subsource" {% if 'subsource' in _sel %}selected{% endif %}>SubSource (API key below)</option>
-                <option value="podnapisi" {% if 'podnapisi' in _sel %}selected{% endif %}>Podnapisi</option>
-                <option value="gestdown" {% if 'gestdown' in _sel %}selected{% endif %}>Gestdown (Addic7ed mirror, TV)</option>
-                <option value="tvsubtitles" {% if 'tvsubtitles' in _sel %}selected{% endif %}>TVsubtitles (TV)</option>
-                <option value="subtitulamos" {% if 'subtitulamos' in _sel %}selected{% endif %}>Subtitulamos (Spanish)</option>
-                <option value="bsplayer" {% if 'bsplayer' in _sel %}selected{% endif %}>BSPlayer (hash only)</option>
-                <option value="opensubtitles" {% if 'opensubtitles' in _sel %}selected{% endif %}>OpenSubtitles.org (legacy)</option>
-            </select>
-            <p class="settings-description">None of these need a captcha. Every selected provider is searched and the best match wins: a file-hash match first (exact release, already in sync), then same release group/source. Matches for the wrong episode or movie are never downloaded. Ctrl/Cmd-click to select several.</p>
+            <div class="settings-title">Subtitle Providers:</div>
+            {% set _providers = [
+                ('opensubtitlescom', 'OpenSubtitles.com', 'login above'),
+                ('subdl', 'SubDL', 'API key below'),
+                ('subsource', 'SubSource', 'API key below'),
+                ('gestdown', 'Gestdown', 'Addic7ed mirror, TV only'),
+                ('tvsubtitles', 'TVsubtitles', 'TV only'),
+                ('subtitulamos', 'Subtitulamos', 'Spanish'),
+                ('bsplayer', 'BSPlayer', 'hash matches only'),
+                ('opensubtitles', 'OpenSubtitles.org', 'legacy; refuses most logins'),
+            ] %}
+            <div id="additional-subtitle_providers" class="subtitle-provider-list" role="group" aria-label="Subtitle providers"
+                 style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:6px 16px;margin-top:4px">
+                {% for value, name, note in _providers %}
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 0">
+                    <input type="checkbox" class="subtitle-provider-option" value="{{ value }}"
+                           {% if value in _sel %}checked{% endif %}>
+                    <span>{{ name }} <span style="color:var(--text-secondary);font-size:0.9em">({{ note }})</span></span>
+                </label>
+                {% endfor %}
+            </div>
+            <p class="settings-description">None of these need a captcha. Every selected provider is searched and the best match wins: a file-hash match first (exact release, already in sync), then same release group/source. Matches for the wrong episode or movie are never downloaded.</p>
         </div>
 
         <div class="settings-form-group">

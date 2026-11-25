@@ -91,9 +91,13 @@ def expand_languages(codes):
 
 #: Providers that work without a captcha. Order is only a tie-break: every
 #: selected provider is queried and the best-scoring subtitle wins.
-KNOWN_PROVIDERS = ('opensubtitlescom', 'subdl', 'subsource', 'podnapisi', 'gestdown', 'tvsubtitles',
+KNOWN_PROVIDERS = ('opensubtitlescom', 'subdl', 'subsource', 'gestdown', 'tvsubtitles',
                    'subtitulamos', 'bsplayer', 'opensubtitles')
-DEFAULT_PROVIDERS = ['opensubtitlescom', 'podnapisi', 'gestdown', 'tvsubtitles']
+DEFAULT_PROVIDERS = ['opensubtitlescom', 'gestdown', 'tvsubtitles']
+#: Providers whose site is gone. Still in subliminal, so saved settings may
+#: list them; they're skipped. podnapisi.net stopped resolving in Nov 2026
+#: (Bazarr removed it too).
+REMOVED_PROVIDERS = frozenset({'podnapisi'})
 
 #: Subtitle codecs every Plex/Jellyfin/Emby client can draw without the server
 #: burning them into the video. Styled ASS/SSA and image subs (PGS, VobSub,
@@ -229,7 +233,7 @@ def selected_providers(include_blocked=False):
     chosen = config.SUBTITLE_PROVIDERS or DEFAULT_PROVIDERS
     if isinstance(chosen, str):
         chosen = [c.strip() for c in chosen.split(',')]
-    out = [p for p in chosen if p in available]
+    out = [p for p in chosen if p in available and p not in REMOVED_PROVIDERS]
     if not out:
         out = [p for p in DEFAULT_PROVIDERS if p in available]
     if include_blocked:
