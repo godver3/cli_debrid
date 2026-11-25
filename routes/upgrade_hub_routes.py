@@ -94,7 +94,8 @@ def start_scan():
     from database.upgrade_hub_scrapers import scraper_settings
     _scr = scraper_settings()
     use_scrapers = (_scr['enabled'] and _scr['limit'] > 0) or recent_days is not None
-    upgrade_source = get_setting('Upgrade Hub', 'upgrade_source', 'both') or 'both'
+    from database.upgrade_hub_scrapers import upgrade_source as _upgrade_source
+    upgrade_source = _upgrade_source()
     use_zilean = upgrade_source in ('both', 'zilean_only') and bool(get_zilean_config())
     use_nzb    = upgrade_source in ('both', 'nzb_only') and bool(get_newznab_scrapers())
 
@@ -287,7 +288,7 @@ _SETTINGS_DEFAULTS = {
     'recent_threshold_days': 90,
     'excluded_genres': '',
     'exclude_nas_items': False,
-    'upgrade_source': 'both',
+    'upgrade_source': 'none',
     'use_scrapers': True,
     'scraper_checks_per_scan': 50,
 }
@@ -339,6 +340,8 @@ def get_settings():
             settings[key] = bool(val) if not isinstance(val, str) else val.lower() == 'true'
         else:
             settings[key] = val
+    from database.upgrade_hub_scrapers import upgrade_source as _upgrade_source
+    settings['upgrade_source'] = _upgrade_source()
     settings['upgrading'] = {
         key: _coerce(kind, get_setting(section, key, default), default)
         for key, (section, kind, default) in _UPGRADING_KEYS.items()

@@ -1286,7 +1286,8 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
 
     used_db = False
     try:
-        upgrade_source = get_setting('Upgrade Hub', 'upgrade_source', 'both') or 'both'  # both|zilean_only|nzb_only|none
+        from database.upgrade_hub_scrapers import upgrade_source as _upgrade_source
+        upgrade_source = _upgrade_source()  # both|zilean_only|nzb_only|none
         use_zilean = upgrade_source in ('both', 'zilean_only')
         use_nzb    = upgrade_source in ('both', 'nzb_only')
         logger.info(f'[UPGRADE_HUB] Upgrade source: {upgrade_source} (zilean={use_zilean}, nzb={use_nzb})')

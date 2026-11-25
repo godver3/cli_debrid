@@ -830,7 +830,7 @@ let _settings = {
     recent_threshold_days: 90,
     excluded_genres: '',
     exclude_nas_items: false,
-    upgrade_source: 'both',
+    upgrade_source: 'none',
 };
 
 async function loadSettings() {
@@ -894,7 +894,7 @@ function applySettingsToUI() {
 
     // Upgrade source
     const upgradeSourceSel = document.getElementById('settings-upgrade-source');
-    if (upgradeSourceSel) upgradeSourceSel.value = _settings.upgrade_source || 'both';
+    if (upgradeSourceSel) upgradeSourceSel.value = _settings.upgrade_source || 'none';
 
     // Scraper search
     const useScr = document.getElementById('settings-use-scrapers');
@@ -1021,7 +1021,7 @@ async function saveSettings() {
         recent_threshold_days:  recentDaysInp ? parseInt(recentDaysInp.value) || 90 : 90,
         excluded_genres:        _uhExcludedGenres.join(','),
         exclude_nas_items:      excludeNasChk ? excludeNasChk.checked : false,
-        upgrade_source:         (document.getElementById('settings-upgrade-source') || {}).value || 'both',
+        upgrade_source:         (document.getElementById('settings-upgrade-source') || {}).value || 'none',
         use_scrapers:           !!(document.getElementById('settings-use-scrapers') || {}).checked,
         scraper_checks_per_scan: parseInt((document.getElementById('settings-scraper-checks') || {}).value) || 50,
         // Only sent once loaded, so a failed load can't save blank defaults over them.

@@ -51,6 +51,65 @@ def _ensure_table() -> None:
             conn.close()
 
 
+# Bulk Sources (Upgrade Hub.upgrade_source): both | zilean_only | nzb_only | none.
+UPGRADE_SOURCES = ('both', 'zilean_only', 'nzb_only', 'none')
+# New installs scan with the user's scrapers only; Zilean / the NZB feed are opt-in.
+DEFAULT_UPGRADE_SOURCE = 'none'
+
+
+def _ran_full_scan_before() -> bool:
+    """True if this install has completed an Upgrade Hub scan that wasn't a
+    Search Recent Releases run, i.e. it has been using the old default (both)."""
+    import json
+    conn = get_db_connection()
+    try:
+        try:
+            for (stats,) in conn.execute(
+                    "SELECT stats_json FROM upgrade_hub_activity WHERE action_type = 'scan'"):
+                try:
+                    if (json.loads(stats or '{}') or {}).get('recent_release_days') is None:
+                        return True
+                except ValueError:
+                    return True
+        except Exception:
+            pass
+        try:
+            row = conn.execute("SELECT results_json FROM upgrade_hub_scan_cache WHERE id = 1").fetchone()
+            if row and (json.loads(row[0] or '{}') or {}).get('recent_release_days') is None:
+                return True
+        except Exception:
+            pass
+        return False
+    finally:
+        conn.close()
+
+
+def upgrade_source() -> str:
+    """The Bulk Sources setting.
+
+    Unset means the user never saved the hub's settings. Installs that already
+    ran a full hub scan keep the old default (both) so Zilean / NZB don't
+    silently stop; everyone else gets scrapers only. The choice is saved, so it
+    doesn't change later.
+    """
+    raw = get_setting('Upgrade Hub', 'upgrade_source', None)
+    if raw in UPGRADE_SOURCES:
+        return raw
+    if raw not in (None, ''):
+        return DEFAULT_UPGRADE_SOURCE  # unknown value: don't overwrite what the user has
+    try:
+        source = 'both' if _ran_full_scan_before() else DEFAULT_UPGRADE_SOURCE
+    except Exception:
+        return DEFAULT_UPGRADE_SOURCE
+    try:
+        from utilities.settings import set_setting
+        set_setting('Upgrade Hub', 'upgrade_source', source)
+        logger.info(f"[UPGRADE_HUB] Bulk Sources was never set; saved '{source}'")
+    except Exception as e:
+        logger.debug(f"[UPGRADE_HUB] Could not save Bulk Sources default: {e}")
+    return source
+
+
 def scraper_settings() -> Dict:
     """(enabled, checks_per_scan) from the Upgrade Hub settings."""
     raw = get_setting('Upgrade Hub', 'use_scrapers', True)

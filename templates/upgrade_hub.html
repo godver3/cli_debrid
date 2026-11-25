@@ -465,12 +465,12 @@
                 <!-- Sub-card: Upgrade Source -->
                 <div class="uh-settings-section">
                     <div class="uh-settings-subsection-title">Bulk Sources</div>
-                    <p class="uh-settings-desc">Sources that check the whole library each scan, on top of the scraper search. Zilean reads its database; NZB indexers read the latest releases.</p>
+                    <p class="uh-settings-desc">Optional sources that check the whole library each scan, on top of the scraper search. Zilean reads its database (fast with the direct DB connection in Settings → Scrapers, slow without it); NZB indexers read the latest releases.</p>
                     <select id="settings-upgrade-source" class="uh-filter-select" style="margin-top:6px">
-                        <option value="both">Both (Zilean + NZB Indexers)</option>
-                        <option value="zilean_only">Zilean Only</option>
+                        <option value="none">None (scrapers only), default</option>
                         <option value="nzb_only">NZB Indexers Only</option>
-                        <option value="none">None (scrapers only)</option>
+                        <option value="zilean_only">Zilean Only</option>
+                        <option value="both">Both (Zilean + NZB Indexers)</option>
                     </select>
                 </div>
 

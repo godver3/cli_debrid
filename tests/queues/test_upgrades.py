@@ -560,3 +560,50 @@ def test_plain_scan_route_still_needs_a_source():
 def test_recent_search_route_rejects_bad_days(days):
     body, status, started = _start_scan({'recent_release_days': days})
     assert status == 400 and not started
+
+
+# ── Bulk Sources default ─────────────────────────────────────────────────────
+
+def _activity(conn, stats):
+    import json
+    conn.execute("CREATE TABLE IF NOT EXISTS upgrade_hub_activity (id INTEGER PRIMARY KEY, action_type TEXT, "
+                 "triggered_by TEXT, result TEXT, title TEXT, stats_json TEXT, created_at TEXT)")
+    conn.execute("INSERT INTO upgrade_hub_activity (action_type, stats_json) VALUES ('scan', ?)", (json.dumps(stats),))
+    conn.commit()
+
+
+def _source_after(app_settings, monkeypatch, hub_db, history=None, stored=None):
+    import database.upgrade_hub_scrapers as uhs
+    import utilities.settings as us
+    app_settings['Upgrade Hub'] = {} if stored is None else {'upgrade_source': stored}
+    saved = {}
+    monkeypatch.setattr(us, 'set_setting', lambda s, k, v: saved.__setitem__((s, k), v))
+    if history is not None:
+        conn = hub_db()
+        _activity(conn, history)
+        conn.close()
+    return uhs.upgrade_source(), saved
+
+
+def test_new_install_defaults_to_scrapers_only_and_saves_it(hub_db, app_settings, monkeypatch):
+    source, saved = _source_after(app_settings, monkeypatch, hub_db)
+    assert source == 'none'
+    assert saved == {('Upgrade Hub', 'upgrade_source'): 'none'}
+
+
+def test_install_that_ran_a_full_scan_keeps_both(hub_db, app_settings, monkeypatch):
+    # Never saved the setting but has been scanning with the old default.
+    source, saved = _source_after(app_settings, monkeypatch, hub_db, history={'upgrades': 3, 'scan_limit': None})
+    assert source == 'both'
+    assert saved == {('Upgrade Hub', 'upgrade_source'): 'both'}
+
+
+def test_recent_release_searches_alone_dont_count_as_using_both(hub_db, app_settings, monkeypatch):
+    source, _ = _source_after(app_settings, monkeypatch, hub_db, history={'recent_release_days': 7})
+    assert source == 'none'
+
+
+@pytest.mark.parametrize('stored', ['both', 'zilean_only', 'nzb_only', 'none'])
+def test_a_saved_choice_is_used_as_is(hub_db, app_settings, monkeypatch, stored):
+    source, saved = _source_after(app_settings, monkeypatch, hub_db, history={'upgrades': 1}, stored=stored)
+    assert source == stored and saved == {}
