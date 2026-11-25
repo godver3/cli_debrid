@@ -7,6 +7,11 @@
 (function() {
     'use strict';
 
+    // TMDB text and indexer release names: escape before innerHTML.
+    function _amEsc(v) {
+        return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
     function buildClassicSeasonResults(data, mediaData, allowSpecials) {
         mediaData.title = data.title || mediaData.title;
         mediaData.year = data.year || mediaData.year;
@@ -104,7 +109,7 @@
             if (data.error) {
                 console.error('Error loading season data:', data.error);
                 if (seasonResults) {
-                    seasonResults.innerHTML = `<div class="error">Error: ${data.error}</div>`;
+                    seasonResults.innerHTML = `<div class="error">Error: ${_amEsc(data.error)}</div>`;
                 }
                 return;
             }
@@ -182,7 +187,7 @@
         .catch(error => {
             console.error('Error loading media:', error);
             if (seasonResults) {
-                seasonResults.innerHTML = `<div class="error">Error: ${error.message || 'Failed to load media data'}</div>`;
+                seasonResults.innerHTML = `<div class="error">Error: ${_amEsc(error.message || 'Failed to load media data')}</div>`;
             }
         });
     });
@@ -315,13 +320,13 @@
 
         seasonInfo.innerHTML = `
             <div class="season-info-container">
-                <img src="/scraper/tmdb_image/w300${poster_path}" alt="${title} ${seasonLabel}" class="season-poster">
+                <img src="/scraper/tmdb_image/w300${poster_path}" alt="${_amEsc(title)} ${seasonLabel}" class="season-poster">
                 <div class="season-details">
                     <span class="show-rating">${(vote_average || 0).toFixed(1)}</span>
-                    <h2>${title} - ${seasonLabel}</h2>
+                    <h2>${_amEsc(title)} - ${seasonLabel}</h2>
                     <p>${genreString}</p>
                     <div class="season-overview">
-                        <p>${season_overview || show_overview}</p>
+                        <p>${_amEsc(season_overview || show_overview)}</p>
                     </div>
                 </div>
             </div>
@@ -337,7 +342,7 @@
         const seasonLabel = season_num === 0 ? 'Specials' : `Season ${season_num}`;
         seasonInfo.innerHTML = `
             <div class="season-info-text-only">
-                <h2>${title} - ${seasonLabel}</h2>
+                <h2>${_amEsc(title)} - ${seasonLabel}</h2>
             </div>
         `;
     }
@@ -361,7 +366,7 @@
             if (data.error) {
                 console.error('Error loading episodes:', data.error);
                 if (episodeResults) {
-                    episodeResults.innerHTML = `<div class="error">Error: ${data.error}</div>`;
+                    episodeResults.innerHTML = `<div class="error">Error: ${_amEsc(data.error)}</div>`;
                 }
                 return;
             }
@@ -378,7 +383,7 @@
         .catch(error => {
             console.error('Error fetching episodes:', error);
             if (episodeResults) {
-                episodeResults.innerHTML = `<div class="error">Error: ${error.message || 'Failed to load episodes'}</div>`;
+                episodeResults.innerHTML = `<div class="error">Error: ${_amEsc(error.message || 'Failed to load episodes')}</div>`;
             }
         });
     }
@@ -433,11 +438,11 @@
                 <button>
                     <span class="episode-rating">${rating.toFixed(1)}</span>
                     <img src="${imageSrc}"
-                        alt="${episodeTitle}"
+                        alt="${_amEsc(episodeTitle)}"
                         loading="${loadingAttr}"
                         class="${imageClass}">
                     <div class="episode-info">
-                        <h2 class="episode-title">${episodeNumber}. ${episodeTitle}</h2>
+                        <h2 class="episode-title">${episodeNumber}. ${_amEsc(episodeTitle)}</h2>
                         <p class="episode-sub">${date ? date.toLocaleDateString("en-US", options) : 'Air date unknown'}</p>
                     </div>
                 </button>
@@ -515,7 +520,7 @@
         const subEl = document.createElement('div');
         subEl.className = 'dialog-sub';
         const isTV = content.mediaType === 'tv';
-        subEl.innerHTML = `<i class="fa-solid fa-${isTV ? 'tv' : 'film'}"></i> ${content.title}${content.year ? ` (${content.year})` : ''}`;
+        subEl.innerHTML = `<i class="fa-solid fa-${isTV ? 'tv' : 'film'}"></i> ${_amEsc(content.title)}${content.year ? ` (${content.year})` : ''}`;
         versionRadios.appendChild(subEl);
 
         // Section label
@@ -580,7 +585,7 @@
         const subEl = document.createElement('div');
         subEl.className = 'dialog-sub';
         const isTV = content.mediaType === 'tv';
-        subEl.innerHTML = `<i class="fa-solid fa-${isTV ? 'tv' : 'film'}"></i> Requesting: ${content.title}${content.year ? ` (${content.year})` : ''}`;
+        subEl.innerHTML = `<i class="fa-solid fa-${isTV ? 'tv' : 'film'}"></i> Requesting: ${_amEsc(content.title)}${content.year ? ` (${content.year})` : ''}`;
         versionCheckboxes.appendChild(subEl);
 
         // Section label
@@ -982,9 +987,9 @@
                     torResDiv.innerHTML = `
                         <button ${isFilteredOut ? 'style="cursor:pointer; opacity:0.7;"' : ''}>
                             <div class="torresult-info">
-                                <p class="torresult-title">${torrent.title || torrent.original_title || 'N/A'}</p>
+                                <p class="torresult-title">${_amEsc(torrent.title || torrent.original_title || 'N/A')}</p>
                                 <p class="torresult-item">${(torrent.size || 0).toFixed(1)} GB${bitrateDisplay} | Score: ${scoreDisplay}</p>
-                                <p class="torresult-item">${torrent.source || 'N/A'}</p>
+                                <p class="torresult-item">${_amEsc(torrent.source || 'N/A')}</p>
                                 <span class="cache-status ${torrent.cached === 'Yes' ? 'cached' :
                                               torrent.cached === 'No' ? 'not-cached' :
                                               torrent.cached === 'Not Checked' ? 'not-checked' :
@@ -1063,9 +1068,9 @@
                 torResDiv.innerHTML = `
                     <button ${isFilteredOut ? 'style="cursor:pointer; opacity:0.7;"' : ''}>
                         <div class="torresult-info">
-                            <p class="torresult-title">${torrent.title || torrent.original_title || 'N/A'}</p>
+                            <p class="torresult-title">${_amEsc(torrent.title || torrent.original_title || 'N/A')}</p>
                             <p class="torresult-item">${(torrent.size || 0).toFixed(1)} GB | Score: ${scoreDisplay}</p>
-                            <p class="torresult-item">${torrent.source || 'N/A'}</p>
+                            <p class="torresult-item">${_amEsc(torrent.source || 'N/A')}</p>
                             <span class="cache-status ${torrent.cached === 'Yes' ? 'cached' :
                                           torrent.cached === 'No' ? 'not-cached' :
                                           torrent.cached === 'Not Checked' ? 'not-checked' :
@@ -1144,9 +1149,9 @@
                     torResDiv.innerHTML = `
                         <button ${isFilteredOut ? 'style="cursor:pointer; opacity:0.7;"' : ''}>
                             <div class="torresult-info">
-                                <p class="torresult-title">${torrent.title || torrent.original_title || 'N/A'}</p>
+                                <p class="torresult-title">${_amEsc(torrent.title || torrent.original_title || 'N/A')}</p>
                                 <p class="torresult-item">${(torrent.size || 0).toFixed(1)} GB${bitrateDisplay} | Score: ${scoreDisplay}</p>
-                                <p class="torresult-item">${torrent.source || 'N/A'}</p>
+                                <p class="torresult-item">${_amEsc(torrent.source || 'N/A')}</p>
                                 <span class="cache-status ${torrent.cached === 'Yes' ? 'cached' :
                                               torrent.cached === 'No' ? 'not-cached' :
                                               torrent.cached === 'Not Checked' ? 'not-checked' :

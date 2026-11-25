@@ -1625,7 +1625,7 @@ async function deleteSelectedItems() {
 
             console.log('[DELETE] Phase 2: showing CONFIRM popup, window.showPopup:', typeof window.showPopup, 'window.POPUP_TYPES:', window.POPUP_TYPES);
 
-            const titles = plexNotFoundItems.map(r => `<strong>${r.item.title}</strong>`).join('<br>');
+            const titles = plexNotFoundItems.map(r => `<strong>${escapeHtml(r.item.title)}</strong>`).join('<br>');
             const itemWord = plexNotFoundItems.length === 1 ? 'item' : 'items';
             const confirmed = await new Promise((resolve) => {
                 if (window.POPUP_TYPES && window.showPopup) {
@@ -1645,7 +1645,7 @@ async function deleteSelectedItems() {
                     showPopup({
                         type: 'confirm',
                         title: 'Not Found in Plex',
-                        message: `"${titleList}" not found in Plex. Continue removing from database and other layers?`,
+                        message: `"${escapeHtml(titleList)}" not found in Plex. Continue removing from database and other layers?`,
                         confirmText: 'Continue',
                         cancelText: 'Cancel',
                         onConfirm: () => resolve(true),

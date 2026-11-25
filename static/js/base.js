@@ -1109,9 +1109,9 @@ document.addEventListener('DOMContentLoaded', function() {
                         <span class="notification-type ${notification.type || 'info'}">${notification.type || 'info'}</span>
                         <span class="notification-time">${formatTimestamp(notification.timestamp)}</span>
                     </div>
-                    <div class="notification-title">${notification.title}</div>
-                    <div class="notification-message">${notification.message}</div>
-                    ${notification.link ? `<a href="${notification.link}" class="notification-link">View Details</a>` : ''}
+                    <div class="notification-title">${escapeNotesHtml(notification.title)}</div>
+                    <div class="notification-message">${escapeNotesHtml(notification.message)}</div>
+                    ${notification.link ? `<a href="${escapeNotesHtml(notification.link)}" class="notification-link">View Details</a>` : ''}
                 </div>
             `;
             }).join('');

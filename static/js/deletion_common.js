@@ -1,3 +1,6 @@
+// Escape names/titles/messages before they go into innerHTML or an attribute.
+function _dcEsc(v) { return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
 /**
  * Shared Deletion Utilities
  *
@@ -683,7 +686,7 @@ export function buildDeletionReport(result, itemTitle = 'Item', mediaType = 'sho
         countText = `${result.deleted_count} episode${result.deleted_count !== 1 ? 's' : ''}`;
     }
     const action = wasGhostlisted ? 'Ghostlisted' : 'Removed';
-    reportLines.push(`<strong>${action} "${itemTitle}"</strong> | ${countText}`);
+    reportLines.push(`<strong>${action} "${_dcEsc(itemTitle)}"</strong> | ${countText}`);
     reportLines.push(''); // Empty line
 
     // Parse content source removal details

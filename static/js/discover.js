@@ -1024,7 +1024,7 @@ function renderKeywordDropdown(keywords, dropdown, chipsWrapper) {
         }
 
         item.innerHTML = `
-            <span class="chips-item-label">${keyword.name}</span>
+            <span class="chips-item-label">${escapeDiscoverText(keyword.name)}</span>
             <div class="chips-item-actions">
                 <button type="button" class="chips-include-btn" title="Include">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -1104,7 +1104,7 @@ function renderKeywordChips(chipsWrapper) {
         const chip = document.createElement('span');
         chip.className = 'chip chip-include';
         chip.setAttribute('data-value', keywordId);
-        chip.innerHTML = `<span class="chip-icon">+</span>${name} <button type="button" class="chip-remove">&times;</button>`;
+        chip.innerHTML = `<span class="chip-icon">+</span>${escapeDiscoverText(name)} <button type="button" class="chip-remove">&times;</button>`;
         chip.querySelector('.chip-remove').addEventListener('click', () => {
             const idx = state.filters.selectedKeywords.indexOf(keywordId);
             if (idx > -1) state.filters.selectedKeywords.splice(idx, 1);
@@ -1121,7 +1121,7 @@ function renderKeywordChips(chipsWrapper) {
         const chip = document.createElement('span');
         chip.className = 'chip chip-exclude';
         chip.setAttribute('data-value', keywordId);
-        chip.innerHTML = `<span class="chip-icon">-</span>${name} <button type="button" class="chip-remove">&times;</button>`;
+        chip.innerHTML = `<span class="chip-icon">-</span>${escapeDiscoverText(name)} <button type="button" class="chip-remove">&times;</button>`;
         chip.querySelector('.chip-remove').addEventListener('click', () => {
             const idx = state.filters.excludedKeywords.indexOf(keywordId);
             if (idx > -1) state.filters.excludedKeywords.splice(idx, 1);
@@ -1233,7 +1233,7 @@ function renderCompanyDropdown(companies, dropdown, chipsWrapper) {
         }
 
         item.innerHTML = `
-            <span class="chips-item-label">${company.name}</span>
+            <span class="chips-item-label">${escapeDiscoverText(company.name)}</span>
             <div class="chips-item-actions">
                 <button type="button" class="chips-include-btn" title="Include">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -1545,7 +1545,7 @@ function renderChips(name, wrapper, includeArray, excludeArray, dropdown, hidden
         chip.className = 'chip chip-include';
         chip.innerHTML = `
             <span class="chip-icon">+</span>
-            <span>${label}</span>
+            <span>${escapeDiscoverText(label)}</span>
             <button type="button" class="chip-remove" data-value="${value}" data-type="include">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
@@ -1577,7 +1577,7 @@ function renderChips(name, wrapper, includeArray, excludeArray, dropdown, hidden
         chip.className = 'chip chip-exclude';
         chip.innerHTML = `
             <span class="chip-icon">-</span>
-            <span>${label}</span>
+            <span>${escapeDiscoverText(label)}</span>
             <button type="button" class="chip-remove" data-value="${value}" data-type="exclude">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
@@ -2960,7 +2960,7 @@ function renderGenreFilters() {
         item.className = 'chips-dropdown-item';
         item.setAttribute('data-value', genre.id.toString());
         item.innerHTML = `
-            <span class="chips-item-label">${genre.name}</span>
+            <span class="chips-item-label">${escapeDiscoverText(genre.name)}</span>
             <div class="chips-item-actions">
                 <button type="button" class="chips-include-btn" title="Include">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -3018,7 +3018,7 @@ function updateGenreChips() {
             const chip = document.createElement('span');
             chip.className = 'chip chip-include';
             chip.setAttribute('data-value', genreId);
-            chip.innerHTML = `<span class="chip-icon">+</span>${genre.name} <button type="button" class="chip-remove">&times;</button>`;
+            chip.innerHTML = `<span class="chip-icon">+</span>${escapeDiscoverText(genre.name)} <button type="button" class="chip-remove">&times;</button>`;
             chip.querySelector('.chip-remove').addEventListener('click', () => {
                 const idx = state.filters.selectedGenres.indexOf(genreId);
                 if (idx > -1) state.filters.selectedGenres.splice(idx, 1);
@@ -3038,7 +3038,7 @@ function updateGenreChips() {
             const chip = document.createElement('span');
             chip.className = 'chip chip-exclude';
             chip.setAttribute('data-value', genreId);
-            chip.innerHTML = `<span class="chip-icon">-</span>${genre.name} <button type="button" class="chip-remove">&times;</button>`;
+            chip.innerHTML = `<span class="chip-icon">-</span>${escapeDiscoverText(genre.name)} <button type="button" class="chip-remove">&times;</button>`;
             chip.querySelector('.chip-remove').addEventListener('click', () => {
                 const idx = state.filters.excludedGenres.indexOf(genreId);
                 if (idx > -1) state.filters.excludedGenres.splice(idx, 1);
@@ -3072,7 +3072,7 @@ function updateSelectedGenres() {
     
     const html = selectedGenres.map(genre => `
         <div class="genre-chip" data-genre-id="${genre.id}">
-            <span>${genre.name}</span>
+            <span>${escapeDiscoverText(genre.name)}</span>
             <button type="button" class="remove-genre" onclick="removeGenre(${genre.id})">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
@@ -3520,7 +3520,7 @@ function updateActiveFilters() {
         const chip = document.createElement('div');
         chip.className = 'active-filter-chip';
         chip.innerHTML = `
-            <span>${filter.label}</span>
+            <span>${escapeDiscoverText(filter.label)}</span>
             <button type="button" class="remove-filter">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
@@ -4521,7 +4521,7 @@ function createResultItemHTML(item) {
     return `
         <div class="result-item" data-id="${item.id}" data-type="${item.media_type}" data-status="${statusClass}">
             <!-- Status badge - top left with icon -->
-            <div class="db-status-badge ${statusClass} ${splitClass}" title="${statusTitle}">
+            <div class="db-status-badge ${statusClass} ${splitClass}" title="${escapeDiscoverText(statusTitle)}">
                 ${statusIcon}
             </div>
             <!-- Media type badge - top right with icon -->
@@ -4530,14 +4530,14 @@ function createResultItemHTML(item) {
             </div>
             <!-- Rank overlay - top center (only for FlixPatrol Top 10 lists) -->
             ${item.rank && window.flixpatrolState && window.flixpatrolState.currentPlatform ? `<div class="rank-overlay">${String(item.rank).padStart(2, '0')}</div>` : ''}
-            <img src="${posterUrl}" alt="${title}" class="result-poster" loading="lazy">
+            <img src="${posterUrl}" alt="${escapeDiscoverText(title)}" class="result-poster" loading="lazy">
             <!-- Bottom info bar - compact text -->
             <div class="result-bottom-bar">
                 <span class="result-info">${infoText}</span>
             </div>
             <!-- Hover overlay with full details -->
             <div class="result-hover-overlay">
-                <h3 class="result-title">${title}</h3>
+                <h3 class="result-title">${escapeDiscoverText(title)}</h3>
                 <div class="result-meta">
                     <span class="result-year">${year}</span>
                     <span class="result-rating">
@@ -4548,7 +4548,7 @@ function createResultItemHTML(item) {
                     </span>
                 </div>
                 ${reasonHtml}
-                <p class="result-overview">${overview}</p>
+                <p class="result-overview">${escapeDiscoverText(overview)}</p>
                 <!-- Action buttons row -->
                 <div class="hover-action-bar" style="display:flex!important;flex-direction:row!important;flex-wrap:nowrap!important;gap:6px;align-items:center;justify-content:center;width:100%;position:absolute;bottom:8px;left:0;padding:0 8px;box-sizing:border-box;z-index:10">
                     <button class="hover-action-btn request-icon" title="Request this content" style="width:32px;height:32px;min-width:32px;min-height:32px;border-radius:8px;border:1px solid rgba(74,222,128,0.35);background:rgba(10,10,10,0.7);color:#4ade80;display:flex;align-items:center;justify-content:center;padding:0;cursor:pointer;flex-shrink:0;box-sizing:border-box;transition:transform 0.15s ease,box-shadow 0.15s ease,background 0.15s ease">
@@ -4762,13 +4762,13 @@ function bindResultEvents() {
                     } catch(err) {}
                 }
                 if (!imdbId) {
-                    showPopup({ type: 'warning', title: 'Required', message: `Cannot blacklist "${title}": no IMDb ID found for this item.` });
+                    showPopup({ type: 'warning', title: 'Required', message: `Cannot blacklist "${escapeDiscoverText(title)}": no IMDb ID found for this item.` });
                     return;
                 }
                 showPopup({
                     type: 'confirm',
                     title: 'Confirm Blacklist',
-                    message: `Add "${title}" (${imdbId}) to manual blacklist?`,
+                    message: `Add "${escapeDiscoverText(title)}" (${escapeDiscoverText(imdbId)}) to manual blacklist?`,
                     onConfirm: async function() {
                         try {
                             const itemMediaType = resultItem.media_type || type;
@@ -5888,7 +5888,7 @@ function generateFilterPreview() {
     if (window.sidebarListsState && window.sidebarListsState.selectedLists && window.sidebarListsState.selectedLists.length > 0) {
         const count = window.sidebarListsState.selectedLists.length;
         const label = count === 1 ? window.sidebarListsState.selectedLists[0].listName : `${count} lists`;
-        chips.push(`<span class="preview-chip">Lists: ${label}</span>`);
+        chips.push(`<span class="preview-chip">Lists: ${escapeDiscoverText(label)}</span>`);
     }
 
     return chips.length > 1 ? chips.join('') : '<span class="preview-chip warning">No filters set</span>';
@@ -7044,7 +7044,7 @@ function renderKeywordChipsFromState() {
         const keywordName = state.filters.keywordCache?.[keywordId] || `Keyword ${keywordId}`;
         const chip = document.createElement('span');
         chip.className = 'chip chip-include';
-        chip.innerHTML = `<span class="chip-icon">+</span>${keywordName} <button type="button" class="chip-remove">&times;</button>`;
+        chip.innerHTML = `<span class="chip-icon">+</span>${escapeDiscoverText(keywordName)} <button type="button" class="chip-remove">&times;</button>`;
         chip.querySelector('.chip-remove').addEventListener('click', () => {
             const idx = state.filters.selectedKeywords.indexOf(keywordId);
             if (idx > -1) state.filters.selectedKeywords.splice(idx, 1);
@@ -7059,7 +7059,7 @@ function renderKeywordChipsFromState() {
         const keywordName = state.filters.keywordCache?.[keywordId] || `Keyword ${keywordId}`;
         const chip = document.createElement('span');
         chip.className = 'chip chip-exclude';
-        chip.innerHTML = `<span class="chip-icon">-</span>${keywordName} <button type="button" class="chip-remove">&times;</button>`;
+        chip.innerHTML = `<span class="chip-icon">-</span>${escapeDiscoverText(keywordName)} <button type="button" class="chip-remove">&times;</button>`;
         chip.querySelector('.chip-remove').addEventListener('click', () => {
             const idx = state.filters.excludedKeywords.indexOf(keywordId);
             if (idx > -1) state.filters.excludedKeywords.splice(idx, 1);
@@ -7085,7 +7085,7 @@ function renderCompanyChipsFromState() {
         const companyName = state.filters.companyCache?.[companyId] || `Company ${companyId}`;
         const chip = document.createElement('span');
         chip.className = 'chip chip-include';
-        chip.innerHTML = `<span class="chip-icon">+</span>${companyName} <button type="button" class="chip-remove">&times;</button>`;
+        chip.innerHTML = `<span class="chip-icon">+</span>${escapeDiscoverText(companyName)} <button type="button" class="chip-remove">&times;</button>`;
         chip.querySelector('.chip-remove').addEventListener('click', () => {
             const idx = state.filters.selectedCompanies.indexOf(companyId);
             if (idx > -1) state.filters.selectedCompanies.splice(idx, 1);
@@ -7100,7 +7100,7 @@ function renderCompanyChipsFromState() {
         const companyName = state.filters.companyCache?.[companyId] || `Company ${companyId}`;
         const chip = document.createElement('span');
         chip.className = 'chip chip-exclude';
-        chip.innerHTML = `<span class="chip-icon">-</span>${companyName} <button type="button" class="chip-remove">&times;</button>`;
+        chip.innerHTML = `<span class="chip-icon">-</span>${escapeDiscoverText(companyName)} <button type="button" class="chip-remove">&times;</button>`;
         chip.querySelector('.chip-remove').addEventListener('click', () => {
             const idx = state.filters.excludedCompanies.indexOf(companyId);
             if (idx > -1) state.filters.excludedCompanies.splice(idx, 1);
@@ -7139,7 +7139,7 @@ async function loadProviders(region) {
             const logoHtml = provider.logo_path
                 ? `<img src="https://image.tmdb.org/t/p/w45${provider.logo_path}" alt="" style="width:28px;height:18px;object-fit:contain;margin-right:6px;flex-shrink:0;border-radius:3px;">`
                 : `<span style="width:28px;margin-right:6px;flex-shrink:0;"></span>`;
-            item.innerHTML = `<span class="chips-item-label" style="display:flex;align-items:center;">${logoHtml}${provider.name}</span>`;
+            item.innerHTML = `<span class="chips-item-label" style="display:flex;align-items:center;">${logoHtml}${escapeDiscoverText(provider.name)}</span>`;
 
             if (state.filters.selectedProviders.includes(provider.id.toString())) {
                 item.classList.add('included');
@@ -7254,7 +7254,7 @@ function renderNetworkDropdown(networks, dropdown, chipsWrapper) {
             : `<span style="width:28px;margin-right:6px;flex-shrink:0;"></span>`;
 
         item.innerHTML = `
-            <span class="chips-item-label" style="display:flex;align-items:center;">${logoHtml}${network.name}</span>
+            <span class="chips-item-label" style="display:flex;align-items:center;">${logoHtml}${escapeDiscoverText(network.name)}</span>
             <div class="chips-item-actions">
                 <button type="button" class="chips-include-btn" title="Include">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -7372,7 +7372,7 @@ function renderNetworkChipsFromState() {
         const networkName = state.filters.networkCache?.[networkId] || `Network ${networkId}`;
         const chip = document.createElement('span');
         chip.className = 'chip chip-include';
-        chip.innerHTML = `<span class="chip-icon">+</span>${networkName} <button type="button" class="chip-remove">&times;</button>`;
+        chip.innerHTML = `<span class="chip-icon">+</span>${escapeDiscoverText(networkName)} <button type="button" class="chip-remove">&times;</button>`;
         chip.querySelector('.chip-remove').addEventListener('click', () => {
             const idx = state.filters.selectedNetworks.indexOf(networkId);
             if (idx > -1) state.filters.selectedNetworks.splice(idx, 1);
@@ -7386,7 +7386,7 @@ function renderNetworkChipsFromState() {
         const networkName = state.filters.networkCache?.[networkId] || `Network ${networkId}`;
         const chip = document.createElement('span');
         chip.className = 'chip chip-exclude';
-        chip.innerHTML = `<span class="chip-icon">-</span>${networkName} <button type="button" class="chip-remove">&times;</button>`;
+        chip.innerHTML = `<span class="chip-icon">-</span>${escapeDiscoverText(networkName)} <button type="button" class="chip-remove">&times;</button>`;
         chip.querySelector('.chip-remove').addEventListener('click', () => {
             const idx = state.filters.excludedNetworks.indexOf(networkId);
             if (idx > -1) state.filters.excludedNetworks.splice(idx, 1);
@@ -7587,7 +7587,7 @@ function populateMDBListDropdown(lists) {
             const item = document.createElement('div');
             item.className = 'mdblist-dropdown-item';
             item.dataset.listKey = list.key;
-            item.innerHTML = `<span class="list-name">${list.name}</span>`;
+            item.innerHTML = `<span class="list-name">${escapeDiscoverText(list.name)}</span>`;
             item.addEventListener('click', () => selectMDBList(list));
             dropdown.appendChild(item);
         });
@@ -7853,7 +7853,7 @@ function populateFlixPatrolDropdown(platforms) {
         item.dataset.period = 'today';
         item.innerHTML = `
             <span class="platform-icon platform-${platform.icon}"></span>
-            <span class="platform-name">${platform.name}</span>
+            <span class="platform-name">${escapeDiscoverText(platform.name)}</span>
         `;
         item.addEventListener('click', () => selectFlixPatrolPlatform(platform, 'today'));
         dropdown.appendChild(item);
@@ -7872,7 +7872,7 @@ function populateFlixPatrolDropdown(platforms) {
         item.dataset.period = 'weekly';
         item.innerHTML = `
             <span class="platform-icon platform-${platform.icon}"></span>
-            <span class="platform-name">${platform.name}</span>
+            <span class="platform-name">${escapeDiscoverText(platform.name)}</span>
         `;
         item.addEventListener('click', () => selectFlixPatrolPlatform(platform, 'weekly'));
         dropdown.appendChild(item);
@@ -8270,7 +8270,7 @@ function populateSidebarListsDropdown() {
             const isSelected = state.selectedLists.some(l => l.source === 'flixpatrol' && l.listId === platform.id);
             if (isSelected) item.classList.add('included');
             
-            item.innerHTML = `<span class="list-icon">${getPlatformIcon(platform.icon)}</span> ${platform.name}`;
+            item.innerHTML = `<span class="list-icon">${getPlatformIcon(platform.icon)}</span> ${escapeDiscoverText(platform.name)}`;
             item.addEventListener('click', () => toggleSidebarList(item, 'flixpatrol', platform.id, platform.name));
             dropdown.appendChild(item);
         });
@@ -8318,7 +8318,7 @@ function populateSidebarListsDropdown() {
                     const isSelected = state.selectedLists.some(l => l.source === itemSource && l.listId === list.key);
                     if (isSelected) item.classList.add('included');
 
-                    item.innerHTML = `<span class="list-icon">${getPlatformIcon(list.icon)}</span> ${list.name}`;
+                    item.innerHTML = `<span class="list-icon">${getPlatformIcon(list.icon)}</span> ${escapeDiscoverText(list.name)}`;
                     item.addEventListener('click', () => toggleSidebarList(item, itemSource, list.key, list.name));
                     dropdown.appendChild(item);
                 });
@@ -8344,7 +8344,7 @@ function populateSidebarListsDropdown() {
             const isSelected = state.selectedLists.some(l => l.source === 'trakt-special' && l.listId === list.key);
             if (isSelected) item.classList.add('included');
 
-            item.innerHTML = `<span class="list-icon">${getPlatformIcon('trakt')}</span> ${list.name}`;
+            item.innerHTML = `<span class="list-icon">${getPlatformIcon('trakt')}</span> ${escapeDiscoverText(list.name)}`;
             item.addEventListener('click', () => toggleSidebarList(item, 'trakt-special', list.key, list.name));
             dropdown.appendChild(item);
         });
@@ -8368,7 +8368,7 @@ function populateSidebarListsDropdown() {
             const isSelected = state.selectedLists.some(l => l.source === 'trakt-mylist' && l.listId === list.slug);
             if (isSelected) item.classList.add('included');
 
-            item.innerHTML = `<span class="list-icon">${getPlatformIcon('trakt')}</span> ${list.name}`;
+            item.innerHTML = `<span class="list-icon">${getPlatformIcon('trakt')}</span> ${escapeDiscoverText(list.name)}`;
             item.addEventListener('click', () => toggleSidebarList(item, 'trakt-mylist', list.slug, list.name));
             dropdown.appendChild(item);
         });
@@ -8392,7 +8392,7 @@ function populateSidebarListsDropdown() {
             const isSelected = state.selectedLists.some(l => l.source === 'mdblist-personal' && l.listId === String(list.id));
             if (isSelected) item.classList.add('included');
 
-            item.innerHTML = `<span class="list-icon">${getPlatformIcon('mdblist')}</span> ${list.name}`;
+            item.innerHTML = `<span class="list-icon">${getPlatformIcon('mdblist')}</span> ${escapeDiscoverText(list.name)}`;
             item.addEventListener('click', () => toggleSidebarList(item, 'mdblist-personal', String(list.id), list.name));
             dropdown.appendChild(item);
         });
@@ -8416,7 +8416,7 @@ function populateSidebarListsDropdown() {
             const isSelected = state.selectedLists.some(l => l.source === 'scrob-special' && l.listId === list.key);
             if (isSelected) item.classList.add('included');
 
-            item.innerHTML = `<span class="list-icon">${getPlatformIcon('scrob')}</span> ${list.name}`;
+            item.innerHTML = `<span class="list-icon">${getPlatformIcon('scrob')}</span> ${escapeDiscoverText(list.name)}`;
             item.addEventListener('click', () => toggleSidebarList(item, 'scrob-special', list.key, list.name));
             dropdown.appendChild(item);
         });
@@ -8440,7 +8440,7 @@ function populateSidebarListsDropdown() {
             const isSelected = state.selectedLists.some(l => l.source === 'scrob-mylist' && l.listId === String(list.id));
             if (isSelected) item.classList.add('included');
 
-            item.innerHTML = `<span class="list-icon">${getPlatformIcon('scrob')}</span> ${list.name}`;
+            item.innerHTML = `<span class="list-icon">${getPlatformIcon('scrob')}</span> ${escapeDiscoverText(list.name)}`;
             item.addEventListener('click', () => toggleSidebarList(item, 'scrob-mylist', String(list.id), list.name));
             dropdown.appendChild(item);
         });
@@ -9473,7 +9473,7 @@ function showScrapeVersionModal(content) {
     const subEl = document.createElement('div');
     subEl.className = 'dialog-sub';
     const icon = content.mediaType === 'tv' ? 'fa-tv' : 'fa-film';
-    subEl.innerHTML = `<i class="fa-solid ${icon}"></i> ${content.title}${content.year ? ' (' + content.year + ')' : ''}`;
+    subEl.innerHTML = `<i class="fa-solid ${icon}"></i> ${escapeDiscoverText(content.title)}${content.year ? ' (' + content.year + ')' : ''}`;
     versionRadios.appendChild(subEl);
 
     const verLabel = document.createElement('div');
@@ -9518,7 +9518,7 @@ function showVersionModal(content) {
     const subEl = document.createElement('div');
     subEl.className = 'dialog-sub';
     const icon = content.mediaType === 'tv' ? 'fa-tv' : 'fa-film';
-    subEl.innerHTML = `<i class="fa-solid ${icon}"></i> ${content.title}${content.year ? ' (' + content.year + ')' : ''}`;
+    subEl.innerHTML = `<i class="fa-solid ${icon}"></i> ${escapeDiscoverText(content.title)}${content.year ? ' (' + content.year + ')' : ''}`;
     versionCheckboxes.appendChild(subEl);
 
     if (content.mediaType === 'tv' && !content.bulk) {
@@ -9716,7 +9716,7 @@ async function fetchShowSeasons(tmdbId, order = null) {
             });
         } else {
             const msg = data.error ? `Error: ${data.error}` : 'Could not load seasons. Please try again or request the whole show.';
-            seasonContainer.innerHTML = `<p style="padding:8px;opacity:0.6;">${msg}</p>`;
+            seasonContainer.innerHTML = `<p style="padding:8px;opacity:0.6;">${escapeDiscoverText(msg)}</p>`;
         }
     } catch (error) {
         console.error('Error fetching show seasons:', error);
@@ -9971,7 +9971,7 @@ function populatePersonalDropdown(myLists, mdblistPersonalLists, scrobLists) {
         const item = document.createElement('div');
         item.className = 'mdblist-dropdown-item';
         item.dataset.key = list.key;
-        item.innerHTML = `<span class="list-name">${list.name}</span>`;
+        item.innerHTML = `<span class="list-name">${escapeDiscoverText(list.name)}</span>`;
         item.addEventListener('click', () => selectPersonalList({ type: 'special', key: list.key, name: list.name }));
         menu.appendChild(item);
     });
@@ -9987,7 +9987,7 @@ function populatePersonalDropdown(myLists, mdblistPersonalLists, scrobLists) {
         const item = document.createElement('div');
         item.className = 'mdblist-dropdown-item';
         item.dataset.scrobSpecialKey = list.key;
-        item.innerHTML = `<span class="list-name">${list.name}</span>`;
+        item.innerHTML = `<span class="list-name">${escapeDiscoverText(list.name)}</span>`;
         item.addEventListener('click', () => selectPersonalList({ type: 'scrob-special', key: list.key, name: list.name }));
         menu.appendChild(item);
     });
@@ -10003,7 +10003,7 @@ function populatePersonalDropdown(myLists, mdblistPersonalLists, scrobLists) {
             const item = document.createElement('div');
             item.className = 'mdblist-dropdown-item';
             item.dataset.slug = list.slug;
-            item.innerHTML = `<span class="list-name">${list.name}</span>`;
+            item.innerHTML = `<span class="list-name">${escapeDiscoverText(list.name)}</span>`;
             item.addEventListener('click', () => selectPersonalList({ type: 'mylist', key: list.slug, name: list.name }));
             menu.appendChild(item);
         });
@@ -10020,7 +10020,7 @@ function populatePersonalDropdown(myLists, mdblistPersonalLists, scrobLists) {
             const item = document.createElement('div');
             item.className = 'mdblist-dropdown-item';
             item.dataset.mdblistId = list.id;
-            item.innerHTML = `<span class="list-name">${list.name}</span>`;
+            item.innerHTML = `<span class="list-name">${escapeDiscoverText(list.name)}</span>`;
             item.addEventListener('click', () => selectPersonalList({ type: 'mdblist-personal', key: String(list.id), name: list.name }));
             menu.appendChild(item);
         });
@@ -10037,7 +10037,7 @@ function populatePersonalDropdown(myLists, mdblistPersonalLists, scrobLists) {
             const item = document.createElement('div');
             item.className = 'mdblist-dropdown-item';
             item.dataset.scrobListId = list.id;
-            item.innerHTML = `<span class="list-name">${list.name}</span>`;
+            item.innerHTML = `<span class="list-name">${escapeDiscoverText(list.name)}</span>`;
             item.addEventListener('click', () => selectPersonalList({ type: 'scrob-mylist', key: String(list.id), name: list.name }));
             menu.appendChild(item);
         });

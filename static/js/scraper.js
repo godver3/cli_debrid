@@ -508,7 +508,7 @@ function renderEpisodeBatch() {
                 loading="${loadingAttr}"
                 class="${item.still_path ? '' : 'placeholder-episode'}">
             <div class="episode-info">
-                <h2 class="episode-title">${item.episode_num}. ${item.episode_title || ''}</h2>
+                <h2 class="episode-title">${item.episode_num}. ${scrEsc(item.episode_title || '')}</h2>
                 <p class="episode-sub">${date ? date.toLocaleDateString("en-US", options) : 'Air date unknown'}</p>
             </div></button>
         `;
@@ -696,7 +696,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 <div class="tr-dlg-hdr">
                     <div class="tr-dlg-title">
                         <div class="tr-dlg-h">Torrent Results</div>
-                        <div class="tr-dlg-sub">${subText}</div>
+                        <div class="tr-dlg-sub">${scrEsc(subText)}</div>
                     </div>
                     <button class="tr-close-btn" onclick="closeOverlay()">✕</button>
                 </div>`;
@@ -992,7 +992,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
             
             modalHeader.innerHTML = `
                 <div class="torrent-modal-title-section">
-                    <h3>Torrent Results for ${title}${year && !title.trim().endsWith(`(${year})`) ? ` (${year})` : ''}</h3>
+                    <h3>Torrent Results for ${scrEsc(title)}${year && !title.trim().endsWith(`(${year})`) ? ` (${year})` : ''}</h3>
                     <div class="torrent-stats">
                         <span>${allDisplayItems.length} results</span>
                         <span>Search: ${searchDuration}ms</span>
@@ -1462,7 +1462,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 const scraperCount = scrapers.size;
                 modalHeader.innerHTML = `
                     <div class="torrent-modal-title-section">
-                        <h3>Torrent Results for ${title}${year && !title.trim().endsWith(`(${year})`) ? ` (${year})` : ''}</h3>
+                        <h3>Torrent Results for ${scrEsc(title)}${year && !title.trim().endsWith(`(${year})`) ? ` (${year})` : ''}</h3>
                         <div class="torrent-stats">
                             <span>${allDisplayItems.length} results</span>
                             <span>Search: ${searchDuration}ms</span>
@@ -2759,7 +2759,7 @@ function showVersionModal(content) {
     const subEl = document.createElement('div');
     subEl.className = 'dialog-sub';
     const isTV = content.mediaType === 'tv';
-    subEl.innerHTML = `<i class="fa-solid fa-${isTV ? 'tv' : 'film'}"></i> Requesting: ${content.title}${content.year ? ` (${content.year})` : ''}`;
+    subEl.innerHTML = `<i class="fa-solid fa-${isTV ? 'tv' : 'film'}"></i> Requesting: ${scrEsc(content.title)}${content.year ? ` (${content.year})` : ''}`;
     versionCheckboxes.appendChild(subEl);
 
     // TV show: request type radio rows
@@ -2864,7 +2864,7 @@ function showScrapeVersionModal(content) {
     const subEl = document.createElement('div');
     subEl.className = 'dialog-sub';
     const isTV = content.mediaType === 'tv';
-    subEl.innerHTML = `<i class="fa-solid fa-${isTV ? 'tv' : 'film'}"></i> ${content.title}${content.year ? ` (${content.year})` : ''}`;
+    subEl.innerHTML = `<i class="fa-solid fa-${isTV ? 'tv' : 'film'}"></i> ${scrEsc(content.title)}${content.year ? ` (${content.year})` : ''}`;
     versionRadios.appendChild(subEl);
 
     // Section label
@@ -2922,7 +2922,7 @@ function showVersionModalForSeason(content) {
     // Subtitle pill
     const subEl = document.createElement('div');
     subEl.className = 'dialog-sub';
-    subEl.innerHTML = `<i class="fa-solid fa-tv"></i> Requesting: ${content.title} — Season ${content.seasons[0]}`;
+    subEl.innerHTML = `<i class="fa-solid fa-tv"></i> Requesting: ${scrEsc(content.title)} — Season ${content.seasons[0]}`;
     versionCheckboxes.appendChild(subEl);
 
     const divider = document.createElement('div');
@@ -2987,7 +2987,7 @@ async function fetchShowSeasons(tmdbId) {
                 if (window.DEBUG) console.error('API error message:', data.error);
                 errorMessage = `Error: ${data.error}`;
             }
-            document.getElementById('season-selection-container').innerHTML = `<p>${errorMessage}</p>`;
+            document.getElementById('season-selection-container').innerHTML = `<p>${scrEsc(errorMessage)}</p>`;
         }
     } catch (error) {
         if (window.DEBUG) console.error('Error fetching show seasons:', error);
@@ -3113,11 +3113,11 @@ function createMovieElement(data, index = 999) {
             <span id="trending-watchers">👁 ${data.watcher_count}</span>
             <div class="poster-container">
                 <img src="${data.poster_path.startsWith('static/') ? '/' + data.poster_path : '/scraper/tmdb_image/w300' + data.poster_path}"
-                    alt="${data.title}"
+                    alt="${scrEsc(data.title)}"
                     loading="${index < 8 ? 'eager' : 'lazy'}"
                     class="media-poster-img ${data.poster_path.startsWith('static/') ? 'placeholder-poster' : ''}">
                 <div class="poster-overlay">
-                    <h3>${data.title}</h3>
+                    <h3>${scrEsc(data.title)}</h3>
                     <p>${data.year}</p>
                 </div>
                 ${requestIconHTML}
@@ -3125,7 +3125,7 @@ function createMovieElement(data, index = 999) {
                 ${dbStatusPipHTML} // <!-- Add DB Status Pip Here -->
             </div>
             <div class="media-title" style="display: ${document.getElementById('tmdb_api_key_set').value === 'True' ? 'none' : 'block'}">
-                <h2>${data.title}</h2>
+                <h2>${scrEsc(data.title)}</h2>
                 <p>${data.year}</p>
             </div>
         </div>
@@ -3259,11 +3259,11 @@ function createShowElement(data, index = 999) {
             <span id="trending-watchers">👁 ${data.watcher_count}</span>
             <div class="poster-container">
                 <img src="${data.poster_path.startsWith('static/') ? '/' + data.poster_path : '/scraper/tmdb_image/w300' + data.poster_path}"
-                    alt="${data.title}"
+                    alt="${scrEsc(data.title)}"
                     loading="${index < 8 ? 'eager' : 'lazy'}"
                     class="media-poster-img ${data.poster_path.startsWith('static/') ? 'placeholder-poster' : ''}">
                 <div class="poster-overlay">
-                    <h3>${data.title}</h3>
+                    <h3>${scrEsc(data.title)}</h3>
                     <p>${data.year}</p>
                 </div>
                 ${requestIconHTML}
@@ -3271,7 +3271,7 @@ function createShowElement(data, index = 999) {
                 ${dbStatusPipHTML} // <!-- Add DB Status Pip Here -->
             </div>
             <div class="media-title" style="display: ${document.getElementById('tmdb_api_key_set').value === 'True' ? 'none' : 'block'}">
-                <h2>${data.title}</h2>
+                <h2>${scrEsc(data.title)}</h2>
                 <p>${data.year}</p>
             </div>
         </div>
@@ -3609,11 +3609,11 @@ function createAnimeElement(data, index = 999) {
             <span id="trending-watchers">👁 ${data.watcher_count}</span>
             <div class="poster-container">
                 <img src="${data.poster_path.startsWith('static/') ? '/' + data.poster_path : '/scraper/tmdb_image/w300' + data.poster_path}"
-                    alt="${data.title}"
+                    alt="${scrEsc(data.title)}"
                     loading="${index < 8 ? 'eager' : 'lazy'}"
                     class="media-poster-img ${data.poster_path.startsWith('static/') ? 'placeholder-poster' : ''}">
                 <div class="poster-overlay">
-                    <h3>${data.title}</h3>
+                    <h3>${scrEsc(data.title)}</h3>
                     <p>${data.year}</p>
                 </div>
                 ${requestIconHTML}
@@ -3621,7 +3621,7 @@ function createAnimeElement(data, index = 999) {
                 ${dbStatusPipHTML}
             </div>
             <div class="media-title" style="display: ${document.getElementById('tmdb_api_key_set').value === 'True' ? 'none' : 'block'}">
-                <h2>${data.title}</h2>
+                <h2>${scrEsc(data.title)}</h2>
                 <p>${data.year}</p>
             </div>
         </div>
@@ -3988,10 +3988,10 @@ function displaySearchResults_OLD(results, version) {
                     ${item.media_type === 'show' || item.media_type === 'tv' ? '<span class="mediatype-tv">TV</span>' : '<span class="mediatype-mv">MOVIE</span>'}
                     <div class="poster-container">
                         <img src="${posterUrl}"
-                            alt="${item.title}"
+                            alt="${scrEsc(item.title)}"
                             class="${isPlaceholder ? 'placeholder-poster' : ''}">
                         <div class="poster-overlay">
-                            <h3>${item.title}</h3>
+                            <h3>${scrEsc(item.title)}</h3>
                             <p>${displayYear}</p>
                         </div>
                         ${requestIconHTML}
@@ -3999,7 +3999,7 @@ function displaySearchResults_OLD(results, version) {
                         ${dbStatusPipHTML}
                     </div>
                     <div class="searchresult-info" style="display: ${!tmdb_api_key_set ? 'block' : 'none'}">
-                        <h2 class="searchresult-item">${item.title}</h2>
+                        <h2 class="searchresult-item">${scrEsc(item.title)}</h2>
                         <p class="searchresult-year">${displayYear}</p>
                     </div>
                 ${assignMagnetIconHTML}
@@ -4271,11 +4271,11 @@ function createResultElement(item, tmdb_api_key_set, isRequester, version, reque
                 ${item.media_type === 'show' || item.media_type === 'tv' ? '<span class="mediatype-tv">TV</span>' : '<span class="mediatype-mv">MOVIE</span>'}
                 <div class="poster-container">
                     <img src="${posterUrl}"
-                        alt="${item.title}"
+                        alt="${scrEsc(item.title)}"
                         loading="${index < 12 ? 'eager' : 'lazy'}"
                         class="${isPlaceholder ? 'placeholder-poster' : ''}">
                     <div class="poster-overlay">
-                        <h3>${item.title}</h3>
+                        <h3>${scrEsc(item.title)}</h3>
                         <p>${displayYear}</p>
                     </div>
                     ${requestIconHTML}
@@ -4283,7 +4283,7 @@ function createResultElement(item, tmdb_api_key_set, isRequester, version, reque
                     ${dbStatusPipHTML}
                 </div>
                 <div class="searchresult-info" style="display: ${!tmdb_api_key_set ? 'block' : 'none'}">
-                    <h2 class="searchresult-item">${item.title}</h2>
+                    <h2 class="searchresult-item">${scrEsc(item.title)}</h2>
                     <p class="searchresult-year">${displayYear}</p>
                 </div>
             ${assignMagnetIconHTML}
@@ -4941,13 +4941,13 @@ function displaySeasonInfo(title, season_num, air_date, season_overview, poster_
 
     seasonInfo.innerHTML = `
         <div class="season-info-container">
-            <img src="/scraper/tmdb_image/w300${poster_path}" alt="${title} ${seasonLabel}" class="season-poster">
+            <img src="/scraper/tmdb_image/w300${poster_path}" alt="${scrEsc(title)} ${seasonLabel}" class="season-poster">
             <div class="season-details">
                 <span class="show-rating">${(vote_average || 0).toFixed(1)}</span>
-                <h2>${title} - ${seasonLabel}</h2>
+                <h2>${scrEsc(title)} - ${seasonLabel}</h2>
                 <p>${genreString}</p>
                 <div class="season-overview">
-                    <p>${season_overview ? season_overview : show_overview}</p>
+                    <p>${scrEsc(season_overview ? season_overview : show_overview)}</p>
                 </div>
             </div>
         </div>
@@ -4962,7 +4962,7 @@ function displaySeasonInfoTextOnly(title, season_num) {
 
     seasonInfo.innerHTML = `
         <div class="season-info-container text-only">
-            <h2>${title} - ${seasonLabel}</h2>
+            <h2>${scrEsc(title)} - ${seasonLabel}</h2>
         </div>
     `;
 }
@@ -5384,10 +5384,10 @@ function displayFileListModal(files, torrentTitle, totalFiles, metadata = {}) {
                 <h3>Torrent Files</h3>
                 <button class="file-list-close" aria-label="Close">&times;</button>
             </div>
-            <div class="file-list-torrent-title">${metadata.filename || torrentTitle}</div>
+            <div class="file-list-torrent-title">${scrEsc(metadata.filename || torrentTitle)}</div>
             <div class="file-list-metadata">
-                ${metadata.id ? `<div class="metadata-item"><span class="metadata-label">ID:</span> <span class="metadata-value">${metadata.id}</span></div>` : ''}
-                <div class="metadata-item"><span class="metadata-label">Hash:</span> <span class="metadata-value">${metadata.hash || ''}</span></div>
+                ${metadata.id ? `<div class="metadata-item"><span class="metadata-label">ID:</span> <span class="metadata-value">${scrEsc(metadata.id)}</span></div>` : ''}
+                <div class="metadata-item"><span class="metadata-label">Hash:</span> <span class="metadata-value">${scrEsc(metadata.hash || '')}</span></div>
                 <div class="metadata-item"><span class="metadata-label">Status:</span> <span class="metadata-value" style="color: ${statusColor};">${displayStatus}</span></div>
                 <div class="metadata-item"><span class="metadata-label">Total:</span> <span class="metadata-value">${totalGB} GB</span></div>
             </div>
@@ -5403,8 +5403,8 @@ function displayFileListModal(files, torrentTitle, totalFiles, metadata = {}) {
                     <tbody>
                         ${files.map((file, index) => `
                             <tr>
-                                <td class="file-name" title="${(file.path || file.name).replace(/"/g, '&quot;')}">${file.name}</td>
-                                <td class="file-size text-right">${file.size_formatted}</td>
+                                <td class="file-name" title="${scrEsc(file.path || file.name)}">${scrEsc(file.name)}</td>
+                                <td class="file-size text-right">${scrEsc(file.size_formatted)}</td>
                             </tr>
                         `).join('')}
                     </tbody>

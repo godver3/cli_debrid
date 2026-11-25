@@ -1586,10 +1586,8 @@ window.addEventListener('resize', function() {
 });
 
 function escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+    // Also escapes quotes: some callers put the result in an attribute.
+    return String(text ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
 /**
@@ -2194,7 +2192,7 @@ async function handleDeleteShow(event) {
         showPopup({
             type: 'confirm',
             title: 'Confirm Deletion',
-            message: `This will ${actionUpper} ALL episodes of "${showData.title}". ${canUndo}`,
+            message: `This will ${actionUpper} ALL episodes of "${escapeHtml(showData.title)}". ${canUndo}`,
             confirmText: actionUpper.charAt(0).toUpperCase() + actionUpper.slice(1),
             cancelText: 'Cancel',
             onConfirm: proceedWithDelete
@@ -2459,7 +2457,7 @@ function showFileSelectionPopup(files, episodeTitle, actionLabel) {
             <div class="file-selection-popup-overlay" id="fileSelectionPopup">
                 <div class="file-selection-popup">
                     <h3>${titleLabel}</h3>
-                    <p class="file-selection-subtitle">${episodeTitle}</p>
+                    <p class="file-selection-subtitle">${escapeHtml(episodeTitle)}</p>
                     <div class="file-selection-list">
                         ${files.map((file, index) => {
                             const hasAction = file.magnet !== undefined ? !!file.magnet : true;
@@ -2919,7 +2917,7 @@ function displayCast(cast) {
                  alt="${person.name}"
                  class="cast-photo"
                  onerror="this.src='/static/images/placeholder.png'">
-            <div class="cast-name">${person.name}</div>
+            <div class="cast-name">${escapeHtml(person.name)}</div>
             <div class="cast-character">${person.character || ''}</div>
         </div>
     `).join('');

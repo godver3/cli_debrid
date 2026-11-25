@@ -1,5 +1,8 @@
 // Page script for templates/settings_tabs/content_sources.html.
 // Server-rendered values come from window.TPL_SETTINGS_CONTENT_SOURCES, set inline in the template.
+// Escape names/titles/messages before they go into innerHTML or an attribute.
+function _scsEsc(v) { return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
 let contentSourceSettingsLoaded = false;
 let scrapingVersionsLoaded = false;
 // Initialize with value from Jinja template
@@ -431,7 +434,7 @@ function showTraktFriendOptions(friend) {
                     <form id="friendTraktForm">
                         <div class="form-group">
                             <label for="display_name">Display Name</label>
-                            <input type="text" id="display_name" name="display_name" value="${friend.display_name}" placeholder="Display name for this source">
+                            <input type="text" id="display_name" name="display_name" value="${_scsEsc(friend.display_name)}" placeholder="Display name for this source">
                         </div>
                         <div class="form-group">
                             <label for="media_type">Media Type</label>
@@ -458,7 +461,7 @@ function showTraktFriendOptions(friend) {
                 window.showPopup({
                     type: POPUP_TYPES.PROMPT,
                     title: 'Configure Friend\'s Trakt Watchlist',
-                    message: `Configure ${friend.friend_name}'s Trakt watchlist:`,
+                    message: `Configure ${_scsEsc(friend.friend_name)}'s Trakt watchlist:`,
                     formHtml: formHtml,
                     confirmText: 'Add Source',
                     cancelText: 'Cancel',
@@ -496,7 +499,7 @@ function showFallbackTraktFriendOptions(friend) {
         <form id="friendTraktForm">
             <div class="form-group">
                 <label for="display_name">Display Name</label>
-                <input type="text" id="display_name" name="display_name" value="${friend.display_name}" placeholder="Display name for this source">
+                <input type="text" id="display_name" name="display_name" value="${_scsEsc(friend.display_name)}" placeholder="Display name for this source">
             </div>
             <div class="form-group">
                 <label for="media_type">Media Type</label>
@@ -516,7 +519,7 @@ function showFallbackTraktFriendOptions(friend) {
     window.showPopup({
         type: POPUP_TYPES.PROMPT,
         title: 'Configure Friend\'s Trakt Watchlist',
-        message: `Configure ${friend.friend_name}'s Trakt watchlist:`,
+        message: `Configure ${_scsEsc(friend.friend_name)}'s Trakt watchlist:`,
         formHtml: formHtml,
         confirmText: 'Add Source',
         cancelText: 'Cancel',
@@ -775,7 +778,7 @@ function assignUserToSource(sourceId, username) {
             window.showPopup({
                 type: POPUP_TYPES.SUCCESS,
                 title: 'User Assigned',
-                message: `Successfully assigned ${data.username} and their token to this source. Save settings to persist.`
+                message: `Successfully assigned ${_scsEsc(data.username)} and their token to this source. Save settings to persist.`
             });
 
             const usernameInput = document.getElementById(`content-sources-${sourceId}-username`);

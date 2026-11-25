@@ -398,7 +398,7 @@ function displayCast(cast) {
                  alt="${person.name}"
                  class="cast-photo"
                  onerror="this.src='/static/images/placeholder.png'">
-            <div class="cast-name">${person.name}</div>
+            <div class="cast-name">${escapeHtml(person.name)}</div>
             <div class="cast-character">${person.character || ''}</div>
         </div>
     `).join('');
@@ -950,7 +950,7 @@ function showVersionModal(data) {
     subEl.className = 'dialog-sub';
     const isTV = data.media_type === 'tv';
     const year = data.release_date ? data.release_date.split('-')[0] : (data.first_air_date ? data.first_air_date.split('-')[0] : '');
-    subEl.innerHTML = `<i class="fa-solid fa-${isTV ? 'tv' : 'film'}"></i> Requesting: ${data.title}${year ? ` (${year})` : ''}`;
+    subEl.innerHTML = `<i class="fa-solid fa-${isTV ? 'tv' : 'film'}"></i> Requesting: ${escapeHtml(data.title)}${year ? ` (${year})` : ''}`;
     versionCheckboxes.appendChild(subEl);
 
     // TV show: request type radio rows

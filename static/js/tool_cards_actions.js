@@ -1,5 +1,9 @@
 // Actions for the Tools / Maintenance / Diagnostics card pages (was inline in debug_functions.html).
     import { showPopup, POPUP_TYPES } from './notifications.js';
+    // Names, paths and server messages below can carry torrent or release text:
+    // escape before they go into innerHTML or an attribute.
+    const _tcEsc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const _tcJsArg = (v) => _tcEsc(JSON.stringify(v ?? ''));
     // The 'Loading' object will be accessed from the global scope,
     // assuming loading.js makes it available there (e.g., window.Loading = Loading)
     // and is loaded before this module script.
@@ -928,7 +932,7 @@
                                 message: error.message || 'An error occurred while starting the conversion.',
                                 title: 'Error'
                             });
-                             convertProgressDiv.innerHTML = `<p class="error">Error: ${error.message}</p>`;
+                             convertProgressDiv.innerHTML = `<p class="error">Error: ${_tcEsc(error.message)}</p>`;
                         });
                     }
                 });
@@ -943,7 +947,7 @@
             eventSource.onmessage = function(event) {
                 try {
                     const data = JSON.parse(event.data);
-                    let progressHtml = `<p>Status: ${data.status || 'N/A'}</p><p>Message: ${data.message || 'N/A'}</p>`;
+                    let progressHtml = `<p>Status: ${data.status || 'N/A'}</p><p>Message: ${_tcEsc(data.message || 'N/A')}</p>`;
 
                     // Counters sent by /debug/convert_to_symlinks (they used to be read under
                     // the Rclone scan's names, so most of them stayed at 0).
@@ -991,7 +995,7 @@
             container.innerHTML = '';
             
             if (!data.success) {
-                container.innerHTML = `<div class="error">Error: ${data.error}</div>`;
+                container.innerHTML = `<div class="error">Error: ${_tcEsc(data.error)}</div>`;
                 return;
             }
             
@@ -1016,13 +1020,13 @@
                 }
                 
                 tokenDiv.innerHTML = `
-                    <div class="token-user">${username}</div>
+                    <div class="token-user">${_tcEsc(username)}</div>
                     <div class="token-details">
                         <span class="token-validity ${status.valid ? 'valid' : 'invalid'}">
                             ${status.valid ? 'Valid' : 'Invalid'}
                         </span>
                         <hr class="token-sep">
-                        ${status.username ? `<span class="token-username"><span class="token-detail-label">Plex Username:</span> <strong>${status.username}</strong></span>` : ''}
+                        ${status.username ? `<span class="token-username"><span class="token-detail-label">Plex Username:</span> <strong>${_tcEsc(status.username)}</strong></span>` : ''}
                         <span class="token-expiry">${expiresText}</span>
                         <hr class="token-sep">
                         <span class="token-last-checked">${lastCheckedText}</span>
@@ -1050,7 +1054,7 @@
             .catch(error => {
                 console.error('Error:', error);
                 const container = document.querySelector('.token-status-container');
-                container.innerHTML = `<div class="error">Error refreshing tokens: ${error}</div>`;
+                container.innerHTML = `<div class="error">Error refreshing tokens: ${_tcEsc(error)}</div>`;
             })
             .finally(() => {
                 button.disabled = false;
@@ -1070,7 +1074,7 @@
         .catch(error => {
             console.error('Error:', error);
             const container = document.querySelector('.token-status-container');
-            if (container) container.innerHTML = `<div class="error">Error loading token status: ${error}</div>`;
+            if (container) container.innerHTML = `<div class="error">Error loading token status: ${_tcEsc(error)}</div>`;
         });
         }
 
@@ -1082,7 +1086,7 @@
         function updateTraktTokenStatus(data) {
             const container = document.querySelector('#trakt-token-status .token-status-container');
             if (!data.success) {
-                container.innerHTML = `<div class="error">Error: ${data.error}</div>`;
+                container.innerHTML = `<div class="error">Error: ${_tcEsc(data.error)}</div>`;
                 return;
             }
 
@@ -1162,7 +1166,7 @@
                 .catch(error => {
                     console.error('Error:', error);
                     const container = document.querySelector('#trakt-token-status .token-status-container');
-                    container.innerHTML = `<div class="error">Error loading token status: ${error}</div>`;
+                    container.innerHTML = `<div class="error">Error loading token status: ${_tcEsc(error)}</div>`;
                 })
                 .finally(() => {
                     button.disabled = false;
@@ -1224,8 +1228,8 @@
                                 const lastAttempt = file.last_attempt ? new Date(file.last_attempt).toLocaleString() : 'Never';
                                 
                                 html += '<tr>';
-                                html += `<td title="${file.title}">${file.title}</td>`;
-                                html += `<td title="${file.full_path}">${file.filename}</td>`;
+                                html += `<td title="${_tcEsc(file.title)}">${_tcEsc(file.title)}</td>`;
+                                html += `<td title="${_tcEsc(file.full_path)}">${_tcEsc(file.filename)}</td>`;
                                 html += `<td title="Added: ${addedDate}\nLast Attempt: ${lastAttempt}">${addedDate}</td>`;
                                 html += `<td>${file.attempts}</td>`;
                                 html += '</tr>';
@@ -1448,8 +1452,8 @@
                                         <td>${item.id}</td>
                                         <td class="path-cell">${item.old_location || 'N/A'}</td>
                                         <td class="path-cell">${item.new_location || 'N/A'}</td>
-                                        <td class="path-cell">${item.old_original || 'N/A'}</td>
-                                        <td class="path-cell">${item.new_original || 'N/A'}</td>
+                                        <td class="path-cell">${_tcEsc(item.old_original || 'N/A')}</td>
+                                        <td class="path-cell">${_tcEsc(item.new_original || 'N/A')}</td>
                                     </tr>`;
                                 });
                                 previewHtml += '</tbody></table>';
@@ -1471,7 +1475,7 @@
                         } else {
                             // Optionally clear form or results after successful update
                             // modifySymlinkForm.reset(); // Uncomment to clear form
-                            modifySymlinkResultsDiv.innerHTML = `<p>${data.message}</p>`;
+                            modifySymlinkResultsDiv.innerHTML = `<p>${_tcEsc(data.message)}</p>`;
                         }
                     } else {
                         throw new Error(data.error || 'An unknown error occurred.');
@@ -1486,7 +1490,7 @@
                         title: 'Error',
                         autoClose: false
                     });
-                    modifySymlinkResultsDiv.innerHTML = `<p class="error">Error: ${error.message}</p>`;
+                    modifySymlinkResultsDiv.innerHTML = `<p class="error">Error: ${_tcEsc(error.message)}</p>`;
                 });
             });
         }
@@ -1535,7 +1539,7 @@
                                 message: error.message,
                                 title: 'Error'
                             });
-                            rcloneProgressDiv.innerHTML = `<p class="error">Error: ${error.message}</p>`;
+                            rcloneProgressDiv.innerHTML = `<p class="error">Error: ${_tcEsc(error.message)}</p>`;
                         });
                     }
                 });
@@ -1549,7 +1553,7 @@
             eventSource.onmessage = function(event) {
                 try {
                     const data = JSON.parse(event.data);
-                    let progressHtml = `<p>Status: ${data.status || 'N/A'}</p><p>Message: ${data.message || 'N/A'}</p>`;
+                    let progressHtml = `<p>Status: ${data.status || 'N/A'}</p><p>Message: ${_tcEsc(data.message || 'N/A')}</p>`;
 
                     // Counters sent by /debug/convert_to_symlinks (they used to be read under
                     // the Rclone scan's names, so most of them stayed at 0).
@@ -1650,9 +1654,9 @@
                     const showLabel = `${item.title || 'Unknown'} (${item.year || ''})`;
                     const se = `S${String(item.season_number).padStart(2, '0')}E${String(item.episode_number).padStart(2, '0')}`;
                     html += `<tr>
-                        <td class="title-cell">${showLabel}</td>
+                        <td class="title-cell">${_tcEsc(showLabel)}</td>
                         <td>${se}</td>
-                        <td class="path-cell">${item.path}</td>
+                        <td class="path-cell">${_tcEsc(item.path)}</td>
                     </tr>`;
                 });
                 html += `</tbody></table></div>`;
@@ -1693,7 +1697,7 @@
                     .catch(error => {
                         Loading.hide();
                         showPopup({ type: POPUP_TYPES.ERROR, message: error.message, title: 'Error', autoClose: false });
-                        dupeResultsDiv.innerHTML = `<p class="error">Error: ${error.message}</p>`;
+                        dupeResultsDiv.innerHTML = `<p class="error">Error: ${_tcEsc(error.message)}</p>`;
                     });
             });
         }
@@ -1884,8 +1888,8 @@
                                     data.mismatches.forEach(item => {
                                         resultsHtml += `<tr>
                                             <td>${item.id}</td>
-                                            <td class="title-cell">${item.title || 'N/A'}</td>
-                                            <td class="path-cell">${item.filename}</td>
+                                            <td class="title-cell">${_tcEsc(item.title || 'N/A')}</td>
+                                            <td class="path-cell">${_tcEsc(item.filename)}</td>
                                             <td>S${item.db_season}E${item.db_episode}</td>
                                             <td>S${item.parsed_season}E${item.parsed_episode}</td>
                                             <td>${item.filled_by_torrent_id || 'N/A'}</td>
@@ -2259,7 +2263,7 @@
                                             const scoreDisplay = item.current_score !== undefined && item.current_score !== 'N/A' ? ` | Score: ${typeof item.current_score === 'number' ? item.current_score.toFixed(1) : item.current_score}` : '';
                                             const ghostlistedStatus = item.ghostlisted !== undefined ? (item.ghostlisted ? 'True' : 'False') : 'N/A';
                                             const fileLocation = item.location && item.location !== 'N/A' ? item.location : 'No file location';
-                                            resultsHtml += `<div style="margin-bottom:8px;"><span style="font-weight:600;color:#e0e0e0;">${item.title}${episode}</span><br>`;
+                                            resultsHtml += `<div style="margin-bottom:8px;"><span style="font-weight:600;color:#e0e0e0;">${_tcEsc(item.title)}${episode}</span><br>`;
                                             resultsHtml += `<span style="color:#aaa;font-size:11px;">ID: ${item.id} | State: ${item.state} | Version: ${item.version} | Ghostlisted: ${ghostlistedStatus}${scoreDisplay}</span><br>`;
                                             resultsHtml += `<span style="color:#666;font-size:11px;font-family:monospace;word-break:break-all;">File: ${fileLocation}</span></div>`;
                                         });
@@ -2282,7 +2286,7 @@
                                             if (isExcluded) {
                                                 resultsHtml += `<div style="color:#22c55e;font-weight:600;margin-bottom:4px;font-size:11px;">${statusText}</div>`;
                                             }
-                                            resultsHtml += `<span style="font-weight:600;color:#e0e0e0;">${item.title}${episode}</span><br>`;
+                                            resultsHtml += `<span style="font-weight:600;color:#e0e0e0;">${_tcEsc(item.title)}${episode}</span><br>`;
                                             resultsHtml += `<span style="color:#aaa;font-size:11px;">ID: ${item.id} | State: ${item.state} | Version: ${item.version} | Ghostlisted: ${ghostlistedStatus}${scoreDisplay}</span><br>`;
                                             resultsHtml += `<span style="color:#666;font-size:11px;font-family:monospace;word-break:break-all;">File: ${fileLocation}</span></div>`;
                                         });
@@ -2467,13 +2471,13 @@
                                             const keepGhostlisted = group.keep_item.ghostlisted ? 'True' : 'False';
                                             const keepTorrentId = group.keep_item.torrent_id || 'N/A';
                                             resultsHtml += `<tr>
-                                                <td style="border-bottom:1px solid #2a2a2a;padding:8px 10px;word-break:break-all;max-width:200px;font-family:monospace;font-size:11px;color:#888;">${group.filled_by_file}</td>
+                                                <td style="border-bottom:1px solid #2a2a2a;padding:8px 10px;word-break:break-all;max-width:200px;font-family:monospace;font-size:11px;color:#888;">${_tcEsc(group.filled_by_file)}</td>
                                                 <td style="border-bottom:1px solid #2a2a2a;padding:8px 10px;text-align:center;color:#e8601c;font-weight:700;">${group.count}</td>
-                                                <td style="border-bottom:1px solid #2a2a2a;padding:8px 10px;border-left:2px solid rgba(34,197,94,.4);background:rgba(34,197,94,.04);"><span style="font-weight:600;color:#e0e0e0;">${group.keep_item.title}</span><br><span style="color:#aaa;font-size:11px;">ID: ${group.keep_item.id} | State: ${group.keep_item.state} | Ghostlisted: ${keepGhostlisted}<br>Torrent ID: ${keepTorrentId}</span></td>
+                                                <td style="border-bottom:1px solid #2a2a2a;padding:8px 10px;border-left:2px solid rgba(34,197,94,.4);background:rgba(34,197,94,.04);"><span style="font-weight:600;color:#e0e0e0;">${_tcEsc(group.keep_item.title)}</span><br><span style="color:#aaa;font-size:11px;">ID: ${group.keep_item.id} | State: ${group.keep_item.state} | Ghostlisted: ${keepGhostlisted}<br>Torrent ID: ${keepTorrentId}</span></td>
                                                 <td style="border-bottom:1px solid #2a2a2a;padding:8px 10px;border-left:2px solid rgba(239,68,68,.4);background:rgba(239,68,68,.04);">${group.delete_items.map(item => {
                                                     const ghostlisted = item.ghostlisted ? 'True' : 'False';
                                                     const torrentId = item.torrent_id || 'N/A';
-                                                    return `<div style="margin-bottom:6px;"><span style="font-weight:600;color:#e0e0e0;">${item.title}</span><br><span style="color:#aaa;font-size:11px;">ID: ${item.id} | State: ${item.state} | Ghostlisted: ${ghostlisted}<br>Torrent ID: ${torrentId}</span></div>`;
+                                                    return `<div style="margin-bottom:6px;"><span style="font-weight:600;color:#e0e0e0;">${_tcEsc(item.title)}</span><br><span style="color:#aaa;font-size:11px;">ID: ${item.id} | State: ${item.state} | Ghostlisted: ${ghostlisted}<br>Torrent ID: ${torrentId}</span></div>`;
                                                 }).join('')}</td>
                                             </tr>`;
                                         });
@@ -2525,7 +2529,7 @@
                                 title: 'Error',
                                 autoClose: false
                             });
-                            removeDuplicatesResultsDiv.innerHTML = `<p class="error" style="color: #dc3545; padding: 10px; background-color: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px;">Error: ${error.message}</p>`;
+                            removeDuplicatesResultsDiv.innerHTML = `<p class="error" style="color: #dc3545; padding: 10px; background-color: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px;">Error: ${_tcEsc(error.message)}</p>`;
                         });
                     }
                 });
@@ -2578,18 +2582,18 @@
             .then(data => {
                 resultsDiv.innerHTML = '';
                 if (data.success && data.items && data.items.length > 0) {
-                    let html = `<p style="color: #4ecdc4; margin-bottom: 10px;">Found ${data.items.length} item(s) with label "<strong>${label}</strong>":</p><ul style="margin:0;padding-left:20px;">`;
+                    let html = `<p style="color: #4ecdc4; margin-bottom: 10px;">Found ${data.items.length} item(s) with label "<strong>${_tcEsc(label)}</strong>":</p><ul style="margin:0;padding-left:20px;">`;
                     data.items.forEach(item => {
-                        html += `<li style="padding: 4px 0;">${item.title} <span style="color:var(--text3)">(${item.type}, ID: ${item.id})</span></li>`;
+                        html += `<li style="padding: 4px 0;">${_tcEsc(item.title)} <span style="color:var(--text3)">(${item.type}, ID: ${item.id})</span></li>`;
                     });
                     html += '</ul>';
                     showCleanupResultsModal(html, `Label Search: "${label}"`);
                 } else {
-                    resultsDiv.innerHTML = `<p style="color: #ffd93d;">No items found with label "${label}"</p>`;
+                    resultsDiv.innerHTML = `<p style="color: #ffd93d;">No items found with label "${_tcEsc(label)}"</p>`;
                 }
             })
             .catch(error => {
-                resultsDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${error.message}</p>`;
+                resultsDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${_tcEsc(error.message)}</p>`;
             });
     }
 
@@ -2617,12 +2621,12 @@
                     previewDiv.innerHTML = html;
                     executeBtn.disabled = false;
                 } else {
-                    previewDiv.innerHTML = `<p style="color: #ff6b6b;">${data.message || 'Error loading preview'}</p>`;
+                    previewDiv.innerHTML = `<p style="color: #ff6b6b;">${_tcEsc(data.message || 'Error loading preview')}</p>`;
                     executeBtn.disabled = true;
                 }
             })
             .catch(error => {
-                previewDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${error.message}</p>`;
+                previewDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${_tcEsc(error.message)}</p>`;
                 executeBtn.disabled = true;
             });
     }
@@ -2661,7 +2665,7 @@
                             const data = JSON.parse(line.slice(6));
 
                             if (data.error) {
-                                previewDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${data.error}</p>`;
+                                previewDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${_tcEsc(data.error)}</p>`;
                                 executeBtn.disabled = false;
                                 return;
                             }
@@ -2713,7 +2717,7 @@
                             }
 
                             if (data.status === 'error') {
-                                previewDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${data.error}</p>`;
+                                previewDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${_tcEsc(data.error)}</p>`;
                                 executeBtn.disabled = false;
                             }
                         } catch (e) {
@@ -2728,7 +2732,7 @@
             return reader.read().then(processText);
         })
         .catch(error => {
-            previewDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${error.message}</p>`;
+            previewDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${_tcEsc(error.message)}</p>`;
             executeBtn.disabled = false;
         });
     };
@@ -2776,18 +2780,18 @@
             .then(response => response.json())
             .then(data => {
                 if (data.success && data.count > 0) {
-                    previewDiv.innerHTML = `<p style="color: #ffd93d;">Warning: ${data.count} item(s) will have label "${label}" removed</p>`;
+                    previewDiv.innerHTML = `<p style="color: #ffd93d;">Warning: ${data.count} item(s) will have label "${_tcEsc(label)}" removed</p>`;
                     executeBtn.disabled = false;
                 } else if (data.count === 0) {
-                    previewDiv.innerHTML = `<p style="color: #4ecdc4;">No items found with label "${label}"</p>`;
+                    previewDiv.innerHTML = `<p style="color: #4ecdc4;">No items found with label "${_tcEsc(label)}"</p>`;
                     executeBtn.disabled = true;
                 } else {
-                    previewDiv.innerHTML = `<p style="color: #ff6b6b;">${data.message || 'Error loading preview'}</p>`;
+                    previewDiv.innerHTML = `<p style="color: #ff6b6b;">${_tcEsc(data.message || 'Error loading preview')}</p>`;
                     executeBtn.disabled = true;
                 }
             })
             .catch(error => {
-                previewDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${error.message}</p>`;
+                previewDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${_tcEsc(error.message)}</p>`;
                 executeBtn.disabled = true;
             });
     }
@@ -2840,7 +2844,7 @@
                             html += `<p style="font-size:0.9em;color:var(--text3);margin:0 0 8px;">Labels from sources no longer in config</p>`;
                             html += '<ul style="margin:0 0 16px;padding-left:20px;">';
                             data.orphaned_labels.forEach(label => {
-                                html += `<li style="padding:3px 0;">${label.label} <span style="color:var(--text3)">(${label.item_count} items)</span></li>`;
+                                html += `<li style="padding:3px 0;">${_tcEsc(label.label)} <span style="color:var(--text3)">(${label.item_count} items)</span></li>`;
                             });
                             html += '</ul>';
                         }
@@ -2863,12 +2867,12 @@
                         cleanupBtn.disabled = true;
                     }
                 } else {
-                    resultsDiv.innerHTML = `<p style="color:#ff6b6b;">${data.message || 'Error finding orphaned items'}</p>`;
+                    resultsDiv.innerHTML = `<p style="color:#ff6b6b;">${_tcEsc(data.message || 'Error finding orphaned items')}</p>`;
                     cleanupBtn.disabled = true;
                 }
             })
             .catch(error => {
-                resultsDiv.innerHTML = `<p style="color:#ff6b6b;">Error: ${error.message}</p>`;
+                resultsDiv.innerHTML = `<p style="color:#ff6b6b;">Error: ${_tcEsc(error.message)}</p>`;
                 cleanupBtn.disabled = true;
             });
     }
@@ -2914,7 +2918,7 @@
                                     const data = JSON.parse(line.slice(6));
 
                                     if (data.error) {
-                                        resultsDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${data.error}</p>`;
+                                        resultsDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${_tcEsc(data.error)}</p>`;
                                         cleanupBtn.disabled = false;
                                         return;
                                     }
@@ -2956,7 +2960,7 @@
                                         resultsDiv.innerHTML = `
                                             <div class="progress-message">
                                                 <span class="operation-spinner"></span>
-                                                <span>${phaseLabel}: ${itemInfo}</span>
+                                                <span>${phaseLabel}: ${_tcEsc(itemInfo)}</span>
                                             </div>
                                             <div style="margin-top: 10px;">
                                                 <div style="background: #2a2a2a; border-radius: 4px; overflow: hidden; margin-bottom: 8px;">
@@ -2981,7 +2985,7 @@
                                     }
 
                                     if (data.status === 'error') {
-                                        resultsDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${data.error}</p>`;
+                                        resultsDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${_tcEsc(data.error)}</p>`;
                                         cleanupBtn.disabled = false;
                                     }
                                 } catch (e) {
@@ -2996,7 +3000,7 @@
                     return reader.read().then(processText);
                 })
                 .catch(error => {
-                    resultsDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${error.message}</p>`;
+                    resultsDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${_tcEsc(error.message)}</p>`;
                     cleanupBtn.disabled = false;
                 });
             }
@@ -3052,7 +3056,7 @@
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
-                        let resultHtml = `<div class="success-message">${data.message}</div>`;
+                        let resultHtml = `<div class="success-message">${_tcEsc(data.message)}</div>`;
                         resultHtml += `<div style="margin-top: 10px;"><strong>Summary:</strong></div>`;
                         resultHtml += `<div>Total items processed: ${data.total_items}</div>`;
                         resultHtml += `<div>Successfully updated: ${data.updated}</div>`;
@@ -3069,12 +3073,12 @@
 
                         statusDiv.innerHTML = resultHtml;
                     } else {
-                        statusDiv.innerHTML = `<div class="error-message">${data.message}</div>`;
+                        statusDiv.innerHTML = `<div class="error-message">${_tcEsc(data.message)}</div>`;
                     }
                 })
                 .catch(error => {
                     console.error('Error:', error);
-                    statusDiv.innerHTML = `<div class="error-message">Error: ${error.message}</div>`;
+                    statusDiv.innerHTML = `<div class="error-message">Error: ${_tcEsc(error.message)}</div>`;
                 });
             }
         });
@@ -3104,7 +3108,7 @@
                 html += `<div style="margin-bottom: 15px; padding: 10px; background: #2a2a2a; border-radius: 4px;">`;
                 html += `<div style="margin-bottom: 8px;"><strong>Database Info:</strong></div>`;
                 html += `<div><strong>ID:</strong> ${data.item_id}</div>`;
-                html += `<div><strong>Title:</strong> ${dbInfo.title || 'N/A'}</div>`;
+                html += `<div><strong>Title:</strong> ${_tcEsc(dbInfo.title || 'N/A')}</div>`;
                 html += `<div><strong>Type:</strong> ${dbInfo.type || 'N/A'}</div>`;
                 html += `<div><strong>Year:</strong> ${dbInfo.year || 'N/A'}</div>`;
                 html += `<div><strong>IMDb ID:</strong> ${dbInfo.imdb_id || 'None'}</div>`;
@@ -3117,7 +3121,7 @@
                     const plexLabels = plexInfo.labels || [];
                     html += `<p style="color: #4ecdc4;">✓ Item found in Plex!</p>`;
                     html += `<div style="padding: 10px; background: #2a2a2a; border-radius: 4px;">`;
-                    html += `<div><strong>Plex Title:</strong> ${plexInfo.title || 'N/A'}</div>`;
+                    html += `<div><strong>Plex Title:</strong> ${_tcEsc(plexInfo.title || 'N/A')}</div>`;
                     html += `<div><strong>Plex Year:</strong> ${plexInfo.year || 'N/A'}</div>`;
                     html += `<div><strong>Plex GUID:</strong> ${plexInfo.guid || 'N/A'}</div>`;
                     html += `<div><strong>Plex Labels:</strong> ${plexLabels.length > 0 ? plexLabels.join(', ') : 'None'}</div>`;
@@ -3134,11 +3138,11 @@
 
                 resultsDiv.innerHTML = html;
             } else {
-                resultsDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${data.message}</p>`;
+                resultsDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${_tcEsc(data.message)}</p>`;
             }
         })
         .catch(error => {
-            resultsDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${error.message}</p>`;
+            resultsDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${_tcEsc(error.message)}</p>`;
         });
     };
     // --- End Test Plex Item Lookup Function ---
@@ -3180,11 +3184,11 @@
                     html += `<div><strong>Updated ${data.updated_count} item(s)</strong></div>`;
                     html += `<div><strong>IMDb ID set to:</strong> ${data.imdb_id_after}</div>`;
                     (data.items || []).forEach(i => {
-                        html += `<div style="margin-top:4px; font-size:12px;">ID ${i.id} — ${i.title} (was: ${i.imdb_id_before || 'None'})</div>`;
+                        html += `<div style="margin-top:4px; font-size:12px;">ID ${i.id} — ${_tcEsc(i.title)} (was: ${i.imdb_id_before || 'None'})</div>`;
                     });
                 } else {
                     html += `<div><strong>Item ID:</strong> ${data.item_id}</div>`;
-                    html += `<div><strong>Title:</strong> ${data.title}</div>`;
+                    html += `<div><strong>Title:</strong> ${_tcEsc(data.title)}</div>`;
                     html += `<div><strong>IMDb ID Before:</strong> ${data.imdb_id_before || 'None'}</div>`;
                     html += `<div><strong>IMDb ID After:</strong> ${data.imdb_id_after}</div>`;
                     if (data.updated_count > 1) html += `<div><strong>Rows updated:</strong> ${data.updated_count} (every episode of the show)</div>`;
@@ -3192,11 +3196,11 @@
                 html += `</div>`;
                 resultsDiv.innerHTML = html;
             } else {
-                resultsDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${data.message}</p>`;
+                resultsDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${_tcEsc(data.message)}</p>`;
             }
         })
         .catch(error => {
-            resultsDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${error.message}</p>`;
+            resultsDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${_tcEsc(error.message)}</p>`;
         });
     };
     // --- End Fix Missing IMDb ID Function ---
@@ -3251,7 +3255,7 @@
             const data = await response.json();
 
             if (!data.success) {
-                resultsDiv.innerHTML = `<div class="alert alert-danger">Error: ${data.error}</div>`;
+                resultsDiv.innerHTML = `<div class="alert alert-danger">Error: ${_tcEsc(data.error)}</div>`;
                 return;
             }
 
@@ -3296,9 +3300,9 @@
                             <div style="display: flex; align-items: flex-start; gap: 8px;">
                                 <input type="radio" name="backupSelection" style="margin-top: 3px; flex-shrink: 0;"
                                        ${backup.is_valid ? '' : 'disabled'}
-                                       onclick="selectBackup('${backup.path}', '${backup.filename}')">
+                                       onclick="selectBackup(${_tcJsArg(backup.path)}, ${_tcJsArg(backup.filename)})">
                                 <div style="flex: 1; min-width: 0; overflow: hidden;">
-                                    <div style="font-weight: 500; margin-bottom: 4px; font-size: 0.9em; word-wrap: break-word;">${backup.filename}</div>
+                                    <div style="font-weight: 500; margin-bottom: 4px; font-size: 0.9em; word-wrap: break-word;">${_tcEsc(backup.filename)}</div>
                                     <div style="font-size: 0.8em; opacity: 0.8; display: flex; flex-wrap: wrap; gap: 6px; align-items: center;">
                                         <span>Size: ${backup.size_mb} MB</span>
                                         <span>Age: ${backup.age_display}</span>
@@ -3323,7 +3327,7 @@
             resultsDiv.innerHTML = html;
 
         } catch (error) {
-            resultsDiv.innerHTML = `<div class="alert alert-danger">Error loading backups: ${error.message}</div>`;
+            resultsDiv.innerHTML = `<div class="alert alert-danger">Error loading backups: ${_tcEsc(error.message)}</div>`;
         }
     }
 
@@ -3350,7 +3354,7 @@
             title: '⚠️ Database Restoration',
             message: `
                 <p>You are about to restore from:</p>
-                <p><code>${selectedBackupFilename}</code></p>
+                <p><code>${_tcEsc(selectedBackupFilename)}</code></p>
                 <p><strong>Important:</strong></p>
                 <ul style="list-style:disc;padding-left:1.2em;margin:8px 0;">
                     <li>The container will <strong>RESTART</strong> automatically</li>
@@ -3385,7 +3389,7 @@
                             <div class="alert alert-success">
                                 <h5><i class="fas fa-check-circle"></i> Restore Request Created</h5>
                                 <p><strong>The container is restarting...</strong></p>
-                                <p>Database will be restored from: <code>${selectedBackupFilename}</code></p>
+                                <p>Database will be restored from: <code>${_tcEsc(selectedBackupFilename)}</code></p>
                                 <p style="font-size: 1.2em; margin-top: 15px;">
                                     <i class="fas fa-sync fa-spin"></i> Auto-refreshing in <strong id="countdown">${countdown}</strong> seconds...
                                 </p>
@@ -3406,10 +3410,10 @@
                             }
                         }, 1000);
                     } else {
-                        resultsDiv.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${data.error}</div>`;
+                        resultsDiv.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${_tcEsc(data.error)}</div>`;
                     }
                 } catch (error) {
-                    resultsDiv.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${error.message}</div>`;
+                    resultsDiv.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${_tcEsc(error.message)}</div>`;
                 }
             }
         });
@@ -3428,7 +3432,7 @@
             const data = await response.json();
 
             if (!data.success) {
-                resultsDiv.innerHTML = `<div class="alert alert-danger">Error: ${data.error}</div>`;
+                resultsDiv.innerHTML = `<div class="alert alert-danger">Error: ${_tcEsc(data.error)}</div>`;
                 return;
             }
 
@@ -3436,7 +3440,7 @@
             displayScanResults(data);
 
         } catch (error) {
-            resultsDiv.innerHTML = `<div class="alert alert-danger">Error scanning: ${error.message}</div>`;
+            resultsDiv.innerHTML = `<div class="alert alert-danger">Error scanning: ${_tcEsc(error.message)}</div>`;
         }
     }
 
@@ -3491,9 +3495,9 @@
                     <tr>
                         <td style="padding: 8px;">
                             <div style="display: flex; align-items: flex-start; gap: 8px;">
-                                <input type="checkbox" class="backup-checkbox" value="${file.path}" style="margin-top: 3px; flex-shrink: 0;">
+                                <input type="checkbox" class="backup-checkbox" value="${_tcEsc(file.path)}" style="margin-top: 3px; flex-shrink: 0;">
                                 <div style="flex: 1; min-width: 0; overflow: hidden;">
-                                    <div style="font-weight: 500; margin-bottom: 4px; font-size: 0.9em; word-wrap: break-word;">${file.filename}</div>
+                                    <div style="font-weight: 500; margin-bottom: 4px; font-size: 0.9em; word-wrap: break-word;">${_tcEsc(file.filename)}</div>
                                     <div style="font-size: 0.8em; opacity: 0.8; display: flex; flex-wrap: wrap; gap: 6px; align-items: center;">
                                         <span>Size: ${file.size_mb} MB</span>
                                         <span>Age: ${file.age_display}</span>
@@ -3548,9 +3552,9 @@
                     <tr>
                         <td style="padding: 8px;">
                             <div style="display: flex; align-items: flex-start; gap: 8px;">
-                                <input type="checkbox" class="content-checkbox" value="${file.path}" style="margin-top: 3px; flex-shrink: 0;">
+                                <input type="checkbox" class="content-checkbox" value="${_tcEsc(file.path)}" style="margin-top: 3px; flex-shrink: 0;">
                                 <div style="flex: 1; min-width: 0; overflow: hidden;">
-                                    <div style="font-weight: 500; margin-bottom: 4px; font-size: 0.9em; word-wrap: break-word;">${file.filename}</div>
+                                    <div style="font-weight: 500; margin-bottom: 4px; font-size: 0.9em; word-wrap: break-word;">${_tcEsc(file.filename)}</div>
                                     <div style="font-size: 0.8em; opacity: 0.8; display: flex; flex-wrap: wrap; gap: 6px; align-items: center;">
                                         <span>Size: ${file.size_mb} MB</span>
                                         <span>Age: ${file.age_display}</span>
@@ -3634,7 +3638,7 @@
 
                     if (data.skipped.length > 0) {
                         html += '<h6>Skipped Files:</h6><ul>';
-                        data.skipped.forEach(item => { html += `<li><code>${item.file}</code> - ${item.reason}</li>`; });
+                        data.skipped.forEach(item => { html += `<li><code>${_tcEsc(item.file)}</code> - ${_tcEsc(item.reason)}</li>`; });
                         html += '</ul>';
                     }
 
@@ -3644,10 +3648,10 @@
 
                     resultsDiv.innerHTML = html;
                 } else {
-                    resultsDiv.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${data.error}</div>`;
+                    resultsDiv.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${_tcEsc(data.error)}</div>`;
                 }
             } catch (error) {
-                resultsDiv.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${error.message}</div>`;
+                resultsDiv.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${_tcEsc(error.message)}</div>`;
             }
         };
 
@@ -3821,7 +3825,7 @@
         try {
             const r = await fetch('/debug/api/list_climount_backups');
             const d = await r.json();
-            if (!d.success) { resultsDiv.innerHTML = `<div class="alert alert-danger">Error: ${d.error}</div>`; return; }
+            if (!d.success) { resultsDiv.innerHTML = `<div class="alert alert-danger">Error: ${_tcEsc(d.error)}</div>`; return; }
             if (!d.backups.length) { resultsDiv.innerHTML = '<div class="alert alert-info">No backup files found.</div>'; return; }
 
             const categoryColors = {
@@ -3851,9 +3855,9 @@
                             <div style="display: flex; align-items: flex-start; gap: 8px;">
                                 <input type="radio" name="dcyBackupSel" style="margin-top: 3px; flex-shrink: 0;"
                                        ${!b.is_valid ? 'disabled' : ''}
-                                       onchange="dcySelectBackup('${b.path}','${b.filename}')">
+                                       onchange="dcySelectBackup(${_tcJsArg(b.path)},${_tcJsArg(b.filename)})">
                                 <div style="flex: 1; min-width: 0; overflow: hidden;">
-                                    <div style="font-weight: 500; margin-bottom: 4px; font-size: 0.9em; word-wrap: break-word;">${b.filename}</div>
+                                    <div style="font-weight: 500; margin-bottom: 4px; font-size: 0.9em; word-wrap: break-word;">${_tcEsc(b.filename)}</div>
                                     <div style="font-size: 0.8em; opacity: 0.8; display: flex; flex-wrap: wrap; gap: 6px; align-items: center;">
                                         <span>Size: ${b.size_mb} MB</span>
                                         <span>Age: ${b.age_display}</span>
@@ -3871,7 +3875,7 @@
                 </button>`;
             resultsDiv.innerHTML = html;
         } catch(e) {
-            resultsDiv.innerHTML = `<div class="alert alert-danger">Error loading backups: ${e.message}</div>`;
+            resultsDiv.innerHTML = `<div class="alert alert-danger">Error loading backups: ${_tcEsc(e.message)}</div>`;
         }
     }
 
@@ -3896,13 +3900,13 @@
             const d = await r.json();
             const resultsDiv = document.getElementById('dcyRestoreResults');
             if (d.success) {
-                resultsDiv.innerHTML = `<div style="color:#4ade80;margin-top:8px">&#10003; ${d.message}</div>`;
+                resultsDiv.innerHTML = `<div style="color:#4ade80;margin-top:8px">&#10003; ${_tcEsc(d.message)}</div>`;
             } else {
-                resultsDiv.innerHTML = `<div style="color:#ff6b6b;margin-top:8px">Error: ${d.error}</div>`;
+                resultsDiv.innerHTML = `<div style="color:#ff6b6b;margin-top:8px">Error: ${_tcEsc(d.error)}</div>`;
                 btn.disabled = false; btn.textContent = 'Restore Selected';
             }
         } catch(e) {
-            document.getElementById('dcyRestoreResults').innerHTML = `<span style="color:#ff6b6b">Error: ${e.message}</span>`;
+            document.getElementById('dcyRestoreResults').innerHTML = `<span style="color:#ff6b6b">Error: ${_tcEsc(e.message)}</span>`;
             btn.disabled = false; btn.textContent = 'Restore Selected';
         }
     }
@@ -3913,7 +3917,7 @@
         try {
             const r = await fetch('/debug/api/scan_climount_old_databases');
             const d = await r.json();
-            if (!d.success) { resultsDiv.innerHTML = `<span style="color:#ff6b6b">Error: ${d.error}</span>`; return; }
+            if (!d.success) { resultsDiv.innerHTML = `<span style="color:#ff6b6b">Error: ${_tcEsc(d.error)}</span>`; return; }
             if (!d.files.length) { resultsDiv.innerHTML = '<em>No old backup files found.</em>'; return; }
 
             const catColors = {recent_backup:'#4ade80', old_version:'#fbbf24', safety_backup:'#60a5fa', corrupted:'#ff6b6b'};
@@ -3928,8 +3932,8 @@
             d.files.forEach(f => {
                 const c = catColors[f.category] || '#888';
                 html += `<tr style="border-bottom:1px solid #333">
-                    <td style="padding:4px 8px;text-align:center"><input type="checkbox" class="dcy-cleanup-cb" value="${f.path}"></td>
-                    <td style="padding:4px 8px;font-family:monospace">${f.filename}</td>
+                    <td style="padding:4px 8px;text-align:center"><input type="checkbox" class="dcy-cleanup-cb" value="${_tcEsc(f.path)}"></td>
+                    <td style="padding:4px 8px;font-family:monospace">${_tcEsc(f.filename)}</td>
                     <td style="padding:4px 8px;text-align:right">${f.size_mb} MB</td>
                     <td style="padding:4px 8px;text-align:center">${f.age_display}</td>
                     <td style="padding:4px 8px;text-align:center"><span style="color:${c};font-size:11px">${f.category.replace('_',' ')}</span></td>
@@ -3942,7 +3946,7 @@
                 + '</div><div id="dcyDeleteResult" style="margin-top:8px"></div>';
             resultsDiv.innerHTML = html;
         } catch(e) {
-            resultsDiv.innerHTML = `<span style="color:#ff6b6b">Error: ${e.message}</span>`;
+            resultsDiv.innerHTML = `<span style="color:#ff6b6b">Error: ${_tcEsc(e.message)}</span>`;
         }
     }
 

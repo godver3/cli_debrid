@@ -208,7 +208,7 @@ async function loadUsage() {
                     hosters.forEach((h, i) => {
                         tableRows += `<tr>
                             <td class="dm-usage-th-date">${i === 0 ? day.date : ''}</td>
-                            <td class="dm-usage-th-hoster">${h.name}</td>
+                            <td class="dm-usage-th-hoster">${escHtml(h.name)}</td>
                             <td class="dm-usage-th-total">${_fmtBytes(h.gb)}</td>
                         </tr>`;
                     });

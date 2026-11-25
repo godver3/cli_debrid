@@ -1,6 +1,9 @@
 // Page script for templates/statistics.html.
 // Server-rendered values come from window.TPL_STATISTICS, set inline in the template.
 // Initialize displays when page loads
+// Escape names/titles/messages before they go into innerHTML or an attribute.
+function _statEsc(v) { return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
 document.addEventListener('DOMContentLoaded', function() {
     // Check if on mobile
     if (window.innerWidth <= 768) {
@@ -219,14 +222,14 @@ function updateUIWithTimePreference(data) {
             return `
             <li>
                 <div class="show-info clickable"
-                     data-title="${item.title}"
-                     data-show-title="${item.show_title || item.title}"
+                     data-title="${_statEsc(item.title)}"
+                     data-show-title="${_statEsc(item.show_title || item.title)}"
                      data-year="${item.year || ''}"
                      data-imdb-id="${item.imdb_id}"
                      data-tmdb-id="${item.tmdb_id}"
                      data-season="${item.season_number}"
                      data-episode="${item.episode_number}">
-                    <span class="show-title${statusClass}">${item.title}</span>
+                    <span class="show-title${statusClass}">${_statEsc(item.title)}</span>
                     <span class="air-time">${item.formatted_datetime}</span>
                 </div>
                 <div class="episode-actions">
@@ -289,12 +292,12 @@ function updateUIWithTimePreference(data) {
         console.log('Updating airing soon items');
         airingSoonList.innerHTML = data.airing_soon.map(item => `
             <li class="clickable"
-                data-title="${item.title}"
+                data-title="${_statEsc(item.title)}"
                 data-imdb-id="${item.imdb_id}"
                 data-tmdb-id="${item.tmdb_id}"
                 data-season="${item.season_number}"
                 data-episode="${item.episode_number}">
-                <span class="show-title">${item.title}</span>
+                <span class="show-title">${_statEsc(item.title)}</span>
                 <span class="air-time${item.formatted_datetime.startsWith('Today') ? ' today' : ''}">${item.formatted_datetime}</span>
             </li>
         `).join('');
@@ -306,11 +309,11 @@ function updateUIWithTimePreference(data) {
         console.log('Updating upcoming releases');
         upcomingReleasesList.innerHTML = data.upcoming_releases.map(release => `
             <li class="clickable"
-                data-title="${release.titles || ''}"
+                data-title="${_statEsc(release.titles || '')}"
                 data-release-date="${release.release_date || ''}"
                 data-tmdb-id="${release.tmdb_ids && release.tmdb_ids.length > 0 ? release.tmdb_ids : ''}"
                 data-imdb-id="${release.imdb_ids && release.imdb_ids.length > 0 ? release.imdb_ids : ''}">
-                <span class="titles">${release.titles}</span>
+                <span class="titles">${_statEsc(release.titles)}</span>
                 <span class="release-date${release.is_soon ? ' soon' : ''}">${release.formatted_date}</span>
             </li>
         `).join('');
@@ -330,15 +333,15 @@ function updateUIWithTimePreference(data) {
             <div class="stats-card">
                 ${isCompact ? `
                     <div class="file-details">
-                        <span class="title">${movie.title} (${movie.year})</span>
+                        <span class="title">${_statEsc(movie.title)} (${movie.year})</span>
                         <span class="metadata">${meta}</span>
                         <span class="filename">${movie.filled_by_file}</span>
                     </div>
                 ` : `
                     <div class="stats-poster-container">
-                        <img src="${movie.poster_url}" alt="${movie.title} poster" class="poster" loading="lazy">
+                        <img src="${movie.poster_url}" alt="${_statEsc(movie.title)} poster" class="poster" loading="lazy">
                         <div class="stats-poster-hover">
-                            <span class="title">${movie.title} (${movie.year})</span>
+                            <span class="title">${_statEsc(movie.title)} (${movie.year})</span>
                             <span class="metadata">${meta}</span>
                             <span class="filename">${movie.filled_by_file}</span>
                         </div>
@@ -365,15 +368,15 @@ function updateUIWithTimePreference(data) {
             <div class="stats-card">
                 ${isCompact ? `
                     <div class="file-details">
-                        <span class="title">${show.title}${show.year ? ` (${show.year})` : ''}</span>
+                        <span class="title">${_statEsc(show.title)}${show.year ? ` (${show.year})` : ''}</span>
                         <span class="metadata">${meta}</span>
                         <span class="filename">${show.filled_by_file}</span>
                     </div>
                 ` : `
                     <div class="stats-poster-container">
-                        <img src="${show.poster_url}" alt="${show.title} poster" class="poster" loading="lazy">
+                        <img src="${show.poster_url}" alt="${_statEsc(show.title)} poster" class="poster" loading="lazy">
                         <div class="stats-poster-hover">
-                            <span class="title">${show.title}${show.year ? ` (${show.year})` : ''}</span>
+                            <span class="title">${_statEsc(show.title)}${show.year ? ` (${show.year})` : ''}</span>
                             <span class="metadata">${meta}</span>
                             <span class="filename">${show.filled_by_file}</span>
                         </div>
@@ -415,7 +418,7 @@ function updateUIWithTimePreference(data) {
             if (document.querySelector('.statistics-wrapper').classList.contains('compact-view')) {
                 return `<div class="stats-card">
                     <div class="file-details">
-                        <span class="title">${item.title}${yearInfo}</span>
+                        <span class="title">${_statEsc(item.title)}${yearInfo}</span>
                         <span class="metadata">${episodeInfo}${versionInfo} - ${toDate}</span>
                         <span class="filename" data-label="From:">${item.upgrading_from || 'Unknown'}</span>
                         <span class="filename" data-label="To:">${item.filled_by_file || 'Unknown'}</span>
@@ -424,9 +427,9 @@ function updateUIWithTimePreference(data) {
             } else {
                 return `<div class="stats-card">
                     <div class="stats-poster-container">
-                        <img src="${item.poster_url || ''}" alt="${item.title} poster" class="poster" loading="lazy">
+                        <img src="${item.poster_url || ''}" alt="${_statEsc(item.title)} poster" class="poster" loading="lazy">
                         <div class="stats-poster-hover">
-                            <span class="title">${item.title}${yearInfo}</span>
+                            <span class="title">${_statEsc(item.title)}${yearInfo}</span>
                             <span class="metadata">${episodeInfo}${versionInfo} - ${toDate}</span>
                             <span class="filename" data-label="From:">${item.upgrading_from || 'Unknown'}</span>
                             <span class="filename" data-label="To:">${item.filled_by_file || 'Unknown'}</span>

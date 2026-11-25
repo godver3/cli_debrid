@@ -584,7 +584,7 @@ function createFileRow(file, rowNumber, movie) {
 
     info.innerHTML = `
         <div class="release-title-wrapper">
-            <div class="movie-file-title" data-clean-title="${titleText}" title="${fileName}">${titleText}</div>
+            <div class="movie-file-title" data-clean-title="${escapeHtml(titleText)}" title="${escapeHtml(fileName)}">${escapeHtml(titleText)}</div>
             <div class="release-tags">${tags}</div>
         </div>
         <div class="movie-file-meta">
@@ -1268,7 +1268,7 @@ function showVersionModal(versions) {
     const requestTitleHasYear = movieData.year && movieData.title.trim().endsWith(`(${movieData.year})`);
     const subEl = document.createElement('div');
     subEl.className = 'dialog-sub';
-    subEl.innerHTML = `<i class="fa-solid fa-film"></i> Requesting: ${movieData.title}${movieData.year && !requestTitleHasYear ? ` (${movieData.year})` : ''}`;
+    subEl.innerHTML = `<i class="fa-solid fa-film"></i> Requesting: ${escapeHtml(movieData.title)}${movieData.year && !requestTitleHasYear ? ` (${movieData.year})` : ''}`;
     versionCheckboxes.appendChild(subEl);
 
     // Section label
@@ -1529,7 +1529,7 @@ async function handleDeleteMovie(event) {
     showPopup({
         type: 'confirm',
         title: 'Confirm Deletion',
-        message: `This will ${action} ALL videos of "${movieData.title}". ${canUndo}`,
+        message: `This will ${action} ALL videos of "${escapeHtml(movieData.title)}". ${canUndo}`,
         confirmText: action.charAt(0).toUpperCase() + action.slice(1),
         cancelText: 'Cancel',
         onConfirm: async function() {
@@ -1902,9 +1902,8 @@ async function deleteMovieFilesByIds(fileIds) {
  * Escape HTML to prevent XSS
  */
 function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+    // Also escapes quotes: some callers put the result in an attribute.
+    return String(text ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
 /**
@@ -1950,7 +1949,7 @@ function displayCast(cast) {
                  alt="${person.name}"
                  class="cast-photo"
                  onerror="this.src='/static/images/placeholder.png'">
-            <div class="cast-name">${person.name}</div>
+            <div class="cast-name">${escapeHtml(person.name)}</div>
             <div class="cast-character">${person.character || ''}</div>
         </div>
     `).join('');

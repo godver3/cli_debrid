@@ -287,7 +287,7 @@ async function loadLibrary(force) {
             _libPollTimer = setTimeout(_pollLibraryUpdate, data.cache_status === 'partial' ? 5000 : 8000);
         }
     } catch(e) {
-        tbody.innerHTML = `<tr class="dm-empty-row"><td colspan="6">Error: ${e.message}</td></tr>`;
+        tbody.innerHTML = `<tr class="dm-empty-row"><td colspan="6">Error: ${escHtml(e.message)}</td></tr>`;
     }
 }
 
@@ -372,13 +372,13 @@ function renderLibPage() {
         const ago = timeAgo(t.added);
         const abs = fmt_added_abs(t.added);
         const checked = _libSelected.has(t.id) ? 'checked' : '';
-        const safeFile = (t.filename||'').replace(/"/g,'&quot;');
+        const safeFile = escHtml(t.filename||'');
         const magnetHref = t.hash ? `magnet:?xt=urn:btih:${t.hash}&dn=${encodeURIComponent(t.filename||'')}` : '#';
         return `<tr data-id="${t.id}" data-hash="${t.hash||''}" style="cursor:pointer" onclick="libOpenDetail(event,'${t.id}')">
             <td class="dm-col-check" onclick="event.stopPropagation()"><input type="checkbox" class="lib-row-check" data-id="${t.id}" ${checked}></td>
             <td class="dm-col-lib-title">
-                <div class="dm-lib-title-row">${cleanTitle ? `<span class="dm-clean-title">${cleanTitle}</span>` : ''}${typeBadge}${dupeBadge}${orphanedBadge}</div>
-                <div class="dm-lib-filename" title="${safeFile}">${t.filename||'—'}</div>
+                <div class="dm-lib-title-row">${cleanTitle ? `<span class="dm-clean-title">${escHtml(cleanTitle)}</span>` : ''}${typeBadge}${dupeBadge}${orphanedBadge}</div>
+                <div class="dm-lib-filename" title="${safeFile}">${escHtml(t.filename||'—')}</div>
             </td>
             <td class="dm-col-size">${fmt_bytes(t.bytes)}</td>
             <td class="dm-col-status"><span class="dm-status-badge ${status_class(t.status)}">${t.status||'—'}</span></td>
@@ -387,10 +387,10 @@ function renderLibPage() {
                 <a class="dm-btn dm-btn-secondary dm-btn-sm" href="${magnetHref}" title="Open magnet" onclick="_flashCheck(this, this.innerHTML)" ${t.hash ? '' : 'style="pointer-events:none;opacity:.4"'}>
                     <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
                 </a>
-                <button class="dm-btn dm-btn-secondary dm-btn-sm" onclick="copyHash('${t.hash||''}', this)" title="Copy hash">
+                <button class="dm-btn dm-btn-secondary dm-btn-sm" onclick="copyHash(${_jsArg(t.hash||'')}, this)" title="Copy hash">
                     <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
                 </button>
-                <button class="dm-btn dm-btn-secondary dm-btn-sm" onclick="libReinsertTorrent('${t.id}','${t.hash||''}','${(t.filename||'').replace(/'/g,"\\'")}')" title="Reinsert (re-add magnet to debrid)">
+                <button class="dm-btn dm-btn-secondary dm-btn-sm" onclick="libReinsertTorrent(${_jsArg(t.id)},${_jsArg(t.hash||'')},${_jsArg(t.filename||'')})" title="Reinsert (re-add magnet to debrid)">
                     <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
                 </button>
                 <button class="dm-btn dm-btn-danger dm-btn-sm" onclick="libDeleteTorrent('${t.id}', this)" title="Delete">
@@ -665,7 +665,7 @@ function libOpenDetail(e, id) {
     fetch(`/debrid_manager/api/torrent/${id}`)
         .then(r => r.json())
         .then(data => {
-            if (!data.success) { body.innerHTML = `<p class="dm-error">Error: ${data.error}</p>`; return; }
+            if (!data.success) { body.innerHTML = `<p class="dm-error">Error: ${escHtml(data.error)}</p>`; return; }
             const d = data.torrent;
             const files = Array.isArray(d.files) ? d.files : [];
             const links = Array.isArray(d.links) ? d.links : [];
@@ -677,7 +677,7 @@ function libOpenDetail(e, id) {
 
             // Quick-action bar
             const magnetHref = d.hash ? `magnet:?xt=urn:btih:${d.hash}&dn=${encodeURIComponent(d.filename||'')}` : '#';
-            const safeFilename = (d.filename||'').replace(/"/g,'&quot;');
+            const safeFilename = escHtml(d.filename||'');
 
             let html = `
 <div class="dm-detail-actions">
@@ -685,11 +685,11 @@ function libOpenDetail(e, id) {
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
         Magnet
     </a>
-    <button class="dm-btn dm-btn-secondary dm-btn-sm" onclick="copyHash('${d.hash||''}', this)">
+    <button class="dm-btn dm-btn-secondary dm-btn-sm" onclick="copyHash(${_jsArg(d.hash||'')}, this)">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
         Copy Hash
     </button>
-    <button class="dm-btn dm-btn-secondary dm-btn-sm" onclick="libCloseDetail();libReinsertTorrent('${id}','${d.hash||''}','${(d.filename||'').replace(/'/g,"\\'")}')">
+    <button class="dm-btn dm-btn-secondary dm-btn-sm" onclick="libCloseDetail();libReinsertTorrent(${_jsArg(id)},${_jsArg(d.hash||'')},${_jsArg(d.filename||'')})">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
         Reinsert
     </button>
@@ -749,7 +749,7 @@ function libOpenDetail(e, id) {
 
             body.innerHTML = html;
         })
-        .catch(e => { body.innerHTML = `<p class="dm-error">Failed to load: ${e.message}</p>`; });
+        .catch(e => { body.innerHTML = `<p class="dm-error">Failed to load: ${escHtml(e.message)}</p>`; });
 }
 
 function libCloseDetail() {
@@ -786,7 +786,7 @@ function libOpenDupes(type, key, currentId) {
         const cleanTitle = buildCleanTitle(t);
         return `<div class="dm-dupe-entry${isCurrent ? ' dm-dupe-entry-current' : ''}">
             <div class="dm-dupe-entry-head">
-                <span class="dm-dupe-entry-title">${cleanTitle || t.filename || '—'}</span>
+                <span class="dm-dupe-entry-title">${escHtml(cleanTitle || t.filename || '—')}</span>
                 ${isCurrent ? '<span class="dm-dupe-entry-tag">current</span>' : ''}
                 <div class="dm-dupe-entry-head-right">
                     <span class="dm-status-badge ${status_class(t.status)}">${t.status||'—'}</span>
@@ -798,7 +798,7 @@ function libOpenDupes(type, key, currentId) {
                 <span><span class="dm-dupe-label">Added:</span> ${timeAgo(t.added)}</span>
             </div>
             <div class="dm-dupe-entry-meta"><span class="dm-dupe-label">Hash:</span> <span class="dm-dupe-hash">${t.hash||'—'}</span></div>
-            ${t.filename ? `<div class="dm-dupe-entry-meta"><span class="dm-dupe-label">File:</span> <span class="dm-dupe-entry-filename">${t.filename}</span></div>` : ''}
+            ${t.filename ? `<div class="dm-dupe-entry-meta"><span class="dm-dupe-label">File:</span> <span class="dm-dupe-entry-filename">${escHtml(t.filename)}</span></div>` : ''}
         </div>`;
     });
 

@@ -158,7 +158,7 @@ function generateConsolidatedItems(items, queueName) {
         
         htmlChunks.push(`
             <div class="item">
-                ${item.title} (${item.year}) - Version(s): ${Array.from(item.versions).join(', ')}
+                ${escapeHtml(item.title)} (${item.year}) - Version(s): ${Array.from(item.versions).join(', ')}
                 ${item.seasons.size > 0 ? ` - Season(s): ${Array.from(item.seasons).join(', ')}` : ''}
                 ${queueName === 'Unreleased' ? ` - Release Date: ${releaseInfo}` : ''}
             </div>
@@ -295,11 +295,11 @@ function generateSingleItem(item, queueName) {
 
     let itemContent = `
         <div class="item ${processingClass} ${forcePriorityClass}" onclick="copyItemToClipboard(this, event)">
-            <span class="item-title">${item.title || 'Unknown Title'} (${item.year || 'Unknown Year'})${seasonEpisode}</span><span class="item-separator"> - </span><span class="item-version"><span class="item-label">Version:</span> ${item.version || 'Unknown'}</span>${formattedReleaseInfo}
+            <span class="item-title">${escapeHtml(item.title || 'Unknown Title')} (${item.year || 'Unknown Year'})${seasonEpisode}</span><span class="item-separator"> - </span><span class="item-version"><span class="item-label">Version:</span> ${item.version || 'Unknown'}</span>${formattedReleaseInfo}
     `;
 
     if (queueName === 'Checking' && item.filled_by_file) {
-        itemContent += ` <span class="filename-content" style="display: ${filenameToggleState ? 'inline' : 'none'}">- Checking: ${item.filled_by_file}</span>`;
+        itemContent += ` <span class="filename-content" style="display: ${filenameToggleState ? 'inline' : 'none'}">- Checking: ${escapeHtml(item.filled_by_file)}</span>`;
     }
 
     if (queueName === 'Upgrading') {
@@ -448,11 +448,11 @@ function generateCheckingItem(item, showProgress = true) {
 
     let itemContent = `
         <div class="item ${processingClass} ${forcePriorityClass}" onclick="copyItemToClipboard(this, event)">
-            <span class="item-title">${item.title || 'Unknown Title'} (${item.year || 'Unknown Year'})${seasonEpisode}</span><span class="item-separator"> - </span><span class="item-version"><span class="item-label">Version:</span> ${item.version || 'Unknown'}</span>
+            <span class="item-title">${escapeHtml(item.title || 'Unknown Title')} (${item.year || 'Unknown Year'})${seasonEpisode}</span><span class="item-separator"> - </span><span class="item-version"><span class="item-label">Version:</span> ${item.version || 'Unknown'}</span>
     `;
 
     if (item.filled_by_file) {
-        itemContent += `<span class="filename-content" style="display: ${filenameToggleState ? 'inline' : 'none'}"><span class="item-separator"> - </span><span class="item-label">File:</span> <span class="item-checking-file">${item.filled_by_file}</span></span>`;
+        itemContent += `<span class="filename-content" style="display: ${filenameToggleState ? 'inline' : 'none'}"><span class="item-separator"> - </span><span class="item-label">File:</span> <span class="item-checking-file">${escapeHtml(item.filled_by_file)}</span></span>`;
     }
 
     // Add Content Source inline for Checking queue items

@@ -415,6 +415,7 @@ body.tangerine-theme #stClassic{display:none!important}
 </div>
 
 <script>
+    function _slEsc(v) { return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 document.addEventListener('DOMContentLoaded', function() {
     // ── Classic theme JS ────────────────────────────────────────────
     const mediaTypeSelect = document.getElementById('media_type');
@@ -481,12 +482,12 @@ document.addEventListener('DOMContentLoaded', function() {
             body: JSON.stringify(formData)
         }).then(r => r.json()).then(data => {
             if (data.success) {
-                pathPreview.innerHTML = `<div class="path">${data.path}</div>`;
+                pathPreview.innerHTML = `<div class="path">${_slEsc(data.path)}</div>`;
                 if (data.exists) pathPreview.innerHTML += `<div class="exists">⚠️ This symlink already exists</div>`;
             } else {
-                pathPreview.innerHTML = `<div style="color:#dc3545">${data.message}</div>`;
+                pathPreview.innerHTML = `<div style="color:#dc3545">${_slEsc(data.message)}</div>`;
             }
-        }).catch(e => { pathPreview.innerHTML = `<div style="color:#dc3545">Error: ${e.message}</div>`; });
+        }).catch(e => { pathPreview.innerHTML = `<div style="color:#dc3545">Error: ${_slEsc(e.message)}</div>`; });
     });
 
     function showValidation(msg, isValid) {
@@ -521,8 +522,8 @@ document.addEventListener('DOMContentLoaded', function() {
             body: JSON.stringify({ path })
         }).then(r => r.json()).then(data => {
             if (data.success) displayClassicFiles(data.items);
-            else if (fileList) fileList.innerHTML = `<div class="error-message">${data.message}</div>`;
-        }).catch(e => { if (fileList) fileList.innerHTML = `<div class="error-message">Error: ${e.message}</div>`; });
+            else if (fileList) fileList.innerHTML = `<div class="error-message">${_slEsc(data.message)}</div>`;
+        }).catch(e => { if (fileList) fileList.innerHTML = `<div class="error-message">Error: ${_slEsc(e.message)}</div>`; });
     }
 
     function displayClassicFiles(items) {
