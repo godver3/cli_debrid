@@ -193,3 +193,45 @@ def test_browse_request_leaves_out_q():
         nu._fetch_browse_page('https://idx', 'k', '2000', 100, 0)
     params = get.call_args.kwargs['params']
     assert 'q' not in params and params['t'] == 'search' and params['extended'] == 1
+
+
+# ── Version filters honour debrid-only / NZB-only patterns ──────────────────
+
+def test_hub_hard_filter_applies_patterns_only_to_their_source():
+    from database.zilean_upgrade import _apply_version_hard_filters
+    vs = {'max_resolution': '2160p', 'resolution_wanted': '<=', 'filter_out': [
+        {'pattern': '(?-i:WEB-DL)', 'source': 'debrid'},
+        {'pattern': 'NZBONLY', 'source': 'nzb'},
+        {'pattern': 'CAM', 'source': 'both'},
+        'LEGACYSTRING',
+    ]}
+
+    def r(title, nzb):
+        d = {'title': title, 'parsed_info': {'resolution': '1080p'}}
+        if nzb:
+            d.update(protocol='nzb', nzb_url='https://idx/get/1')
+        return d
+
+    kept = [x['title'] + (' (nzb)' if x.get('protocol') else '') for x in _apply_version_hard_filters([
+        r('Movie.2025.1080p.WEB-DL-GRP', nzb=True),     # debrid-only rule: kept for NZB
+        r('Movie.2025.1080p.WEB-DL-GRP', nzb=False),    # rejected for torrents
+        r('Movie.2025.1080p.NZBONLY', nzb=True),        # rejected for NZB
+        r('Movie.2025.1080p.NZBONLY', nzb=False),       # kept for torrents
+        r('Movie.2025.CAM', nzb=True),                  # 'both' rejects either
+        r('Movie.2025.LEGACYSTRING', nzb=False),        # plain strings apply to both
+    ], vs)]
+    assert kept == ['Movie.2025.1080p.WEB-DL-GRP (nzb)', 'Movie.2025.1080p.NZBONLY']
+
+
+# ── Obfuscated current files ────────────────────────────────────────────────
+
+def test_obfuscated_current_file_is_scored_by_its_release_name():
+    from database.zilean_upgrade import _item_filename
+    release = 'The.Lord.of.the.Rings.The.Return.of.the.King.2003.Extended.Remastered.BluRay.1080p.DDP.5.1.x264-hallowed'
+    item = {'filled_by_file': 'b8ccc80d20904e7b976e5f978facb55c.mkv', 'location_basename': None,
+            'original_scraped_torrent_title': release, 'filled_by_title': release}
+    assert _item_filename(item) == release
+    normal = {'filled_by_file': 'Movie.2025.2160p.WEB-DL.mkv', 'filled_by_title': 'Movie.2025.1080p.WEB'}
+    assert _item_filename(normal) == 'Movie.2025.2160p.WEB-DL.mkv'   # a real filename still wins
+    assert _item_filename({'filled_by_file': 'abc123.mkv'}) == 'abc123.mkv'  # nothing better known
+    assert _item_filename({}) == ''

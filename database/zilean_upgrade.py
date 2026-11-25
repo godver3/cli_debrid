@@ -17,6 +17,7 @@ Upgrade types supported:
   - Episodes -> Season Pack (threshold of episodes collected => suggest pack)
 """
 
+import functools
 import json
 import logging
 import threading
@@ -359,9 +360,29 @@ def _get_db_config(zilean_settings: Dict) -> Optional[Dict]:
     }
 
 
+@functools.lru_cache(maxsize=50000)
+def _has_quality_info(name: str) -> bool:
+    try:
+        from PTT import parse_title
+        return bool(parse_title(name).get('resolution'))
+    except Exception:
+        return False
+
+
 def _item_filename(item: Dict) -> str:
-    """Return the best available filename for an item, falling back to location_basename."""
-    return (item.get('filled_by_file') or item.get('location_basename') or '')
+    """The name to score and show for the item's current file.
+
+    Usually its filename. Obfuscated usenet files (``b8ccc80d….mkv``) carry no
+    quality information, so scoring them made any release look like a large
+    upgrade; for those, use the release name it was grabbed as.
+    """
+    names = [item.get('filled_by_file'), item.get('location_basename'),
+             item.get('original_scraped_torrent_title'), item.get('filled_by_title')]
+    names = [str(n) for n in names if n]
+    for n in names:
+        if _has_quality_info(n):
+            return n
+    return names[0] if names else ''
 
 
 def _item_size_gb(item: Dict) -> float:
@@ -436,10 +457,26 @@ def _apply_version_hard_filters(candidates: List[Dict], version_settings: Dict) 
 
     max_resolution = version_settings.get('max_resolution', '1080p') or '1080p'
     resolution_wanted = version_settings.get('resolution_wanted', '==') or '=='
-    def _pat(item):
-        return item['pattern'] if isinstance(item, dict) else item
-    filter_in_patterns  = [_pat(x) for x in (version_settings.get('filter_in',  []) or [])]
-    filter_out_patterns = [_pat(x) for x in (version_settings.get('filter_out', []) or [])]
+    # Patterns are plain strings or {"pattern", "source": both|nzb|debrid}; a
+    # debrid-only pattern doesn't apply to NZB releases and vice versa, as in
+    # filter_results.py.
+    def _pats(items):
+        out = []
+        for x in items or []:
+            if isinstance(x, dict):
+                out.append((x.get('pattern', ''), x.get('source', 'both') or 'both'))
+            else:
+                out.append((str(x), 'both'))
+        return [(p, src) for p, src in out if p]
+
+    def _for(pats, is_nzb):
+        return [p for p, src in pats
+                if src == 'both' or (src == 'nzb' and is_nzb) or (src == 'debrid' and not is_nzb)]
+
+    filter_in_all  = _pats(version_settings.get('filter_in'))
+    filter_out_all = _pats(version_settings.get('filter_out'))
+    filter_in_patterns  = [p for p, _ in filter_in_all]
+    filter_out_patterns = [p for p, _ in filter_out_all]
 
     # Nothing to filter — skip the loop entirely (2160p/<= is the most permissive combination)
     if not filter_in_patterns and not filter_out_patterns and max_resolution == '2160p' and resolution_wanted == '<=':
@@ -449,6 +486,9 @@ def _apply_version_hard_filters(candidates: List[Dict], version_settings: Dict) 
     for r in candidates:
         title_str    = r.get('title', '') or ''
         filename_str = (r.get('additional_metadata') or {}).get('filename') or title_str
+        is_nzb = r.get('protocol') == 'nzb' or bool(r.get('nzb_url'))
+        filter_out_patterns = _for(filter_out_all, is_nzb)
+        filter_in_patterns  = _for(filter_in_all, is_nzb)
 
         # 1. Resolution ceiling
         detected_res = (r.get('parsed_info') or {}).get('resolution', 'Unknown')
@@ -1341,7 +1381,8 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
         columns = ['id', 'type', 'imdb_id', 'title', 'year',
                    'season_number', 'episode_number', 'version',
                    'current_score', 'filled_by_file', 'location_on_disk', 'location_basename',
-                   'state', 'genres', 'size', 'filled_by_torrent_id', 'release_date']
+                   'state', 'genres', 'size', 'filled_by_torrent_id', 'release_date',
+                   'original_scraped_torrent_title', 'filled_by_title']
         all_collected = [
             dict(row) for row in get_all_media_items(state='Collected', columns=columns)
             if row['imdb_id']
