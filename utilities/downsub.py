@@ -114,7 +114,14 @@ MIN_MOVIE_SCORE_NO_YEAR = 162
 _BLOCKED = {}
 
 
-def _block_seconds(exc):
+#: Prefix of the ServiceUnavailable a search raises when the site can't be
+#: reached at all (DNS failure, connection refused): paused longer than an
+#: ordinary outage, since every search would fail the same way.
+UNREACHABLE = "can't reach the site"
+TIMED_OUT = 'timed out'
+
+
+def _block_seconds(exc, name=None):
     """(seconds, reason) to pause a provider after exc. By class, so the
     providers' own subclasses (OpenSubtitles Unauthorized, DownloadLimitReached)
     count too."""
@@ -129,10 +136,19 @@ def _block_seconds(exc):
     if isinstance(exc, DownloadLimitExceeded):
         return 6 * 3600, 'daily download limit reached'
     if isinstance(exc, (AuthenticationError, ConfigurationError)):
+        if name == 'opensubtitles':
+            # The old OpenSubtitles.org API refuses logins that work on
+            # OpenSubtitles.com, so the password is usually not the problem.
+            return 6 * 3600, ('login refused by the old OpenSubtitles.org API, which refuses accounts '
+                              'that work on OpenSubtitles.com; use OpenSubtitles.com instead')
         return 3600, 'login failed (check the OpenSubtitles username/password)'
     if isinstance(exc, ServiceUnavailable):
         if 'HTTP 403' in str(exc):
             return 6 * 3600, 'the site refuses requests (HTTP 403)'
+        if UNREACHABLE in str(exc):
+            return 3600, f'{UNREACHABLE} (DNS or connection failed)'
+        if TIMED_OUT in str(exc):
+            return 600, 'searches are timing out'
         return 600, 'service unavailable'
     return 600, f'error ({type(exc).__name__ if exc else "unknown"})'
 
@@ -159,12 +175,21 @@ def _pool_class():
             try:
                 return self._prov.list_subtitles(*a, **kw)
             except Exception as e:
+                import requests
+                from subliminal.exceptions import ServiceUnavailable
+                if isinstance(e, (requests.Timeout, requests.ConnectionError)):
+                    # A site that's down (podnapisi.net stopped resolving) or
+                    # not answering: subliminal would log a traceback and
+                    # retry it for every item. Paused instead.
+                    why = TIMED_OUT if isinstance(e, requests.Timeout) else UNREACHABLE
+                    err = ServiceUnavailable(f'{self._name}: {why}')
+                    self._errors[self._name] = err
+                    raise err from e
                 code = getattr(getattr(e, 'response', None), 'status_code', None)
                 if code in (403, 503):
                     # The site refuses us (tvsubtitles.net answers 403 to every
                     # search): subliminal would log a traceback per search and
                     # keep asking. As ServiceUnavailable it is paused instead.
-                    from subliminal.exceptions import ServiceUnavailable
                     err = ServiceUnavailable(f'{self._name}: HTTP {code}')
                     self._errors[self._name] = err
                     raise err from e
@@ -186,7 +211,7 @@ def _pool_class():
         def _discard_provider(self, name):
             super()._discard_provider(name)
             exc = sys.exc_info()[1] or self.__dict__.get('_last_errors', {}).get(name)
-            secs, reason = _block_seconds(exc)
+            secs, reason = _block_seconds(exc, name)
             if name not in _BLOCKED:
                 logging.warning(f"[subs] pausing provider {name} for {secs // 60} min: {reason}")
             _BLOCKED[name] = (time.monotonic() + secs, reason)
@@ -1409,8 +1434,17 @@ def download_subtitles_for_video(video_path, rating_key=None, name_hint=None, it
         took = time.time() - start_time
         item_id = (ctx.get('item') or {}).get('id')
         if not subtitles[video]:
+            # Providers paused during this search never answered it: say so
+            # instead of listing them as searched.
+            now_paused = blocked_providers()
+            failed = [p for p in providers if p in now_paused]
+            searched = [p for p in providers if p not in now_paused]
             logging.info(f"[subs] {name}: nothing passed the match threshold ({took:.1f}s)")
-            _note(ctx, f"nothing passed the match threshold ({', '.join(providers)})")
+            note = (f"nothing passed the match threshold ({', '.join(searched)})" if searched
+                    else 'no provider answered')
+            if failed:
+                note += '; ' + ', '.join(f'{p} paused: {now_paused[p]}' for p in failed)
+            _note(ctx, note)
             _record_attempt(item_id, False)
             return False
         for sub in subtitles[video]:
