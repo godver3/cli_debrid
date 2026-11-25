@@ -141,10 +141,13 @@ def _block_seconds(exc, name=None):
         return 6 * 3600, 'daily download limit reached'
     if isinstance(exc, (AuthenticationError, ConfigurationError)):
         if name == 'opensubtitles':
-            # The old OpenSubtitles.org API refuses logins that work on
-            # OpenSubtitles.com, so the password is usually not the problem.
+            if (getattr(config, 'OPENSUBTITLES_ORG_USERNAME', '') or '').strip():
+                return 3600, 'login failed (check the OpenSubtitles.org username/password)'
+            # Using the .com login: the old .org API refuses logins that work
+            # on OpenSubtitles.com, so the password is usually not the problem.
             return 6 * 3600, ('login refused by the old OpenSubtitles.org API, which refuses accounts '
-                              'that work on OpenSubtitles.com; use OpenSubtitles.com instead')
+                              'that work on OpenSubtitles.com; enter an OpenSubtitles.org login or '
+                              'use OpenSubtitles.com instead')
         return 3600, 'login failed (check the OpenSubtitles username/password)'
     if isinstance(exc, ServiceUnavailable):
         if 'HTTP 403' in str(exc):
@@ -243,14 +246,19 @@ def selected_providers(include_blocked=False):
 
 
 def build_provider_configs():
-    """Credentials per provider. One OpenSubtitles account works for both the
-    .com API (required to download there) and the legacy .org provider."""
+    """Credentials per provider. The legacy OpenSubtitles.org provider uses its
+    own login when one is set (.org and .com accounts can differ, and the old
+    API refuses .com logins), else the OpenSubtitles.com one."""
     pc = {}
     user = config.OPENSUBTITLES_USERNAME
     pwd = config.OPENSUBTITLES_PASSWORD
     if user and pwd:
         pc['opensubtitles'] = {'username': user, 'password': pwd}
         pc['opensubtitlescom'] = {'username': user, 'password': pwd}
+    org_user = (getattr(config, 'OPENSUBTITLES_ORG_USERNAME', '') or '').strip()
+    org_pwd = getattr(config, 'OPENSUBTITLES_ORG_PASSWORD', '') or ''
+    if org_user and org_pwd:
+        pc['opensubtitles'] = {'username': org_user, 'password': org_pwd}
     if getattr(config, 'SUBDL_API_KEY', ''):
         pc['subdl'] = {'api_key': config.SUBDL_API_KEY}
     if getattr(config, 'SUBSOURCE_API_KEY', ''):

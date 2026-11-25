@@ -188,6 +188,18 @@ SECTIONS = {
             "default": "",
             "sensitive": True
         },
+        "opensubtitles_org_username": {
+            "type": "string",
+            "description": "OpenSubtitles.org username for the legacy 'opensubtitles' provider. Blank uses the OpenSubtitles.com login.",
+            "default": "",
+            "sensitive": False
+        },
+        "opensubtitles_org_password": {
+            "type": "string",
+            "description": "OpenSubtitles.org password for the legacy 'opensubtitles' provider.",
+            "default": "",
+            "sensitive": True
+        },
         "subtitle_languages": {
             "type": "string",
             "description": "Comma-separated list of language codes (e.g., eng,zho,spa). Uses ISO-639-3 codes.",

@@ -42,6 +42,25 @@
         </div>
 
         <div class="settings-form-group">
+            <label for="additional-opensubtitles_org_username" class="settings-title">OpenSubtitles.org Username:</label>
+            <input type="{% if environment_mode != 'full' %}password{% else %}text{% endif %}" id="additional-opensubtitles_org_username" name="Subtitle Settings.opensubtitles_org_username"
+                   value="{{ settings.get('Subtitle Settings', {}).get('opensubtitles_org_username', '') }}"
+                   class="settings-input"
+                   data-section="Subtitle Settings" data-key="opensubtitles_org_username"
+                   {% if environment_mode != 'full' %}readonly disabled{% endif %}>
+            <p class="settings-description">Only for the legacy OpenSubtitles.org provider. Its accounts can differ from OpenSubtitles.com's, and the old API refuses .com logins. Leave blank to use the login above.</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-opensubtitles_org_password" class="settings-title">OpenSubtitles.org Password:</label>
+            <input type="password" id="additional-opensubtitles_org_password" name="Subtitle Settings.opensubtitles_org_password"
+                   value="{{ settings.get('Subtitle Settings', {}).get('opensubtitles_org_password', '') }}"
+                   class="settings-input"
+                   data-section="Subtitle Settings" data-key="opensubtitles_org_password"
+                   {% if environment_mode != 'full' %}readonly disabled{% endif %}>
+        </div>
+
+        <div class="settings-form-group">
             <label class="settings-title">Subtitle Languages:</label>
             <input type="hidden" id="additional-subtitle_languages" name="Subtitle Settings.subtitle_languages"
                    value="{{ settings.get('Subtitle Settings', {}).get('subtitle_languages', 'eng,zho') }}"
@@ -116,7 +135,7 @@
                 ('tvsubtitles', 'TVsubtitles', 'TV only'),
                 ('subtitulamos', 'Subtitulamos', 'Spanish'),
                 ('bsplayer', 'BSPlayer', 'hash matches only'),
-                ('opensubtitles', 'OpenSubtitles.org', 'legacy; refuses most logins'),
+                ('opensubtitles', 'OpenSubtitles.org', 'legacy; .org login above'),
             ] %}
             <div id="additional-subtitle_providers" class="subtitle-provider-list" role="group" aria-label="Subtitle providers"
                  style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:6px 16px;margin-top:4px">

@@ -420,12 +420,30 @@ def test_timing_out_provider_is_paused_briefly():
     downsub._BLOCKED.clear()
 
 
-def test_legacy_opensubtitles_login_refusal_points_to_com():
+def test_legacy_opensubtitles_login_refusal_points_to_com(monkeypatch):
     from subliminal.providers.opensubtitles import Unauthorized
     from utilities import downsub
+    monkeypatch.setattr(downsub.config, 'OPENSUBTITLES_ORG_USERNAME', '', raising=False)
     secs, reason = downsub._block_seconds(Unauthorized(), 'opensubtitles')
     assert 'OpenSubtitles.com instead' in reason and 'username/password' not in reason
     assert 'username/password' in downsub._block_seconds(Unauthorized(), 'opensubtitlescom')[1]
+    # with its own .org login set, a refusal is that login's problem
+    monkeypatch.setattr(downsub.config, 'OPENSUBTITLES_ORG_USERNAME', 'orguser', raising=False)
+    assert 'OpenSubtitles.org username/password' in downsub._block_seconds(Unauthorized(), 'opensubtitles')[1]
+
+
+def test_org_login_used_for_legacy_provider_only(monkeypatch):
+    from utilities import downsub
+    for k, v in {'OPENSUBTITLES_USERNAME': 'com', 'OPENSUBTITLES_PASSWORD': 'cp',
+                 'OPENSUBTITLES_ORG_USERNAME': '', 'OPENSUBTITLES_ORG_PASSWORD': ''}.items():
+        monkeypatch.setattr(downsub.config, k, v, raising=False)
+    pc = downsub.build_provider_configs()
+    assert pc['opensubtitles'] == pc['opensubtitlescom'] == {'username': 'com', 'password': 'cp'}
+    monkeypatch.setattr(downsub.config, 'OPENSUBTITLES_ORG_USERNAME', 'org', raising=False)
+    monkeypatch.setattr(downsub.config, 'OPENSUBTITLES_ORG_PASSWORD', 'op', raising=False)
+    pc = downsub.build_provider_configs()
+    assert pc['opensubtitles'] == {'username': 'org', 'password': 'op'}
+    assert pc['opensubtitlescom'] == {'username': 'com', 'password': 'cp'}
 
 
 def test_note_does_not_list_providers_that_failed(db, tmp_path):
