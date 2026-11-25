@@ -575,8 +575,14 @@ def _add_nzb_pack_to_usenet(episode_nzb_urls, fallback_nzb_urls, title, year, me
 
 def _add_nzb_to_usenet(nzb_url, title, year, media_type, season, episode, version, tmdb_id,
                        original_scraped_torrent_title=None, genres=None, current_score=0.0,
-                       selected_folder=None, selected_folder_is_custom=False, selected_tags=None):
-    """Submit an NZB URL to the configured Usenet provider and track it through the queue like a debrid add."""
+                       selected_folder=None, selected_folder_is_custom=False, selected_tags=None,
+                       nzb_content=None, episode_list=None):
+    """Submit an NZB (URL, or an uploaded file's nzb_content) to the configured
+    Usenet provider and track it through the queue like a debrid add.
+
+    Library items: one per (season, episode) in episode_list when given (manual
+    assign of a pack: the seasons picked there), else every episode of season
+    when episode is None, else the one episode or movie."""
     from usenet import get_usenet_client, reset_usenet_client
     from metadata.metadata import get_metadata, get_release_date
     reset_usenet_client()
@@ -585,19 +591,20 @@ def _add_nzb_to_usenet(nzb_url, title, year, media_type, season, episode, versio
     if not client.is_enabled():
         return jsonify({'error': f'Usenet provider ({_usenet_pname()}) is not enabled. Configure it in Required Settings.'}), 503
 
-    if not nzb_url:
+    if not nzb_url and not nzb_content:
         return jsonify({'error': 'No NZB URL provided'}), 400
 
     # Pre-fetch NZB XML to check not-wanted list before submitting
     from routes.api_tracker import api as _nzb_api
     from database.not_wanted_magnets import is_nzb_segment_not_wanted as _is_not_wanted
-    _nzb_xml = None
-    try:
-        _nr = _nzb_api.get(nzb_url, timeout=15, allow_redirects=True)
-        if _nr.status_code == 200 and '<nzb' in _nr.text.lower():
-            _nzb_xml = _nr.text
-    except Exception:
-        pass
+    _nzb_xml = nzb_content or None
+    if _nzb_xml is None:
+        try:
+            _nr = _nzb_api.get(nzb_url, timeout=15, allow_redirects=True)
+            if _nr.status_code == 200 and '<nzb' in _nr.text.lower():
+                _nzb_xml = _nr.text
+        except Exception:
+            pass
 
     if _nzb_xml and _is_not_wanted(_nzb_xml):
         logging.info(f'[NZB] Skipping {title!r} — segment ID in not-wanted list (previously broken)')
@@ -719,19 +726,29 @@ def _add_nzb_to_usenet(nzb_url, title, year, media_type, season, episode, versio
             _record_manual_grab(item_id_to_place, 'nzb', nzb_title)
             logging.info(f'[NZB] Item {item_id_to_place} placed in Adding queue for health check (checking_id={checking_id})')
 
-        if item_type == 'episode' and season is not None and episode is None:
-            # Season pack — create items per episode
+        if item_type == 'episode' and (episode_list or (season is not None and episode is None)):
+            # Pack: one item per episode, all on this job
             try:
                 meta = get_metadata(tmdb_id=int(tmdb_id), item_media_type=media_type)
-                season_data = (meta.get('seasons') or {}).get(season, {})
-                episodes = season_data.get('episodes', {})
-                for ep_num_str, ep_data in episodes.items():
+                seasons_meta = meta.get('seasons') or {}
+
+                def _episodes_of(s):
+                    data = seasons_meta.get(s) or seasons_meta.get(str(s)) or {}
+                    return data.get('episodes') or {}
+                if episode_list:
+                    targets = [(s, e) for s, e in episode_list]
+                else:
+                    targets = [(season, int(e)) for e in _episodes_of(season)]
+                for s_num, e_num in targets:
+                    eps = _episodes_of(s_num)
+                    ep_data = eps.get(e_num) or eps.get(str(e_num)) or {}
                     ep_item = base_item.copy()
-                    ep_item.update({'season_number': season, 'episode_number': int(ep_num_str),
-                                    'episode_title': ep_data.get('title', f'Episode {ep_num_str}')})
+                    ep_item.update({'season_number': s_num, 'episode_number': e_num,
+                                    'episode_title': ep_data.get('title', f'Episode {e_num}')})
                     item_id = add_media_item(ep_item)
                     if item_id:
                         _place_nzb_in_adding(item_id)
+                logging.info(f'[NZB] Pack tracked as {len(targets)} episode(s)')
             except Exception as _spe:
                 logging.warning(f'[NZB] Season pack queue tracking failed: {_spe}')
         else:
