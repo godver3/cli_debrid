@@ -5,6 +5,10 @@ library item with no season or episode: the selection was ignored, so only
 the one episode the job resolved to got assigned (The Traitors (IN) S02,
 2026-11-25: only S02E03). Each episode of the picked seasons now gets its own
 item on the job, for an NZB URL and an uploaded .nzb alike.
+
+The page posts media_type=show, and get_metadata only includes seasons for
+'tv', so the fix above still found no episodes on the real page ("No episodes
+found for the selected seasons"). The metadata stub below behaves the same way.
 """
 import io
 import os
@@ -19,6 +23,16 @@ from tests.matching.test_manual_assign_page import _fresh_app_modules  # noqa: E
 
 SEASONS = {1: {'episodes': {1: {'title': 'One'}, 2: {'title': 'Two'}}},
            2: {'episodes': {1: {'title': 'A'}, 2: {'title': 'B'}, 3: {'title': 'C'}}}}
+
+
+def _metadata(**kw):
+    """Like get_metadata: seasons only when asked for 'tv'."""
+    meta = {'imdb_id': 'tt1', 'title': 'The Traitors (IN)'}
+    if kw.get('item_media_type') == 'tv':
+        meta['seasons'] = SEASONS
+    return meta
+
+
 NZB = '<?xml version="1.0"?><nzb><file subject="x"><segments><segment>a@b</segment></segments></file></nzb>'
 
 
@@ -37,13 +51,13 @@ class ManualAssignNzbRouteTests(unittest.TestCase):
         for patcher in [mock.patch.object(models, 'is_user_system_enabled', return_value=False),
                         patch_in_package(mr, '_saved_episode_order', return_value='default'),
                         mock.patch.object(sr, '_add_nzb_to_usenet', self.add),
-                        mock.patch('metadata.metadata.get_metadata',
-                                   return_value={'imdb_id': 'tt1', 'seasons': SEASONS})]:
+                        mock.patch('metadata.metadata.get_metadata', side_effect=_metadata)]:
             patcher.start()
             self.addCleanup(patcher.stop)
 
     def _post(self, **form):
-        base = {'tmdb_id': '271489', 'media_type': 'tv', 'title': 'The Traitors (IN)', 'year': '2025',
+        # The page posts 'show' (result.mediaType), not 'tv'.
+        base = {'tmdb_id': '271489', 'media_type': 'show', 'title': 'The Traitors (IN)', 'year': '2025',
                 'version': '1080p'}
         base.update(form)
         return self.client.post('/magnet/prepare_manual_assignment', data=base,
@@ -89,7 +103,7 @@ class AddNzbEpisodeListTests(unittest.TestCase):
         added = []
         with mock.patch('usenet.get_usenet_client', return_value=client), \
                 mock.patch('usenet.reset_usenet_client'), \
-                mock.patch('metadata.metadata.get_metadata', return_value={'imdb_id': 'tt1', 'seasons': SEASONS}), \
+                mock.patch('metadata.metadata.get_metadata', side_effect=_metadata), \
                 mock.patch.object(nwm, 'is_nzb_segment_not_wanted', return_value=False), \
                 mock.patch.object(dw, 'add_media_item', side_effect=lambda item: added.append(item) or len(added)), \
                 mock.patch.object(dw, 'update_media_item'), \
@@ -98,7 +112,7 @@ class AddNzbEpisodeListTests(unittest.TestCase):
                 mock.patch.object(ua, '_build_nzb_title', return_value='The Traitors S02'), \
                 mock.patch('queues.queue_manager.QueueManager'), \
                 Flask(__name__).app_context():
-            ua._add_nzb_to_usenet(None, 'The Traitors (IN)', 2025, 'tv', None, None, '1080p', '271489',
+            ua._add_nzb_to_usenet(None, 'The Traitors (IN)', 2025, 'show', None, None, '1080p', '271489',
                                   nzb_content=NZB, episode_list=[(2, 1), (2, 2), (2, 3)])
         client.add_nzb_content.assert_called_once()
         self.assertEqual([(i['season_number'], i['episode_number'], i['episode_title']) for i in added],

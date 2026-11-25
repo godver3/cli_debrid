@@ -78,7 +78,8 @@ def prepare_manual_assignment():
             else:
                 try:
                     from metadata.metadata import get_metadata
-                    seasons_meta = get_metadata(tmdb_id=int(tmdb_id), item_media_type=media_type).get('seasons') or {}
+                    # The form says 'show'; get_metadata only returns seasons for 'tv'.
+                    seasons_meta = get_metadata(tmdb_id=int(tmdb_id), item_media_type='tv').get('seasons') or {}
                 except Exception as _me:
                     logging.error(f"[NZB] Could not load seasons for manual assign: {_me}")
                     seasons_meta = {}
