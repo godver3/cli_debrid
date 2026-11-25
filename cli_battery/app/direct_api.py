@@ -135,6 +135,8 @@ def _format_seasons_from_orm(seasons) -> dict:
                 } for ep in season.episodes
             },
         }
+        if season.title:
+            result[season.season_number]['title'] = season.title
     return result
 
 
@@ -532,6 +534,7 @@ def _upsert_seasons_and_episodes(item_id: int, seasons_data: dict, session: SqlA
         season_rows.append({
             'item_id': item_id,
             'season_number': season_number,
+            'title': season_info.get('title') or season_info.get('name'),
             'episode_count': episode_count,
             'plex_guid': season_info.get('plex_guid'),
             'tmdb_id': season_info.get('tmdb_id'),
@@ -562,6 +565,7 @@ def _upsert_seasons_and_episodes(item_id: int, seasons_data: dict, session: SqlA
         stmt = stmt.on_conflict_do_update(
             index_elements=['item_id', 'season_number'],
             set_=dict(
+                title=stmt.excluded.title,
                 episode_count=stmt.excluded.episode_count,
                 plex_guid=func.coalesce(stmt.excluded.plex_guid, Season.plex_guid),
                 tmdb_id=func.coalesce(stmt.excluded.tmdb_id, Season.tmdb_id),

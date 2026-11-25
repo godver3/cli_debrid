@@ -220,6 +220,9 @@ def get_show_data(imdb_id: str) -> Optional[dict]:
         logger.error(f"IMDb mismatch: requested {imdb_id}, got {show_data.get('ids', {}).get('imdb')}")
         return None
 
+    seasons, _ = get_show_seasons_and_episodes(imdb_id, include_specials=True)
+    show_data['seasons'] = seasons
+
     # Aliases
     slug = show_data.get('ids', {}).get('slug')
     tmdb_id = show_data.get('ids', {}).get('tmdb')
@@ -227,14 +230,10 @@ def get_show_data(imdb_id: str) -> Optional[dict]:
     if slug:
         aliases = get_show_aliases(slug) or {}
         # Enrich with TMDB alternative titles + primary TMDB title if different from Trakt
-        tmdb_alts = _fetch_tmdb_alternative_titles(tmdb_id, 'tv', trakt_title)
+        tmdb_alts = _fetch_tmdb_alternative_titles(tmdb_id, 'tv', trakt_title, seasons=seasons)
         aliases = _merge_tmdb_aliases(aliases, tmdb_alts)
         if aliases:
             show_data['aliases'] = aliases
-
-    # Seasons + episodes
-    seasons, _ = get_show_seasons_and_episodes(imdb_id, include_specials=True)
-    show_data['seasons'] = seasons
 
     return show_data
 
@@ -282,6 +281,8 @@ def get_show_seasons_and_episodes(imdb_id: str, include_specials: bool = False) 
             'tmdb_id': str(season_ids['tmdb']) if season_ids.get('tmdb') else None,
             'tvdb_id': str(season_ids['tvdb']) if season_ids.get('tvdb') else None,
         }
+        if season.get('title'):
+            processed[season_number]['title'] = season['title']
     return processed, 'trakt'
 
 
@@ -345,11 +346,14 @@ def get_movie_data(imdb_id: str) -> Optional[dict]:
     return data
 
 
-def _fetch_tmdb_alternative_titles(tmdb_id, media_type: str, trakt_title: str = '') -> dict:
+def _fetch_tmdb_alternative_titles(tmdb_id, media_type: str, trakt_title: str = '',
+                                   *, seasons: Optional[dict] = None) -> dict:
     """Fetch English alternative titles from TMDB and return as {country: [titles]} dict.
 
     Also includes the TMDB primary title if it differs from the Trakt title
     (e.g. Trakt has "187" but TMDB has "One Eight Seven").
+
+    When Trakt seasons are supplied, retain their TMDB names from the same response.
 
     Backwards-compatible: returns empty dict on any failure (missing API key,
     network error, TMDB unavailable). Never raises.
@@ -369,6 +373,13 @@ def _fetch_tmdb_alternative_titles(tmdb_id, media_type: str, trakt_title: str = 
         if resp.status_code != 200:
             return {}
         data = resp.json()
+
+        if seasons:
+            for season in data.get('seasons') or []:
+                number = season.get('season_number')
+                name = season.get('name')
+                if number in seasons and name and name.lower() != f'season {number}':
+                    seasons[number]['title'] = name
 
         # Primary TMDB title — add as 'us' alias if different from Trakt title
         for field in ('title', 'name'):
