@@ -377,24 +377,14 @@
                 </div>
 
                 <div class="uh-settings-section">
-                    <div class="uh-settings-card-header">
-                        <div>
-                            <div class="uh-settings-subsection-title">Search With My Scrapers</div>
-                            <p class="uh-settings-desc" style="margin:4px 0 0">Each scan searches your configured scrapers for a batch of library items, starting with the ones checked longest ago, so a better release that appears months later is still found.</p>
-                        </div>
-                        <label class="uh-settings-toggle">
-                            <input type="checkbox" id="settings-use-scrapers">
-                            <span class="uh-settings-toggle-track"><span class="uh-settings-toggle-thumb"></span></span>
-                        </label>
-                    </div>
-                </div>
-
-                <div class="uh-settings-section">
-                    <div class="uh-settings-subsection-title">Items Searched Per Scan</div>
-                    <p class="uh-settings-desc">Each item is one full search, so keep this modest on a daily schedule. The whole library is covered over successive scans.</p>
+                    <div class="uh-settings-subsection-title">Fresh Release Search</div>
+                    <p class="uh-settings-desc">Each scan also searches your scrapers for items released recently, when better encodes keep appearing. Each item is one full search (one API call per indexer), so it's capped. Items checked longest ago go first. Set items to 0 to turn it off.</p>
                     <div class="uh-number-input-wrap">
-                        <input type="number" id="settings-scraper-checks" class="uh-number-input" min="1" max="2000" step="10">
-                        <span class="uh-settings-unit">items</span>
+                        <span class="uh-settings-unit">Released within</span>
+                        <input type="number" id="settings-fresh-days" class="uh-number-input" min="0" max="3650" step="1">
+                        <span class="uh-settings-unit">days, up to</span>
+                        <input type="number" id="settings-fresh-limit" class="uh-number-input" min="0" max="2000" step="5">
+                        <span class="uh-settings-unit">items per scan</span>
                     </div>
                 </div>
 
@@ -467,10 +457,10 @@
                     <div class="uh-settings-subsection-title">Bulk Sources</div>
                     <p class="uh-settings-desc">Optional sources that check the whole library each scan, on top of the scraper search. Zilean reads its database (fast with the direct DB connection in Settings → Scrapers, slow without it); NZB indexers read the latest releases.</p>
                     <select id="settings-upgrade-source" class="uh-filter-select" style="margin-top:6px">
-                        <option value="none">None (scrapers only), default</option>
-                        <option value="nzb_only">NZB Indexers Only</option>
-                        <option value="zilean_only">Zilean Only</option>
                         <option value="both">Both (Zilean + NZB Indexers)</option>
+                        <option value="zilean_only">Zilean Only</option>
+                        <option value="nzb_only">NZB Indexers Only</option>
+                        <option value="none">None (fresh-release search only)</option>
                     </select>
                 </div>
 

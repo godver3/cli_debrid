@@ -47,10 +47,9 @@ def status():
     s = get_scan_status()
     s['zilean_configured'] = get_zilean_config() is not None
     s['nzb_configured'] = len(get_newznab_scrapers()) > 0
-    from database.upgrade_hub_scrapers import scraper_settings
-    _scr = scraper_settings()
-    s['scrapers_enabled'] = _scr['enabled'] and _scr['limit'] > 0
-    s['any_source_configured'] = s['zilean_configured'] or s['nzb_configured'] or s['scrapers_enabled']
+    from database.upgrade_hub_scrapers import fresh_search_settings
+    s['fresh_search_enabled'] = fresh_search_settings()['enabled']
+    s['any_source_configured'] = s['zilean_configured'] or s['nzb_configured'] or s['fresh_search_enabled']
     results = get_last_results()
     if results and 'error' not in results:
         try:
@@ -91,9 +90,8 @@ def start_scan():
             return jsonify({'success': False,
                             'error': f'Days must be between 0 and {MAX_RECENT_DAYS}'}), 400
 
-    from database.upgrade_hub_scrapers import scraper_settings
-    _scr = scraper_settings()
-    use_scrapers = (_scr['enabled'] and _scr['limit'] > 0) or recent_days is not None
+    from database.upgrade_hub_scrapers import fresh_search_settings
+    use_scrapers = fresh_search_settings()['enabled'] or recent_days is not None
     from database.upgrade_hub_scrapers import upgrade_source as _upgrade_source
     upgrade_source = _upgrade_source()
     use_zilean = upgrade_source in ('both', 'zilean_only') and bool(get_zilean_config())
@@ -105,8 +103,8 @@ def start_scan():
         elif upgrade_source == 'nzb_only':
             err = 'No enabled Newznab indexers configured in Settings → Scrapers'
         else:
-            err = ('No upgrade source. Turn on "Search with my scrapers" below, or enable '
-                   'Zilean or a Newznab indexer in Settings → Scrapers')
+            err = ('No upgrade source. Enable Zilean or a Newznab indexer in Settings → Scrapers, '
+                   'or turn on Fresh Release Search below')
         return jsonify({'success': False, 'error': err}), 400
 
     scan_limit = get_setting('Upgrade Hub', 'scan_limit', None)
@@ -276,8 +274,8 @@ _SETTINGS_KEYS = {
     'excluded_genres': str,
     'exclude_nas_items': bool,
     'upgrade_source': str,
-    'use_scrapers': bool,
-    'scraper_checks_per_scan': int,
+    'fresh_search_days': int,
+    'fresh_search_limit': int,
 }
 _SETTINGS_DEFAULTS = {
     'min_improvement_threshold': 0,
@@ -288,11 +286,11 @@ _SETTINGS_DEFAULTS = {
     'recent_threshold_days': 90,
     'excluded_genres': '',
     'exclude_nas_items': False,
-    'upgrade_source': 'none',
-    'use_scrapers': True,
-    'scraper_checks_per_scan': 50,
+    'upgrade_source': 'both',
+    'fresh_search_days': 30,
+    'fresh_search_limit': 20,
 }
-_BOOL_KEYS = ('show_recent_only', 'hide_pack_episodes', 'exclude_nas_items', 'use_scrapers')
+_BOOL_KEYS = ('show_recent_only', 'hide_pack_episodes', 'exclude_nas_items')
 
 # Upgrading settings that live in other config sections (Scraping / Debug) but
 # are edited on the Upgrade Hub's Settings tab: key -> (section, type, default).
@@ -331,7 +329,12 @@ def get_settings():
         # Coerce stored strings back to correct types
         if key == 'scan_limit':
             settings[key] = int(val) if val not in (None, '', 'null', 0) else None
-        elif key in ('min_improvement_threshold', 'max_upgrades_per_run', 'scraper_checks_per_scan'):
+        elif key in ('fresh_search_days', 'fresh_search_limit'):
+            try:
+                settings[key] = max(0, int(val))
+            except (TypeError, ValueError):
+                settings[key] = default
+        elif key in ('min_improvement_threshold', 'max_upgrades_per_run'):
             try:
                 settings[key] = int(val or default)
             except (TypeError, ValueError):

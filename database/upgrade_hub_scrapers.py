@@ -1,14 +1,16 @@
 """
-Upgrade Hub — search with the user's own scrapers, and cache status for candidates.
+Upgrade Hub — fresh-release search with the user's own scrapers, and cache
+status for candidates.
 
-The Zilean and Newznab-feed phases only see releases those two sources happen to
-hold. This phase runs the normal scrape (Torrentio, Jackett, Prowlarr, Newznab…)
-for a rotating slice of the library each scan, so a better release that appears
-months after an item was collected is still found.
+Zilean and the NZB feed history cover the whole library cheaply. On top of
+them, each scan runs the normal scrape (Torrentio, Jackett, Newznab…) for a
+small, capped number of recently released items, when better encodes are
+still appearing. A full search per item costs an API call per indexer, so it
+is limited to those items.
 
 Items are checked oldest-checked first and the last check time is kept in
-``upgrade_hub_scraper_checks``, so a daily scan with a cap of N works through the
-whole library over time instead of re-searching the same items.
+``upgrade_hub_scraper_checks``, so successive scans spread over the recent
+items instead of re-searching the same ones.
 """
 
 import logging
@@ -22,7 +24,9 @@ from utilities.settings import get_setting
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CHECKS_PER_SCAN = 50
+# Fresh-release search: items released in the last N days, up to M per scan.
+DEFAULT_FRESH_DAYS = 30
+DEFAULT_FRESH_LIMIT = 20
 MAX_CHECKS_PER_SCAN = 2000
 # Scrapers rate-limit; a couple of searches at a time is enough.
 SCRAPE_WORKERS = 2
@@ -53,72 +57,25 @@ def _ensure_table() -> None:
 
 # Bulk Sources (Upgrade Hub.upgrade_source): both | zilean_only | nzb_only | none.
 UPGRADE_SOURCES = ('both', 'zilean_only', 'nzb_only', 'none')
-# New installs scan with the user's scrapers only; Zilean / the NZB feed are opt-in.
-DEFAULT_UPGRADE_SOURCE = 'none'
-
-
-def _ran_full_scan_before() -> bool:
-    """True if this install has completed an Upgrade Hub scan that wasn't a
-    Search Recent Releases run, i.e. it has been using the old default (both)."""
-    import json
-    conn = get_db_connection()
-    try:
-        try:
-            for (stats,) in conn.execute(
-                    "SELECT stats_json FROM upgrade_hub_activity WHERE action_type = 'scan'"):
-                try:
-                    if (json.loads(stats or '{}') or {}).get('recent_release_days') is None:
-                        return True
-                except ValueError:
-                    return True
-        except Exception:
-            pass
-        try:
-            row = conn.execute("SELECT results_json FROM upgrade_hub_scan_cache WHERE id = 1").fetchone()
-            if row and (json.loads(row[0] or '{}') or {}).get('recent_release_days') is None:
-                return True
-        except Exception:
-            pass
-        return False
-    finally:
-        conn.close()
+DEFAULT_UPGRADE_SOURCE = 'both'
 
 
 def upgrade_source() -> str:
-    """The Bulk Sources setting.
-
-    Unset means the user never saved the hub's settings. Installs that already
-    ran a full hub scan keep the old default (both) so Zilean / NZB don't
-    silently stop; everyone else gets scrapers only. The choice is saved, so it
-    doesn't change later.
-    """
+    """The Bulk Sources setting; unset or unknown means both (Zilean + NZB)."""
     raw = get_setting('Upgrade Hub', 'upgrade_source', None)
-    if raw in UPGRADE_SOURCES:
-        return raw
-    if raw not in (None, ''):
-        return DEFAULT_UPGRADE_SOURCE  # unknown value: don't overwrite what the user has
-    try:
-        source = 'both' if _ran_full_scan_before() else DEFAULT_UPGRADE_SOURCE
-    except Exception:
-        return DEFAULT_UPGRADE_SOURCE
-    try:
-        from utilities.settings import set_setting
-        set_setting('Upgrade Hub', 'upgrade_source', source)
-        logger.info(f"[UPGRADE_HUB] Bulk Sources was never set; saved '{source}'")
-    except Exception as e:
-        logger.debug(f"[UPGRADE_HUB] Could not save Bulk Sources default: {e}")
-    return source
+    return raw if raw in UPGRADE_SOURCES else DEFAULT_UPGRADE_SOURCE
 
 
-def scraper_settings() -> Dict:
-    """(enabled, checks_per_scan) from the Upgrade Hub settings."""
-    raw = get_setting('Upgrade Hub', 'use_scrapers', True)
-    enabled = raw if isinstance(raw, bool) else str(raw).strip().lower() in ('true', '1', 'yes', 'on')
-    try:
-        limit = int(get_setting('Upgrade Hub', 'scraper_checks_per_scan', DEFAULT_CHECKS_PER_SCAN))
-    except (TypeError, ValueError):
-        limit = DEFAULT_CHECKS_PER_SCAN
-    return {'enabled': enabled, 'limit': max(0, min(MAX_CHECKS_PER_SCAN, limit))}
+def fresh_search_settings() -> Dict:
+    """Fresh-release search: {'days', 'limit', 'enabled'}. A limit of 0 turns it off."""
+    def _int(key, default, hi):
+        try:
+            return max(0, min(hi, int(get_setting('Upgrade Hub', key, default))))
+        except (TypeError, ValueError):
+            return default
+    days = _int('fresh_search_days', DEFAULT_FRESH_DAYS, 3650)
+    limit = _int('fresh_search_limit', DEFAULT_FRESH_LIMIT, MAX_CHECKS_PER_SCAN)
+    return {'days': days, 'limit': limit, 'enabled': limit > 0}
 
 
 def last_checked_map(item_ids: List[int]) -> Dict[int, str]:
@@ -340,7 +297,7 @@ def _scan_item(item: Dict, threshold: float, default_version: str,
 
 def scan_with_scrapers(items: List[Dict], threshold: float, default_version: str,
                        not_wanted_hashes: Optional[frozenset] = None,
-                       limit: int = DEFAULT_CHECKS_PER_SCAN,
+                       limit: int = DEFAULT_FRESH_LIMIT,
                        progress_callback: Optional[Callable[[int, int], None]] = None,
                        errors: Optional[List[str]] = None,
                        searched: Optional[List[int]] = None) -> List[Dict]:

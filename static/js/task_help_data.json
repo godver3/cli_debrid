@@ -326,9 +326,14 @@
       "runs": "Off by default. While this task is on, it runs even if the cleanup's own enable switch is off."
     },
     "task_upgrade_hub_scan": {
-      "description": "Looks for better-quality releases of your collected items and saves the upgrade and season-pack candidates for the Upgrade Hub page. It searches your scrapers for a batch of items (Items Searched Per Scan, longest-unchecked first), and also reads Zilean and your Newznab indexers if they're set up as Bulk Sources. Scan Limit caps how many items Zilean and the indexers check.",
+      "description": "Looks for better-quality releases of your collected items and saves the upgrade and season-pack candidates for the Upgrade Hub page. It checks Zilean and the NZB feed history (kept up to date by the Upgrade Hub NZB feed sync task), depending on Bulk Sources, and searches your scrapers for a few recently released items (Fresh Release Search). Scan Limit caps how many items Zilean and the NZB history check.",
       "action": "Scan for upgrade candidates.",
-      "runs": "Off by default. Needs Search With My Scrapers on, or Zilean or a Newznab indexer."
+      "runs": "Off by default. Needs Zilean or a Newznab indexer, or Fresh Release Search on."
+    },
+    "task_upgrade_hub_feed_sync": {
+      "description": "Reads what's new on each Newznab indexer since the last run (movies and TV, usually one or two API calls each) and keeps the releases that match your library for 90 days. Upgrade Hub scans match against this history, so a release posted between scans isn't missed.",
+      "action": "Read new releases from your Newznab indexers.",
+      "runs": "Only while the Upgrade Hub scan task is on and Bulk Sources includes the NZB indexers."
     },
     "task_upgrade_hub_auto_queue": {
       "description": "Takes the candidates from the last Upgrade Hub scan (and scans first if there are none) and queues the ones that meet the Min Improvement Threshold for upgrading, up to Max Upgrades per Run. Season packs come first, then candidates your debrid service reports cached. Ones reported not cached are skipped unless you accept uncached results, and items already upgrading are skipped. Show Recent Only limits it to recently added items.",

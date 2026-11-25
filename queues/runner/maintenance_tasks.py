@@ -985,6 +985,22 @@ class MaintenanceTasks:
         except Exception as e:
             logging.error(f"[UPGRADE_HUB] Scheduled scan failed: {e}", exc_info=True)
 
+    def task_upgrade_hub_feed_sync(self):
+        """Keep the Upgrade Hub's NZB feed history current between scans."""
+        try:
+            if 'task_upgrade_hub_feed_sync' not in self.enabled_tasks:
+                return
+            # Follows the hub's automatic scan: no scans, no need for history.
+            if 'task_upgrade_hub_scan' not in self.enabled_tasks:
+                return
+            from database.upgrade_hub_scrapers import upgrade_source
+            if upgrade_source() not in ('both', 'nzb_only'):
+                return
+            from database.nzb_feed_history import sync_feeds
+            sync_feeds()
+        except Exception as e:
+            logging.error(f"[UPGRADE_HUB] NZB feed sync failed: {e}", exc_info=True)
+
     def task_upgrade_hub_auto_queue(self):
         """Auto-queue upgrade candidates found in the most recent scan."""
         try:

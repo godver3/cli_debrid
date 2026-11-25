@@ -152,13 +152,18 @@ def test_scan_with_scrapers_records_checks_even_without_upgrades(hub_db, app_set
     assert 7 in uhs.last_checked_map([7])
 
 
-def test_full_scan_with_only_the_scraper_source(hub_db, app_settings, monkeypatch):
+def _days_ago(n):
+    from datetime import date, timedelta
+    return (date.today() - timedelta(days=n)).isoformat()
+
+
+def test_full_scan_with_only_the_fresh_release_search(hub_db, app_settings, monkeypatch):
     import database.zilean_upgrade as zu
     import database.upgrade_hub_scrapers as uhs
-    app_settings['Upgrade Hub'] = {'upgrade_source': 'none', 'use_scrapers': True, 'scraper_checks_per_scan': 10}
+    app_settings['Upgrade Hub'] = {'upgrade_source': 'none', 'fresh_search_days': 30, 'fresh_search_limit': 10}
     conn = hub_db()
     iid = _insert(conn, type='movie', title='The Long Walk', imdb_id='tt1', tmdb_id='1', year=2025,
-                  filled_by_file='The.Long.Walk.2025.1080p.WEB-DL-FLUX.mkv', size=5.0)
+                  filled_by_file='The.Long.Walk.2025.1080p.WEB-DL-FLUX.mkv', size=5.0, release_date=_days_ago(10))
     conn.close()
     monkeypatch.setattr(zu, '_save_scan_results_to_db', lambda *a, **k: None)
     results = [{'title': 'The.Long.Walk.2025.2160p.WEB-DL-FLUX',
@@ -176,28 +181,33 @@ def test_full_scan_with_only_the_scraper_source(hub_db, app_settings, monkeypatc
     assert iid in uhs.last_checked_map([iid])
 
 
-def test_scan_limit_does_not_pin_the_scraper_rotation_to_the_first_rows(hub_db, app_settings, monkeypatch):
-    # Scan Limit caps the Zilean/NZB phases; the scraper phase picks its own
-    # oldest-checked slice from the whole library.
+def test_fresh_search_covers_recent_items_only_up_to_its_cap(hub_db, app_settings, monkeypatch):
+    # Recent items only, capped per scan, oldest-checked first; Scan Limit
+    # (for Zilean / NZB) doesn't narrow it.
     import database.zilean_upgrade as zu
     import database.upgrade_hub_scrapers as uhs
-    app_settings['Upgrade Hub'] = {'upgrade_source': 'none', 'use_scrapers': True, 'scraper_checks_per_scan': 10}
+    app_settings['Upgrade Hub'] = {'upgrade_source': 'none', 'fresh_search_days': 30, 'fresh_search_limit': 2}
     conn = hub_db()
-    ids = [_insert(conn, type='movie', title=f'M{n}', imdb_id=f'tt{n}', tmdb_id=str(n), year=2025,
-                   filled_by_file=f'M{n}.2025.1080p.WEB.mkv', size=5.0) for n in (1, 2, 3)]
+    recent = [_insert(conn, type='movie', title=f'M{n}', imdb_id=f'tt{n}', tmdb_id=str(n), year=2025,
+                      filled_by_file=f'M{n}.2025.1080p.WEB.mkv', size=5.0, release_date=_days_ago(n))
+              for n in (1, 2, 3)]
+    old = _insert(conn, type='movie', title='Old', imdb_id='tt9', tmdb_id='9', year=2010,
+                  filled_by_file='Old.2010.1080p.mkv', size=5.0, release_date='2010-05-01')
     conn.close()
     monkeypatch.setattr(zu, '_save_scan_results_to_db', lambda *a, **k: None)
     seen = []
     with mock.patch.object(uhs, '_scan_item', side_effect=lambda it, *a, **k: seen.append(it['id'])), \
          mock.patch('database.upgrade_hub_activity.log_hub_activity'):
         out = zu.scan_for_upgrades(scan_limit=1)
-    assert 'error' not in out, out
-    assert sorted(seen) == sorted(ids)
+        assert 'error' not in out, out
+        assert len(seen) == 2 and set(seen) <= set(recent) and old not in seen
+        zu.scan_for_upgrades(scan_limit=1)  # next scan reaches the one not searched yet
+    assert set(seen) == set(recent)
 
 
 def test_scan_with_no_source_at_all_says_so(hub_db, app_settings):
     import database.zilean_upgrade as zu
-    app_settings['Upgrade Hub'] = {'upgrade_source': 'none', 'use_scrapers': False}
+    app_settings['Upgrade Hub'] = {'upgrade_source': 'none', 'fresh_search_limit': 0}
     out = zu.scan_for_upgrades()
     assert 'No upgrade source' in out['error']
 
@@ -367,11 +377,11 @@ def test_hub_settings_read_and_write_the_upgrading_keys_in_their_own_sections():
         assert upg['upgrading_percentage_threshold'] == 0.25
         assert upg['enable_upgrading_cleanup'] is True  # default
         assert upg['upgrade_max_release_age_days'] == 7  # default
-        assert body['settings']['use_scrapers'] is True
-        assert body['settings']['scraper_checks_per_scan'] == 50
+        assert body['settings']['fresh_search_days'] == 30
+        assert body['settings']['fresh_search_limit'] == 20
 
         _call(r.save_settings, method='POST', json={
-            'use_scrapers': False, 'scraper_checks_per_scan': 200,
+            'fresh_search_days': 14, 'fresh_search_limit': 0,
             'upgrading': {'enable_upgrading': False, 'upgrading_percentage_threshold': 3,
                           'upgrade_queue_duration_hours': 0, 'delayed_upgrade_scrape_days': 7,
                           'upgrade_max_release_age_days': 60},
@@ -381,8 +391,8 @@ def test_hub_settings_read_and_write_the_upgrading_keys_in_their_own_sections():
     assert store[('Debug', 'upgrade_queue_duration_hours')] == 1          # clamped
     assert store[('Scraping', 'delayed_upgrade_scrape_days')] == 7
     assert store[('Scraping', 'upgrade_max_release_age_days')] == 60
-    assert store[('Upgrade Hub', 'use_scrapers')] is False
-    assert store[('Upgrade Hub', 'scraper_checks_per_scan')] == 200
+    assert store[('Upgrade Hub', 'fresh_search_days')] == 14
+    assert store[('Upgrade Hub', 'fresh_search_limit')] == 0
     assert ('Upgrade Hub', 'enable_upgrading') not in store
 
 
@@ -400,15 +410,16 @@ def test_settings_page_no_longer_defaults_enable_upgrading_off():
     assert "settingsData['Scraping']['enable_upgrading'] = false" not in js
 
 
-def test_status_counts_scrapers_as_a_source(hub_db):
+def test_status_counts_fresh_release_search_as_a_source(hub_db):
     from routes import upgrade_hub_routes as r
     with mock.patch('database.zilean_upgrade.get_zilean_config', return_value=None), \
          mock.patch('database.nzb_upgrade.get_newznab_scrapers', return_value=[]), \
          mock.patch('database.zilean_upgrade.get_last_results', return_value=None), \
-         mock.patch('database.upgrade_hub_scrapers.scraper_settings', return_value={'enabled': True, 'limit': 50}):
+         mock.patch('database.upgrade_hub_scrapers.fresh_search_settings',
+                    return_value={'enabled': True, 'limit': 20, 'days': 30}):
         body, _ = _call(r.status)
     assert body['any_source_configured'] is True
-    assert body['scrapers_enabled'] is True
+    assert body['fresh_search_enabled'] is True
 
 
 @pytest.mark.parametrize('stored, expected', [(None, 7), ('30', 30), (60, 60), ('', 7), ('x', 7), (-5, 0)])
@@ -449,7 +460,7 @@ def test_recent_search_covers_every_recent_item_past_the_cap_and_toggle(hub_db, 
     import database.zilean_upgrade as zu
     import database.upgrade_hub_scrapers as uhs
     # Scraper search off and capped at 1: the recent search ignores both.
-    app_settings['Upgrade Hub'] = {'upgrade_source': 'none', 'use_scrapers': False, 'scraper_checks_per_scan': 1}
+    app_settings['Upgrade Hub'] = {'upgrade_source': 'none', 'fresh_search_limit': 0}
     recent = (date.today() - timedelta(days=3)).isoformat()
     old = (date.today() - timedelta(days=400)).isoformat()
     conn = hub_db()
@@ -477,7 +488,7 @@ def test_recent_search_skips_zilean_and_nzb_and_keeps_other_candidates(hub_db, a
     import database.zilean_upgrade as zu
     import database.upgrade_hub_scrapers as uhs
     import database.nzb_upgrade as nzb
-    app_settings['Upgrade Hub'] = {'upgrade_source': 'both', 'use_scrapers': True}
+    app_settings['Upgrade Hub'] = {'upgrade_source': 'both'}
     recent = (date.today() - timedelta(days=2)).isoformat()
     conn = hub_db()
     searched_no_upgrade = _insert(conn, type='movie', title='A', imdb_id='tt11', tmdb_id='11', year=2026,
@@ -531,7 +542,7 @@ def _start_scan(json, **settings):
         def start(self):
             self.target()
 
-    store = {('Upgrade Hub', 'upgrade_source'): 'none', ('Upgrade Hub', 'use_scrapers'): False}
+    store = {('Upgrade Hub', 'upgrade_source'): 'none', ('Upgrade Hub', 'fresh_search_limit'): 0}
     store.update(settings)
     with mock.patch.object(r, 'get_setting', side_effect=lambda s, k, d=None: store.get((s, k), d)), \
          mock.patch('database.upgrade_hub_scrapers.get_setting', side_effect=lambda s, k, d=None: store.get((s, k), d)), \
@@ -564,46 +575,11 @@ def test_recent_search_route_rejects_bad_days(days):
 
 # ── Bulk Sources default ─────────────────────────────────────────────────────
 
-def _activity(conn, stats):
-    import json
-    conn.execute("CREATE TABLE IF NOT EXISTS upgrade_hub_activity (id INTEGER PRIMARY KEY, action_type TEXT, "
-                 "triggered_by TEXT, result TEXT, title TEXT, stats_json TEXT, created_at TEXT)")
-    conn.execute("INSERT INTO upgrade_hub_activity (action_type, stats_json) VALUES ('scan', ?)", (json.dumps(stats),))
-    conn.commit()
-
-
-def _source_after(app_settings, monkeypatch, hub_db, history=None, stored=None):
+@pytest.mark.parametrize('stored, expected', [
+    (None, 'both'), ('', 'both'), ('garbage', 'both'),
+    ('both', 'both'), ('zilean_only', 'zilean_only'), ('nzb_only', 'nzb_only'), ('none', 'none'),
+])
+def test_bulk_sources_default_to_both(app_settings, stored, expected):
     import database.upgrade_hub_scrapers as uhs
-    import utilities.settings as us
     app_settings['Upgrade Hub'] = {} if stored is None else {'upgrade_source': stored}
-    saved = {}
-    monkeypatch.setattr(us, 'set_setting', lambda s, k, v: saved.__setitem__((s, k), v))
-    if history is not None:
-        conn = hub_db()
-        _activity(conn, history)
-        conn.close()
-    return uhs.upgrade_source(), saved
-
-
-def test_new_install_defaults_to_scrapers_only_and_saves_it(hub_db, app_settings, monkeypatch):
-    source, saved = _source_after(app_settings, monkeypatch, hub_db)
-    assert source == 'none'
-    assert saved == {('Upgrade Hub', 'upgrade_source'): 'none'}
-
-
-def test_install_that_ran_a_full_scan_keeps_both(hub_db, app_settings, monkeypatch):
-    # Never saved the setting but has been scanning with the old default.
-    source, saved = _source_after(app_settings, monkeypatch, hub_db, history={'upgrades': 3, 'scan_limit': None})
-    assert source == 'both'
-    assert saved == {('Upgrade Hub', 'upgrade_source'): 'both'}
-
-
-def test_recent_release_searches_alone_dont_count_as_using_both(hub_db, app_settings, monkeypatch):
-    source, _ = _source_after(app_settings, monkeypatch, hub_db, history={'recent_release_days': 7})
-    assert source == 'none'
-
-
-@pytest.mark.parametrize('stored', ['both', 'zilean_only', 'nzb_only', 'none'])
-def test_a_saved_choice_is_used_as_is(hub_db, app_settings, monkeypatch, stored):
-    source, saved = _source_after(app_settings, monkeypatch, hub_db, history={'upgrades': 1}, stored=stored)
-    assert source == stored and saved == {}
+    assert uhs.upgrade_source() == expected

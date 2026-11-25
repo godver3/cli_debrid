@@ -1242,8 +1242,9 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
                       triggered_by: str = 'manual',
                       recent_release_days: Optional[int] = None) -> Dict[str, Any]:
     """
-    Scan Collected items for better releases: the configured scrapers (a rotating
-    slice per scan), Zilean and the Newznab browse feed.
+    Scan Collected items for better releases: Zilean, the NZB feed history
+    (database/nzb_feed_history.py), and a capped fresh-release search with the
+    configured scrapers.
 
     Performance design:
       DB mode  — Pre-fetch ALL data upfront in bulk queries (1 query for all movies,
@@ -1260,7 +1261,7 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
       scan_limit: If set, caps total Collected items processed (applied before type split).
       recent_release_days: "Search recent releases": a targeted run. Only the scraper
         phase runs, over every item released in the last N days (up to
-        MAX_CHECKS_PER_SCAN), even with "Search with my scrapers" off. Zilean and
+        MAX_CHECKS_PER_SCAN), even with Fresh Release Search off. Zilean and
         the NZB feed are skipped, and the finds are merged into the last results:
         candidates for items this run didn't search are kept.
     """
@@ -1292,11 +1293,15 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
         use_nzb    = upgrade_source in ('both', 'nzb_only')
         logger.info(f'[UPGRADE_HUB] Upgrade source: {upgrade_source} (zilean={use_zilean}, nzb={use_nzb})')
 
-        from database.upgrade_hub_scrapers import scraper_settings
-        _scr = scraper_settings()
-        use_scrapers = _scr['enabled'] and _scr['limit'] > 0
-        scraper_limit = _scr['limit']
+        # Fresh-release search: a capped scraper search of recently released
+        # items. Search Recent Releases widens the window and lifts the cap.
+        from database.upgrade_hub_scrapers import fresh_search_settings
+        _fresh = fresh_search_settings()
+        use_scrapers = _fresh['enabled']
+        scraper_limit = _fresh['limit']
+        scraper_days = _fresh['days']
         if recent_release_days is not None:
+            scraper_days = recent_release_days
             from database.upgrade_hub_scrapers import MAX_CHECKS_PER_SCAN
             use_scrapers = True
             scraper_limit = MAX_CHECKS_PER_SCAN
@@ -1312,8 +1317,8 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
             use_zilean = False
             logger.info('[UPGRADE_HUB] Zilean not configured — skipping the Zilean phases')
         if not (use_zilean or use_nzb or use_scrapers):
-            return {'error': 'No upgrade source: turn on "Search with my scrapers", '
-                             'or set up Zilean / Newznab indexers'}
+            return {'error': 'No upgrade source: set up Zilean or a Newznab indexer, '
+                             'or turn on Fresh Release Search'}
 
         zilean_instance = zilean_settings = zilean_url = db_cfg = None
         if zilean_info:
@@ -1388,16 +1393,16 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
                     best[_key] = _m
             return list(best.values())
 
-        # The scraper phase picks its own slice (oldest-checked first, capped by
-        # "Items Searched Per Scan"), so it gets the whole filtered library. Cutting
-        # it to the scan limit first kept it on the same first N rows forever.
+        # The fresh-release search picks its own slice (recent items, oldest-checked
+        # first, capped per scan), so it starts from the whole filtered library,
+        # not the Scan Limit slice.
         scraper_pool = (_dedupe_movies([i for i in all_collected if i['type'] == 'movie'])
                         + [i for i in all_collected if i['type'] == 'episode'])
-        if recent_release_days is not None:
+        if use_scrapers:
             from database.upgrade_hub_scrapers import released_within
-            scraper_pool = released_within(scraper_pool, recent_release_days)
-            logger.info(f"[UPGRADE_HUB] Search recent releases: {len(scraper_pool)} item(s) "
-                        f"released in the last {recent_release_days} day(s)")
+            scraper_pool = released_within(scraper_pool, scraper_days)
+            logger.info(f"[UPGRADE_HUB] Fresh-release search: {len(scraper_pool)} item(s) released "
+                        f"in the last {scraper_days} day(s), up to {scraper_limit} searched")
 
         # Apply scan limit before splitting by type (Zilean / NZB phases)
         if scan_limit and scan_limit > 0 and len(all_collected) > scan_limit:
@@ -1729,9 +1734,9 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
         except Exception as _nzb_e:
             logger.warning(f'[UPGRADE_HUB] NZB scan phase failed: {_nzb_e}', exc_info=True)
 
-        # ── Phase D: search with the user's own scrapers ─────────────────────
-        # A rotating slice of the library (oldest-checked first), so releases
-        # that never reach Zilean or the NZB browse feed are still found.
+        # ── Phase D: fresh-release search with the user's own scrapers ───────
+        # Recently released items only, capped per scan, oldest-checked first:
+        # better encodes keep appearing in the first weeks after release.
         scraper_searched_ids: List[int] = []
         if use_scrapers and scraper_pool:
             try:

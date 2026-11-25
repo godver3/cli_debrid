@@ -690,7 +690,7 @@ const PHASE_LABELS = {
     scoring:   'Scoring episodes & packs…',
     scanning:  'Scanning movies…',
     nzb_scan:  'Checking NZB indexers…',
-    scrapers:  'Searching with your scrapers…',
+    scrapers:  'Searching fresh releases with your scrapers…',
     done:      'Done',
     error:     'Error',
 };
@@ -830,7 +830,7 @@ let _settings = {
     recent_threshold_days: 90,
     excluded_genres: '',
     exclude_nas_items: false,
-    upgrade_source: 'none',
+    upgrade_source: 'both',
 };
 
 async function loadSettings() {
@@ -894,13 +894,13 @@ function applySettingsToUI() {
 
     // Upgrade source
     const upgradeSourceSel = document.getElementById('settings-upgrade-source');
-    if (upgradeSourceSel) upgradeSourceSel.value = _settings.upgrade_source || 'none';
+    if (upgradeSourceSel) upgradeSourceSel.value = _settings.upgrade_source || 'both';
 
     // Scraper search
-    const useScr = document.getElementById('settings-use-scrapers');
-    if (useScr) useScr.checked = _settings.use_scrapers !== false;
-    const scrChecks = document.getElementById('settings-scraper-checks');
-    if (scrChecks) scrChecks.value = _settings.scraper_checks_per_scan || 50;
+    const freshDays = document.getElementById('settings-fresh-days');
+    if (freshDays) freshDays.value = _settings.fresh_search_days ?? 30;
+    const freshLimit = document.getElementById('settings-fresh-limit');
+    if (freshLimit) freshLimit.value = _settings.fresh_search_limit ?? 20;
 
     // Upgrading (Scraping / Debug settings shown here)
     const upg = _settings.upgrading || {};
@@ -1021,9 +1021,9 @@ async function saveSettings() {
         recent_threshold_days:  recentDaysInp ? parseInt(recentDaysInp.value) || 90 : 90,
         excluded_genres:        _uhExcludedGenres.join(','),
         exclude_nas_items:      excludeNasChk ? excludeNasChk.checked : false,
-        upgrade_source:         (document.getElementById('settings-upgrade-source') || {}).value || 'none',
-        use_scrapers:           !!(document.getElementById('settings-use-scrapers') || {}).checked,
-        scraper_checks_per_scan: parseInt((document.getElementById('settings-scraper-checks') || {}).value) || 50,
+        upgrade_source:         (document.getElementById('settings-upgrade-source') || {}).value || 'both',
+        fresh_search_days:      (v => isNaN(v) ? 30 : Math.max(0, v))(parseInt((document.getElementById('settings-fresh-days') || {}).value)),
+        fresh_search_limit:     (v => isNaN(v) ? 20 : Math.max(0, v))(parseInt((document.getElementById('settings-fresh-limit') || {}).value)),
         // Only sent once loaded, so a failed load can't save blank defaults over them.
         upgrading: !_settings.upgrading ? undefined : {
             enable_upgrading:               !!(document.getElementById('upg-enable') || {}).checked,
@@ -1307,7 +1307,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const s = await res.json();
 
         if (!s.any_source_configured) {
-            showStatus('error', 'No upgrade source — turn on "Search With My Scrapers" in the Settings tab, or enable Zilean or a Newznab indexer in Settings → Scrapers');
+            showStatus('error', 'No upgrade source — enable Zilean or a Newznab indexer in Settings → Scrapers, or turn on Fresh Release Search in the Settings tab');
             document.getElementById('scan-btn').disabled = true;
         }
 
