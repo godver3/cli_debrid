@@ -109,26 +109,27 @@ def release_country_suffix(normalized_parsed_title: str, normalized_base_title: 
     return code if code in _COUNTRY_CODES else None
 
 
-def extract_year_from_title(title: str) -> Optional[int]:
+_YEAR_PATTERN = r'\b(19[0-9]{2}|20[0-9]{2})\b'
+
+
+def release_years_outside_title(parsed_year, release_name: str, wanted_title: str, extract_fallback: bool = False) -> List[int]:
+    """The release-name years to check, leaving out any that belong to the title.
+
+    A year-like number in the show or movie's own name ("Blade Runner 2099",
+    "1923", "2001: A Space Odyssey") is read by the parser as a release year,
+    which then fails the year check on every release. Such years are dropped.
+    With extract_fallback, when nothing is left, the earliest other year in the
+    release name is used (PTT sometimes parses none).
     """
-    Simple year extraction from title when PTT fails to parse it.
-    Looks for 4-digit years and returns the earliest one found.
-    """
-    if not title:
-        return None
-    
-    # Find all 4-digit numbers that could be years (1900-2099)
-    year_pattern = r'\b(19[0-9]{2}|20[0-9]{2})\b'
-    years = re.findall(year_pattern, title)
-    
-    if years:
-        # Convert to integers and return the earliest year
-        year_ints = [int(year) for year in years]
-        earliest_year = min(year_ints)
-        logging.debug(f"Extracted year {earliest_year} from title: '{title}' (found years: {year_ints})")
-        return earliest_year
-    
-    return None
+    title_years = {int(y) for y in re.findall(_YEAR_PATTERN, wanted_title or '')}
+    raw = parsed_year if isinstance(parsed_year, list) else ([] if parsed_year is None else [parsed_year])
+    years = [int(y) for y in raw if str(y).isdigit() and int(y) not in title_years]
+    if not years and extract_fallback:
+        found = [int(y) for y in re.findall(_YEAR_PATTERN, release_name or '') if int(y) not in title_years]
+        if found:
+            years = [min(found)]
+            logging.info(f"Using year {years[0]} from release name: '{release_name}'")
+    return years
 
 
 def tv_release_year_matches(release_year: int, show_year: Optional[int], season_year: int) -> bool:
@@ -1237,14 +1238,9 @@ def filter_results(
             
             # Content type specific checks
             if is_movie and not is_ufc:
-                parsed_year = parsed_info.get('year')
+                parsed_year = release_years_outside_title(parsed_info.get('year'), original_title, title)
                 if parsed_year and year is not None:
-                    if isinstance(parsed_year, list):
-                        if not any(abs(int(py) - year) <= 1 for py in parsed_year):
-                            result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {year})"
-                            logging.info(f"Rejected: Movie year list {parsed_year} doesn't match {year} for '{original_title}' (Size: {result['size']:.2f}GB)")
-                            continue
-                    elif abs(int(parsed_year) - year) > 1:
+                    if not any(abs(py - year) <= 1 for py in parsed_year):
                         result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {year})"
                         logging.info(f"Rejected: Movie year {parsed_year} doesn't match {year} for '{original_title}' (Size: {result['size']:.2f}GB)")
                         continue
@@ -1291,15 +1287,11 @@ def filter_results(
                 # first special's air year. Specials only get the looser
                 # "not before the show existed" check below instead.
                 if not is_formula_1 and season != 0: # Only perform year check if not Formula 1 or a special
-                    parsed_year = parsed_info.get('year')
-                    
-                    # If PTT didn't parse a year, try our own simple extraction
-                    if parsed_year is None:
-                        extracted_year = extract_year_from_title(original_title)
-                        if extracted_year:
-                            parsed_year = extracted_year
-                            logging.info(f"PTT didn't parse year, extracted {extracted_year} from title: '{original_title}'")
-                    
+                    # Years in the show's own name don't count; if PTT gave
+                    # none, fall back to our own extraction from the release name.
+                    parsed_year = release_years_outside_title(
+                        parsed_info.get('year'), original_title, title, extract_fallback=True)
+
                     if parsed_year and year is not None:
                         # For TV shows, we should compare against the season's air date, not the original show premiere
                         # Get the season-specific year if available, otherwise fall back to the original year
@@ -1374,60 +1366,18 @@ def filter_results(
                                     logging.warning(f"Error getting season year for {imdb_id} S{year_lookup_season}: {season_year_err}, using original show year ({year})")
                                     _season_year_cache[cache_key] = year  # Cache the fallback
                         
-                        if isinstance(parsed_year, list):
-                            # Ensure all elements in parsed_year are convertible to int before comparison
-                            try:
-                                # For TV shows, be more lenient with year matching
-                                # Check if any year in the list matches with appropriate tolerance
-                                year_matches = [int(py) for py in parsed_year
-                                                if str(py).isdigit() and tv_release_year_matches(int(py), year, target_year)]
-
-                                if not year_matches:
-                                    result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {target_year}, original show: {year})"
-                                    logging.info(f"Rejected: TV year list {parsed_year} doesn't match season year {target_year} for '{original_title}' (Size: {result['size']:.2f}GB)")
-                                    continue
-                            except ValueError:
-                                # Handle cases where a year in the list is not a valid integer
-                                logging.warning(f"Skipping year check due to invalid year format in list for '{original_title}': {parsed_year}")
-                                result['filter_reason'] = f"Invalid year format in list: {parsed_year}"
-                                continue
-
-                        elif isinstance(parsed_year, (int, str)) and str(parsed_year).isdigit():
-                            parsed_year_int = int(parsed_year)
-                            
-                            # For TV shows, be more lenient with year matching
-                            # Many torrents incorrectly use the original show year instead of the season air date
-                            year_difference = abs(parsed_year_int - target_year)
-                            
-                            # DEBUG: Add detailed logging for Frasier-like cases
-                            if "frasier" in original_title.lower() or "1993" in original_title or "2004" in original_title:
-                                logging.info(f"DEBUG FRASIER: '{original_title}'")
-                                logging.info(f"  - parsed_year: {parsed_year} (int: {parsed_year_int})")
-                                logging.info(f"  - original show year: {year}")
-                                logging.info(f"  - target_year (season/fallback): {target_year}")
-                                logging.info(f"  - year_difference: {year_difference}")
-                                logging.info(f"  - parsed_year_int == year: {parsed_year_int == year}")
-                                logging.info(f"  - target_year != year: {target_year != year}")
-                            
-                            if not tv_release_year_matches(parsed_year_int, year, target_year):
-                                result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {target_year}, original show: {year})"
-                                logging.info(f"Rejected: TV year {parsed_year} doesn't match season year {target_year} for '{original_title}' (Size: {result['size']:.2f}GB)")
-                                continue
-                        else:
-                            # Handle cases where parsed_year is not a list or a valid int/str digit
-                            logging.warning(f"Skipping year check due to invalid year format for '{original_title}': {parsed_year}")
-                            # Optionally, you could reject here if strict year parsing is required
-                            # result['filter_reason'] = f"Invalid year format: {parsed_year}"
-                            # continue
+                        if not any(tv_release_year_matches(py, year, target_year) for py in parsed_year):
+                            result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {target_year}, original show: {year})"
+                            logging.info(f"Rejected: TV year {parsed_year} doesn't match season year {target_year} for '{original_title}' (Size: {result['size']:.2f}GB)")
+                            continue
                 elif season == 0 and not is_formula_1:
                     # Keep the one guarantee year matching still gives specials: a
                     # release dated before the show premiered is a different
                     # same-titled show, not a remaster of this one.
-                    parsed_year = parsed_info.get('year') or extract_year_from_title(original_title)
+                    parsed_year = release_years_outside_title(
+                        parsed_info.get('year'), original_title, title, extract_fallback=True)
                     if parsed_year and year is not None:
-                        _special_years = parsed_year if isinstance(parsed_year, list) else [parsed_year]
-                        _special_years = [int(py) for py in _special_years if str(py).isdigit()]
-                        if _special_years and all(py < year - 1 for py in _special_years):
+                        if all(py < year - 1 for py in parsed_year):
                             result['filter_reason'] = f"Year mismatch: {parsed_year} predates show premiere ({year})"
                             logging.info(f"Rejected: Special's release year {parsed_year} predates show premiere {year} for '{original_title}' (Size: {result['size']:.2f}GB)")
                             continue
