@@ -724,7 +724,7 @@ def _engine_why_down(check_state: bool = True) -> str:
     if builtin_engine.stopped_by_user():
         return 'it was stopped from the Mount page (press Start)'
     if check_state and builtin_engine.state() == 'FATAL':
-        return 'it keeps crashing on start (see the cli_debrid log)'
+        return 'it keeps crashing on start (see the Clyde log)'
     return ''
 
 
