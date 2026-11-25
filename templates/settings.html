@@ -131,6 +131,18 @@
                     </svg>
                     Notifications
                 </div>
+                <div class="settings-nav-item" data-tab="ai-assistant">
+                    <svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>
+                    </svg>
+                    AI Assistant
+                </div>
+                <div class="settings-nav-item" data-tab="settings-transfer">
+                    <svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+                    </svg>
+                    Export / Import
+                </div>
                 {% if environment_mode == 'full' %}
                 <!-- <div class="settings-nav-item" data-tab="reverse-parser">
                     <svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -185,6 +197,9 @@
                 <div id="notifications" class="settings-tab-content" style="display: none;">
                     {% include 'settings_tabs/notifications.html' %}
                 </div>
+                <div id="ai-assistant" class="settings-tab-content" style="display: none;">
+                    {% include 'settings_tabs/page_ai_assistant.html' %}
+                </div>
                 {% if environment_mode == 'full' %}
                 <div id="reverse-parser" class="settings-tab-content" style="display: none;">
                     {% include 'settings_tabs/reverse_parser.html' %}
@@ -194,6 +209,11 @@
                     {% include 'settings_tabs/scrapers.html' %}
                 </div>
                 {% include 'settings_tabs/_settings_scripts.html' %}
+            </div>
+
+            <!-- Outside #settingsForm: its inputs must never reach Save Settings. -->
+            <div id="settings-transfer" class="settings-tab-content" style="display: none;">
+                {% include 'settings_tabs/page_settings_transfer.html' %}
             </div>
 
             <button type="button" id="saveSettingsButton" class="btn btn-primary settings-submit-button">Save Settings</button>
@@ -402,7 +422,7 @@
     }
 
     function toggleSectionHandler(e) {
-        if (!e.target.closest('button')) {
+        if (!e.target.closest('button, .vs-menu')) {
             const header = e.currentTarget;
             const section = header.closest('.settings-section');
             const content = header.nextElementSibling;
@@ -489,6 +509,13 @@
             if (activeTab) {
                 activeTab.style.display = 'block';
                 localStorage.setItem('currentTab', tabName);
+            }
+            // Export / Import has its own buttons; Save Settings does nothing there.
+            const saveBtn = document.getElementById('saveSettingsButton');
+            // (.btn sets display with !important, so a plain style.display loses)
+            if (saveBtn) {
+                if (tabName === 'settings-transfer') saveBtn.style.setProperty('display', 'none', 'important');
+                else saveBtn.style.removeProperty('display');
             }
         }
 
@@ -733,6 +760,7 @@
                 'scraping': 'Version Settings',
                 'content-sources': 'Content Sources',
                 'notifications': 'Notifications',
+                'ai-assistant': 'AI Assistant',
                 'reverse-parser': 'Reverse Parser'
             };
 

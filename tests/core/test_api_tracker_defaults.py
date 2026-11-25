@@ -50,3 +50,48 @@ class APITrackerDefaultsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RequestLoggingTest(unittest.TestCase):
+    """Every outbound request is logged once, whoever makes it (TVDB/TMDB use
+    their own requests calls, not the shared `api` object)."""
+
+    def setUp(self):
+        import requests
+        from requests.adapters import HTTPAdapter
+        self.requests = requests
+        self.mod = _module()
+        self.mod._internal_hosts_cache = (float('inf'), frozenset({'127.0.0.1:8283'}))
+
+        def fake_send(adapter, request, *args, **kwargs):
+            resp = requests.Response()
+            resp.status_code = 200
+            resp.url = request.url
+            resp.request = request
+            resp._content = b'{}'
+            return resp
+
+        patcher = mock.patch.object(HTTPAdapter, 'send', fake_send)
+        patcher.start()
+        self.addCleanup(patcher.stop)  # also undoes install_request_logging's wrapper
+        self.mod.install_request_logging()
+
+    def logged(self):
+        return [c.args[0] for c in self.mod.api_logger.info.call_args_list]
+
+    def test_plain_requests_call_is_logged_without_query(self):
+        self.requests.get('https://api4.thetvdb.com/v4/series/123?apikey=secret')
+        self.assertEqual(self.logged(), ['GET api4.thetvdb.com/v4/series/123'])
+
+    def test_api_tracker_call_is_logged_once(self):
+        self.mod.APITracker().get('https://api.themoviedb.org/3/movie/603')
+        self.assertEqual(self.logged(), ['GET api.themoviedb.org/3/movie/603'])
+
+    def test_internal_hosts_are_not_logged(self):
+        self.requests.get('http://127.0.0.1:8283/api/state')
+        self.assertEqual(self.logged(), [])
+
+    def test_installing_twice_does_not_double_log(self):
+        self.mod.install_request_logging()
+        self.requests.post('https://community.plex.tv/api')
+        self.assertEqual(len(self.logged()), 1)

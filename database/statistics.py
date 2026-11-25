@@ -124,8 +124,8 @@ def resolve_stats_mode():
         return priority
     if not get_setting('Debrid Provider', 'api_key', default='').strip():
         return 'usenet'
-    if (get_setting('Usenet Provider', 'enabled', default=False)
-            and get_setting('Usenet Provider', 'url', default='').strip()):
+    from usenet import usenet_configured
+    if usenet_configured(get_setting):
         return 'combined'
     return 'debrid'
 
@@ -137,17 +137,10 @@ def _fetch_climount_debug_stats(timeout=10):
     need its own copy of the enabled/url/token/HTTP-error handling.
     """
     try:
-        _dcy_url = get_setting('Usenet Provider', 'url', default='').rstrip('/')
-        _dcy_token = get_setting('Usenet Provider', 'api_token', default='').strip()
-        _dcy_enabled = get_setting('Usenet Provider', 'enabled', default=False)
-        if not (_dcy_enabled and _dcy_url):
+        from usenet import get_usenet_client, usenet_configured
+        if not usenet_configured(get_setting):
             return None
-        import requests as _rq
-        _headers = {'Authorization': f'Bearer {_dcy_token}'} if _dcy_token else {}
-        _r = _rq.get(f'{_dcy_url}/debug/stats', headers=_headers, timeout=timeout)
-        if _r.status_code != 200:
-            return None
-        return _r.json()
+        return get_usenet_client().get_debug_stats(timeout=timeout)
     except Exception as _exc:
         logging.debug(f"cli_mount /debug/stats fetch failed: {_exc}")
         return None
@@ -163,15 +156,10 @@ def _fetch_climount_broken_split(total_broken, timeout=10):
     if not total_broken:
         return 0, 0
     try:
-        _dcy_url = get_setting('Usenet Provider', 'url', default='').rstrip('/')
-        _dcy_token = get_setting('Usenet Provider', 'api_token', default='').strip()
-        import requests as _rq
-        _headers = {'Authorization': f'Bearer {_dcy_token}'} if _dcy_token else {}
-        _r = _rq.get(f'{_dcy_url}/api/repair/health', params={'status': 'broken'},
-                     headers=_headers, timeout=timeout)
-        if _r.status_code != 200:
+        from usenet import get_usenet_client
+        _entries = get_usenet_client().list_repair_health(timeout=timeout, status='broken')
+        if _entries is None:
             return total_broken, None
-        _entries = _r.json() or []
         # Records without a protocol predate the field; count them as debrid
         # so the two numbers still add up to the total.
         _nzb = sum(1 for e in _entries if e.get('protocol') == 'nzb')
@@ -372,77 +360,70 @@ def _refresh_download_stats_blocking():
 
         if _use_usenet:
             try:
-                _dcy_url = get_setting('Usenet Provider', 'url', default='').rstrip('/')
-                _dcy_token = get_setting('Usenet Provider', 'api_token', default='').strip()
-                _dcy_enabled = get_setting('Usenet Provider', 'enabled', default=False)
-                if _dcy_enabled and _dcy_url:
-                    import requests as _rq
-                    _headers = {'Authorization': f'Bearer {_dcy_token}'} if _dcy_token else {}
-                    _r = _rq.get(f'{_dcy_url}/debug/stats', headers=_headers, timeout=10)
-                    if _r.status_code == 200:
-                        _data = _r.json()
-                        _pool = _data.get('usenet', {}).get('pool', {})
-                        _active = _pool.get('active', 0)
-                        _idle = _pool.get('idle', 0)
-                        _max = _pool.get('max_connections', 0)
-                        _used = _active + _idle
-                        _pct = round((_used / _max * 100) if _max > 0 else 0)
-                        _status = 'critical' if _pct >= 90 else ('warning' if _pct >= 75 else 'normal')
+                _data = _fetch_climount_debug_stats(timeout=10)
+                if _data is not None:
+                    _pool = _data.get('usenet', {}).get('pool', {})
+                    _active = _pool.get('active', 0)
+                    _idle = _pool.get('idle', 0)
+                    _max = _pool.get('max_connections', 0)
+                    _used = _active + _idle
+                    _pct = round((_used / _max * 100) if _max > 0 else 0)
+                    _status = 'critical' if _pct >= 90 else ('warning' if _pct >= 75 else 'normal')
 
-                        # Library size — subprocess du -sh inherits FUSE mount namespace, cached 30 min
-                        _library_size_str = _dcy_nzbs_size_cache.get('size', 'N/A')
-                        if time.time() - _dcy_nzbs_size_cache.get('last_update', 0) > 1800:
-                            try:
-                                import os as _os, subprocess as _sp
-                                _file_mgmt = get_setting('File Management', 'file_collection_management', 'Plex')
-                                _mount_raw = (get_setting('File Management', 'original_files_path', '')
-                                              if _file_mgmt == 'Symlinked/Local'
-                                              else get_setting('Plex', 'mounted_file_location', ''))
-                                if _mount_raw:
-                                    _base = _mount_raw.rstrip('/').replace('/__all__', '')
-                                    _nzbs_path = _base + '/nzbs'
-                                    logging.info(f"[LibSize] Checking nzbs path: {_nzbs_path}, exists={_os.path.isdir(_nzbs_path)}")
-                                    if _os.path.isdir(_nzbs_path):
-                                        _du = _sp.run(
-                                            ['du', '-sh', '--apparent-size', _nzbs_path],
-                                            capture_output=True, text=True, timeout=60
-                                        )
-                                        logging.info(f"[LibSize] du rc={_du.returncode} stdout={_du.stdout[:50]!r} stderr={_du.stderr[:50]!r}")
-                                        if _du.stdout.strip():  # accept output even if rc=1 (inaccessible files)
-                                            _library_size_str = _du.stdout.split('\t')[0].strip()
-                                            _dcy_nzbs_size_cache['size'] = _library_size_str
-                                            _dcy_nzbs_size_cache['last_update'] = time.time()
-                                            logging.info(f"[LibSize] nzbs size: {_library_size_str}")
-                            except Exception as _le:
-                                logging.info(f"[LibSize] nzbs size check failed: {_le}")
+                    # Library size — subprocess du -sh inherits FUSE mount namespace, cached 30 min
+                    _library_size_str = _dcy_nzbs_size_cache.get('size', 'N/A')
+                    if time.time() - _dcy_nzbs_size_cache.get('last_update', 0) > 1800:
+                        try:
+                            import os as _os, subprocess as _sp
+                            _file_mgmt = get_setting('File Management', 'file_collection_management', 'Plex')
+                            _mount_raw = (get_setting('File Management', 'original_files_path', '')
+                                          if _file_mgmt == 'Symlinked/Local'
+                                          else get_setting('Plex', 'mounted_file_location', ''))
+                            if _mount_raw:
+                                _base = _mount_raw.rstrip('/').replace('/__all__', '')
+                                _nzbs_path = _base + '/nzbs'
+                                logging.info(f"[LibSize] Checking nzbs path: {_nzbs_path}, exists={_os.path.isdir(_nzbs_path)}")
+                                if _os.path.isdir(_nzbs_path):
+                                    _du = _sp.run(
+                                        ['du', '-sh', '--apparent-size', _nzbs_path],
+                                        capture_output=True, text=True, timeout=60
+                                    )
+                                    logging.info(f"[LibSize] du rc={_du.returncode} stdout={_du.stdout[:50]!r} stderr={_du.stderr[:50]!r}")
+                                    if _du.stdout.strip():  # accept output even if rc=1 (inaccessible files)
+                                        _library_size_str = _du.stdout.split('\t')[0].strip()
+                                        _dcy_nzbs_size_cache['size'] = _library_size_str
+                                        _dcy_nzbs_size_cache['last_update'] = time.time()
+                                        logging.info(f"[LibSize] nzbs size: {_library_size_str}")
+                        except Exception as _le:
+                            logging.info(f"[LibSize] nzbs size check failed: {_le}")
 
-                        # Broken entries from repair health, split NZB / debrid
-                        _broken = _data.get('repair', {}).get('health', {}).get('broken', 0)
-                        _broken_nzbs, _broken_debrid = _fetch_climount_broken_split(_broken)
+                    # Broken entries from repair health, split NZB / debrid
+                    _broken = _data.get('repair', {}).get('health', {}).get('broken', 0)
+                    _broken_nzbs, _broken_debrid = _fetch_climount_broken_split(_broken)
 
-                        download_stats_cache['active_downloads'] = {
-                            'count': _active,
-                            'idle': _idle,
-                            'limit': _max,
-                            'percentage': round((_active / _max * 100) if _max > 0 else 0),
-                            'status': _status,
-                            'error': None,
-                            'source': 'climount',
-                            'library_size': _library_size_str,
-                            'broken_nzbs': _broken_nzbs,
-                            'broken_debrid': _broken_debrid,
-                        }
-                        download_stats_cache['usage_stats'] = {
-                            'used': str(_used),
-                            'limit': str(_max),
-                            'percentage': _pct,
-                            'error': None,
-                            'source': 'climount',
-                            'label': 'Connections'
-                        }
-                        download_stats_cache['last_update'] = current_time
-                        logging.debug(f"cli_mount stats: active={_active}, idle={_idle}, max={_max}, broken={_broken}, library={_library_size_str}")
-                        return download_stats_cache['active_downloads'], download_stats_cache['usage_stats']
+                    download_stats_cache['active_downloads'] = {
+                        'count': _active,
+                        'idle': _idle,
+                        'limit': _max,
+                        'percentage': round((_active / _max * 100) if _max > 0 else 0),
+                        'status': _status,
+                        'error': None,
+                        'source': 'climount',
+                        'library_size': _library_size_str,
+                        'broken_nzbs': _broken_nzbs,
+                        'broken_debrid': _broken_debrid,
+                    }
+                    download_stats_cache['usage_stats'] = {
+                        'used': str(_used),
+                        'limit': str(_max),
+                        'percentage': _pct,
+                        'error': None,
+                        'source': 'climount',
+                        'label': 'Connections'
+                    }
+                    download_stats_cache['last_update'] = current_time
+                    logging.debug(f"cli_mount stats: active={_active}, idle={_idle}, max={_max}, broken={_broken}, library={_library_size_str}")
+                    return download_stats_cache['active_downloads'], download_stats_cache['usage_stats']
             except Exception as _dcy_err:
                 logging.debug(f"cli_mount stats fetch failed: {_dcy_err}")
             # cli_mount not available either — return empty stats

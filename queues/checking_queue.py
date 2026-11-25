@@ -88,6 +88,7 @@ class CheckingQueue:
             cls._instance._rediscovery_exhausted = set()  # probed the whole chain, nobody had it
             cls._instance._plex_stall_held_at = {}  # torrent_id -> last time its timeout was held for a stuck Plex
             cls._instance._finished_at = {}  # torrent_id -> first pass that saw it at 100% (Plex mode's timeout clock)
+            cls._instance._hidden_checked = set()  # torrent ids already found hidden by the mount's allowed extensions
             cls._instance._plex_scans = {}  # torrent_id -> times Plex accepted a scan of its folder
             cls._instance._plex_scan_tried_at = {}  # torrent_id -> last time a scan of its folder was sent
             cls._instance._plex_scan_no_library = set()  # torrent_ids whose folder no Plex library holds
@@ -172,6 +173,7 @@ class CheckingQueue:
             for _state in (self._plex_stall_held_at, self._finished_at, self._plex_scans, self._plex_scan_tried_at):
                 _state.pop(_tid, None)
             self._plex_scan_no_library.discard(_tid)
+            self._hidden_checked.discard(_tid)
             self._nzb_plex_scan_triggered.discard(_tid)
 
     def get_contents(self, raw=False):
@@ -687,6 +689,37 @@ class CheckingQueue:
                     return name
         return None
 
+    def _debrid_release_hidden(self, torrent_id, items) -> bool:
+        """Built-in mount: the torrent is mounted but every file has an
+        extension the mount hides (e.g. only .ts), so its file never appears.
+        Blacklists the release so the next scrape takes another one, instead
+        of waiting out the whole checking period. Checked once per torrent."""
+        if str(torrent_id).startswith('nzb:') or torrent_id in self._hidden_checked:
+            return False
+        try:
+            from utilities import mount_debrid
+            if not mount_debrid.engine_holds_debrid(get_setting):
+                return False
+            if not mount_debrid.hidden_by_extension(torrent_id):
+                return False
+        except Exception as exc:
+            logging.debug(f"[CheckingQueue] hidden-extension check for {torrent_id} failed: {exc}")
+            return False
+        self._hidden_checked.add(torrent_id)
+        logging.warning(f"Torrent {torrent_id}: no file has an extension the mount shows "
+                        f"(Built-in Mount allowed extensions) — dropping this release and rescraping")
+        import re as _re_hid
+        from database.not_wanted_magnets import add_to_not_wanted
+        for item in items:
+            try:
+                m = _re_hid.search(r'urn:btih:([0-9a-fA-F]{40})', item.get('filled_by_magnet') or '')
+                h = m.group(1).lower() if m else ''
+                if h:
+                    add_to_not_wanted(h, item_identifier=item.get('id'), item=item)
+            except Exception as exc:
+                logging.debug(f"[CheckingQueue] not-wanted for item {item.get('id')} failed: {exc}")
+        return True
+
     def _provider_for_torrent(self, torrent_id: str):
         """Return the debrid provider that actually holds this torrent.
 
@@ -1195,6 +1228,7 @@ class CheckingQueue:
             self.missing_strikes.pop(torrent_id, None)
             self._plex_stall_held_at.pop(torrent_id, None)
             self._finished_at.pop(torrent_id, None)
+            self._hidden_checked.discard(torrent_id)
             self._plex_scans.pop(torrent_id, None)
             self._plex_scan_tried_at.pop(torrent_id, None)
             self._plex_scan_no_library.discard(torrent_id)
@@ -1652,8 +1686,10 @@ class CheckingQueue:
                         # Collect unique directories for batch Plex scan (prevents hammering Plex API)
                         # Store as dict: {directory: item_type} to preserve type information for section matching
                         directories_to_scan = {}
-                        use_jellyfin = get_setting('Debug', 'emby_jellyfin_url', default=False)
-                        use_plex = get_setting('File Management', 'plex_url_for_symlink', default=False)
+                        from utilities.silo_functions import is_silo_mode, silo_update_item
+                        use_silo = is_silo_mode()
+                        use_jellyfin = not use_silo and get_setting('Debug', 'emby_jellyfin_url', default=False)
+                        use_plex = not use_silo and get_setting('File Management', 'plex_url_for_symlink', default=False)
 
                         for item_in_torrent_group in current_items_for_torrent:
                             try:
@@ -1708,7 +1744,9 @@ class CheckingQueue:
                                                     if len(self._immediate_scan_at) > 500:
                                                         self._immediate_scan_at.pop(next(iter(self._immediate_scan_at)))
                                                     try:
-                                                        if use_jellyfin:
+                                                        if use_silo:
+                                                            silo_update_item({'full_path': directory, 'location_on_disk': directory, 'type': item_type})
+                                                        elif use_jellyfin:
                                                             emby_update_item({'full_path': directory, 'location_on_disk': directory, 'type': item_type})
                                                         elif use_plex:
                                                             plex_update_item({'full_path': directory, 'location_on_disk': directory, 'type': item_type})
@@ -1766,7 +1804,9 @@ class CheckingQueue:
                         if directories_to_scan:
                             logging.info(f"[CheckingQueue] Batch media server update: {len(directories_to_scan)} unique directories to scan")
                             for directory, item_type in directories_to_scan.items():
-                                if use_jellyfin:
+                                if use_silo:
+                                    silo_update_item({'full_path': directory, 'location_on_disk': directory, 'type': item_type})
+                                elif use_jellyfin:
                                     # For Jellyfin, create a minimal item dict with the directory and type
                                     emby_update_item({'full_path': directory, 'location_on_disk': directory, 'type': item_type})
                                 elif use_plex:
@@ -1834,7 +1874,11 @@ class CheckingQueue:
 
                     logging.info(f"Torrent {torrent_id} has been in checking queue for {time_in_queue:.1f} seconds, {current_time - finished_at:.1f} since it finished (dynamic limit: {checking_queue_limit} seconds for {len(current_items_for_torrent)} items)")
 
-                    if waited > checking_queue_limit and plex_mode:
+                    hidden = self._debrid_release_hidden(torrent_id, current_items_for_torrent)
+                    if hidden:
+                        waited = checking_queue_limit + 1
+
+                    if waited > checking_queue_limit and plex_mode and not hidden:
                         if plex_verdict_budget <= 0:
                             continue
                         plex_verdict_budget -= 1

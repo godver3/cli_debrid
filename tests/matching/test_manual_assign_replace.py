@@ -108,7 +108,8 @@ class ReplaceCollectedItemTests(unittest.TestCase):
 class ConfirmFormTests(unittest.TestCase):
     def test_checkbox_isnt_read_as_an_item(self):
         # Every other form key is an item key; the checkbox has to be popped first
-        src = open(os.path.join(ROOT, 'routes', 'magnet_routes.py')).read()
+        from tests._source import project_source
+        src = project_source('routes/magnet_routes.py')
         confirm = src[src.index('def confirm_manual_assignment'):]
         self.assertLess(confirm.index("assignments.pop('replace_existing'"),
                         confirm.index('for item_key, selected_file_list in assignments.items()'))

@@ -1325,6 +1325,18 @@ def scraper_stats_api():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@statistics_bp.route('/api/scraper_stats/trend', methods=['GET'])
+@user_required
+def scraper_stats_trend_api():
+    from database.scraper_grabs import get_scraper_trend
+    days, kind = _scraper_stats_args()
+    try:
+        return jsonify({'success': True, **get_scraper_trend(days=days, kind=kind)})
+    except Exception as e:
+        logging.error(f"[ScraperStats] trend query failed: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @statistics_bp.route('/api/scraper_stats/recent', methods=['GET'])
 @user_required
 def scraper_stats_recent_api():

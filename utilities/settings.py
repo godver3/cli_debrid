@@ -7,6 +7,7 @@ from utilities.file_lock import FileLock
 import shutil # Added for copy2
 import pickle
 import threading
+import time
 
 # --- Start Dynamic Path Functions ---
 def get_config_dir():
@@ -89,7 +90,7 @@ def _read_config_from_disk():
         with Settings(lock_file_path): # Pass dynamic lock path
             if os.path.exists(config_file_path):
                 try:
-                    with open(config_file_path, 'r') as config_file:
+                    with open(config_file_path, 'r', encoding='utf-8') as config_file:
                         config = json.load(config_file)
 
                     # One-time migration: rename legacy 'Decypharr' section → 'cli_mount'
@@ -118,7 +119,7 @@ def _read_config_from_disk():
                     backup_file = config_file_path + '.backup'
                     if os.path.exists(backup_file):
                         try:
-                            with open(backup_file, 'r') as backup:
+                            with open(backup_file, 'r', encoding='utf-8') as backup:
                                 config = json.load(backup)
                                 logging.info(f"Successfully loaded config from backup: {backup_file}")
                                 return config
@@ -217,7 +218,7 @@ def write_config_file(config, indent=2, default=None):
     os.makedirs(os.path.dirname(config_file_path), exist_ok=True)
     tmp_path = f"{config_file_path}.tmp.{os.getpid()}.{threading.get_ident()}"
     try:
-        with open(tmp_path, 'w') as tmp_file:
+        with open(tmp_path, 'w', encoding='utf-8') as tmp_file:
             json.dump(config, tmp_file, indent=indent, default=default)
             tmp_file.flush()
             os.fsync(tmp_file.fileno())
@@ -230,7 +231,7 @@ def write_config_file(config, indent=2, default=None):
             os.replace(tmp_path, config_file_path)
         except OSError as e_replace:
             logging.warning(f"write_config_file: atomic rename failed ({e_replace}); writing in place.")
-            with open(config_file_path, 'w') as config_file:
+            with open(config_file_path, 'w', encoding='utf-8') as config_file:
                 json.dump(config, config_file, indent=indent, default=default)
     finally:
         if os.path.exists(tmp_path):
@@ -266,7 +267,7 @@ def load_env_config():
     
     try:
         # First load traditional env vars
-        with open(env_file, 'r') as f:
+        with open(env_file, 'r', encoding='utf-8') as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith('#') and not line.startswith('CONFIG_JSON'):
@@ -279,7 +280,7 @@ def load_env_config():
         logging.debug(f"Loaded traditional environment variables from {env_file}")
         
         # Now load JSON config
-        with open(env_file, 'r') as f:
+        with open(env_file, 'r', encoding='utf-8') as f:
             lines = f.readlines()
         
         # Try multi-line format first
@@ -423,6 +424,14 @@ def get_setting(section, key=None, default=None):
 
     return value
 
+def get_upgrade_max_release_age_days() -> int:
+    """Scraping.upgrade_max_release_age_days: newly collected items released this
+    many days ago or less go to the Upgrading queue (default 7)."""
+    try:
+        return max(0, int(float(str(get_setting('Scraping', 'upgrade_max_release_age_days', 7)).strip())))
+    except (TypeError, ValueError):
+        return 7
+
 # Update the set_setting function to handle boolean values correctly
 def set_setting(section, key, value):
     # Load config dynamically
@@ -517,6 +526,18 @@ def merge_configs(base, overlay):
             base[key] = value
     return base
 
+# Settings whose default changed for new installs only: an existing config
+# that never stored the key keeps behaving as before. The built-in mount is
+# the default usenet backend for new installs; existing installs stay on
+# cli_mount unless the user picks otherwise.
+EXISTING_INSTALL_DEFAULTS = {
+    ('Usenet Provider', 'provider'): 'climount',
+    # New installs get Movies + TV Shows virtual folders; existing configs
+    # that never had the key keep an unchanged mount.
+    ('Built-in Mount', 'virtual_folders'): '',
+}
+
+
 def ensure_settings_file():
     config_file_path = get_config_file_path()
     logging.debug(f"ensure_settings_file: Checking existence of {config_file_path}")
@@ -606,13 +627,16 @@ def ensure_settings_file():
         config = load_config()
         if not config:
             # If load_config returned empty dict (e.g., due to corruption), trigger default creation
-            logging.warning(f"ensure_settings_file: Existing config file {config_file_path} loaded empty or failed. Re-initializing defaults.")
+            # Never delete it: a file that is merely unreadable here (wrong
+            # encoding, a lock, a partial write) still holds the user's settings.
+            corrupt_path = f"{config_file_path}.unreadable-{time.strftime('%Y%m%d-%H%M%S')}"
+            logging.warning(f"ensure_settings_file: Existing config file {config_file_path} loaded empty or failed. "
+                            f"Moving it to {corrupt_path} and re-initializing defaults.")
             try:
-                os.remove(config_file_path) # Remove potentially corrupt file
-                # Potentially remove backup too? os.remove(config_file_path + '.backup')
+                os.replace(config_file_path, corrupt_path)
                 ensure_settings_file() # Recurse to create defaults
             except OSError as e:
-                 logging.error(f"ensure_settings_file: Failed to remove corrupt config file {config_file_path}: {e}")
+                 logging.error(f"ensure_settings_file: Failed to move unreadable config file {config_file_path}: {e}")
         else:
             # Merge new defaults from schema into existing config
             # This ensures older configs get new default keys from updated schema
@@ -638,7 +662,8 @@ def ensure_settings_file():
                         # Ensure value_schema is a dict and has 'default'
                         if isinstance(value_schema, dict) and 'default' in value_schema:
                             if key != 'tab' and key not in config[section]:
-                                config[section][key] = value_schema.get('default')
+                                config[section][key] = EXISTING_INSTALL_DEFAULTS.get(
+                                    (section, key), value_schema.get('default'))
                                 config_updated = True
                                 logging.info(f"ensure_settings_file: Added new default setting ['{section}']['{key}'] = {value_schema.get('default')}")
 

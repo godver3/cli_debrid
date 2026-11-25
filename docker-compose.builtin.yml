@@ -1,0 +1,62 @@
+# Clyde with its built-in mount: one container, nothing else to set up.
+#
+# The built-in mount streams your debrid account (Real-Debrid, AllDebrid,
+# TorBox, Premiumize, Debrid-Link, HighWay) and your Usenet server from
+# inside Clyde. Linux with Docker Engine. Then:
+#
+#   docker compose -f docker-compose.builtin.yml up -d
+#
+# and open http://your-server-ip:5000. Onboarding picks the built-in mount,
+# fills in its paths, and checks at the end that this container and your
+# media server see the same folders.
+#
+# Every container sees the mount at the same path as the host: /mnt/clid.
+# Keep it that way, and give Plex/Jellyfin/Emby the same paths, so file
+# paths and symlinks work everywhere.
+# Setup guide: https://godver3.github.io/cli_docs/integrations/builtin-mount/
+
+services:
+  cli_debrid:
+    image: godver3/clyde:dev
+    pull_policy: always
+    container_name: cli_debrid
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+      # - "8284:8284"                         # WebDAV share of the mount (Mount page → WebDAV share), for a media server on another machine
+    volumes:
+      - ./cli_debrid/db_content:/user/db_content  # databases: back this up
+      - ./cli_debrid/config:/user/config
+      - ./cli_debrid/logs:/user/logs
+      - ./cli_debrid/cache:/user/cache            # the mount's download cache (50 GB by default; Mount page → Disk cache)
+      - /mnt/clid:/mnt/clid:rshared              # the mount; rshared lets the host and Plex see it
+      - /mnt/symlinks:/mnt/symlinks              # Symlink mode only: where Clyde writes symlinks
+    # The built-in mount is a FUSE filesystem: these three let it mount.
+    devices:
+      - /dev/fuse:/dev/fuse:rwm
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - apparmor:unconfined
+    environment:
+      - TZ=America/New_York                       # your timezone
+      - MALLOC_ARENA_MAX=2
+    # Time to unmount cleanly before Docker stops the container.
+    stop_grace_period: 40s
+    tty: true
+    stdin_open: true
+
+  # Plex in the same stack (optional). Already running Plex? Give it the
+  # same two volumes instead, with :rslave on the mount.
+  # plex:
+  #   image: plexinc/pms-docker:latest
+  #   container_name: plex
+  #   restart: unless-stopped
+  #   network_mode: host
+  #   environment:
+  #     - TZ=America/New_York
+  #     - PLEX_CLAIM=claim-xxxx                # from https://plex.tv/claim, first start only
+  #   volumes:
+  #     - ./plex/config:/config
+  #     - /mnt/clid:/mnt/clid:rslave           # rslave: sees the mount, and sees it again after Clyde restarts
+  #     - /mnt/symlinks:/mnt/symlinks

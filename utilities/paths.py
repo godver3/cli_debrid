@@ -51,3 +51,63 @@ def migrate_legacy_user_dirs() -> None:
                 logging.info(f"Copied {src} to {dst} (it was written to the old hardcoded location)")
             except Exception as e:
                 logging.warning(f"Could not copy {src} to {dst}: {e}")
+
+
+def safe_realpath(path: str) -> str:
+    """os.path.realpath that works on the built-in mount on Windows.
+
+    There, realpath raises WinError 1005 for every path on the WinFsp drive
+    (GetFinalPathNameByHandle needs a volume the Mount Manager knows), so
+    links are followed by hand: readlink until a non-link, minus the \\\\?\\
+    prefix Windows adds. Elsewhere this is plain os.path.realpath."""
+    try:
+        return os.path.realpath(path)
+    except OSError:
+        pass
+    p = os.path.abspath(path)
+    for _ in range(40):  # link loop guard, like the OS limit
+        try:
+            if not os.path.islink(p):
+                break
+            target = os.readlink(p)
+        except OSError:
+            break
+        if target.startswith('\\\\?\\UNC\\'):
+            target = '\\\\' + target[8:]
+        elif target.startswith('\\\\?\\'):
+            target = target[4:]
+        p = os.path.normpath(os.path.join(os.path.dirname(p), target))
+    return os.path.normpath(p)
+
+
+_MEDIA_EXTS = ('.mkv', '.mp4', '.m4v', '.avi', '.mov', '.mpg', '.mpeg', '.ts', '.m2ts', '.wmv', '.webm')
+
+
+def media_file_at(path: str):
+    """The file a Plex check candidate points at, or None. While an NZB item
+    is still checking, its file name can still be the release name, so a
+    candidate may be the job's folder: use the largest video inside it.
+    A folder must never pass as the file, because a directory's st_size
+    (always 0 on Windows) made the ffprobe gate reject healthy releases."""
+    if os.path.isfile(path):
+        return path
+    if not os.path.isdir(path):
+        return None
+    best, best_size = None, -1
+    try:
+        for root, _dirs, files in os.walk(path):
+            if root[len(path):].count(os.sep) > 1:
+                continue
+            for name in files:
+                if not name.lower().endswith(_MEDIA_EXTS) or 'sample' in name.lower():
+                    continue
+                full = os.path.join(root, name)
+                try:
+                    size = os.path.getsize(full)
+                except OSError:
+                    continue
+                if size > best_size:
+                    best, best_size = full, size
+    except OSError:
+        return None
+    return best

@@ -192,10 +192,12 @@ def remove_torrent(api_key: str, torrent_id: str) -> None:
             logging.error(f"Error removing torrent: {str(e)}")
             raise
 
-def list_active_torrents(api_key: str) -> List[Dict]:
+def list_active_torrents(api_key: str, strict: bool = False) -> List[Dict]:
     """List all active torrents, paginating through all results.
 
     RD API /torrents uses page-based pagination (page=1,2,... with limit per page).
+    strict: raise when a page fails instead of returning the pages read so
+    far (the built-in mount removes torrents missing from the listing).
     """
     page_size = 500
     all_torrents = []
@@ -206,10 +208,14 @@ def list_active_torrents(api_key: str) -> List[Dict]:
             page = make_request('GET', '/torrents', api_key, params={'limit': page_size, 'page': current_page})
         except Exception as e:
             logging.error(f"Error listing active torrents at page {current_page}: {str(e)}")
+            if strict:
+                raise
             break
 
         if not isinstance(page, list):
             logging.error(f"Unexpected response from /torrents (page={current_page}): {type(page)} — {str(page)[:200]}")
+            if strict:
+                raise ValueError(f'Real-Debrid /torrents page {current_page} was not a list')
             break
 
         all_torrents.extend(page)

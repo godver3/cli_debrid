@@ -9,6 +9,26 @@ except ImportError:
     pass
 
 import appdirs
+
+# Data folders first: the app imports below read USER_* at import time
+# (database, secret key, battery DB), so on Windows they must already
+# point at the user data dir, or C:\user\... gets a second copy.
+if sys.platform.startswith('win'):
+    app_name = "cli_debrid"  # Replace with your app's name
+    app_author = "cli_debrid"  # Replace with your company name
+    base_path = appdirs.user_data_dir(app_name, app_author)
+    os.environ['USER_CONFIG'] = os.path.join(base_path, 'config')
+    os.environ['USER_LOGS'] = os.path.join(base_path, 'logs')
+    os.environ['USER_DB_CONTENT'] = os.path.join(base_path, 'db_content')
+else:
+    os.environ.setdefault('USER_CONFIG', '/user/config')
+    os.environ.setdefault('USER_LOGS', '/user/logs')
+    os.environ.setdefault('USER_DB_CONTENT', '/user/db_content')
+
+# Ensure directories exist
+for dir_path in [os.environ['USER_CONFIG'], os.environ['USER_LOGS'], os.environ['USER_DB_CONTENT']]:
+    os.makedirs(dir_path, exist_ok=True)
+
 import threading
 import time
 import signal
@@ -35,22 +55,6 @@ from routes.notifications import (
 )
 from database import schema_management
 
-if sys.platform.startswith('win'):
-    app_name = "cli_debrid"  # Replace with your app's name
-    app_author = "cli_debrid"  # Replace with your company name
-    base_path = appdirs.user_data_dir(app_name, app_author)
-    os.environ['USER_CONFIG'] = os.path.join(base_path, 'config')
-    os.environ['USER_LOGS'] = os.path.join(base_path, 'logs')
-    os.environ['USER_DB_CONTENT'] = os.path.join(base_path, 'db_content')
-else:
-    os.environ.setdefault('USER_CONFIG', '/user/config')
-    os.environ.setdefault('USER_LOGS', '/user/logs')
-    os.environ.setdefault('USER_DB_CONTENT', '/user/db_content')
-
-# Ensure directories exist
-for dir_path in [os.environ['USER_CONFIG'], os.environ['USER_LOGS'], os.environ['USER_DB_CONTENT']]:
-    os.makedirs(dir_path, exist_ok=True)
-
 # Set environment mode flag - defaults to 'full' for current behavior
 os.environ.setdefault('CLI_DEBRID_ENVIRONMENT_MODE', 'full')
 
@@ -60,16 +64,6 @@ print(f"USER_CONFIG: {os.environ['USER_CONFIG']}")
 print(f"USER_LOGS: {os.environ['USER_LOGS']}")
 print(f"USER_DB_CONTENT: {os.environ['USER_DB_CONTENT']}")
 print(f"ENVIRONMENT_MODE: {os.environ['CLI_DEBRID_ENVIRONMENT_MODE']}")
-
-import logging
-import shutil
-import signal
-import time
-from utilities.settings import get_setting
-import subprocess
-import threading
-from logging_config import stop_global_profiling, start_global_profiling
-import babelfish
 
 # Global variables
 global_program_runner_instance = None
@@ -2169,7 +2163,7 @@ def main():
            Version:                      
     """)
     print(f"             {version}\n") 
-    print(f"cli_debrid is initialized.")
+    print(f"Clyde is initialized.")
     port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
     print(f"The web UI is available at http://localhost:{port}")
     print("Use the web UI to control the program.")
@@ -2187,6 +2181,17 @@ def main():
 
     # Always print this message
     print("Running in console mode.")
+
+    # Windows source runs (python main.py): bring the built-in mount up like
+    # Docker (supervisord) and the packaged exe (windows_wrapper) do.
+    if sys.platform.startswith('win') and not os.environ.get('CLID_ENGINE_STARTUP_DONE'):
+        def _sync_builtin_engine():
+            try:
+                from utilities import builtin_engine
+                logging.info(f"Built-in mount engine: {builtin_engine.startup()}")
+            except Exception as exc:
+                logging.warning(f"Built-in mount engine sync failed: {exc}")
+        threading.Thread(target=_sync_builtin_engine, name='builtin-engine-sync', daemon=True).start()
 
     if get_setting('Debug', 'auto_run_program'):
         # Add delay to ensure server is ready for app_context usage
@@ -2226,15 +2231,6 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    # Supervisor attributes
-    # Using function attributes for state to keep them local to main() context
-    if not hasattr(main, 'last_supervisor_check_time'):
-        main.last_supervisor_check_time = 0
-    if not hasattr(main, 'supervisor_resume_attempts'):
-        main.supervisor_resume_attempts = 0
-    SUPERVISOR_CHECK_INTERVAL = 300 # 5 minutes
-    SUPERVISOR_MAX_RESUME_ATTEMPTS = 3 
-
     # Prepare MemProbe timing
     if not hasattr(main, 'last_memprobe_time'):
         main.last_memprobe_time = 0.0
@@ -2272,78 +2268,6 @@ def main():
             except Exception:
                 pass
             # ────────────────────────────────────────────────────────
-
-            # Supervisor Logic
-            # No 'global' keyword needed here to access the module-level variable
-            if global_program_runner_instance and global_program_runner_instance.is_running() and False:
-                if global_program_runner_instance.queue_paused and global_program_runner_instance.pause_info.get("error_type"):
-                    current_time = time.time()
-                    if current_time - main.last_supervisor_check_time > SUPERVISOR_CHECK_INTERVAL:
-                        main.last_supervisor_check_time = current_time
-                        logging.info("[Supervisor] ProgramRunner is paused. Verifying pause conditions.")
-                        
-                        pause_error_type = global_program_runner_instance.pause_info.get("error_type")
-                        pause_reason_str = global_program_runner_instance.pause_info.get("reason_string", "Unknown reason")
-                        should_attempt_resume = False
-
-                        if pause_error_type == "CONNECTION_ERROR":
-                            logging.info(f"[Supervisor] Pause due to {pause_error_type}. Re-checking service connectivity...")
-                            from routes.program_operation_routes import check_service_connectivity # Import locally
-                            connectivity_ok, failed_services = check_service_connectivity()
-                            if connectivity_ok:
-                                logging.info("[Supervisor] Connectivity restored.")
-                                should_attempt_resume = True
-                            else:
-                                logging.info(f"[Supervisor] Connectivity issues persist: {failed_services}")
-                        
-                        elif pause_error_type == "DB_HEALTH":
-                            logging.info(f"[Supervisor] Pause due to {pause_error_type}. Re-checking database health...")
-                            if verify_database_health(): # verify_database_health is in main.py
-                                logging.info("[Supervisor] Database health is OK.")
-                                global_program_runner_instance.db_health_pause_info = None  # lift the hold resume_queue honours
-                                should_attempt_resume = True
-                            else:
-                                logging.info("[Supervisor] Database health issues persist.")
-
-                        elif pause_error_type == "SYSTEM_SCHEDULED":
-                            logging.info(f"[Supervisor] Pause due to {pause_error_type}. Re-checking system pause schedule...")
-                            if not global_program_runner_instance._is_within_pause_schedule():
-                                logging.info("[Supervisor] System pause schedule has ended.")
-                                should_attempt_resume = True
-                            else:
-                                logging.info("[Supervisor] Still within system pause schedule.")
-                        
-                        # Add other specific checks if ProgramRunner introduces new pause_info error_types
-
-                        if should_attempt_resume:
-                            main.supervisor_resume_attempts += 1
-                            logging.info(f"[Supervisor] Conditions for pause '{pause_reason_str}' (Type: {pause_error_type}) no longer met. Attempting to resume ProgramRunner (Attempt {main.supervisor_resume_attempts}/{SUPERVISOR_MAX_RESUME_ATTEMPTS}).")
-                            try:
-                                global_program_runner_instance.resume_queue()
-                                # resume_queue() clears pause_info if successful
-                                if not global_program_runner_instance.queue_paused:
-                                    logging.info("[Supervisor] ProgramRunner resumed successfully by supervisor.")
-                                    main.supervisor_resume_attempts = 0 # Reset attempts on success
-                                else:
-                                    logging.warning(f"[Supervisor] Called resume_queue(), but ProgramRunner is still paused. Current pause reason: {global_program_runner_instance.pause_info.get('reason_string')}")
-                                    if main.supervisor_resume_attempts >= SUPERVISOR_MAX_RESUME_ATTEMPTS:
-                                        logging.error(f"[Supervisor] Max resume attempts ({SUPERVISOR_MAX_RESUME_ATTEMPTS}) reached. ProgramRunner remains paused. Manual intervention may be required. Last pause reason: {pause_reason_str}")
-                                        # Optionally, send a critical notification here
-                            except Exception as e_resume:
-                                logging.error(f"[Supervisor] Error attempting to resume ProgramRunner: {e_resume}", exc_info=True)
-                        else:
-                            # Conditions for pause still met, reset resume attempts for this specific pause reason if it changes.
-                            # This might be too complex; for now, attempts are general.
-                            logging.info(f"[Supervisor] Conditions for pause '{pause_reason_str}' (Type: {pause_error_type}) still appear to be met.")
-                            # If pause reason changes, supervisor_resume_attempts should ideally reset.
-                            # For simplicity, we're not tracking changes in pause_info string here.
-                elif not global_program_runner_instance.queue_paused:
-                    # If queue is not paused, reset supervisor attempts.
-                    if main.supervisor_resume_attempts > 0:
-                        logging.info("[Supervisor] ProgramRunner is no longer paused. Resetting resume attempts.")
-                        main.supervisor_resume_attempts = 0
-                    main.last_supervisor_check_time = time.time() # Update check time even if not paused to delay next check
-
 
     except KeyboardInterrupt:
         from routes.program_operation_routes import cleanup_port
@@ -2396,7 +2320,7 @@ if __name__ == "__main__":
             except Exception as e_listeners:
                 logging.error(f"Failed to set up initial scheduler listeners in __main__: {e_listeners}", exc_info=True)
             
-            print("\ncli_debrid Python environment initialized.")
+            print("\nClyde Python environment initialized.")
 
             def run_flask():
                 if not start_server(): 

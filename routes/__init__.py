@@ -1,9 +1,7 @@
 from flask import Blueprint, jsonify, redirect, url_for, render_template, g, request, abort, flash
-from functools import wraps
 import json
 import os
 import sys
-from requests.exceptions import RequestException
 from werkzeug.exceptions import TooManyRequests
 
 from .models import admin_required, user_required, require_login
@@ -19,14 +17,15 @@ from .webhook_routes import webhook_bp
 from .trakt_friends_routes import trakt_friends_bp
 from .debug_routes import debug_bp
 from .tool_pages_routes import tool_pages_bp
+from .subtitle_manager_routes import subtitle_manager_bp
 from .trakt_routes import trakt_bp
 from .log_viewer_routes import logs_bp
 from .settings_routes import settings_bp
 from .program_operation_routes import program_operation_bp
-from .video_routes import video_routes
 from routes.api_tracker import is_rate_limited, get_blocked_domains, APIRateLimiter, api  # Add this import at the top of the file
 from routes.extensions import app
 from .content_requestor_routes import content_requestor_bp
+from .mount_routes import mount_bp
 from .base_routes import base_bp  # Add this import
 from .library_management_routes import library_management
 from .library_routes import library_bp
@@ -45,9 +44,9 @@ from .bazarr_spoofing_routes import bazarr_bp
 from .overlay_routes import overlay_bp, overlay_page_bp
 from .debrid_manager_routes import debrid_manager_bp
 from .upgrade_hub_routes import upgrade_hub_bp
-# AI Assistant disabled: the AI Butler routes (/api/ai/*) are not registered.
-# from .ai_routes import ai_bp
+from .ai_routes import ai_bp
 from .tracker_account_routes import tracker_account_bp
+from .mcp_routes import mcp_bp
 from .oidc_routes import oidc_bp
 
 tooltip_bp = Blueprint('tooltip', __name__)
@@ -71,33 +70,6 @@ def get_tooltips():
     tooltips = get_tooltip_schema()
     return jsonify(tooltips)
 
-
-def is_html_request():
-    return 'text/html' in request.accept_mimetypes.values()
-
-def rate_limit_check(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if is_rate_limited():
-            g.is_rate_limited = True
-            # Allow access to login page, over_usage page, and static files even when rate-limited
-            if request.endpoint in ['auth.login', 'over_usage.index'] or request.path.startswith('/static/'):
-                return f(*args, **kwargs)
-            if is_html_request():
-                return redirect(url_for('over_usage.index'))
-            else:
-                return jsonify(error="Rate limit exceeded", is_rate_limited=True), 429
-        try:
-            return f(*args, **kwargs)
-        except RequestException as e:
-            if "Rate limit exceeded" in str(e):
-                g.is_rate_limited = True
-                if is_html_request():
-                    return redirect(url_for('over_usage.index'))
-                else:
-                    return jsonify(error="Rate limit exceeded", is_rate_limited=True), 429
-            raise
-    return decorated_function
 
 over_usage_bp = Blueprint('over_usage', __name__)
 
@@ -150,6 +122,7 @@ def register_blueprints(app):
         (webhook_bp, '/webhook'),
         (debug_bp, '/debug'),
         (tool_pages_bp, ''),
+        (subtitle_manager_bp, ''),
         (trakt_bp, '/trakt'),
         (logs_bp, '/logs'),
         (settings_bp, '/settings'),
@@ -157,8 +130,8 @@ def register_blueprints(app):
         (real_time_api_bp, '/realtime_api_calls'),
         (tooltip_bp, '/tooltip'),
         (over_usage_bp, '/over_usage'),
-        (video_routes, '/video'),
         (content_requestor_bp, '/content'),
+        (mount_bp, '/mount'),
         (base_bp, '/base'),
         (root_bp, '/'),
         (library_management, '/library_management'),
@@ -179,17 +152,13 @@ def register_blueprints(app):
         (overlay_bp, ''),  # Mounted at root for /api/overlays/* paths (includes prefix in blueprint)
         (debrid_manager_bp, '/debrid_manager'),
         (upgrade_hub_bp, '/upgrade_hub'),
-        # (ai_bp, ''),  # /api/ai/* routes (AI Assistant disabled)
+        (ai_bp, ''),  # /api/ai/* routes
         (oidc_bp, '/auth/oidc'),  # OIDC SSO routes
         (tracker_account_bp, '/tracking'),  # Simkl sign-in, Floppy test
+        (mcp_bp, '/mcp'),  # read-only MCP endpoint (own token) + setup page
     ]
     
     for blueprint, url_prefix in blueprints:
         app.register_blueprint(blueprint, url_prefix=url_prefix)
 
-    # Remove rate_limit_check decorator from all routes
-    # for endpoint, view_func in app.view_functions.items():
-    #     if not endpoint.startswith('over_usage.'):
-    #         app.view_functions[endpoint] = rate_limit_check(view_func)
-
-__all__ = ['register_blueprints', 'admin_required', 'user_required', 'auth_bp', 'statistics_bp', 'rate_limit_check']
+__all__ = ['register_blueprints', 'admin_required', 'user_required', 'auth_bp', 'statistics_bp']

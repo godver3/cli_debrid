@@ -177,6 +177,7 @@ def test_cache_for_seconds_recomputes_once_for_concurrent_callers(fresh_modules)
 
 def test_trending_is_served_stale_while_one_refresh_runs(fresh_modules, monkeypatch):
     from routes import scraper_routes
+    from tests._patching import setattr_in_package
     fetches = []
     refreshed = threading.Event()
 
@@ -186,8 +187,8 @@ def test_trending_is_served_stale_while_one_refresh_runs(fresh_modules, monkeypa
             refreshed.set()
         return {'trendingMovies': [len(fetches)], 'trendingShows': [], 'trendingAnime': []}
 
-    monkeypatch.setattr(scraper_routes, '_fetch_all_trending_now', fetch)
-    monkeypatch.setattr(scraper_routes, '_trending_state', {'data': None, 'fetched_at': 0.0, 'refreshing': False})
+    setattr_in_package(monkeypatch, scraper_routes, '_fetch_all_trending_now', fetch)
+    setattr_in_package(monkeypatch, scraper_routes, '_trending_state', {'data': None, 'fetched_at': 0.0, 'refreshing': False})
 
     assert scraper_routes.fetch_all_trending_parallel()['trendingMovies'] == [1]
     assert scraper_routes.fetch_all_trending_parallel()['trendingMovies'] == [1]

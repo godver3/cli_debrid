@@ -156,8 +156,8 @@ class TestResolverHonoursOverrides(unittest.TestCase):
 
     @staticmethod
     def _resolver_source():
-        with open(DEBUG_ROUTES_PATH, encoding='utf-8') as handle:
-            source = handle.read()
+        from tests._source import project_source
+        source = project_source('routes/debug_routes.py')
         tree = ast.parse(source, filename=DEBUG_ROUTES_PATH)
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef) and node.name == '_run_rclone_to_symlink_task':

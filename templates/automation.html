@@ -77,9 +77,9 @@
     <div class="title">Automation</div>
   </div>
   <p class="intro">
-    What cli_debrid does on its own, grouped by feature. Turn a feature off to stop it running, or use
+    What Clyde does on its own, grouped by feature. Turn a feature off to stop it running, or use
     <b>Run now</b> to run it once. Some features follow a setting by default; the note under them says where.
-    Turn on <b>Advanced</b> to change how often each one runs.
+    Turn on <b>Advanced</b> to see the Queues, Metadata and System groups and to change how often each feature runs.
   </p>
 
   <div class="toolbar">
@@ -105,7 +105,9 @@
   const LS = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } };
 
   let data = { groups: [], tasks: [], running: false };
-  let open = new Set(JSON.parse(LS('auto.open') || '["queues"]'));
+  let open = new Set(JSON.parse(LS('auto.open') || '["content_sources"]'));
+  // Groups most people never need to touch; they only show with Advanced on.
+  const ADVANCED_GROUPS = new Set(['queues', 'metadata', 'system']);
   const expanded = new Set();
   const state = {
     advanced: LS('auto.advanced') === '1',
@@ -182,6 +184,7 @@
     const root = $('autoGroups');
     const parts = [];
     for (const g of data.groups) {
+      if (!state.advanced && ADVANCED_GROUPS.has(g.id)) continue;
       const all = data.tasks.filter(t => t.group === g.id);
       const tasks = all.filter(visible);
       if (!tasks.length) continue;
@@ -273,7 +276,7 @@
       const g = data.groups.find(x => x.id === el.dataset.gtoggle);
       const on = el.checked;
       const tasks = data.tasks.filter(t => t.group === g.id && visible(t) && toggleable(t) && t.enabled !== on);
-      if (!on && g.id === 'queues' && !confirm('Turning off every queue stops cli_debrid from scraping and adding anything. Continue?')) { el.checked = true; return; }
+      if (!on && g.id === 'queues' && !confirm('Turning off every queue stops Clyde from scraping and adding anything. Continue?')) { el.checked = true; return; }
       if (on && tasks.some(t => t.destructive) && !confirm(`This also turns on: ${tasks.filter(t => t.destructive).map(t => t.label).join(', ')}, which delete or change data. Continue?`)) { el.checked = false; render(); return; }
       el.disabled = true;
       for (const t of tasks) {

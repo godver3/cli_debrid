@@ -63,6 +63,10 @@ IN_PROGRESS_STATES = ('Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 'P
 
 def _plex_credentials() -> Tuple[str, str]:
     """(url, token) of the Plex server cli_debrid manages files for, or ('', '')."""
+    from utilities.silo_functions import is_silo_selected
+    from utilities.direct_mount import is_direct_mount_jellyfin
+    if is_silo_selected() or is_direct_mount_jellyfin():
+        return '', ''  # Silo or Jellyfin/Emby is the media server: no Plex reports to read
     if get_setting('File Management', 'file_collection_management') == 'Plex':
         url = get_setting('Plex', 'url', '')
         token = get_setting('Plex', 'token', '')
@@ -306,9 +310,9 @@ def handle_report(report: Dict[str, Any], plex_url: str, token: str, machine_id:
         return 'replacing'
 
     logging.info(f"{log_prefix} no cli_debrid item uses the file Plex plays")
-    reports_db.save_report(report, 'no_match', "cli_debrid doesn't manage the file Plex plays", title)
+    reports_db.save_report(report, 'no_match', "Clyde doesn't manage the file Plex plays", title)
     _notify_owner(f"Plex issue reported by {report['reporter']}: {title}{quoted}. "
-                  "cli_debrid doesn't manage that file, so nothing was replaced.")
+                  "Clyde doesn't manage that file, so nothing was replaced.")
     return 'no_match'
 
 

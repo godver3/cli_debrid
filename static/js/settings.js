@@ -226,8 +226,6 @@ export function updateSettings() {
         settingsData['Bazarr Integration'][key] = input.type === 'checkbox' ? input.checked : input.value;
     });
 
-    // AI Assistant disabled: its settings section is commented out (settings_tabs/_settings_scripts.html).
-    /*
     // Create AI Assistant section if it doesn't exist
     if (!settingsData['AI Assistant']) {
         settingsData['AI Assistant'] = {};
@@ -249,7 +247,6 @@ export function updateSettings() {
             settingsData['AI Assistant'][parts[1]] = val;
         }
     });
-    */
 
 
     // Handle Plex Smart Collections settings
@@ -551,13 +548,14 @@ export function updateSettings() {
         }
     });
 
-    // Handle subtitle providers multi-select
-    const subtitleProvidersSelect = document.getElementById('additional-subtitle_providers');
-    if (subtitleProvidersSelect) {
+    // Subtitle providers: one checkbox each
+    const subtitleProviderList = document.getElementById('additional-subtitle_providers');
+    if (subtitleProviderList) {
         if (!settingsData['Subtitle Settings']) {
             settingsData['Subtitle Settings'] = {};
         }
-        settingsData['Subtitle Settings']['subtitle_providers'] = Array.from(subtitleProvidersSelect.selectedOptions).map(option => option.value);
+        settingsData['Subtitle Settings']['subtitle_providers'] = Array.from(
+            subtitleProviderList.querySelectorAll('input.subtitle-provider-option:checked')).map(box => box.value);
     }
 
     // Set default values for Subtitle Settings if not set
@@ -574,7 +572,7 @@ export function updateSettings() {
     }
     
     if (!settingsData['Subtitle Settings']['subtitle_providers'] || !settingsData['Subtitle Settings']['subtitle_providers'].length) {
-        settingsData['Subtitle Settings']['subtitle_providers'] = ['opensubtitles', 'opensubtitlescom', 'podnapisi', 'tvsubtitles'];
+        settingsData['Subtitle Settings']['subtitle_providers'] = ['opensubtitlescom', 'gestdown', 'tvsubtitles'];
     }
     
     if (!settingsData['Subtitle Settings']['user_agent']) {
@@ -646,7 +644,7 @@ export function updateSettings() {
 
         // Handle filter lists
         ['filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out'].forEach(filterType => {
-            const filterList = section.querySelector(`.filter-list[data-version="${versionId}"][data-filter-type="${filterType}"]`);
+            const filterList = section.querySelector(`.filter-list[data-version="${CSS.escape(versionId)}"][data-filter-type="${filterType}"]`);
             if (filterList) {
                 versionData[filterType] = [];
                 filterList.querySelectorAll('.filter-item').forEach(item => {
@@ -801,22 +799,6 @@ export function updateSettings() {
 
     if (emphasizeNumberOfItemsOverQuality) {
         settingsData['Debug']['emphasize_number_of_items_over_quality'] = emphasizeNumberOfItemsOverQuality.checked;
-    }
-
-    const enableUpgrading = document.getElementById('scraping-enable_upgrading');
-    
-    if (enableUpgrading) {
-        settingsData['Scraping']['enable_upgrading'] = enableUpgrading.checked;
-
-    } else {
-    }
-
-    const enableUpgradingCleanup = document.getElementById('scraping-enable_upgrading_cleanup');
-    
-    if (enableUpgradingCleanup) {
-        settingsData['Scraping']['enable_upgrading_cleanup'] = enableUpgradingCleanup.checked;
-
-    } else {
     }
 
 
@@ -1024,7 +1006,9 @@ export function updateSettings() {
         if (!settingsData['Overlay Settings']) {
             settingsData['Overlay Settings'] = {};
         }
-        settingsData['Overlay Settings']['overlay_content_check_interval_days'] = parseInt(overlayContentCheckDays.value) || 7;
+        const _days = parseInt(overlayContentCheckDays.value, 10);
+        // 0 is valid (refresh every sync), so only fall back to 7 for a blank/invalid value
+        settingsData['Overlay Settings']['overlay_content_check_interval_days'] = Number.isNaN(_days) || _days < 0 ? 7 : _days;
     }
 
     const doNotAddPlexWatchHistoryItemsToQueue = document.getElementById('scraping-do_not_add_plex_watch_history_items_to_queue');
@@ -1049,11 +1033,9 @@ export function updateSettings() {
         });
     }
 
-    // Set default values for enable_upgrading, disable_adult, and trakt_early_releases
-    if (settingsData['Scraping']['enable_upgrading'] === undefined) {
-        settingsData['Scraping']['enable_upgrading'] = false;
-    }
-        
+    // Set default values for disable_adult and trakt_early_releases.
+    // (enable_upgrading is edited on the Upgrade Hub, not here: defaulting it
+    // to false on every save would switch upgrading off.)
     if (settingsData['Scraping']['disable_adult'] === undefined) {
         settingsData['Scraping']['disable_adult'] = true;
     }
@@ -1096,7 +1078,7 @@ export function updateSettings() {
             let successMessage;
             if (data.requires_restart) {
                 const reasons = data.restart_reasons ? data.restart_reasons.join(', ') : 'critical settings';
-                successMessage = `Settings saved successfully.<br><br><strong>⚠️ Restart Required</strong><br>Changes to ${reasons} require restarting CLI Debrid to take effect.`;
+                successMessage = `Settings saved successfully.<br><br><strong>⚠️ Restart Required</strong><br>Changes to ${reasons} require restarting Clyde to take effect.`;
             } else {
                 successMessage = 'Settings saved successfully.<br>Program runner restarted if running.';
             }

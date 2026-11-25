@@ -105,10 +105,10 @@ def rclone_webhook():
         # Check file management mode first
         file_management_mode = get_setting('File Management', 'file_collection_management', 'Symlinked/Local')
         if file_management_mode == 'Plex':
-            logging.info("Ignoring rclone webhook because file management mode is set to 'Plex'.")
+            logging.info("Ignoring rclone webhook because file management is Direct Mount.")
             return jsonify({
                 "status": "ignored",
-                "message": "Rclone webhook ignored; file management mode is 'Plex'."
+                "message": "Rclone webhook ignored; file management is Direct Mount."
             }), 200
 
         full_relative_path_str_raw = request.args.get('file') # Keep raw for logging
@@ -531,7 +531,7 @@ def agregarr_get_user():
         "id": 1,
         "email": "agregarr@cli-debrid",
         "username": "cli_debrid",
-        "displayName": "CLI Debrid",
+        "displayName": "Clyde",
         "permissions": 2,  # Admin permissions
         "avatar": ""
     }), 200
@@ -555,7 +555,7 @@ def agregarr_get_settings():
     """
     return jsonify({
         "initialized": True,
-        "applicationTitle": "CLI Debrid",
+        "applicationTitle": "Clyde",
         "applicationUrl": "",
         "hideAvailable": False,
         "localLogin": True,
@@ -580,7 +580,7 @@ def agregarr_get_main_settings():
     """
     return jsonify({
         "apiKey": "cli_debrid_dummy_key",
-        "applicationTitle": "CLI Debrid",
+        "applicationTitle": "Clyde",
         "applicationUrl": "",
         "csrfProtection": False,
         "defaultPermissions": 2,

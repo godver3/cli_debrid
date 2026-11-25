@@ -11,6 +11,7 @@ from pathlib import Path
 from utilities.settings import get_setting
 from routes.debug_routes import move_item_to_wanted
 from utilities.plex_removal_cache import cache_plex_removal
+from utilities.paths import safe_realpath
 
 ANALYSIS_VIDEO_EXTENSIONS = {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm"}
 ANALYSIS_THREADS = 15  # Number of threads for file analysis
@@ -32,7 +33,7 @@ def is_ffprobe_available():
 def is_symlink_valid_for_analysis(path):
     if os.path.islink(path):
         try:
-            resolved = os.path.realpath(path)
+            resolved = safe_realpath(path)
             return os.path.exists(resolved), resolved
         except Exception: 
             return False, None
@@ -108,8 +109,8 @@ def _process_broken_media_item_analysis(db_path, item_id, title, imdb_id, season
         remaining_items_with_version = 0
 
         if clean_version:
-            query_params = [f"%{clean_version}%", item_id, imdb_id]
-            base_query_select = "SELECT COUNT(*) FROM media_items WHERE state IN ('Collected', 'Upgrading') AND version LIKE ? AND id != ? "
+            query_params = [clean_version, item_id, imdb_id]
+            base_query_select = "SELECT COUNT(*) FROM media_items WHERE state IN ('Collected', 'Upgrading') AND RTRIM(version, '*') = ? AND id != ? "
             base_query_exists = """
                 AND location_on_disk IS NOT NULL AND EXISTS (
                     SELECT 1 FROM media_items m2 

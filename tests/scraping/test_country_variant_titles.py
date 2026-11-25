@@ -47,6 +47,27 @@ class CountryVariantTitleTests(unittest.TestCase):
             self.assertNotIn("language_code_missing_penalty", by_title[t])
         self.assertEqual(-500, by_title[UNTAGGED]["language_code_missing_penalty"])
 
+    def test_untagged_release_the_indexer_files_under_this_show_passes(self):
+        """The Traitors (IN) S02 packs are named plain "The.Traitors.S02...":
+        the indexer's own IMDb id for the NZB (extended=1) says which show it
+        is. The same untagged name with another show's id, or none, is still
+        the original and rejected; a name saying UK stays rejected."""
+        from scraper.functions.filter_results import filter_results
+
+        def nzb(title, imdb):
+            r = _result(title)
+            r["parsed_info"]["newznab_imdb"] = imdb
+            return r
+        pack = "The.Traitors.S02.1080p.AMZN.WEB-DL.DDP2.0.H.264-GRP"
+        results = [nzb(pack, "33347879"),
+                   nzb("The.Traitors.S02E01.1080p.WEB.H264-OTHER", "15357226"),
+                   nzb("The.Traitors.S02E01.1080p.WEB.H264-NOID", ""),
+                   nzb("The.Traitors.UK.S02E01.1080p.WEB.H264-UKGRP", "33347879")]
+        passed, _ = filter_results(results, "271489", "The Traitors (IN)", 2025, "episode",
+                                   2, 1, True, VERSION, 60, 11, {2: 11}, ["Reality"], [],
+                                   imdb_id="tt33347879")
+        self.assertEqual({pack}, {r["original_title"] for r in passed})
+
     def test_other_country_versions(self):
         # Native release named by country (Italy) or tagged with the language passes;
         # other countries and untagged English releases (the original show) don't.
@@ -98,3 +119,26 @@ class HelperTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class CountryTextSearchTests(unittest.TestCase):
+    """Newznab text searches spell a national version's country the way its
+    releases do: "The Traitors (IN)" was searched as "The Traitors IN S02E01"
+    and found none of the "The.Traitors.India.S02..." packs on DrunkenSlug."""
+
+    def test_search_title(self):
+        from scraper.newznab import _text_search_title
+        cases = {'The Traitors (IN)': 'The Traitors India', 'The Traitors (IT)': 'The Traitors Italy',
+                 'The Traitors (BR)': 'The Traitors Brazil', 'The Traitors (RS)': 'The Traitors Serbia',
+                 'The Traitors (IE)': 'The Traitors Ireland',
+                 # releases use these codes as-is
+                 'The Traitors (UK)': 'The Traitors (UK)', 'The Traitors (NZ)': 'The Traitors (NZ)',
+                 'The Traitors': 'The Traitors', 'Show (ZZ)': 'Show (ZZ)'}
+        for title, expected in cases.items():
+            with self.subTest(title=title):
+                self.assertEqual(expected, _text_search_title(title))
+
+    def test_episode_query_uses_it(self):
+        from scraper.newznab import _build_params_list
+        params = _build_params_list('k', '33347879', 'The Traitors (IN)', 2025, 'episode', 2, 1, True)
+        self.assertEqual(['The Traitors India S02'], [p['q'] for p in params if p.get('t') == 'search'])

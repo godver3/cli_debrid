@@ -191,6 +191,20 @@ class DebridProvider(ABC):
         """
         pass
 
+    # ---- built-in mount streaming (optional per provider) ----------------
+
+    #: True when mount_files/mount_link are implemented.
+    supports_mount_links = False
+
+    def mount_files(self, torrent_id: str) -> Optional[Tuple[str, List[Dict]]]:
+        """(folder name, [{name, size, file_id}]) of a finished torrent for the
+        built-in mount, or None when it isn't finished / not streamable."""
+        raise NotImplementedError(f'{type(self).__name__} has no built-in mount support yet')
+
+    def mount_link(self, torrent_id: str, file_id: str) -> Tuple[str, int]:
+        """(direct download URL, seconds it stays valid) for one file."""
+        raise NotImplementedError(f'{type(self).__name__} has no built-in mount support yet')
+
     @abstractmethod
     def get_torrent_info(self, torrent_id: str) -> Optional[Dict]:
         """Get basic information about a torrent."""

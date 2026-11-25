@@ -1,7 +1,7 @@
 {% extends "tool_cards/layout.html" %}
 {% block title %}Maintenance{% endblock %}
 {% block page_title %}Maintenance{% endblock %}
-{% block intro %}<p class="tdb-intro">Backups, cleanups and repairs for cli_debrid's databases and caches. Most of these change data; dry run first where a card offers it.</p>{% endblock %}
+{% block intro %}<p class="tdb-intro">Backups, cleanups and repairs for Clyde's databases and caches. Most of these change data; dry run first where a card offers it.</p>{% endblock %}
 {% block tabs %}
 <button class="tab" data-cat="backups">Backups</button>
 <button class="tab" data-cat="cleanup">Cleanup &amp; repair</button>
@@ -24,7 +24,7 @@ window.addEventListener('load', function () {
 {% include 'tool_cards/maintenance.html' %}
 <div data-cat="cleanup" class="debug_item">
   <h3>Not Wanted list</h3>
-  <p class="description">Releases cli_debrid will skip because they failed before (magnets, URLs). Remove single entries or purge the list.</p>
+  <p class="description">Releases Clyde will skip because they failed before (magnets, URLs). Remove single entries or purge the list.</p>
   <a class="btn" href="{{ url_for('debug.not_wanted') }}">Open the Not Wanted list</a>
 </div>
 <div data-cat="cleanup" class="debug_item">

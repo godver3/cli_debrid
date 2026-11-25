@@ -1,0 +1,734 @@
+// Package api is the engine's localhost HTTP API, used by cli_debrid.
+//
+//	GET    /status                 engine, providers, caches, job counts
+//	POST   /speedtest             {"provider": name}: manual usenet server speed test
+//	POST   /jobs?name=&category=&id=   body: NZB (raw, or multipart field "nzb")
+//	GET    /jobs?status=           list
+//	GET    /jobs/{id}              job + entries (with mount paths) + failures
+//	PATCH  /jobs/{id}              {"name": ..., "tags": [...], "cli_ids": {...}}
+//	DELETE /jobs/{id}
+//	POST   /jobs/{id}/retry        re-queue a failed job
+//	GET    /changes?since=<unix ms>  jobs updated and deleted since
+//	GET    /stats                  connection pools and transfer counters
+//	GET    /health?status=broken   jobs with health records (filtered)
+//	POST   /health/run?full=&ignore_last_checked=   check all ready jobs
+//	GET    /health/run             current/last run; POST /health/stop stops it
+//	GET|POST|DELETE /jobs/{id}/health   record / check now (?full=) / clear
+//	POST   /replacements/verify    {cli_debrid_id, info_hash}: is the replacement playable?
+//	POST   /replacements/ack       {entry_name, file_name, info_hash, cli_debrid_id, reason}:
+//	                               remove one old broken file (cli_mount-compatible shapes)
+//	GET    /jobs/{id}/sidecars     subtitle sidecars saved in the job's folder
+//	PUT|DELETE /jobs/{id}/sidecars/{name}   save (raw body) / remove one
+package api
+
+import (
+	"crypto/subtle"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/pprof"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/godver3/cli_debrid/engine/internal/engine"
+	"github.com/godver3/cli_debrid/engine/internal/nntp"
+	"github.com/godver3/cli_debrid/engine/internal/store"
+	"github.com/godver3/cli_debrid/engine/internal/stream"
+)
+
+const maxNZB = 64 << 20
+
+// Handler returns the API handler for e.
+func Handler(e *engine.Engine) http.Handler {
+	mux := http.NewServeMux()
+	a := &api{e: e}
+	mux.HandleFunc("GET /status", a.status)
+	mux.HandleFunc("POST /jobs", a.submit)
+	mux.HandleFunc("POST /jobs/import", a.importMapped)
+	mux.HandleFunc("POST /debrid/jobs", a.addDebrid)
+	mux.HandleFunc("GET /jobs", a.list)
+	mux.HandleFunc("GET /jobs/{id}", a.get)
+	mux.HandleFunc("PATCH /jobs/{id}", a.patch)
+	mux.HandleFunc("DELETE /jobs/{id}", a.del)
+	mux.HandleFunc("GET /jobs/{id}/nzb", a.nzb)
+	mux.HandleFunc("POST /jobs/{id}/retry", a.retry)
+	mux.HandleFunc("GET /jobs/{id}/sidecars", a.sidecarList)
+	mux.HandleFunc("PUT /jobs/{id}/sidecars/{name}", a.sidecarPut)
+	mux.HandleFunc("DELETE /jobs/{id}/sidecars/{name}", a.sidecarDel)
+	mux.HandleFunc("GET /tree", a.tree)
+	mux.HandleFunc("POST /cache/cleanup", a.cacheCleanup)
+	mux.HandleFunc("POST /cache/purge", a.cachePurge)
+	mux.HandleFunc("GET /protected", a.protectedGet)
+	mux.HandleFunc("POST /protected", a.protectedSet)
+	mux.HandleFunc("GET /tree/{top}", a.treeTop)
+	mux.HandleFunc("GET /changes", a.changes)
+	mux.HandleFunc("GET /stats", a.stats)
+	mux.HandleFunc("GET /streams", a.streams)
+	mux.HandleFunc("POST /prewarm", a.prewarm)
+	mux.HandleFunc("GET /find", a.findFile)
+	mux.HandleFunc("POST /speedtest", a.speedTest)
+	mux.HandleFunc("POST /shutdown", a.shutdown)
+	mux.HandleFunc("GET /health", a.healthList)
+	mux.HandleFunc("POST /health/run", a.healthRun)
+	mux.HandleFunc("GET /health/run", a.healthRunStatus)
+	mux.HandleFunc("POST /health/stop", a.healthStop)
+	mux.HandleFunc("GET /jobs/{id}/health", a.healthGet)
+	mux.HandleFunc("POST /jobs/{id}/health", a.healthCheck)
+	mux.HandleFunc("DELETE /jobs/{id}/health", a.healthClear)
+	mux.HandleFunc("POST /replacements/verify", a.verify)
+	mux.HandleFunc("POST /replacements/ack", a.ack)
+	// Profiling (token-protected like the rest; the API listens on loopback).
+	mux.HandleFunc("GET /debug/pprof/", pprof.Index)
+	mux.HandleFunc("GET /debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("GET /debug/pprof/trace", pprof.Trace)
+	return a.logged(a.auth(mux))
+}
+
+type api struct{ e *engine.Engine }
+
+// statusRecorder keeps a response's status and the start of an error body.
+type statusRecorder struct {
+	http.ResponseWriter
+	code int
+	body []byte
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	s.code = code
+	s.ResponseWriter.WriteHeader(code)
+}
+
+func (s *statusRecorder) Write(b []byte) (int, error) {
+	if s.code == 0 {
+		s.code = http.StatusOK
+	}
+	if s.code >= 400 && len(s.body) < 300 {
+		s.body = append(s.body, b[:min(len(b), 300-len(s.body))]...)
+	}
+	return s.ResponseWriter.Write(b)
+}
+
+// logged logs failed API calls: server errors as warnings, refusals (bad
+// request, not found...) at debug level, so a failing cli_debrid call can
+// be traced from the engine's side.
+func (a *api) logged(next http.Handler) http.Handler {
+	log := a.e.Logger().With("component", "api")
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w}
+		next.ServeHTTP(rec, r)
+		if rec.code < 400 {
+			return
+		}
+		attrs := []any{"method", r.Method, "path", r.URL.Path, "status", rec.code,
+			"err", strings.TrimSpace(string(rec.body)), "took", time.Since(start).Round(time.Millisecond)}
+		if rec.code >= 500 {
+			log.Warn("api call failed", attrs...)
+		} else {
+			log.Debug("api call refused", attrs...)
+		}
+	})
+}
+
+func (a *api) auth(next http.Handler) http.Handler {
+	token := a.e.Config().Token
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if token != "" {
+			got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+			if subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
+				writeErr(w, http.StatusUnauthorized, errors.New("bad or missing token"))
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func writeJSON(w http.ResponseWriter, code int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeErr(w http.ResponseWriter, code int, err error) {
+	writeJSON(w, code, map[string]string{"error": err.Error()})
+}
+
+func storeErr(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		writeErr(w, http.StatusNotFound, err)
+	case errors.Is(err, store.ErrExists):
+		writeErr(w, http.StatusConflict, err)
+	case errors.Is(err, store.ErrBadID), errors.Is(err, engine.ErrBadNZB):
+		writeErr(w, http.StatusBadRequest, err)
+	default:
+		writeErr(w, http.StatusInternalServerError, err)
+	}
+}
+
+type entryOut struct {
+	Name        string `json:"name"`
+	Size        int64  `json:"size"`
+	Path        string `json:"path,omitempty"`
+	FromArchive string `json:"from_archive,omitempty"`
+}
+
+type jobOut struct {
+	store.Job
+	Path string `json:"path,omitempty"` // job folder in the mount
+	// HiddenByExtension: ready, but every file has an extension the mount
+	// doesn't show (no folder will ever appear).
+	HiddenByExtension bool       `json:"hidden_by_extension,omitempty"`
+	Entries           []entryOut `json:"entries,omitempty"`
+	Failures          any        `json:"failures,omitempty"`
+}
+
+func (a *api) render(j store.Job, detail bool) jobOut {
+	out := jobOut{Job: j, Path: a.e.FolderPath(j.ID)}
+	if !detail {
+		return out
+	}
+	if _, res, err := a.e.Store.Get(j.ID); err == nil && res != nil {
+		out.HiddenByExtension = out.Path == "" && a.e.HiddenByExtension(res)
+		if len(res.Failures) > 0 {
+			out.Failures = res.Failures
+		}
+	}
+	if out.Path != "" {
+		name := out.Path[strings.LastIndex(out.Path, "/")+1:]
+		if f, ok := a.e.Folder(engine.AllFolder, name); ok {
+			for _, en := range f.Entries {
+				out.Entries = append(out.Entries, entryOut{Name: en.Name, Size: en.Size,
+					Path: out.Path + "/" + en.Name, FromArchive: en.FromArchive})
+			}
+		}
+	}
+	return out
+}
+
+// protectedSet takes one Plex poll: the mount files Plex reports playing.
+func (a *api) protectedSet(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		OK    bool                   `json:"ok"`
+		Error string                 `json:"error"`
+		Files []engine.ProtectedFile `json:"files"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	a.e.SetProtected(body.Files, body.OK, body.Error)
+	writeJSON(w, http.StatusOK, a.e.Protection())
+}
+
+func (a *api) protectedGet(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, a.e.Protection())
+}
+
+func (a *api) cacheCleanup(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, a.e.RunCleanup())
+}
+
+func (a *api) cachePurge(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, a.e.PurgeCache())
+}
+
+// tree lists the mount's top folders with how many job folders each holds.
+func (a *api) tree(w http.ResponseWriter, r *http.Request) {
+	type top struct {
+		Name  string `json:"name"`
+		Count int    `json:"count"`
+	}
+	out := []top{}
+	for _, t := range a.e.TopFolders() {
+		out = append(out, top{Name: t, Count: len(a.e.Folders(t))})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// treeTop lists the job folders under one top folder, as the mount shows them.
+func (a *api) treeTop(w http.ResponseWriter, r *http.Request) {
+	top := r.PathValue("top")
+	known := false
+	for _, t := range a.e.TopFolders() {
+		known = known || t == top
+	}
+	if !known {
+		writeErr(w, http.StatusNotFound, fmt.Errorf("no top folder %q", top))
+		return
+	}
+	type folderOut struct {
+		Name    string    `json:"name"`
+		JobID   string    `json:"job_id"`
+		Size    int64     `json:"size"`
+		Files   int       `json:"files"`
+		ModTime time.Time `json:"mod_time"`
+	}
+	out := []folderOut{}
+	for _, f := range a.e.Folders(top) {
+		var size int64
+		for _, en := range f.Entries {
+			size += en.Size
+		}
+		out = append(out, folderOut{Name: f.Name, JobID: f.JobID, Size: size, Files: len(f.Entries), ModTime: f.ModTime})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (a *api) status(w http.ResponseWriter, r *http.Request) {
+	counts := map[string]int{}
+	for _, j := range a.e.Store.List() {
+		counts[j.Status]++
+	}
+	pools, _, _, _ := a.e.Client.Stats()
+	out := map[string]any{
+		"ready":      true,
+		"mount_path": a.e.Config().MountPath,
+		"jobs":       counts,
+		"providers":  pools,
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (a *api) submit(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxNZB)
+	var data []byte
+	var err error
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		f, _, ferr := r.FormFile("nzb")
+		if ferr != nil {
+			writeErr(w, http.StatusBadRequest, ferr)
+			return
+		}
+		defer f.Close()
+		data, err = io.ReadAll(f)
+	} else {
+		data, err = io.ReadAll(r.Body)
+	}
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	q := r.URL.Query()
+	password := q.Get("password")
+	if password == "" {
+		password = r.FormValue("password") // multipart field keeps it out of URLs/logs
+	}
+	j, err := a.e.SubmitPassword(data, q.Get("name"), q.Get("category"), q.Get("id"), password)
+	if err != nil {
+		storeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, a.render(j, false))
+}
+
+func (a *api) list(w http.ResponseWriter, r *http.Request) {
+	status := r.URL.Query().Get("status")
+	out := []jobOut{}
+	for _, j := range a.e.Store.List() {
+		if status == "" || j.Status == status {
+			out = append(out, a.render(j, false))
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (a *api) get(w http.ResponseWriter, r *http.Request) {
+	j, _, err := a.e.Store.Get(r.PathValue("id"))
+	if err != nil {
+		storeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, a.render(j, true))
+}
+
+func (a *api) patch(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var body struct {
+		Name   *string         `json:"name"`
+		Tags   *[]string       `json:"tags"`
+		CLIIDs *map[string]int `json:"cli_ids"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if body.Name != nil {
+		if _, err := a.e.Rename(id, *body.Name); err != nil {
+			storeErr(w, err)
+			return
+		}
+	}
+	j, err := a.e.Store.Update(id, func(j *store.Job) {
+		if body.Tags != nil {
+			j.Tags = *body.Tags
+		}
+		if body.CLIIDs != nil {
+			if j.CLIIDs == nil {
+				j.CLIIDs = map[string]int{}
+			}
+			for k, v := range *body.CLIIDs { // merge, like cli_mount
+				j.CLIIDs[k] = v
+			}
+		}
+	})
+	if err != nil {
+		storeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, a.render(j, true))
+}
+
+// nzb hands out a usenet job's stored NZB (moving a library back to
+// cli_mount re-submits it there under the same id).
+func (a *api) nzb(w http.ResponseWriter, r *http.Request) {
+	j, _, err := a.e.Store.Get(r.PathValue("id"))
+	if err != nil {
+		storeErr(w, err)
+		return
+	}
+	if j.Protocol == engine.ProtocolDebrid {
+		writeErr(w, http.StatusConflict, fmt.Errorf("job %s is a debrid job: it has no NZB", j.ID))
+		return
+	}
+	data, err := a.e.Store.NZB(j.ID)
+	if err != nil {
+		storeErr(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-nzb")
+	w.Write(data)
+}
+
+func (a *api) del(w http.ResponseWriter, r *http.Request) {
+	if err := a.e.Delete(r.PathValue("id")); err != nil {
+		storeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *api) sidecarList(w http.ResponseWriter, r *http.Request) {
+	if _, _, err := a.e.Store.Get(r.PathValue("id")); err != nil {
+		storeErr(w, err)
+		return
+	}
+	list := a.e.Sidecars(r.PathValue("id"))
+	if list == nil {
+		list = []engine.Sidecar{}
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+func (a *api) sidecarPut(w http.ResponseWriter, r *http.Request) {
+	data, err := io.ReadAll(io.LimitReader(r.Body, engine.MaxSidecarBytes+1))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := a.e.PutSidecar(r.PathValue("id"), r.PathValue("name"), data); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			storeErr(w, err)
+		} else {
+			writeErr(w, http.StatusBadRequest, err)
+		}
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *api) sidecarDel(w http.ResponseWriter, r *http.Request) {
+	if err := a.e.DeleteSidecar(r.PathValue("id"), r.PathValue("name")); err != nil {
+		if errors.Is(err, engine.ErrNotSidecar) {
+			writeErr(w, http.StatusBadRequest, err)
+		} else {
+			writeErr(w, http.StatusNotFound, err)
+		}
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *api) retry(w http.ResponseWriter, r *http.Request) {
+	j, err := a.e.Retry(r.PathValue("id"))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			storeErr(w, err)
+		} else {
+			writeErr(w, http.StatusConflict, err)
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, a.render(j, false))
+}
+
+func (a *api) changes(w http.ResponseWriter, r *http.Request) {
+	var since time.Time
+	if s := r.URL.Query().Get("since"); s != "" {
+		ms, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, errors.New("since must be unix milliseconds"))
+			return
+		}
+		since = time.UnixMilli(ms)
+	}
+	now := time.Now()
+	jobs, gone := a.e.Store.Changes(since)
+	out := make([]jobOut, 0, len(jobs))
+	for _, j := range jobs {
+		out = append(out, a.render(j, true))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"now":     now.UnixMilli(), // pass back as since next time
+		"jobs":    out,
+		"deleted": gone,
+	})
+}
+
+// addDebrid registers a debrid torrent (cli_debrid's account sync).
+func (a *api) addDebrid(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ID       string              `json:"id"`
+		Name     string              `json:"name"`
+		Category string              `json:"category"`
+		Provider string              `json:"provider"`
+		Hash     string              `json:"hash"`
+		Files    []engine.DebridFile `json:"files"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 16<<20)).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	j, err := a.e.AddDebrid(body.ID, body.Name, body.Category, body.Provider, body.Files)
+	if err != nil {
+		storeErr(w, err)
+		return
+	}
+	if h := strings.ToLower(strings.TrimSpace(body.Hash)); h != "" {
+		if j2, err := a.e.Store.Update(j.ID, func(s *store.Job) { s.Hash = h }); err == nil {
+			j = j2
+		}
+	}
+	writeJSON(w, http.StatusCreated, a.render(j, false))
+}
+
+// importMapped adds a job migrated from cli_mount (its own segment maps).
+func (a *api) importMapped(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ID       string                  `json:"id"`
+		Name     string                  `json:"name"`
+		Category string                  `json:"category"`
+		Tags     []string                `json:"tags"`
+		Files    []engine.MappedFileSpec `json:"files"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 256<<20)).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	j, err := a.e.ImportMapped(body.ID, body.Name, body.Category, body.Tags, body.Files)
+	if err != nil {
+		storeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, a.render(j, false))
+}
+
+// shutdown stops the engine cleanly (unmount, then exit).
+func (a *api) shutdown(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "stopping"})
+	a.e.RequestShutdown()
+}
+
+// prewarm starts fetching the start of one file in the background
+// (cli_debrid's next-episode prewarm). Body: {"job_id","file","bytes"}.
+func (a *api) prewarm(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		JobID string `json:"job_id"`
+		File  string `json:"file"`
+		Bytes int64  `json:"bytes"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil || body.JobID == "" || body.File == "" || body.Bytes <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "job_id, file and bytes are required"})
+		return
+	}
+	if err := a.e.Prewarm(body.JobID, body.File, body.Bytes); err != nil {
+		storeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "prewarming"})
+}
+
+// findFile looks a mount file up by name (?name=, repeatable, tried in
+// order): {"job_id", "file"}, or 404.
+func (a *api) findFile(w http.ResponseWriter, r *http.Request) {
+	id, file, ok := a.e.FindFile(r.URL.Query()["name"])
+	if !ok {
+		writeErr(w, http.StatusNotFound, fmt.Errorf("no mount file by that name"))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"job_id": id, "file": file})
+}
+
+// speedTest measures one usenet server ({"provider": name}).
+func (a *api) speedTest(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Provider string `json:"provider"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<12)).Decode(&body); err != nil || body.Provider == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "provider is required"})
+		return
+	}
+	res, err := a.e.SpeedTest(r.Context(), body.Provider)
+	if errors.Is(err, nntp.ErrUnknownProvider) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// streams lists files open on the mount (for "now playing").
+func (a *api) streams(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, a.e.Streams())
+}
+
+func (a *api) stats(w http.ResponseWriter, r *http.Request) {
+	pools, bytes, articles, missing := a.e.Client.Stats()
+	segs, memBytes := a.e.Cache.Len()
+	out := map[string]any{
+		"pools":            pools,
+		"bytes_downloaded": bytes,
+		"articles":         articles,
+		"articles_missing": missing,
+		"mem_cache":        map[string]int64{"segments": int64(segs), "bytes": memBytes},
+		// Live reads that stopped waiting on a slow background fetch.
+		"hedges": map[string]int64{"started": a.e.Cache.Hedges.Load(), "won": a.e.Cache.HedgeWins.Load()},
+	}
+	out["debrid"] = stream.RemoteStats()
+	out["usage"] = a.e.Usage.Summaries()
+	out["overview"] = a.e.Overview()
+	if a.e.Disk != nil {
+		files, used := a.e.Disk.Usage()
+		out["disk_cache"] = map[string]int64{"segments": int64(files), "bytes": used,
+			"hits": a.e.Disk.Hits.Load(), "misses": a.e.Disk.Misses.Load()}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func truthy(s string) bool {
+	return s == "1" || strings.EqualFold(s, "true") || strings.EqualFold(s, "yes")
+}
+
+func (a *api) healthList(w http.ResponseWriter, r *http.Request) {
+	status := r.URL.Query().Get("status")
+	out := []jobOut{}
+	for _, j := range a.e.Store.List() {
+		if j.Health == nil || (status != "" && j.Health.Status != status) {
+			continue
+		}
+		out = append(out, a.render(j, false))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (a *api) healthRun(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	writeJSON(w, http.StatusAccepted, a.e.StartHealthRun(truthy(q.Get("full")), truthy(q.Get("ignore_last_checked")), q.Get("protocol")))
+}
+
+func (a *api) healthRunStatus(w http.ResponseWriter, r *http.Request) {
+	run := a.e.HealthRunStatus()
+	if run == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"status": "idle"})
+		return
+	}
+	writeJSON(w, http.StatusOK, run)
+}
+
+func (a *api) healthStop(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]bool{"stopped": a.e.StopHealthRun()})
+}
+
+func (a *api) healthGet(w http.ResponseWriter, r *http.Request) {
+	j, _, err := a.e.Store.Get(r.PathValue("id"))
+	if err != nil {
+		storeErr(w, err)
+		return
+	}
+	if j.Health == nil {
+		writeJSON(w, http.StatusOK, store.Health{Status: "unknown"})
+		return
+	}
+	writeJSON(w, http.StatusOK, j.Health)
+}
+
+func (a *api) healthCheck(w http.ResponseWriter, r *http.Request) {
+	err := a.e.CheckHealth(r.PathValue("id"), truthy(r.URL.Query().Get("full")))
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusAccepted, map[string]string{"status": "checking"})
+	case errors.Is(err, engine.ErrNotReady), errors.Is(err, engine.ErrNotUsenet):
+		writeErr(w, http.StatusConflict, err)
+	default:
+		storeErr(w, err)
+	}
+}
+
+func (a *api) healthClear(w http.ResponseWriter, r *http.Request) {
+	if err := a.e.ClearHealth(r.PathValue("id")); err != nil {
+		storeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func replacementErr(w http.ResponseWriter, err error) {
+	var re *engine.ReplacementError
+	if errors.As(err, &re) {
+		code := http.StatusConflict
+		if re.Code == "invalid_request" || re.Code == "unsupported_media" {
+			code = http.StatusBadRequest
+		}
+		writeJSON(w, code, map[string]string{"code": re.Code, "message": re.Message})
+		return
+	}
+	writeJSON(w, http.StatusInternalServerError, map[string]string{"code": "failed", "message": err.Error()})
+}
+
+func (a *api) verify(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		CliDebridID int    `json:"cli_debrid_id"`
+		InfoHash    string `json:"info_hash"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"code": "invalid_request", "message": "invalid JSON body"})
+		return
+	}
+	res, err := a.e.VerifyReplacement(r.Context(), req.CliDebridID, req.InfoHash)
+	if err != nil {
+		replacementErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func (a *api) ack(w http.ResponseWriter, r *http.Request) {
+	var req engine.AckRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"code": "invalid_request", "message": "invalid JSON body"})
+		return
+	}
+	res, err := a.e.AckReplacement(req)
+	if err != nil {
+		replacementErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}

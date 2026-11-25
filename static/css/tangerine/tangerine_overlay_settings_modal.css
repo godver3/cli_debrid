@@ -132,6 +132,33 @@
     margin: 8px 0;
 }
 
+.overlay-setting-path-hint {
+    color: #f0b48f;
+    overflow-wrap: anywhere;
+}
+
+.overlay-setting-path-hint code {
+    background: rgba(225, 124, 82, 0.12);
+    border-radius: 6px;
+    padding: 1px 6px;
+    color: #fff;
+}
+
+.overlay-setting-path-use {
+    margin-left: 4px;
+    padding: 3px 10px;
+    border: 1px solid #e17c52;
+    border-radius: 8px;
+    background: transparent;
+    color: #e17c52;
+    font-size: 0.8rem;
+    cursor: pointer;
+}
+
+.overlay-setting-path-use:hover {
+    background: rgba(225, 124, 82, 0.15);
+}
+
 .overlay-setting-input {
     width: 100%;
     padding: 10px 14px;

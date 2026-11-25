@@ -18,7 +18,7 @@ This page provides an overview of your collection, recent activity, and upcoming
     *   Collected items have a <i class="fas fa-redo"></i> (Rescrape) button to move the item back to a "Wanted" state if needed (e.g., if the file was deleted or incorrect). This does not impact the original item.
 *   **Airing Soon:** Lists episodes scheduled to air in the near future. Clickable for external links.
 *   **Upcoming Releases:** Shows movies or show premieres expected soon based on your lists. Clickable for external links.
-*   **Recently Added Movies/Shows:** Displays the most recent movies and shows added to your collection via cli_debrid. Shows poster images in default view, or just file details in compact view.
+*   **Recently Added Movies/Shows:** Displays the most recent movies and shows added to your collection via Clyde. Shows poster images in default view, or just file details in compact view.
 *   **Recently Upgraded:** Shows items that were recently replaced with a different version (e.g., higher quality). Displays details about the old and new files/versions.
 
 **Other Notes:**
@@ -33,7 +33,7 @@ This page provides an overview of your collection, recent activity, and upcoming
 
 The header bar appears at the top of every page and provides navigation, status information, and quick access controls.
 
-*   **Logo/Title:** Clicking the application logo or title ("cli_debrid") always takes you back to the Home page.
+*   **Logo/Title:** Clicking the application logo or title ("Clyde") always takes you back to the Home page.
 *   **Version & Update Indicator:**
     *   Displays the currently running application version (e.g., `v0.5.0m`). The suffix `m` indicates the main branch, while `d` indicates the dev branch.
     *   If an update is available, a download icon (<i class="fas fa-download"></i>) will appear next to the version number. Clicking this icon opens the project's GitHub repository in a new tab.

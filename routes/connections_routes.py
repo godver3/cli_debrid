@@ -41,8 +41,6 @@ except Exception as e:
 
 connections_bp = Blueprint('connections', __name__)
 
-# Add logging configuration if not already present
-logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
 from .models import user_required # Added import
@@ -248,6 +246,16 @@ def check_plex_connection():
                 'identity_url': identity_url
             }
         }
+
+def check_silo_connection():
+    """Check the Silo media server when it is the symlink media server."""
+    from utilities.silo_functions import is_silo_selected, silo_config, test_connection
+    if not is_silo_selected():
+        return None
+    url, key = silo_config()
+    ok, message = test_connection(url, key)
+    return {'name': 'Silo', 'connected': ok, 'error': None if ok else message, 'details': {'url': url}}
+
 
 def check_jellyfin_connection():
     """Check connection to Jellyfin/Emby if configured."""
@@ -586,9 +594,9 @@ def check_climount_connection():
     Uses the provider factory so NzbDAV is checked (and its ensure_categories()
     side-effect runs) when NzbDAV is the active provider.
     """
-    enabled = get_setting('Usenet Provider', 'enabled', default=False)
+    from usenet import usenet_configured
     url = get_setting('Usenet Provider', 'url', '').strip().rstrip('/')
-    if not enabled or not url:
+    if not usenet_configured(get_setting):
         return None
     try:
         from usenet import get_usenet_client, get_usenet_provider_display_name
@@ -1284,6 +1292,12 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
                 base_response['details'].update({'url': floppy_config['base_url']})
             else:
                 base_response['error'] = message
+        elif source_type == 'Silo Requests':
+            from content_checkers.silo_requests import test_connection as silo_requests_test
+            ok, message = silo_requests_test()
+            base_response['connected'] = ok
+            if not ok:
+                base_response['error'] = message
         elif source_type == 'Simkl Watchlist':
             from content_checkers.simkl import auth_status
             status = auth_status()
@@ -1326,7 +1340,7 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
             base_response['connected'] = True
             base_response['details'].update({
                 'webhook_mode': 'receive_only',
-                'note': 'Agregarr sends webhooks to CLI Debrid. No outbound connection required.',
+                'note': 'Agregarr sends webhooks to Clyde. No outbound connection required.',
                 'media_type': source_config.get('media_type', 'All')
             })
 
@@ -1423,7 +1437,11 @@ def api_check_system():
         'mounted_files_status': check_mounted_files_connection,
         'phalanx_db_status': check_phalanx_db_connection,
     }
-    if jellyfin_url and jellyfin_token:
+    from utilities.silo_functions import is_silo_selected
+    from utilities.direct_mount import is_direct_mount_jellyfin
+    if is_silo_selected():
+        tasks['silo_status'] = check_silo_connection
+    elif is_direct_mount_jellyfin() or (jellyfin_url and jellyfin_token):
         tasks['jellyfin_status'] = check_jellyfin_connection
     else:
         tasks['plex_status'] = check_plex_connection
@@ -1446,6 +1464,7 @@ def api_check_system():
             pass
     results.setdefault('plex_status', None)
     results.setdefault('jellyfin_status', None)
+    results.setdefault('silo_status', None)
     results.setdefault('mounted_files_status', None)
     results.setdefault('phalanx_db_status', None)
     results.setdefault('cli_battery_status', None)
@@ -1454,6 +1473,8 @@ def api_check_system():
     results.setdefault('climount_status', None)
     results.setdefault('scrob_status', None)
     results.setdefault('trakt_status', None)
+    from utilities import connection_health
+    connection_health.record('system', results)
     return jsonify(results)
 
 
@@ -1474,6 +1495,8 @@ def api_check_scrapers():
                     log.error(f"Scraper check error: {exc}")
         except TimeoutError:
             pass
+    from utilities import connection_health
+    connection_health.record('scrapers', results['scraper_statuses'])
     return jsonify(results)
 
 
@@ -1484,10 +1507,21 @@ def api_check_content_sources():
     from flask import jsonify
     try:
         statuses = check_content_sources_connections()
+        from utilities import connection_health
+        connection_health.record('content_sources', statuses)
     except Exception as exc:
         log.error(f"Content sources check error: {exc}")
         statuses = []
     return jsonify({'content_source_statuses': statuses})
+
+
+@connections_bp.route('/api/health')
+@user_required
+def api_health():
+    """Cached connection summary for the home page's Connections tile."""
+    from flask import jsonify
+    from utilities import connection_health
+    return jsonify(connection_health.summary())
 
 
 @connections_bp.route('/api/stream/scrapers')
@@ -1509,7 +1543,10 @@ def api_stream_scrapers():
         except Exception:
             all_scrapers = []
 
+        from utilities import connection_health
+        seen = []
         if not all_scrapers:
+            connection_health.record('scrapers', seen)
             yield "event: done\ndata: {}\n\n"
             return
 
@@ -1523,14 +1560,17 @@ def api_stream_scrapers():
                     try:
                         result = future.result()
                         if result:
+                            seen.append(result)
                             yield f"event: scraper\ndata: {json.dumps(result)}\n\n"
                     except Exception as exc:
                         sid, cfg = future_to_scraper[future]
                         scraper_type = cfg.get('type', sid)
                         name = f"{scraper_type} ({sid})"
+                        seen.append({'name': name, 'connected': False, 'error': str(exc)})
                         yield f"event: scraper\ndata: {json.dumps({'name': name, 'connected': False, 'error': str(exc)})}\n\n"
             except TimeoutError:
                 pass
+        connection_health.record('scrapers', seen)
         yield "event: done\ndata: {}\n\n"
 
     return Response(generate(), mimetype='text/event-stream',
@@ -1556,7 +1596,10 @@ def api_stream_content_sources():
         except Exception:
             pass
 
+        from utilities import connection_health
+        seen = []
         if not all_sources:
+            connection_health.record('content_sources', seen)
             yield "event: done\ndata: {}\n\n"
             return
 
@@ -1570,14 +1613,17 @@ def api_stream_content_sources():
                     try:
                         result = future.result()
                         if result:
+                            seen.append(result)
                             yield f"event: source\ndata: {json.dumps(result)}\n\n"
                     except Exception as exc:
                         sid, cfg = future_to_source[future]
                         display_name = cfg.get('display_name')
                         name = f"{display_name} ({sid})" if display_name else sid
+                        seen.append({'name': name, 'connected': False, 'error': str(exc)})
                         yield f"event: source\ndata: {json.dumps({'name': name, 'connected': False, 'error': str(exc), 'details': {}})}\n\n"
             except TimeoutError:
                 pass
+        connection_health.record('content_sources', seen)
         yield "event: done\ndata: {}\n\n"
 
     return Response(generate(), mimetype='text/event-stream',
@@ -1618,7 +1664,7 @@ def index():
 
     results = {
         'cli_battery_status': None, 'plex_status': None,
-        'jellyfin_status': None, 'mounted_files_status': None,
+        'jellyfin_status': None, 'silo_status': None, 'mounted_files_status': None,
         'phalanx_db_status': None,
         'tvdb_status': None, 'tmdb_status': None, 'climount_status': None,
         'scrob_status': None, 'trakt_status': None,
@@ -1641,6 +1687,7 @@ def index():
                          cli_battery_status=results['cli_battery_status'],
                          plex_status=results['plex_status'],
                          jellyfin_status=results['jellyfin_status'],
+                         silo_status=results['silo_status'],
                          mounted_files_status=results['mounted_files_status'],
                          phalanx_db_status=results['phalanx_db_status'],
                          tvdb_status=results['tvdb_status'],

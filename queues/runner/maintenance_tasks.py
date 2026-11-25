@@ -965,15 +965,41 @@ class MaintenanceTasks:
             else:
                 scan_limit = None
             logging.info("[UPGRADE_HUB] Starting scheduled upgrade scan")
-            result = scan_for_upgrades(scan_limit=scan_limit, triggered_by='scheduled')
-            if 'error' in result:
-                logging.warning(f"[UPGRADE_HUB] Scheduled scan error: {result['error']}")
-            else:
-                upgrades = len(result.get('upgrade_candidates', []))
-                packs    = len(result.get('pack_candidates', []))
-                logging.info(f"[UPGRADE_HUB] Scheduled scan complete: {upgrades} upgrades, {packs} packs")
+
+            # Runs in its own thread: with scraper searches a scan can take a
+            # while, and this executor is shared by every maintenance task.
+            def _run():
+                try:
+                    result = scan_for_upgrades(scan_limit=scan_limit, triggered_by='scheduled')
+                    if 'error' in result:
+                        logging.warning(f"[UPGRADE_HUB] Scheduled scan error: {result['error']}")
+                    else:
+                        upgrades = len(result.get('upgrade_candidates', []))
+                        packs    = len(result.get('pack_candidates', []))
+                        logging.info(f"[UPGRADE_HUB] Scheduled scan complete: {upgrades} upgrades, {packs} packs")
+                except Exception as e:
+                    logging.error(f"[UPGRADE_HUB] Scheduled scan failed: {e}", exc_info=True)
+
+            import threading
+            threading.Thread(target=_run, name='upgrade-hub-scan', daemon=True).start()
         except Exception as e:
             logging.error(f"[UPGRADE_HUB] Scheduled scan failed: {e}", exc_info=True)
+
+    def task_upgrade_hub_feed_sync(self):
+        """Keep the Upgrade Hub's NZB feed history current between scans."""
+        try:
+            if 'task_upgrade_hub_feed_sync' not in self.enabled_tasks:
+                return
+            # Follows the hub's automatic scan: no scans, no need for history.
+            if 'task_upgrade_hub_scan' not in self.enabled_tasks:
+                return
+            from database.upgrade_hub_scrapers import upgrade_source
+            if upgrade_source() not in ('both', 'nzb_only'):
+                return
+            from database.nzb_feed_history import sync_feeds
+            sync_feeds()
+        except Exception as e:
+            logging.error(f"[UPGRADE_HUB] NZB feed sync failed: {e}", exc_info=True)
 
     def task_upgrade_hub_auto_queue(self):
         """Auto-queue upgrade candidates found in the most recent scan."""
@@ -1058,9 +1084,18 @@ class MaintenanceTasks:
 
             # Collect individual upgrade candidates — skip any episode covered by a pack slot
             # or already in Upgrading state (so repeated button presses queue the next batch)
+            # Known-uncached torrents would be refused by the adding queue when
+            # uncached results aren't accepted, so don't spend slots on them.
+            # Candidates the cache check confirmed go first.
+            _uncached_ok = (str(get_setting('Scraping', 'uncached_content_handling', 'None')) != 'None'
+                            or bool(get_setting('Scraping', 'hybrid_mode', False)))
+            _ordered = sorted(results.get('upgrade_candidates', []),
+                              key=lambda c: 0 if (c.get('cached', c.get('rd_cached')) is True) else 1)
             upgrade_item_ids = []
-            for c in results.get('upgrade_candidates', []):
+            for c in _ordered:
                 if c.get('improvement_pct', 0) < threshold:
+                    continue
+                if not _uncached_ok and c.get('cached', c.get('rd_cached')) is False:
                     continue
                 if c['item_id'] in pack_covered_ids:
                     continue

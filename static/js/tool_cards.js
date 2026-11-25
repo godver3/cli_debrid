@@ -288,7 +288,7 @@
     'run task manually':                 { icon:'fa-solid fa-play', desc:'Run a queue or a task once, right now.' },
     'bulk queue actions':                { icon:'fa-solid fa-boxes-stacked', desc:'Delete items in a queue, or move them to another queue.' },
     'bulk subtitle scan':                { icon:'fa-solid fa-closed-captioning' },
-    'direct emby/jellyfin scan':         { icon:'fa-solid fa-server' },
+    'direct emby/jellyfin/silo scan':    { icon:'fa-solid fa-server' },
     'move item id to upgrading':         { icon:'fa-solid fa-arrow-up-right-dots', desc:'Send one Collected item back to Upgrading so it looks for a better release.' },
     'fix missing imdb id':               { icon:'fa-solid fa-fingerprint', desc:'Set the IMDb ID on one item, or on every row with the same TMDB ID.' },
     'test plex item lookup':             { icon:'fa-solid fa-magnifying-glass', desc:'Check whether Plex can find a database item, and how it matched.' },
@@ -323,7 +323,7 @@
     'delete database':                       { icon:'fa-solid fa-bomb', danger:true },
     /* Diagnostics */
     'current rate limit state':     { icon:'fa-solid fa-gauge-high', desc:'Requests used against each site\'s rate limit.' },
-    'plex token status':            { icon:'fa-solid fa-key', desc:'Whether each Plex token cli_debrid holds is still valid.' },
+    'plex token status':            { icon:'fa-solid fa-key', desc:'Whether each Plex token Clyde holds is still valid.' },
     'personal trakt token status':  { icon:'fa-solid fa-key', desc:'Whether your Trakt sign-in is still valid.' },
     'torrent tracking':             { icon:'fa-solid fa-clock-rotate-left' },
     'api summary':                  { icon:'fa-solid fa-chart-column' },

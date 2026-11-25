@@ -15,8 +15,8 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 
 
 def _read(path):
-    with open(os.path.join(PROJECT_ROOT, path), encoding="utf-8") as f:
-        return f.read()
+    from tests._source import project_source
+    return project_source(path)
 
 
 class TestTriggerTaskBypassesCacheForContentSources(unittest.TestCase):

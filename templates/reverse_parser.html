@@ -344,6 +344,10 @@ document.addEventListener('DOMContentLoaded', function() {
             });
     }
 
+    function rpEsc(v) {
+        return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
     function renderTable(items, selectedColumns) {
         let tableHTML = '<table id="items-table"><thead><tr>';
         selectedColumns.forEach(column => {
@@ -367,10 +371,12 @@ document.addEventListener('DOMContentLoaded', function() {
                     if (cellContent === null || cellContent === undefined || cellContent === '') {
                         cellContent = 'None';
                     }
-                    rowsHTML += `<td class="truncate" data-full-content="${cellContent}">${cellContent}</td>`;
+                    // File names come from indexers: escape them.
+                    const safe = rpEsc(cellContent);
+                    rowsHTML += `<td class="truncate" data-full-content="${safe}">${safe}</td>`;
                 }
             });
-            rowsHTML += `<td class="assigned-version" data-parsed-version="${item.parsed_version || ''}"></td></tr>`;
+            rowsHTML += `<td class="assigned-version" data-parsed-version="${rpEsc(item.parsed_version || '')}"></td></tr>`;
         });
         return rowsHTML;
     }

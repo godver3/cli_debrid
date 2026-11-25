@@ -8,6 +8,7 @@ from scraper.functions.ptt_parser import parse_title_unwrapped
 from scraper.functions import *
 from scraper.functions.common import detect_season_episode_info
 from functools import lru_cache
+from utilities.hdr_tags import hdr_tags_mean_hdr
 import time
 
 # Pre-compile regex patterns
@@ -103,13 +104,9 @@ def _parse_with_ptt(title: str) -> Dict[str, Any]:
     return result
 
 def detect_hdr(parsed_info: Dict[str, Any]) -> bool:
-    # Extract HDR information from PTT result
-    hdr_info = parsed_info.get('hdr', False)
-    if hdr_info:
-        return True
-
-    # No fallback method - removed to prevent false positives with titles like "Devil's Advocate"
-    return False
+    # Extract HDR information from PTT result ('SDR' is not HDR)
+    # No title-based fallback - removed to prevent false positives with titles like "Devil's Advocate"
+    return hdr_tags_mean_hdr(parsed_info.get('hdr'))
 
 def match_any_title(release_title: str, official_titles: List[str], threshold: float = 0.35) -> float:
     max_similarity = 0
@@ -396,17 +393,3 @@ def get_resolution_rank(resolution: str) -> int:
         return 1
     return 0  # For unknown resolutions
 
-def compare_resolutions(res1: str, res2: str) -> int:
-    resolution_order = {
-        '2160p': 6, '4k': 6, 'uhd': 6,
-        '1440p': 5, 'qhd': 5,
-        '1080p': 4, 'fhd': 4,
-        '720p': 3, 'hd': 3,
-        '480p': 2, 'sd': 2,
-        '360p': 1
-    }
-
-    val1 = resolution_order.get(res1.lower(), 0)
-    val2 = resolution_order.get(res2.lower(), 0)
-
-    return val1 - val2

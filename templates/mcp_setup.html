@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}AI Assistant (MCP){% endblock %}
+{% block head %}
+<style>
+.mcp{max-width:900px;margin:0 auto;padding:16px;color:#ddd}
+.mcp h2{margin:4px 0}
+.mcp .sub{color:#999;margin:0 0 16px}
+.mcp .card{background:#1e1e1e;border:1px solid #333;border-radius:8px;padding:14px 16px;margin-bottom:14px}
+.mcp code,.mcp pre{background:#111;border:1px solid #333;border-radius:6px;color:#cfe8ff}
+.mcp pre{padding:10px;white-space:pre-wrap;word-break:break-all;margin:6px 0}
+.mcp .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.mcp .btn{background:#2d6cdf;color:#fff;border:0;border-radius:6px;padding:6px 12px;cursor:pointer}
+.mcp .btn.sec{background:#3a3a3a}
+.mcp ul{margin:6px 0 0 18px;padding:0}
+.mcp .muted{color:#999;font-size:.9em}
+</style>
+{% endblock %}
+{% block content %}
+<div class="mcp">
+  <h2>AI Assistant (MCP)</h2>
+  <p class="sub">Connect Claude (Desktop or Code) or another MCP-capable AI assistant to Clyde, so it can explain your settings, read your logs and help troubleshoot. It is <strong>read-only</strong>: the assistant can look, never change anything. API keys, tokens and passwords are masked in everything it sees.</p>
+
+  <div class="card">
+    <div class="row">
+      <label><input type="checkbox" id="mcpOn"> Turn on the MCP endpoint</label>
+      <span id="mcpMsg" class="muted"></span>
+    </div>
+    <p class="muted" style="margin:8px 0 0">Anyone with the token below can read your settings (secrets masked), logs and library. Keep it private; make a new one if it leaks.</p>
+  </div>
+
+  <div class="card" id="mcpDetails" style="display:none">
+    <div><strong>URL</strong><pre id="mcpUrl"></pre></div>
+    <div class="row"><strong>Token</strong>
+      <button type="button" class="btn sec" id="mcpShow">Show</button>
+      <button type="button" class="btn sec" id="mcpNew">Make a new token</button></div>
+    <pre id="mcpToken">••••••••</pre>
+    <div style="margin-top:10px"><strong>Claude Code</strong> (run in a terminal)<pre id="mcpCC"></pre></div>
+    <div style="margin-top:10px"><strong>Claude Desktop / other clients</strong> (MCP config JSON)<pre id="mcpJson"></pre></div>
+    <p class="muted">The URL must be reachable from where the assistant runs. Behind a reverse proxy, use your public Clyde address with <code>/mcp</code>.</p>
+  </div>
+
+  <div class="card">
+    <strong>What the assistant can see</strong>
+    <ul>
+      <li><code>get_overview</code>: version, running state, library mode, providers, connection health, item counts</li>
+      <li><code>list_settings</code> / <code>explain_setting</code>: every setting with its value and description</li>
+      <li><code>search_logs</code> / <code>recent_errors</code>: Clyde and built-in mount logs</li>
+      <li><code>queue_status</code>, <code>mount_status</code>, <code>connection_health</code></li>
+      <li><code>lookup_item</code>: one movie or episode's state, release, file and related log lines</li>
+    </ul>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  const $ = s => document.querySelector(s);
+  let data = null, shown = false;
+  function render(d) {
+    data = d;
+    $('#mcpOn').checked = !!d.enabled;
+    $('#mcpDetails').style.display = d.enabled ? '' : 'none';
+    $('#mcpUrl').textContent = d.url;
+    const hide = s => shown ? s : s.split(d.token).join('<token>');
+    $('#mcpToken').textContent = shown ? d.token : '••••••••';
+    $('#mcpCC').textContent = hide(d.claude_code);
+    $('#mcpJson').textContent = hide(JSON.stringify(d.json_config, null, 2));
+    $('#mcpShow').textContent = shown ? 'Hide' : 'Show';
+  }
+  function call(body) {
+    return fetch('/mcp/setup/api', body ? {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)} : {})
+      .then(r => r.json()).then(render).catch(e => { $('#mcpMsg').textContent = String(e); });
+  }
+  $('#mcpOn').onchange = e => call({enabled: e.target.checked}).then(() => { $('#mcpMsg').textContent = e.target.checked ? 'On' : 'Off'; });
+  $('#mcpShow').onclick = () => { shown = !shown; render(data); };
+  $('#mcpNew').onclick = () => { if (confirm('Make a new token? Clients using the old one stop working.')) call({new_token: true}); };
+  call();
+})();
+</script>
+{% endblock %}

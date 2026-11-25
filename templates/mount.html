@@ -1,0 +1,271 @@
+{% extends "base.html" %}
+{% block title %}Mount{% endblock %}
+{% block head %}
+<style>
+.mnt{max-width:1100px;margin:0 auto;padding:16px;color:#ddd}
+.mnt h2{margin:4px 0 4px;font-size:1.6em}
+.mnt .sub{color:#999;margin:0 0 18px}
+.mnt .warn{background:#3a2a12;border:1px solid #8a5a12;color:#f3d39b;border-radius:8px;padding:10px 14px;margin-bottom:14px}
+.mnt .bad{background:#3a1616;border:1px solid #8a2a2a;color:#f2b8b8;border-radius:8px;padding:10px 14px;margin-bottom:14px}
+.mnt .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:18px}
+@media (min-width:600px){.mnt .grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (min-width:1000px){.mnt .grid{grid-template-columns:repeat(6,minmax(0,1fr))}}
+.mnt .lastapply{color:#999;font-size:13px;margin:-8px 0 14px}
+.mnt .tile{background:#1e1e1e;border:1px solid #333;border-radius:8px;padding:10px 12px}
+.mnt .tile .k{color:#999;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+.mnt .tile .v{font-size:1.15em;margin-top:4px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere;line-height:1.3}
+.mnt .tile .s{color:#888;font-size:12px;margin-top:3px;font-variant-numeric:tabular-nums}
+.mnt .ok{color:#7fd47f}.mnt .no{color:#f08a8a}.mnt .mid{color:#e8c46a}
+.mnt .card{background:#1a1a1a;border:1px solid #333;border-radius:8px;margin-bottom:14px}
+.mnt .card h3{margin:0;padding:10px 14px;border-bottom:1px solid #333;font-size:1.05em}
+.mnt .card .body{padding:12px 14px}
+.mnt .fold-all{display:flex;gap:8px;justify-content:flex-end;margin-bottom:10px}
+.mnt .card.fold>h3{cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between}
+.mnt .card.fold>h3::after{content:'\25B8';color:#888;transition:transform .15s}
+.mnt .card.fold.open>h3::after{transform:rotate(90deg)}
+.mnt .card.fold:not(.open)>h3{border-bottom:none}
+.mnt .card.fold:not(.open)>.body{display:none}
+.mnt table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+.mnt th,.mnt td{text-align:left;padding:6px 8px;border-bottom:1px solid #2a2a2a;font-size:13px}
+.mnt th{color:#999;font-weight:600}
+.mnt .bar{height:6px;background:#2a2a2a;border-radius:3px;overflow:hidden;min-width:80px}
+.mnt .bar i{display:block;height:100%;background:#e8601c}
+.mnt .f{margin-bottom:12px}
+.mnt .f label{display:block;font-weight:600;margin-bottom:4px}
+.mnt .f input[type=text],.mnt .f input[type=number],.mnt .f input[type=password]{width:100%;max-width:520px;background:#111;border:1px solid #3d3d3d;color:#eee;border-radius:5px;padding:7px 9px}
+.mnt .f .d{color:#8f8f8f;font-size:12px;margin-top:4px;max-width:760px}
+.mnt .srv input{background:#111;border:1px solid #3d3d3d;color:#eee;border-radius:4px;padding:5px 6px;width:100%;min-width:0;box-sizing:border-box}
+.mnt .srvcard{border:1px solid #333;border-radius:6px;padding:8px 10px;margin-top:8px}
+.mnt .srvcard.off{opacity:.55}
+.mnt .srvcard .sh{display:flex;align-items:center;gap:6px;margin-bottom:8px;min-width:0}
+.mnt .srvcard .sn{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.mnt .srvcard .sb{font-size:11px;color:#bbb;border:1px solid #555;border-radius:3px;padding:0 5px}
+.mnt .srvcard .sp{flex:1}
+.mnt .srvcard .sh .btn{padding:3px 9px}
+.mnt .srvcard .tg{border:none;border-radius:12px;padding:3px 12px;font-weight:600;cursor:pointer;background:#2e7d32;color:#fff;min-width:48px}
+.mnt .srvcard.off .tg{background:#555;color:#ddd}
+.mnt .srvcard.off .sg{display:none}
+.mnt .srvcard .sg{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px}
+.mnt .srvcard .sf{display:flex;flex-direction:column;gap:2px;min-width:0}
+.mnt .srvcard .sf>span{font-size:11px;color:#999}
+.mnt .srvcard .w2{grid-column:span 2}
+.mnt .srvcard .checks{flex-direction:row;flex-wrap:wrap;gap:10px;align-items:flex-end;grid-column:span 2}
+.mnt .srvcard .sc{font-size:13px;white-space:nowrap;display:flex;align-items:center;gap:4px}
+.mnt .srvcard .sc input{width:auto}
+@media (max-width:420px){.mnt .srvcard .w2,.mnt .srvcard .checks{grid-column:1/-1}}
+.mnt .btn{background:#e8601c;border:none;color:#fff;border-radius:6px;padding:8px 16px;cursor:pointer;font-weight:600}
+.mnt .btn.sec{background:#2a2a2a;border:1px solid #444;color:#ddd}
+.mnt .btn:disabled{opacity:.5;cursor:default}
+.mnt .actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:6px 0 30px}
+.mnt .msg{font-size:13px}
+.mnt .tabs{display:flex;gap:4px;border-bottom:1px solid #333;margin-bottom:14px;flex-wrap:wrap}
+.mnt .tabs button{background:none;border:none;color:#aaa;padding:8px 14px;cursor:pointer;font-weight:600;border-bottom:2px solid transparent}
+.mnt .tabs button.on{color:#fff;border-bottom-color:#e8601c}
+.mnt .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+.mnt .toolbar input,.mnt .toolbar select{background:#111;border:1px solid #3d3d3d;color:#eee;border-radius:5px;padding:7px 9px}
+.mnt .toolbar input[type=search]{flex:1;min-width:180px}
+.mnt .btn.danger{background:#7a1f1f}
+.mnt .tbl{overflow-x:auto}
+.mnt .tbl td{vertical-align:top}
+.mnt .tbl .nm{max-width:520px;word-break:break-all}
+.mnt .tbl .err{color:#f08a8a;font-size:12px;margin-top:3px}
+.mnt .tbl .err.full{max-height:260px;overflow-y:auto}
+.mnt .errToggle{color:#e8601c;cursor:pointer;white-space:nowrap;text-decoration:underline}
+.mnt .pill{font-size:11px;padding:2px 8px;border-radius:9px;border:1px solid #555;white-space:nowrap}
+.mnt .pill.ready,.mnt .pill.healthy{border-color:#2f9e6b;color:#8fdcb6}
+.mnt .pill.failed,.mnt .pill.broken{border-color:#a33;color:#f2a0a0}
+.mnt .pill.importing,.mnt .pill.queued,.mnt .pill.checking{border-color:#b8902b;color:#ecd08a}
+.mnt .rowbtn{background:#2a2a2a;border:1px solid #444;color:#ddd;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:12px;margin:1px}
+.mnt .pager{display:flex;justify-content:space-between;align-items:center;margin-top:8px;color:#999;font-size:13px}
+.mnt .crumbs a{color:#e8a06c;cursor:pointer;text-decoration:none}
+.mnt .link{color:#e8a06c;cursor:pointer}
+</style>
+{% endblock %}
+{% block content %}
+<div class="mnt">
+  <h2>Built-in Mount</h2>
+  <p class="sub">Clyde's own usenet mount: status, servers and cache. Changes here restart only the mount engine, not Clyde.</p>
+
+  {% if not selected %}
+  <div class="warn">The built-in mount isn't your usenet backend right now. Choose <strong>Built-in mount (internal)</strong> under Settings → Required → Usenet Mount to use it. You can still edit these settings first.</div>
+  {% endif %}
+  <div id="problems" class="bad" style="display:none"></div>
+
+  <div class="tabs" id="mntTabs">
+    <button type="button" data-tab="overview" class="on">Overview</button>
+    <button type="button" data-tab="queue">Queue</button>
+    <button type="button" data-tab="browse">Browse</button>
+    <button type="button" data-tab="settings">Settings</button>
+    <button type="button" data-tab="migrate">Migrate from cli_mount</button>
+  </div>
+
+  <div class="pane" data-pane="overview">
+  <div class="grid" id="tiles"></div>
+  <div class="grid" id="tiles2"></div>
+  <div class="lastapply" id="lastapply" style="display:none"></div>
+  <div class="actions" style="margin:4px 0 14px">
+    <button type="button" class="btn sec" id="cleanupBtn" title="Apply the cache size limit and expiry now, remove stray cache files, close idle connections">Run cleanup</button>
+    <button type="button" class="btn danger" id="purgeBtn" title="Empty the memory and disk caches">Purge cache</button>
+    <span class="msg" id="cacheMsg"></span>
+  </div>
+  <div class="card"><h3>Open streams</h3><div class="body">
+    <div class="tbl"><table id="streams"><thead><tr><th>File</th><th>Source</th><th>Opened</th><th>Read</th><th>Position</th><th>Rate</th><th>Protection</th></tr></thead><tbody></tbody></table></div>
+    <p class="hint" style="color:#888;font-size:.85em;margin:6px 0 0">Every file open on the mount: playback, but also scanners (Plex/Jellyfin analysis, Bazarr) that open files and read little or nothing.</p>
+  </div></div>
+  <div class="card"><h3>Server connections</h3><div class="body">
+    <div class="tbl"><table id="pools"><thead><tr><th>Server</th><th>Role</th><th>In use</th><th>Open</th><th>Waiting</th><th></th><th>Articles</th><th>Data</th><th>Missing</th><th>Errors</th><th>Avg fetch</th><th>Speed test</th></tr></thead><tbody></tbody></table></div>
+  </div></div>
+  <div class="card"><h3>Usage and plans</h3><div class="body">
+    <div class="tbl"><table id="usage"><thead><tr><th>Provider</th><th>Type</th><th>Today</th><th>Last 30 days</th><th>Average / day</th><th>Plan ends</th></tr></thead><tbody></tbody></table></div>
+    <p class="hint" style="color:#888;font-size:.85em;margin:6px 0 0">Data each server or debrid service delivered to the mount, kept across restarts. The average counts only the days tracked so far (up to 30). Set a usenet plan's end date in Settings → Usenet servers; debrid plan ends come from the provider's account.</p>
+  </div></div>
+  <div class="card"><h3>Debrid connections</h3><div class="body">
+    <div class="tbl"><table id="debridPools"><thead><tr><th>Provider</th><th>Open</th><th>Requests</th><th>Data</th><th>Errors</th><th>Link errors</th><th>Avg response</th><th>Speed test</th></tr></thead><tbody></tbody></table></div>
+  </div></div>
+  </div>
+
+  <div class="pane" data-pane="queue" hidden>
+    <div class="toolbar">
+      <input id="qSearch" type="search" placeholder="Search jobs…">
+      <select id="qStatus"><option value="">All states</option><option value="ready">Ready</option><option value="importing">Importing</option><option value="queued">Queued / retrying</option><option value="failed">Failed</option></select>
+      <select id="qCategory"><option value="">All categories</option></select>
+      <select id="qSort">
+        <option value="added_desc">Date added (newest first)</option><option value="added_asc">Date added (oldest first)</option>
+        <option value="name_asc">Name (A-Z)</option><option value="name_desc">Name (Z-A)</option>
+        <option value="size_desc">Size (largest first)</option><option value="size_asc">Size (smallest first)</option>
+      </select>
+      <button type="button" class="btn sec" id="qRefresh">Refresh</button>
+      <button type="button" class="btn danger" id="qDeleteSel" hidden>Delete selected</button>
+    </div>
+    <div class="card"><div class="body tbl">
+      <table id="qTable"><thead><tr><th><input type="checkbox" id="qAll"></th><th>Name</th><th>State</th><th>Size</th><th>Category</th><th>Added</th><th>Health</th><th></th></tr></thead><tbody></tbody></table>
+      <div class="pager"><span id="qInfo"></span><span id="qPages"></span></div>
+    </div></div>
+  </div>
+
+  <div class="pane" data-pane="browse" hidden>
+    <div class="toolbar">
+      <span class="crumbs" id="bCrumbs"></span>
+      <input id="bSearch" type="search" placeholder="Search files…">
+    </div>
+    <div class="card"><div class="body tbl">
+      <table id="bTable"><thead><tr><th>Name</th><th>Size</th><th>Details</th><th></th></tr></thead><tbody></tbody></table>
+    </div></div>
+  </div>
+
+  <div class="pane" data-pane="migrate" hidden>
+    <p class="sub" style="margin-top:0">Move your cli_mount library to the built-in mount without downloading anything: jobs keep their IDs, folders and file names, so Clyde's records, your symlinks and Plex keep working. Every step copies: cli_mount is never changed, so you can switch back at any time, and jobs added in the meantime can be copied back to it.</p>
+    <div id="mgStatus" class="card"><div class="body">Loading…</div></div>
+    <div class="card"><h3>1. Run the built-in mount alongside cli_mount</h3><div class="body">
+      <p class="d" style="color:#8f8f8f;font-size:13px;margin-top:0">It mounts on its own path (Settings tab → Mount path, e.g. /mnt/clid) while cli_mount keeps serving. Before you start, every line in the checklist above should be ticked except the built-in mount itself. No usenet servers set yet? Import copies cli_mount's.</p>
+      <button class="btn" id="mgAlong">Start alongside</button> <span class="msg" id="mgAlongMsg"></span>
+    </div></div>
+    <div class="card"><h3>2. Import cli_mount's library</h3><div class="body">
+      <p class="d" style="color:#8f8f8f;font-size:13px;margin-top:0">Reads cli_mount's job list and its saved file maps (no usenet traffic). Safe to run again: jobs already imported are skipped. Encrypted archives can't be imported. With no usenet servers set on this page yet, cli_mount's are copied over first.</p>
+      <div class="f" style="margin-bottom:8px"><label for="mgLimit" style="font-weight:600;font-size:13px">Jobs to import</label>
+        <input type="number" id="mgLimit" min="0" step="1" value="0" style="width:120px;background:#111;border:1px solid #3d3d3d;color:#eee;border-radius:5px;padding:6px 8px">
+        <span style="color:#8f8f8f;font-size:12px">0 = all. Start with a few hundred to try it; running Import again carries on and skips jobs already imported.</span></div>
+      <div id="mgSpace" style="font-size:13px;margin-bottom:10px"></div>
+      <button class="btn" id="mgImport">Import</button> <button class="btn sec" id="mgCancel" hidden>Cancel</button>
+      <div id="mgProgress" style="margin-top:10px"></div>
+      <pre id="mgLog" style="max-height:220px;overflow:auto;background:#111;border:1px solid #333;border-radius:6px;padding:8px;font-size:12px;white-space:pre-wrap" hidden></pre>
+    </div></div>
+    <div class="card"><h3>3. Compare</h3><div class="body">
+      <p class="d" style="color:#8f8f8f;font-size:13px;margin-top:0">Reads random usenet files through both mounts and compares size and the bytes at their start, middle and end. Debrid folders are checked by name and size only (reading them would request debrid links twice).</p>
+      <button class="btn" id="mgCompare">Compare 10 files</button>
+      <div class="tbl"><table id="mgCmp" style="margin-top:8px"><tbody></tbody></table></div>
+    </div></div>
+    <div class="card"><h3>4. Switch over</h3><div class="body">
+      <ol style="color:#ccc;font-size:13px;line-height:1.6;margin-top:0">
+        <li>Stop the cli_mount container (its mount must be gone).</li>
+        <li>Make sure this container has <code>/dev/fuse</code>, <code>SYS_ADMIN</code> and cli_mount's mount folder bound with <code>rshared</code> (it already is if Plex saw cli_mount through it).</li>
+        <li>Press Switch: the built-in mount takes over cli_mount's path and becomes your usenet backend. If you use debrid, Switch waits until the built-in mount has added every torrent on your account(s).</li>
+      </ol>
+      <button class="btn" id="mgSwitch">Switch to the built-in mount</button>
+      <span class="msg" id="mgSwitchMsg"></span>
+    </div></div>
+    <div class="card"><h3>5. Switch back to cli_mount</h3><div class="body">
+      <ol style="color:#ccc;font-size:13px;line-height:1.6;margin-top:0">
+        <li>Stop the program (Stop button at the top; the mount keeps running).</li>
+        <li>Press Switch back: cli_mount becomes the backend again and the built-in mount moves back to its own path.</li>
+        <li>Start the cli_mount container, then press Copy back: usenet jobs added since the switch are sent to cli_mount with the same IDs and folder names (needs a cli_mount that keeps job IDs). Debrid torrents need nothing: cli_mount lists your account itself.</li>
+        <li>Use Compare (step 3), then start the program again.</li>
+      </ol>
+      <button class="btn sec" id="mgBack">Switch back to cli_mount</button>
+      <button class="btn" id="mgExport">Copy back</button> <button class="btn sec" id="mgExportCancel" hidden>Cancel</button>
+      <span class="msg" id="mgBackMsg"></span>
+      <div id="mgExportProgress" style="margin-top:10px"></div>
+      <pre id="mgExportLog" style="max-height:220px;overflow:auto;background:#111;border:1px solid #333;border-radius:6px;padding:8px;font-size:12px;white-space:pre-wrap" hidden></pre>
+    </div></div>
+  </div>
+
+  <div class="pane" data-pane="settings" hidden>
+  <div class="fold-all">
+    <button type="button" class="btn sec" id="collapseAll"><i class="fa-solid fa-compress"></i> Collapse All</button>
+    <button type="button" class="btn sec" id="expandAll"><i class="fa-solid fa-expand"></i> Expand All</button>
+  </div>
+  <form id="mntForm" autocomplete="off">
+  <div class="card fold"><h3>Usenet servers</h3><div class="body">
+    <p style="color:#8f8f8f;font-size:12px;margin-top:0">Main servers share the load (Streaming → Primary server load: Fill first uses the top one until it is full, Balanced spreads requests over all of them), and when a server lacks an article the next one is asked. <strong>On/Off</strong> turns a server off right away without losing its settings (the mount restarts to apply it). Servers marked <strong>Backup</strong> (block accounts) are asked only after every main server. Use the arrows to reorder. Leave a password empty to keep the saved one. <strong>Plan ends</strong> and <strong>Auto-renews</strong> are only reminders: they show on the Overview tab and never change how a server is used.</p>
+    <div class="srv" id="servers"></div>
+    <button type="button" class="btn sec" id="addServer" style="margin-top:8px">Add server</button> <span class="msg" id="srvMsg"></span>
+  </div></div>
+  {% for title, fields in groups %}
+  <div class="card fold"><h3>{{ title }}</h3><div class="body">
+    {% for key, spec, label in fields %}
+    <div class="f">
+      {% if spec.type == 'boolean' %}
+      <label><input type="checkbox" name="{{ key }}" data-type="boolean"> {{ label }}</label>
+      {% elif spec.choices %}
+      <label for="m-{{ key }}">{{ label }}</label>
+      <select id="m-{{ key }}" name="{{ key }}" data-type="string">
+        {% for c in spec.choices %}<option value="{{ c }}">{{ {'season_ep': 'Season/Episode (S01E01...)', 'index': 'Index (Name - 01...)', 'off': 'Off', 'fill': 'Fill first', 'balanced': 'Balanced'}.get(c, c) }}</option>{% endfor %}
+      </select>
+      {% else %}
+      <label for="m-{{ key }}">{{ label }}</label>
+      <input id="m-{{ key }}" name="{{ key }}" data-type="{{ spec.type }}"
+             type="{{ 'password' if spec.sensitive else ('number' if spec.type == 'integer' else 'text') }}"
+             {% if spec.sensitive %}placeholder="unchanged" autocomplete="new-password"{% endif %}>
+      {% endif %}
+      <div class="d">{{ spec.description | replace('Built-in mount only. ', '') | replace('Built-in mount only (Usenet Provider = builtin). ', '') | safe }}</div>
+    </div>
+    {% endfor %}
+    {% if title == 'Media servers' %}
+    <div class="f"><div class="d" id="plexEffective"></div>
+      <button type="button" class="btn sec" id="plexTest" style="margin-top:6px">Test Plex</button> <span id="plexTestMsg" style="font-size:12px"></span></div>
+    <div class="f"><div class="d" id="jellyfinEffective"></div>
+      <button type="button" class="btn sec" id="jellyfinTest" style="margin-top:6px">Test Jellyfin / Emby</button> <span id="jellyfinTestMsg" style="font-size:12px"></span></div>
+    <div class="f"><div class="d" id="siloEffective"></div>
+      <button type="button" class="btn sec" id="siloTest" style="margin-top:6px">Test Silo</button> <span id="siloTestMsg" style="font-size:12px"></span></div>
+    {% endif %}
+  </div></div>
+  {% endfor %}
+  <div class="card fold"><h3>Virtual folders</h3><div class="body">
+    <p style="color:#8f8f8f;font-size:12px;margin-top:0">Extra folders at the top of the mount, each listing the jobs that match <strong>all</strong> its filters (a name regex and a files regex together match either). Useful in Plex mode: point a Movies library at one folder and a TV library at another. <em>Add Movies + TV Shows</em> fills in the docs' Content routing filters, so every release lands in exactly one of the two. Sizes take 10GB / 500MB, last_added takes 7d / 12h, protocol takes usenet or debrid. Each folder shows its path under the Mount path; point the Plex library there. If Plex runs in another container, use the same folder under the path that container mounts it at (the Plex side of its volume for the mount).</p>
+    <div id="vfolders"></div>
+    <button type="button" class="btn sec" id="addVf" style="margin-top:8px">Add virtual folder</button>
+    <button type="button" class="btn sec" id="addVfDefaults" style="margin-top:8px" title="The Content routing filters from the docs: every release lands in exactly one of the two">Add Movies + TV Shows</button>
+  </div></div>
+  </form>
+
+  <div class="actions">
+    <button class="btn" id="saveBtn">Save</button>
+    <button class="btn sec" id="restartBtn">Restart engine</button>
+    <span class="msg" id="msg"></span>
+  </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+window.TPL_MOUNT = {
+    url_for: '{{ url_for("mount.jobs_delete") }}',
+    url_for_2: '{{ url_for("mount.jobs_list") }}',
+    url_for_3: '{{ url_for("mount.restart") }}',
+    url_for_4: '{{ url_for("mount.save_settings") }}',
+    url_for_5: '{{ url_for("mount.status") }}',
+    default_vfolders: {{ default_vfolders | tojson }},
+};
+</script>
+<script src="{{ url_for('static', filename='js/pages/mount.js') }}"></script>
+{% endblock %}

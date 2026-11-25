@@ -16,18 +16,6 @@ class TorrentStatus(Enum):
     CACHED = 'cached'
     NOT_CACHED = 'not_cached'
 
-def get_status_flags(status: TorrentStatus) -> Dict[str, bool]:
-    """Return a dictionary of boolean flags based on the torrent status"""
-    is_cached = status == TorrentStatus.DOWNLOADED.value
-    is_queued = status in [TorrentStatus.QUEUED.value, TorrentStatus.DOWNLOADING.value]
-    is_error = status == TorrentStatus.ERROR.value
-
-    return {
-        'is_cached': is_cached,
-        'is_queued': is_queued,
-        'is_error': is_error
-    }
-
 class TorrentFetchStatus(Enum):
     OK = "ok"
     NOT_FOUND = "not_found"  # HTTP 404

@@ -461,8 +461,8 @@ class QueueManager:
         self.queues["Blacklisted"].blacklist_item(item, self)
         self.queues[from_queue].remove_item(item)
 
-    def blacklist_old_season_items(self, item: Dict[str, Any], from_queue: str):
-        self.queues["Blacklisted"].blacklist_old_season_items(item, self)
+    def blacklist_old_season_items(self, item: Dict[str, Any], from_queue: str, exempt_episodes=None):
+        self.queues["Blacklisted"].blacklist_old_season_items(item, self, exempt_episodes=exempt_episodes)
         self.queues[from_queue].remove_item(item)
 
     @logs_for_item

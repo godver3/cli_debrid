@@ -213,7 +213,7 @@ def main():
         fm = (cfg.get('File Management', {}) or {}).get('file_collection_management', '')
         info(f'file_collection_management = {fm or "unknown"}')
         if fm and fm != 'Symlinked/Local':
-            info('Plex mode: subtitle sidecars are written next to the media file, '
+            info('Direct Mount: subtitle sidecars are written next to the media file, '
                  'which is read-only on a WebDAV/rclone mount. Subtitle download '
                  'reliably writes only in Symlinked/Local mode. (Provider-independent.)')
     else:

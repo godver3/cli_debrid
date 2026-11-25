@@ -1,6 +1,6 @@
 services:
   cli_debrid:
-    image: godver3/cli_debrid:dev
+    image: godver3/clyde:dev
     pull_policy: always
     container_name: cli_debrid
     ports:
@@ -11,6 +11,8 @@ services:
       - /host/location/config:/user/config
       - /host/location/logs:/user/logs
       - /mnt:/mnt
+    # For an existing mount (Zurg, Decypharr, cli_mount, NzbDAV...). To use
+    # Clyde's built-in mount instead, start from docker-compose.builtin.yml.
     environment:
       - TZ=America/Edmonton
     restart: unless-stopped

@@ -916,9 +916,8 @@ def _compute_scrape_time(item):
 
             release_datetime = datetime.combine(release_date, airtime)
 
-            if item_type == 'movie' and not airtime_str:
-                release_datetime += timedelta(days=1)
-
+            # Movies with no air time start at 00:00 on the release date plus
+            # the offset (queues/release_timing.py).
             item['release_date'] = release_datetime.strftime('%Y-%m-%d')
 
             offset_hours = 0.0

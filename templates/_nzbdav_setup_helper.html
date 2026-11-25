@@ -2,8 +2,8 @@
    NzbDAV setup helper — reusable partial included in Settings → Usenet Provider
    and in onboarding step 2. Two parts:
      1. Generator  — client-side; renders docker-compose.yml + rclone.conf
-        (+ optional mergerfs union for multi-provider setups) + the cli-debrid
-        config block, all copyable. cli-debrid runs in a container and cannot
+        (+ optional mergerfs union for multi-provider setups) + the Clyde
+        config block, all copyable. Clyde runs in a container and cannot
         write/start a stack on the host, so it shows the files to copy.
      2. Live check — calls /program_operation/api/nzbdav/{check,ensure_categories}
         to verify reachability + create any missing categories via NzbDAV's
@@ -13,20 +13,20 @@
 <div id="nzbdav-helper" data-provider-only="nzbdav" class="settings-form-group"
      style="border:1px solid #3a6ea5;border-radius:8px;padding:12px 14px;margin-top:8px;background:rgba(58,110,165,0.06);">
   <div style="font-weight:700;font-size:1.02em;margin-bottom:4px;">NzbDAV setup helper</div>
-  <p class="settings-description" style="margin-top:0;"><strong>What you do vs. what's automatic:</strong> you type your paths/URL below and the tool <em>writes the config files for you</em> — but you copy them to your host and run the shown <code>docker compose</code> commands yourself (cli-debrid runs in a container and can't create other containers). The <strong>only</strong> step this tool performs automatically is checking/creating the NzbDAV categories in <em>section 2</em>. Fields are prefilled from your saved settings; blank fields fall back to the placeholders.</p>
+  <p class="settings-description" style="margin-top:0;"><strong>What you do vs. what's automatic:</strong> you type your paths/URL below and the tool <em>writes the config files for you</em> — but you copy them to your host and run the shown <code>docker compose</code> commands yourself (Clyde runs in a container and can't create other containers). The <strong>only</strong> step this tool performs automatically is checking/creating the NzbDAV categories in <em>section 2</em>. Fields are prefilled from your saved settings; blank fields fall back to the placeholders.</p>
 
   {# ---- 1. Generator inputs ---- #}
   <details open style="border:1px solid #444;border-radius:6px;padding:8px 12px;margin-top:8px;">
     <summary style="cursor:pointer;font-weight:600;">1. Generate config files</summary>
 
-    <p class="settings-description" style="margin-top:8px;"><input type="checkbox" id="nh-use-union" style="vertical-align:middle;margin-right:6px;"><label for="nh-use-union" style="font-weight:600;">I also use a debrid provider (Real-Debrid / zurg)</label> — most setups run both. Adds a small mergerfs "union" so cli-debrid sees debrid + usenet files under one path.</p>
+    <p class="settings-description" style="margin-top:8px;"><input type="checkbox" id="nh-use-union" style="vertical-align:middle;margin-right:6px;"><label for="nh-use-union" style="font-weight:600;">I also use a debrid provider (Real-Debrid / zurg)</label> — most setups run both. Adds a small mergerfs "union" so Clyde sees debrid + usenet files under one path.</p>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;margin-top:8px;">
-      <div><label class="settings-title">NzbDAV URL (as cli-debrid reaches it)</label>
+      <div><label class="settings-title">NzbDAV URL (as Clyde reaches it)</label>
         <input type="text" id="nh-url" class="settings-input" placeholder="http://192.168.1.50:3000"></div>
       <div><label class="settings-title">SAB API Token</label>
         <input type="text" id="nh-token" class="settings-input" placeholder="from NzbDAV → Settings → API"></div>
-      <div><label class="settings-title">Container mount path (where cli-debrid sees NzbDAV)</label>
+      <div><label class="settings-title">Container mount path (where Clyde sees NzbDAV)</label>
         <input type="text" id="nh-cmount" class="settings-input" placeholder="/mnt/nzbdav"></div>
       <div><label class="settings-title">Host mount base (parent dir, mapped to /mnt/remote)</label>
         <input type="text" id="nh-mountbase" class="settings-input" placeholder="/srv/DUMB/mnt"></div>
@@ -44,13 +44,13 @@
     </div>
 
     <div id="nh-union-fields" style="display:none;border-top:1px dashed #555;margin-top:10px;padding-top:8px;">
-      <p class="settings-description" style="margin-top:0;"><strong>Union (debrid + usenet → one mount):</strong> point both providers' rclone mounts under one host dir, and bind the union output into cli-debrid.</p>
+      <p class="settings-description" style="margin-top:0;"><strong>Union (debrid + usenet → one mount):</strong> point both providers' rclone mounts under one host dir, and bind the union output into Clyde.</p>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;">
         <div><label class="settings-title">Debrid (zurg) source branch</label>
           <input type="text" id="nh-debridbranch" class="settings-input" placeholder="/source/zurg/__all__"></div>
         <div><label class="settings-title">Union output (host path)</label>
           <input type="text" id="nh-uniontarget" class="settings-input" placeholder="/srv/DUMB/debrid-usenet-union/mnt"></div>
-        <div><label class="settings-title">Union path inside cli-debrid (= Plex.mounted_file_location)</label>
+        <div><label class="settings-title">Union path inside Clyde (= Plex.mounted_file_location)</label>
           <input type="text" id="nh-unioncmount" class="settings-input" placeholder="/mnt/debrid-usenet-union"></div>
       </div>
     </div>
@@ -63,7 +63,7 @@
   {# ---- 2. Live check ---- #}
   <details open style="border:1px solid #444;border-radius:6px;padding:8px 12px;margin-top:10px;">
     <summary style="cursor:pointer;font-weight:600;">2. Test connection &amp; ensure categories</summary>
-    <p class="settings-description" style="margin-top:8px;">Once NzbDAV is running, verify cli-debrid can reach it and that the required categories exist (missing categories make grabs loop in "Wanted"). Uses the URL + token above.</p>
+    <p class="settings-description" style="margin-top:8px;">Once NzbDAV is running, verify Clyde can reach it and that the required categories exist (missing categories make grabs loop in "Wanted"). Uses the URL + token above.</p>
     <button type="button" id="nh-check" class="btn-primary add-version-link">Test connection &amp; check categories</button>
     <div id="nh-check-result" style="margin-top:10px;"></div>
   </details>
@@ -113,7 +113,7 @@
     try { var u = new URL(url); return u.port || dflt; } catch(e){ return dflt; }
   }
 
-  // Categories cli-debrid manages, derived from the configured category map
+  // Categories Clyde manages, derived from the configured category map
   // (injected by the inject_nzbdav_categories context processor) so the scaffold
   // matches what the submit-router emits and the check helper expects. 'music' is
   // appended as a recommended extra for shared-with-Lidarr setups.
@@ -128,9 +128,9 @@
 
   function buildCompose(p){
     return [
-'# NzbDAV usenet backend for cli-debrid — generated by the in-app setup helper.',
+'# NzbDAV usenet backend for Clyde — generated by the in-app setup helper.',
 '# Two services: nzbdav (SAB-compatible API + WebDAV) and an rclone sidecar that',
-'# mounts NzbDAV\'s WebDAV so cli-debrid/Plex can read the files.',
+'# mounts NzbDAV\'s WebDAV so Clyde/Plex can read the files.',
 'services:',
 '  nzbdav:',
 '    image: nzbdav/nzbdav:latest',
@@ -142,7 +142,7 @@
 '      - PUID=' + p.puid,
 '      - PGID=' + p.pgid,
 '      - TZ=' + p.tz,
-'      # Lets SAB clients (cli-debrid, Lidarr, ...) hit /api?apikey=... without the',
+'      # Lets SAB clients (Clyde, Lidarr, ...) hit /api?apikey=... without the',
 '      # React frontend redirecting to /login. Required for the in-app category check.',
 '      - DISABLE_FRONTEND_AUTH=true',
 '    volumes:',
@@ -220,7 +220,7 @@
       CATS.map(function(c){ return '/source/nzbdav/content/' + c; })
     ).join(':');
     return [
-'# debrid-usenet-union: mergerfs aggregate so cli-debrid\'s single file-presence',
+'# debrid-usenet-union: mergerfs aggregate so Clyde\'s single file-presence',
 '# path sees both debrid (zurg) and usenet (nzbdav) files. Read-only.',
 '# Build the image from the Dockerfile above (same folder).',
 'services:',
@@ -286,12 +286,12 @@
     if (p.useUnion) {
       li.push('<strong>Create the union mount:</strong> make a folder <code>debrid-usenet-union/</code>, save the <code>Dockerfile</code> + <code>docker-compose.yml</code> below into it, then run <code>cd debrid-usenet-union &amp;&amp; docker compose up -d --build</code>. The <code>--build</code> builds a tiny mergerfs image; mergerfs then merges your debrid (zurg) + NzbDAV folders into one read-only mount at <code>' + esc(p.uniontarget) + '</code>. <em>That folder is the union — it\'s created by this compose, you don\'t make it by hand.</em>');
       li.push('Check it populated: <code>ls ' + esc(p.uniontarget) + '</code> should list your merged content.');
-      li.push('Bind the union into cli-debrid and point Plex\'s file location at it: add <code>- ' + esc(p.uniontarget) + ':' + esc(cm) + ':rshared</code> to cli-debrid\'s compose, set the config block below (it sets <code>Plex.mounted_file_location = ' + esc(cm) + '</code>), then <code>docker compose up -d --force-recreate cli_debrid</code>.');
+      li.push('Bind the union into Clyde and point Plex\'s file location at it: add <code>- ' + esc(p.uniontarget) + ':' + esc(cm) + ':rshared</code> to Clyde\'s compose, set the config block below (it sets <code>Plex.mounted_file_location = ' + esc(cm) + '</code>), then <code>docker compose up -d --force-recreate cli_debrid</code>.');
     } else {
-      li.push('Bind the NzbDAV mount into cli-debrid: add <code>- ' + esc(p.mountbase) + '/nzbdav:' + esc(cm) + ':rshared</code> to cli-debrid\'s compose, apply the config block below, then <code>docker compose up -d --force-recreate cli_debrid</code>.');
+      li.push('Bind the NzbDAV mount into Clyde: add <code>- ' + esc(p.mountbase) + '/nzbdav:' + esc(cm) + ':rshared</code> to Clyde\'s compose, apply the config block below, then <code>docker compose up -d --force-recreate cli_debrid</code>.');
     }
-    li.push('Add the content folders to your Plex libraries (one per managed category — ' + CATS.map(function(c){ return '<code>' + esc(cm) + '/content/' + esc(c) + '</code>'; }).join(', ') + ') and disable Plex auto-scan on them (cli-debrid triggers scans itself).');
-    li.push('<strong>⚠️ Important for library deletes &amp; health checks:</strong> cli-debrid resolves a file\'s on-disk location for deletion/health via <code>Plex.mounted_file_location</code> and <code>File Management.original_files_path</code> — <em>not</em> the NzbDAV mount path. Make sure both point at a path that actually contains your NzbDAV content (the union mount above, or — for an NzbDAV-only box — your NzbDAV mount, e.g. <code>' + esc(cm) + '</code>). If they\'re left at a debrid default like <code>/mnt/zurg/__all__</code> on an NzbDAV-only setup, deletes/health checks look at the wrong (empty) mount and can wrongly flag items as missing.');
+    li.push('Add the content folders to your Plex libraries (one per managed category — ' + CATS.map(function(c){ return '<code>' + esc(cm) + '/content/' + esc(c) + '</code>'; }).join(', ') + ') and disable Plex auto-scan on them (Clyde triggers scans itself).');
+    li.push('<strong>⚠️ Important for library deletes &amp; health checks:</strong> Clyde resolves a file\'s on-disk location for deletion/health via <code>Plex.mounted_file_location</code> and <code>File Management.original_files_path</code> — <em>not</em> the NzbDAV mount path. Make sure both point at a path that actually contains your NzbDAV content (the union mount above, or — for an NzbDAV-only box — your NzbDAV mount, e.g. <code>' + esc(cm) + '</code>). If they\'re left at a debrid default like <code>/mnt/zurg/__all__</code> on an NzbDAV-only setup, deletes/health checks look at the wrong (empty) mount and can wrongly flag items as missing.');
     return '<div style="margin-top:8px;"><strong>Deploy steps (run these on your host):</strong><ol class="settings-description" style="line-height:1.6;margin-top:4px;">'
       + li.map(function(s){ return '<li>' + s + '</li>'; }).join('') + '</ol></div>';
   }
@@ -338,7 +338,7 @@
       html += block('Dockerfile', 'debrid-usenet-union/Dockerfile');
       html += block('docker-compose.yml', 'debrid-usenet-union/docker-compose.yml');
     }
-    html += block('cli-debrid config block', 'config.json (Usenet Provider' + (p.useUnion ? ' + Plex.mounted_file_location' : '') + ')');
+    html += block('Clyde config block', 'config.json (Usenet Provider' + (p.useUnion ? ' + Plex.mounted_file_location' : '') + ')');
     out.innerHTML = html;
     out.style.display = '';
 

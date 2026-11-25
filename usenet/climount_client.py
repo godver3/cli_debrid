@@ -17,10 +17,13 @@ import re
 import threading
 import time
 import urllib.parse
+
+import requests
 from typing import Optional, Dict, Any, Tuple
 
 from utilities.settings import get_setting
 from routes.api_tracker import api
+from usenet.base import ALL_CAPABILITIES
 
 # Jobs we ourselves just told the provider to delete. is_nzb_job_alive() checks
 # this before trusting a fresh provider response, since a delete call returning
@@ -100,6 +103,7 @@ class CliMountClient:
     """Submits NZB URLs to cli_mount and polls for completion."""
 
     PROVIDER_NAME = "cli_mount (Usenet)"
+    CAPABILITIES = ALL_CAPABILITIES
 
     def __init__(self):
         cfg = get_setting('Usenet Provider') or {}
@@ -907,39 +911,11 @@ class CliMountClient:
             return {}
 
     def trigger_health_scan(self, full: bool = False, wait: bool = False, timeout: int = 300) -> bool:
-        """POST /api/repair/run?protocol=nzb to scan NZB entries.
-        full=True scans all files; full=False (default) only scans unchecked files.
-        wait=True blocks until the scan completes (up to timeout seconds)."""
+        """Scan NZB entries (POST /api/repair/run?protocol=nzb). See run_health_scan."""
         if not self.is_enabled():
             return False
         try:
-            import time as _t
-            params = 'protocol=nzb'
-            if full:
-                params += '&ignore_last_checked=true'
-            r = api.post(f'{self.base_url}/api/repair/run?{params}', headers=self._headers(), timeout=30)
-            if r.status_code not in (200, 202, 204):
-                return False
-            if not wait:
-                return True
-            # Poll until the run completes
-            run_id = (r.json() or {}).get('run_id', '')
-            if not run_id:
-                return True
-            deadline = _t.time() + timeout
-            while _t.time() < deadline:
-                _t.sleep(30)
-                try:
-                    sr = api.get(f'{self.base_url}/api/repair/runs/{run_id}', headers=self._headers(), timeout=10)
-                    if sr.status_code == 200:
-                        status = (sr.json() or {}).get('status', '')
-                        if status in ('completed', 'failed', 'error'):
-                            logging.info(f'[cli_mount] NZB health scan completed: status={status}')
-                            return True
-                except Exception:
-                    pass
-            logging.warning('[cli_mount] NZB health scan wait timed out')
-            return True
+            return self.run_health_scan('nzb', full=full, wait=wait, timeout=timeout, log_label='NZB')
         except Exception as exc:
             logging.warning(f'[cli_mount] trigger_health_scan error: {exc}')
             return False
@@ -959,6 +935,238 @@ class CliMountClient:
         except Exception as exc:
             logging.debug(f'[cli_mount] resolve_job_id error: {exc}')
         return ''
+
+    # ---- repair API (capability REPAIR_API) -------------------------------
+    # Thin wrappers over cli_mount's /api/repair/* and /api/browse/torrents.
+    # None of these raise: HTTP errors come back as a status code, transport
+    # errors as status None.
+
+    def _call(self, method: str, path: str, **kwargs):
+        """(status, parsed_json_or_None) for an authenticated cli_mount call."""
+        kwargs.setdefault('timeout', 15)
+        try:
+            r = getattr(api, method)(f'{self.base_url}{path}', headers=self._headers(), **kwargs)
+        except Exception as exc:
+            r = getattr(exc, 'response', None)
+            if r is None:
+                logging.debug(f'[cli_mount] {method.upper()} {path} error: {exc}')
+                return None, None
+        try:
+            body = r.json()
+        except Exception:
+            body = None
+        return r.status_code, body
+
+    def list_repair_health(self, timeout: int = 60, status: str = '') -> Optional[list]:
+        """Health records (both protocols; optionally only ``status``), or None when the call fails."""
+        params = {'status': status} if status else None
+        status, body = self._call('get', '/api/repair/health', params=params, timeout=timeout)
+        if status != 200 or body is None:
+            if status is not None:
+                logging.warning(f'[cli_mount] /api/repair/health HTTP {status}')
+            return None
+        return self._parse_health_entries(body)
+
+    def delete_repair_health(self, entry_name: str) -> Optional[int]:
+        encoded = urllib.parse.quote(entry_name, safe='')
+        return self._call('delete', f'/api/repair/health/{encoded}', timeout=15)[0]
+
+    def recheck_entry_health(self, entry_name: str, timeout: int = 30) -> Optional[int]:
+        encoded = urllib.parse.quote(entry_name, safe='')
+        return self._call('post', f'/api/repair/health/{encoded}/check', timeout=timeout)[0]
+
+    def get_repair_status(self) -> Optional[dict]:
+        status, body = self._call('get', '/api/repair/status', timeout=10)
+        return body if status == 200 and isinstance(body, dict) else None
+
+    def stop_repair(self) -> Optional[int]:
+        return self._call('post', '/api/repair/stop', timeout=10)[0]
+
+    def sync_torrent(self, info_hash: str, rd_id: str = '') -> Optional[int]:
+        """POST /api/torrents/{hash}/sync (optionally pinned to a new RD torrent id)."""
+        return self._call('post', f'/api/torrents/{info_hash}/sync',
+                          params={'rdId': rd_id} if rd_id else None, timeout=15)[0]
+
+    def delete_mount_torrent(self, info_hash: str) -> Optional[int]:
+        return self._call('delete', f'/api/browse/torrents/{info_hash}', timeout=15)[0]
+
+    def iter_mount_torrents(self, page_size: int = 500, timeout: int = 30):
+        """Yield entries from /api/browse/torrents (only those present in the mount)."""
+        page = 1
+        while True:
+            status, body = self._call('get', '/api/browse/torrents',
+                                      params={'limit': page_size, 'page': page}, timeout=timeout)
+            if status != 200 or not isinstance(body, dict):
+                return
+            yield from body.get('entries', [])
+            if page >= body.get('total_pages', 1):
+                return
+            page += 1
+
+    def run_health_scan(self, protocol: str, full: bool = False, wait: bool = False,
+                        timeout: int = 300, log_label: str = '') -> bool:
+        """POST /api/repair/run?protocol=<nzb|torrent>, optionally waiting for it to finish.
+
+        full=True scans all files; full=False only scans unchecked ones.
+        """
+        params = {'protocol': protocol}
+        if full:
+            params['ignore_last_checked'] = 'true'
+        status, body = self._call('post', '/api/repair/run', params=params, timeout=30)
+        if status not in (200, 202, 204):
+            return False
+        if not wait:
+            return True
+        run_id = (body or {}).get('run_id', '') if isinstance(body, dict) else ''
+        if not run_id:
+            return True
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            time.sleep(30)
+            st, run = self._call('get', f'/api/repair/runs/{run_id}', timeout=10)
+            if st == 200 and isinstance(run, dict) and run.get('status') in ('completed', 'failed', 'error'):
+                logging.info(f'[cli_mount] {log_label or protocol} health scan completed: status={run.get("status")}')
+                return True
+        logging.warning(f'[cli_mount] {log_label or protocol} health scan wait timed out')
+        return True
+
+    def post_repair_replacement(self, action: str, payload: dict, timeout: int = 20):
+        """POST /api/repair/replacements/<ack|verify>. Returns (status, body, error):
+        status 0 + error text when the request never got an answer."""
+        if action not in ('ack', 'verify'):
+            raise ValueError(f'unknown replacement action {action!r}')
+        try:
+            r = requests.post(f'{self.base_url}/api/repair/replacements/{action}', json=payload,
+                              headers=self._headers(), timeout=timeout)
+            try:
+                body = r.json()
+            except Exception:
+                body = {}
+            return r.status_code, body if isinstance(body, dict) else {}, ''
+        except Exception as exc:
+            return 0, {}, str(exc)
+
+    # ---- sync feed (capability SYNC_FEED) ---------------------------------
+
+    def fetch_sync_changes_page(self, page: int, limit: int, since_ts: int = 0, timeout: int = 60):
+        """GET /api/sync/changes for one page. Returns (status, payload); raises on
+        transport errors. payload is a list on legacy cli_mount, else a dict
+        with 'changes' and 'has_more'."""
+        params = {'page': page, 'limit': limit}
+        if since_ts > 0:
+            params['since'] = since_ts
+        r = api.get(f'{self.base_url}/api/sync/changes', params=params, headers=self._headers(), timeout=timeout)
+        if r.status_code != 200:
+            return r.status_code, None
+        return r.status_code, r.json() or []
+
+    # ---- logs (capability LOGS) -------------------------------------------
+
+    def fetch_logs(self, lines: int = 1000, level: str = 'all') -> dict:
+        """cli_mount's own recent log lines. Raises on any failure (callers show the message)."""
+        params = {'lines': lines}
+        if level != 'all':
+            params['level'] = level
+        r = api.get(f'{self.base_url}/api/logs', headers=self._headers(), params=params, timeout=15)
+        r.raise_for_status()
+        return r.json()
+
+    def share_logs(self) -> str:
+        """Ask cli_mount to collect and upload its logs; returns the share URL. Raises on failure."""
+        r = api.post(f'{self.base_url}/api/logs/share', headers=self._headers(), timeout=310)
+        r.raise_for_status()
+        url = (r.json() or {}).get('url')
+        if not url:
+            raise Exception('cli_mount did not return a share URL')
+        return url
+
+    # ---- stats (capability STATS) -----------------------------------------
+
+    def get_debug_stats(self, timeout: int = 10) -> Optional[dict]:
+        """cli_mount's GET /debug/stats (pool use, active streams, mount detail), or None."""
+        try:
+            r = requests.get(f'{self.base_url}/debug/stats', headers=self._headers(), timeout=timeout)
+            if r.status_code != 200:
+                return None
+            data = r.json()
+            return data if isinstance(data, dict) else None
+        except Exception as exc:
+            logging.debug(f'[cli_mount] /debug/stats fetch failed: {exc}')
+            return None
+
+    # ---- queue listing (capability QUEUE) ---------------------------------
+
+    def iter_queue_jobs(self, search: str = '', page_size: int = 50, sort: bool = True,
+                        timeout: int = 10, retries: int = 1):
+        """Yield every job dict from GET /api/torrents, page by page.
+
+        Stops quietly, keeping what was already yielded, when a page still
+        fails (non-200 or request error) after ``retries`` attempts.
+        """
+        params = {'limit': page_size}
+        if sort:
+            params.update({'sort_by': 'added_on', 'sort_order': 'desc'})
+        if search:
+            params['search'] = search
+        page = 1
+        while True:
+            r = None
+            for attempt in range(retries):
+                try:
+                    # Plain requests, not the api tracker: a non-200 page is an
+                    # expected stop condition here, not an error to raise and log.
+                    r = requests.get(f'{self.base_url}/api/torrents', params={**params, 'page': page},
+                                     headers=self._headers(), timeout=timeout)
+                except Exception as exc:
+                    r = None
+                    logging.warning(f'[cli_mount] /api/torrents page {page} error (attempt {attempt + 1}): {exc}')
+                    continue
+                if r.status_code == 200:
+                    break
+                logging.warning(f'[cli_mount] /api/torrents page {page} HTTP {r.status_code} (attempt {attempt + 1})')
+            if r is None or r.status_code != 200:
+                return
+            data = r.json()
+            yield from data.get('torrents', [])
+            if not data.get('has_next'):
+                return
+            page += 1
+
+    def find_job_hash_by_name(self, name: str, page_size: int = 50, sort: bool = True) -> str:
+        """info_hash of the first job whose name equals ``name`` (stripped), or ''."""
+        name = (name or '').strip()
+        if not name:
+            return ''
+        for t in self.iter_queue_jobs(page_size=page_size, sort=sort):
+            if t.get('name', '').strip() == name:
+                return t.get('info_hash', '')
+        return ''
+
+    def delete_queue_job(self, info_hash: str) -> Optional[int]:
+        """DELETE /api/torrents?hashes=<hash>. Returns the HTTP status (None on error)."""
+        status, exc = _delete_status(f'{self.base_url}/api/torrents', headers=self._headers(),
+                                     params={'hashes': info_hash}, timeout=10)
+        if status is None:
+            logging.debug(f'[cli_mount] delete_queue_job {info_hash!r} error: {exc}')
+        return status
+
+    def iter_library_nzbs(self, page_size: int = 100, timeout: int = 10):
+        """Yield every entry dict from GET /api/browse/nzbs, page by page."""
+        page = 1
+        while True:
+            r = requests.get(f'{self.base_url}/api/browse/nzbs', params={'page': page, 'limit': page_size},
+                             headers=self._headers(), timeout=timeout)
+            if r.status_code != 200:
+                return
+            data = r.json()
+            entries = data.get('entries', data) if isinstance(data, dict) else data
+            if not entries:
+                return
+            yield from entries
+            total = data.get('total_pages', 1) if isinstance(data, dict) else 1
+            if page >= total:
+                return
+            page += 1
 
     def wait_for_completion(self, job_id: str, timeout: int = 3600, poll_interval: int = 10) -> bool:
         """Poll until the job completes or timeout. Returns True on success."""
@@ -1014,7 +1222,8 @@ def _map_state(raw: str) -> str:
     return 'unknown'
 
 # ---- Provider-switch factory (nzbdav-compat patch 2026-05-26) ----
-# Delegates to nzbdav_client when 'Usenet Provider.provider' == 'nzbdav'.
+# Delegates to nzbdav_client when 'Usenet Provider.provider' is a SAB-style
+# provider (usenet.SAB_STYLE_PROVIDERS: nzbdav, zurg).
 # The CliMountClient class above is unchanged.
 
 _client_instance = None
@@ -1031,9 +1240,14 @@ def _provider_key() -> str:
 
 def get_climount_client():
     global _client_instance
-    if _provider_key() == 'nzbdav':
+    from usenet import SAB_STYLE_PROVIDERS, BUILTIN_PROVIDER
+    key = _provider_key()
+    if key in SAB_STYLE_PROVIDERS:
         from .nzbdav_client import get_nzbdav_client
         return get_nzbdav_client()
+    if key == BUILTIN_PROVIDER:
+        from usenet.builtin_client import get_builtin_client
+        return get_builtin_client()
     if _client_instance is None:
         _client_instance = CliMountClient()
     return _client_instance
@@ -1090,6 +1304,10 @@ def is_nzb_job_alive(job_hash: str) -> bool:
 def reset_climount_client() -> None:
     global _client_instance
     _client_instance = None
-    if _provider_key() == 'nzbdav':
+    from usenet import SAB_STYLE_PROVIDERS, BUILTIN_PROVIDER
+    if _provider_key() == BUILTIN_PROVIDER:
+        from usenet.builtin_client import reset_builtin_client
+        reset_builtin_client()
+    if _provider_key() in SAB_STYLE_PROVIDERS:
         from .nzbdav_client import reset_nzbdav_client
         reset_nzbdav_client()

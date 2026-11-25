@@ -97,12 +97,11 @@ class JobReuseTests(unittest.TestCase):
             self.addCleanup(p.stop)
 
     def _run(self, existing_job_name):
-        listing = {'torrents': [{'name': existing_job_name, 'info_hash': 'uhdjob', 'status': 'downloading'}],
-                   'has_next': False}
+        # The in-flight job listing comes from the client (cli_mount's /api/torrents).
+        jobs = [{'name': existing_job_name, 'info_hash': 'uhdjob', 'status': 'downloading'}]
+        self.client.iter_queue_jobs = lambda **kw: iter(jobs)
 
         def get(url, **kw):
-            if url.endswith('/api/torrents'):
-                return _Resp(200, payload=listing)
             if url == HD_URL:
                 return _Resp(200, NZB_XML)
             return _Resp(404)

@@ -1,5 +1,5 @@
 /**
- * ai_butler.js — CLI Debrid AI Butler chat widget
+ * ai_butler.js — Clyde AI Butler chat widget
  * Phase 2: Assistant with setting-change suggestions + Apply buttons
  */
 

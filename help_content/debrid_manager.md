@@ -1,6 +1,6 @@
 ### Debrid Manager Help
 
-The Debrid Manager is the central hub for monitoring and managing your debrid account directly from cli_debrid. It surfaces everything happening in your Real-Debrid (or AllDebrid) account — active downloads, your full torrent library, a history of what the app has sent to your debrid, and automated maintenance tools for backups and cleanup.
+The Debrid Manager is the central hub for monitoring and managing your debrid account directly from Clyde. It surfaces everything happening in your Real-Debrid (or AllDebrid) account — active downloads, your full torrent library, a history of what the app has sent to your debrid, and automated maintenance tools for backups and cleanup.
 
 ---
 
@@ -37,8 +37,8 @@ A full paginated view of your entire debrid torrent library — every torrent ev
     *   **Title Match** — Filters to items where multiple torrents share the same resolved title. These may be re-downloads of the same content with different hashes.
     *   **Plex Trash** *(shown when Plex is configured)* — Filters to torrents linked to items currently in the Plex trash (deleted from Plex but not removed from debrid). The ↺ button forces a fresh scan of the Plex trash without waiting for cache expiry.
 *   **Sort:** Click any column header (Filename, Size, Status, Added) to sort. The default sort is newest first.
-*   **Refresh Library:** Forces a fresh fetch from the debrid API, bypassing the local cache. Use this after making changes in your debrid account from outside cli_debrid.
-*   **Delete Selected:** Permanently removes selected torrents from your debrid account. Deleting a torrent here does not remove the corresponding item from the cli_debrid database — it only removes the torrent from debrid.
+*   **Refresh Library:** Forces a fresh fetch from the debrid API, bypassing the local cache. Use this after making changes in your debrid account from outside Clyde.
+*   **Delete Selected:** Permanently removes selected torrents from your debrid account. Deleting a torrent here does not remove the corresponding item from the Clyde database — it only removes the torrent from debrid.
 *   **Delete All Dupes:** Visible only when the Dupes filter is active. Removes all duplicate hash entries, keeping the one with the most links (downloaded files). If no links exist, keeps the entry with the highest download progress.
 *   **Pagination:** Results are paginated. Use Prev / Next to navigate. The count display shows your current position and total.
 *   **Cross-page selection:** When you select items across multiple pages, a banner appears offering "Select all N matching" to extend the selection to every item matching the current filter — not just the visible page. Use **Reinsert All** from this banner to re-add all selected torrents to debrid (useful for recovering No Files / error states in bulk).
@@ -51,12 +51,12 @@ A full paginated view of your entire debrid torrent library — every torrent ev
 
 **Tracker Tab**
 
-A chronological log of every torrent that cli_debrid has ever sent to your debrid account. This is sourced from the app's internal database, not the debrid API, so it persists even after torrents are deleted from debrid.
+A chronological log of every torrent that Clyde has ever sent to your debrid account. This is sourced from the app's internal database, not the debrid API, so it persists even after torrents are deleted from debrid.
 
 *   **Filter bar:** Text or regex search against title, hash, and trigger source.
 *   **Reload:** Fetches the latest entries from the database.
 *   **Columns:**
-    *   **Added** — When the torrent was submitted to debrid by cli_debrid.
+    *   **Added** — When the torrent was submitted to debrid by Clyde.
     *   **Title** — The resolved media title (with year, season, and episode if applicable).
     *   **Trigger** — What caused this torrent to be added. Examples: "scraper", "manual", "upgrading", "wanted".
     *   **Rationale** — A short explanation of why this specific torrent was chosen (e.g. "Best quality match", "Upgrade from 1080p to 4K").
@@ -101,24 +101,24 @@ Automatically removes unwanted torrents from your debrid account based on config
 
 **Audit Tab**
 
-A set of diagnostic and maintenance tools for auditing the relationship between your cli_debrid database and the Battery metadata database. The tab is split into three sub-panels, toggled by the pill buttons at the top: **Reconcile**, **Symlinks**, and **Battery**.
+A set of diagnostic and maintenance tools for auditing the relationship between your Clyde database and the Battery metadata database. The tab is split into three sub-panels, toggled by the pill buttons at the top: **Reconcile**, **Symlinks**, and **Battery**.
 
-*   **Reconcile sub-panel:** Identifies mismatches between the torrents in your debrid account and the items recorded in your cli_debrid database.
-    *   **Orphaned in debrid** — Torrents present in your debrid account that have no matching entry in the cli_debrid database. These may be manually added torrents or leftover entries from deleted items.
-    *   **Missing from debrid** — Items in the cli_debrid database with a Collected state but no corresponding torrent found in your debrid account. These items are effectively broken — the file is gone but the database still thinks it is collected.
+*   **Reconcile sub-panel:** Identifies mismatches between the torrents in your debrid account and the items recorded in your Clyde database.
+    *   **Orphaned in debrid** — Torrents present in your debrid account that have no matching entry in the Clyde database. These may be manually added torrents or leftover entries from deleted items.
+    *   **Missing from debrid** — Items in the Clyde database with a Collected state but no corresponding torrent found in your debrid account. These items are effectively broken — the file is gone but the database still thinks it is collected.
     *   **Run Reconcile:** Executes the reconciliation check and populates both lists.
     *   **Per-row actions:** Each row in the orphaned list has a delete icon to remove that torrent from debrid. Each row in the missing list has a re-queue icon to reset the item to a Wanted state so it will be re-downloaded.
 
 *   **Symlinks sub-panel:** Audits the symlink structure used by the symlinked/local mount mode.
     *   **Broken symlinks** — Symlinks that point to a target that no longer exists on disk (e.g., the underlying file was deleted from debrid or moved).
-    *   **Orphaned symlinks** — Symlinks with no corresponding entry in the cli_debrid database. These are leftover links from deleted items.
+    *   **Orphaned symlinks** — Symlinks with no corresponding entry in the Clyde database. These are leftover links from deleted items.
     *   **Run Symlink Audit:** Scans the symlink directory and populates both lists.
     *   **Per-row actions:** Delete icon to remove individual broken or orphaned symlinks from disk.
 
 *   **Battery sub-panel:** Audits the Battery metadata database (cli_battery.db) for consistency issues with your media items.
     *   **Five checks are run:**
-        *   **Orphaned Battery Items** — Entries in the Battery database whose IMDB ID does not match any item in the cli_debrid database. These are metadata records for shows or movies that are no longer tracked.
-        *   **Missing Battery Items** — Items in the cli_debrid database that have no corresponding metadata record in the Battery database.
+        *   **Orphaned Battery Items** — Entries in the Battery database whose IMDB ID does not match any item in the Clyde database. These are metadata records for shows or movies that are no longer tracked.
+        *   **Missing Battery Items** — Items in the Clyde database that have no corresponding metadata record in the Battery database.
         *   **Stale Metadata** — Battery records that have not been refreshed within the expected interval, meaning the metadata may be outdated.
         *   **Orphaned TVDB Mappings** — Entries in the TVDB→IMDB mapping table that reference a TVDB ID with no active items in the database.
         *   **Orphaned TMDB Mappings** — Same as above but for TMDB→IMDB mappings.
@@ -127,7 +127,7 @@ A set of diagnostic and maintenance tools for auditing the relationship between 
         *   **Refresh** — Forces a metadata re-fetch for that item from the upstream API and updates the Battery record.
         *   **Delete** — Removes the Battery record for that item. The item will be re-fetched on the next metadata sync.
         *   **Delete Mapping** — Removes an orphaned TVDB or TMDB mapping record.
-        *   **Re-identify** — Two-step process for correcting a wrong IMDB ID on a Battery record. First click **Verify** to confirm the new IMDB ID resolves correctly, then click **Confirm** to commit the change. The old Battery record is deleted, metadata is re-fetched for the new ID, and optionally the IMDB ID on the cli_debrid media item is updated to match.
+        *   **Re-identify** — Two-step process for correcting a wrong IMDB ID on a Battery record. First click **Verify** to confirm the new IMDB ID resolves correctly, then click **Confirm** to commit the change. The old Battery record is deleted, metadata is re-fetched for the new ID, and optionally the IMDB ID on the Clyde media item is updated to match.
     *   **Sync Now:** Runs a metadata sync pass (`update_movie_titles()` + `sync_episode_metadata()`) in the background to refresh Battery records for all items in the database.
 
 ---
@@ -151,7 +151,7 @@ Displays your debrid account's current usage statistics, fetched live from the d
 
 **Important Notes:**
 
-*   **Deleting from Debrid Manager does not delete from cli_debrid database.** Removing a torrent here only removes it from your debrid account. The corresponding media item in the app database will remain and may be re-queued for download if it is still in a Wanted state.
+*   **Deleting from Debrid Manager does not delete from Clyde database.** Removing a torrent here only removes it from your debrid account. The corresponding media item in the app database will remain and may be re-queued for download if it is still in a Wanted state.
 *   **Reinsert vs Delete + Re-queue:** Reinsert is a fast in-place fix that keeps the existing database state intact. It is the preferred way to unstick a No Files or error torrent without disrupting the app's tracking of that item.
 *   **Backup restore is additive.** Restoring from a backup slot only adds torrents that are missing from your current account — it never deletes anything. You can restore safely at any time.
 *   **Backup slots use a promotion model.** The daily slot is overwritten on every backup run. The 3-day slot is only updated when the daily slot data is 3+ days old; the 7-day slot is only updated when the 3-day slot data is 7+ days old. This ensures that older slots always contain genuinely older snapshots rather than being overwritten by recent runs.

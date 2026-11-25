@@ -31,6 +31,11 @@ class UsenetTasks:
                 if str(item.get('filled_by_torrent_id', '')).startswith('nzb:')
             ]
             if not _nzb_items:
+                # Nothing being added: still look for broken library files
+                # (the engine's broken list, cli_mount's log). They used to sit
+                # after this return, so they ran only while an NZB was in
+                # Adding and broken files waited for the monthly scan.
+                self._nzb_broken_watch()
                 return
 
             _tick_start = _time.monotonic()
@@ -84,6 +89,65 @@ class UsenetTasks:
             # placeholder rather than provider progress. Those waits have their own
             # tick caps; the download timeout must not read them as a stalled download.
             _placeholder_jobs = set()
+            # Jobs whose ghost / folder wait ran out this tick. Decided after all
+            # polls: when none of the finished jobs can find its folder, the mount
+            # or the provider API is down (or just restarted), not every job.
+            _wait_expired = {}
+            _wait_since = self._nzb_folder_wait_since
+            _now_mono = _time.monotonic()
+
+            def _wait_tick(job_id):
+                """Count one more wait tick; returns (ticks, seconds waited)."""
+                count = _job_folder_wait_counts.get(job_id, 0) + 1
+                _job_folder_wait_counts[job_id] = count
+                since = _wait_since.setdefault(job_id, _now_mono)
+                return count, _now_mono - since
+
+            def _title_claimed_elsewhere(job_id, title):
+                """Another item holds a release of this name under a different
+                job id: a folder found by name may be that job's, not this one's."""
+                try:
+                    from database import get_db_connection as _gdb_ff
+                    _c = _gdb_ff()
+                    try:
+                        row = _c.execute(
+                            "SELECT 1 FROM media_items WHERE filled_by_file=? AND filled_by_torrent_id IS NOT NULL "
+                            "AND filled_by_torrent_id NOT IN (?, ?) "
+                            # rows that hold a release now, not a stale id on a dropped one
+                            "AND state IN ('Collected', 'Checking', 'Adding', 'Upgrading') LIMIT 1",
+                            (title, job_id, f'nzb:{job_id}')).fetchone()
+                    finally:
+                        _c.close()
+                    return bool(row)
+                except Exception:
+                    return False
+
+            def _find_folder(job_id, ghost=False):
+                items_for_job = _job_groups[job_id]
+                nzb_title = items_for_job[0].get('filled_by_file', '') or items_for_job[0].get('original_scraped_torrent_title', '')
+                by_job = getattr(_nzb_client, 'get_nzb_file_info_for_job', None)
+                if by_job:
+                    # Built-in mount: ask for this job's own folder instead of
+                    # matching names (its folder can differ from the title).
+                    try:
+                        result = by_job(job_id, include_size=True)
+                        if result:
+                            return result[0], result[2]
+                    except Exception:
+                        pass
+                if ghost and by_job is None and nzb_title and _title_claimed_elsewhere(job_id, nzb_title):
+                    # Job gone from the provider queue and its name belongs to
+                    # another job too: matching by name could take that job's folder.
+                    return None, None
+                try:
+                    result = _nzb_client.get_nzb_file_info(
+                        nzb_title or job_id, fast_check=True, include_size=True
+                    )
+                    if result:
+                        return result[0], result[2]
+                except Exception:
+                    pass
+                return None, None
 
             def _poll_job(job_id):
                 try:
@@ -119,35 +183,30 @@ class UsenetTasks:
                                 entry_name = self._nzb_confirmed_complete[job_id]
                                 progress = 100
                             else:
-                                _ghost_wait = _job_folder_wait_counts.get(job_id, 0) + 1
-                                _job_folder_wait_counts[job_id] = _ghost_wait
-                                if _ghost_wait >= 3:
-                                    logging.warning(f'[NZB] job {job_id} not in cli_mount queue after {_ghost_wait} ticks — treating as ghost')
-                                    _job_folder_wait_counts.pop(job_id, None)
+                                # The confirmed-complete memory is lost on restart, and the
+                                # provider drops finished jobs from its queue. A job whose
+                                # folder is there finished; it is not a ghost.
+                                entry_name, actual_file_size = _find_folder(job_id, ghost=True)
+                            if entry_name:
+                                progress = 100
+                            elif job_id not in self._nzb_confirmed_complete:
+                                _ghost_wait, _waited = _wait_tick(job_id)
+                                if _ghost_wait >= 3 and _waited >= self._NZB_GHOST_MIN_WAIT_SECONDS:
+                                    _wait_expired[job_id] = 'ghost'
                                     progress = -2
                                 else:
                                     logging.debug(f'[NZB] job {job_id} not in queue yet (tick {_ghost_wait}/3) — waiting')
                                     progress = 99
                                     _placeholder_jobs.add(job_id)
-                        if progress == 100:
-                            items_for_job = _job_groups[job_id]
-                            nzb_title = items_for_job[0].get('filled_by_file', '') or items_for_job[0].get('original_scraped_torrent_title', '')
-                            search_name = nzb_title or job_id
-                            try:
-                                result = _nzb_client.get_nzb_file_info(
-                                    search_name, fast_check=True, include_size=True
-                                )
-                                if result:
-                                    entry_name, _, actual_file_size = result
-                            except Exception:
-                                pass
+                        if progress == 100 and not entry_name:
+                            entry_name, actual_file_size = _find_folder(job_id)
                         if not entry_name and progress == 100:
-                            # Job completed (exists in queue) but folder not yet visible — wait up to max ticks.
-                            wait_count = _job_folder_wait_counts.get(job_id, 0) + 1
-                            _job_folder_wait_counts[job_id] = wait_count
-                            if wait_count >= _folder_wait_max:
-                                logging.warning(f'[NZB] job {job_id} folder never appeared after {wait_count} ticks — treating as broken')
-                                _job_folder_wait_counts.pop(job_id, None)
+                            # Job completed (exists in queue) but folder not yet visible. Wait
+                            # both a tick count and a wall-clock minimum: ticks alone ran out
+                            # together for every job right after a restart.
+                            wait_count, _waited = _wait_tick(job_id)
+                            if wait_count >= _folder_wait_max and _waited >= self._NZB_FOLDER_MIN_WAIT_SECONDS:
+                                _wait_expired[job_id] = 'folder'
                                 progress = -1
                             else:
                                 logging.debug(f'[NZB] job {job_id} complete but folder not found (tick {wait_count}/{_folder_wait_max}) — waiting')
@@ -155,6 +214,7 @@ class UsenetTasks:
                                 _placeholder_jobs.add(job_id)
                         elif progress == 100:
                             _job_folder_wait_counts.pop(job_id, None)
+                            _wait_since.pop(job_id, None)
                     return job_id, progress, entry_name, actual_file_size, None
                 except Exception as exc:
                     return job_id, None, None, None, exc
@@ -179,6 +239,37 @@ class UsenetTasks:
                                 _job_results[jid] = (prog, entry, actual_size, err)
                             except Exception:
                                 pass
+
+            # A run of expired waits with no finished job finding its folder this
+            # tick is the mount / provider API failing (or still starting after a
+            # restart). Failing them all blacklisted good releases in bulk, so hold
+            # them until some folder lookup works again.
+            if _wait_expired:
+                _folders_seen = any(prog == 100 and entry for prog, entry, _, _ in _job_results.values())
+                # Capped: with no other job finishing (two bad NZBs from one season and
+                # nothing else downloading), an uncapped hold kept them in Downloading
+                # forever, since held jobs also skip the download timeout.
+                _held_longest = max((_now_mono - _wait_since.get(_jid, _now_mono) for _jid in _wait_expired), default=0)
+                if (len(_wait_expired) >= 2 and not _folders_seen
+                        and _held_longest < self._NZB_MASS_HOLD_MAX_SECONDS):
+                    logging.warning(
+                        f'[NZB] {len(_wait_expired)} jobs ran out of wait at once and no finished job '
+                        f'found its folder — treating it as a mount/provider problem, holding them'
+                    )
+                    for _jid in _wait_expired:
+                        _p, _e, _a, _er = _job_results.get(_jid, (None, None, None, None))
+                        _job_results[_jid] = (99, _e, _a, _er)
+                        _placeholder_jobs.add(_jid)
+                else:
+                    for _jid, _why in _wait_expired.items():
+                        if _why == 'ghost':
+                            logging.warning(f'[NZB] job {_jid} not in the provider queue and no folder after '
+                                            f'{_job_folder_wait_counts.get(_jid, 0)} ticks — treating as ghost')
+                        else:
+                            logging.warning(f'[NZB] job {_jid} folder never appeared after '
+                                            f'{_job_folder_wait_counts.get(_jid, 0)} ticks — treating as broken')
+                        _job_folder_wait_counts.pop(_jid, None)
+                        _wait_since.pop(_jid, None)
 
             # Mark all completed entries as ready to move to Checking.
             # cli_mount's repair/health endpoint can stay in "repairing" indefinitely
@@ -595,27 +686,10 @@ class UsenetTasks:
                             pass
                         # Delete the stalled job from cli_mount
                         try:
-                            import requests as _req_to
-                            _dcy_url_to = _gs('Usenet Provider', 'url', default='').rstrip('/')
-                            _dcy_token_to = _gs('Usenet Provider', 'api_token', default='')
-                            _headers_to = {'Authorization': f'Bearer {_dcy_token_to}'} if _dcy_token_to else {}
+                            from usenet import get_usenet_client as _guc_to
+                            _client_to = _guc_to()
                             _search_to = (entry_name or nzb_title or '').strip()
-                            _real_hash_to = None
-                            _page_to = 1
-                            while not _real_hash_to:
-                                _tr_to = _req_to.get(f'{_dcy_url_to}/api/torrents',
-                                                     params={'page': _page_to, 'limit': 50, 'sort_by': 'added_on', 'sort_order': 'desc'},
-                                                     headers=_headers_to, timeout=10)
-                                if _tr_to.status_code != 200:
-                                    break
-                                _data_to = _tr_to.json()
-                                for _t_to in _data_to.get('torrents', []):
-                                    if _t_to.get('name', '').strip() == _search_to:
-                                        _real_hash_to = _t_to.get('info_hash', '')
-                                        break
-                                if _real_hash_to or not _data_to.get('has_next'):
-                                    break
-                                _page_to += 1
+                            _real_hash_to = _client_to.find_job_hash_by_name(_search_to)
                             if _real_hash_to:
                                 # Safety: never delete if another live item (e.g. a different
                                 # version sharing this job id due to a since-fixed dedup bug)
@@ -633,13 +707,11 @@ class UsenetTasks:
                                 if _stall_sibs:
                                     logging.info(f'[NZB] Skipping provider delete of stalled job {_real_hash_to} — {_stall_sibs} sibling(s) still active')
                                 else:
-                                    _dr_to = _req_to.delete(f'{_dcy_url_to}/api/torrents',
-                                                            headers=_headers_to,
-                                                            params={'hashes': _real_hash_to}, timeout=10)
-                                    if _dr_to.status_code == 200:
+                                    _dr_status_to = _client_to.delete_queue_job(_real_hash_to)
+                                    if _dr_status_to == 200:
                                         logging.info(f'[NZB] Deleted stalled job {_real_hash_to} from cli_mount')
                                     else:
-                                        logging.warning(f'[NZB] Could not delete stalled job: HTTP {_dr_to.status_code}')
+                                        logging.warning(f'[NZB] Could not delete stalled job: HTTP {_dr_status_to}')
                         except Exception as _del_to_err:
                             logging.debug(f'[NZB] Could not delete stalled job from cli_mount: {_del_to_err}')
                         # Handle siblings sharing this stalled job
@@ -815,35 +887,18 @@ class UsenetTasks:
                             _health_results.pop(entry_name, None)
                         self._nzb_health_triggered.pop(entry_name, None)
                         try:
-                            import requests as _req
-                            _dcy_url = _gs('Usenet Provider', 'url', default='').rstrip('/')
-                            _dcy_token = _gs('Usenet Provider', 'api_token', default='')
-                            _headers = {'Authorization': f'Bearer {_dcy_token}'} if _dcy_token else {}
-                            _real_hash = None
+                            from usenet import get_usenet_client as _guc_br
+                            from usenet.base import supports as _supports_br, QUEUE as _QUEUE_br
+                            _client_br = _guc_br()
                             _search_name = (entry_name or nzb_title or '').strip()
-                            _page = 1
-                            while not _real_hash:
-                                _tr = _req.get(f'{_dcy_url}/api/torrents',
-                                               params={'page': _page, 'limit': 50, 'sort_by': 'added_on', 'sort_order': 'desc'},
-                                               headers=_headers, timeout=10)
-                                if _tr.status_code != 200:
-                                    break
-                                _data = _tr.json()
-                                for _t in _data.get('torrents', []):
-                                    if _t.get('name', '').strip() == _search_name:
-                                        _real_hash = _t.get('info_hash', '')
-                                        break
-                                if _real_hash or not _data.get('has_next'):
-                                    break
-                                _page += 1
+                            _real_hash = _client_br.find_job_hash_by_name(_search_name)
                             if _real_hash:
-                                _dr = _req.delete(f'{_dcy_url}/api/torrents', headers=_headers,
-                                                  params={'hashes': _real_hash}, timeout=10)
-                                if _dr.status_code == 200:
+                                _dr_status = _client_br.delete_queue_job(_real_hash)
+                                if _dr_status == 200:
                                     logging.info(f'[NZB] Deleted broken entry {_real_hash} from cli_mount')
                                 else:
-                                    logging.warning(f'[NZB] Could not delete {_real_hash}: HTTP {_dr.status_code}')
-                            else:
+                                    logging.warning(f'[NZB] Could not delete {_real_hash}: HTTP {_dr_status}')
+                            elif _supports_br(_client_br, _QUEUE_br):
                                 logging.warning(f'[NZB] Entry {_search_name!r} not found in /api/torrents')
                         except Exception as _de:
                             logging.warning(f'[NZB] Error deleting broken entry: {_de}')
@@ -1025,321 +1080,304 @@ class UsenetTasks:
             self._nzb_health_last_duration = _time.monotonic() - _tick_start
             logging.debug(f'[NZBHealthCheck] Tick completed in {self._nzb_health_last_duration:.1f}s ({len(_unique_jobs)} jobs)')
 
-            # --- ARTICLE_NOT_FOUND / broken item detection ---
-            # After each health check tick, poll provider for broken items.
-            # Rate-limited: only run every 5 minutes to avoid hammering the API.
-            # Safety guard: skip items whose info_hash matches something currently
-            # in Adding or Checking state — those are new submissions still in flight,
-            # not genuinely broken collected items.
-            try:
-                _now_ts = _time.monotonic()
-                if not hasattr(self, '_last_broken_check_ts'):
-                    self._last_broken_check_ts = 0.0
-                if _now_ts - self._last_broken_check_ts >= 300:  # 5 minutes
-                    self._last_broken_check_ts = _now_ts
-                    from usenet.repair_engine import fetch_broken_items, run_repair
-                    _broken = fetch_broken_items()
-                    if _broken:
-                        # Build set of in-flight hashes (Adding + Checking) to exclude
-                        try:
-                            from database.core import get_db_connection as _get_dbc_hc
-                            with _get_dbc_hc() as _hc_conn:
-                                _inflight_rows = _hc_conn.execute(
-                                    "SELECT filled_by_torrent_id FROM media_items "
-                                    "WHERE state IN ('Adding','Checking') "
-                                    "AND filled_by_torrent_id LIKE 'nzb:%'"
-                                ).fetchall()
-                            _inflight_hashes = {r[0][4:] for r in _inflight_rows if r[0]}
-                        except Exception:
-                            _inflight_hashes = set()
-                        # Filter out in-flight items — they're not genuinely broken
-                        _truly_broken = [
-                            e for e in _broken
-                            if (e.get('info_hash') or e.get('hash') or '') not in _inflight_hashes
-                        ]
-                        if _truly_broken:
-                            logging.warning(
-                                f'[NZBHealthCheck] Detected {len(_truly_broken)} broken item(s) '
-                                f'(excluded {len(_broken)-len(_truly_broken)} in-flight) — triggering repair'
-                            )
-                            run_repair(triggered_by='auto_detected')
-                        elif _broken:
-                            logging.debug(
-                                f'[NZBHealthCheck] {len(_broken)} broken item(s) all in-flight — skipping repair'
-                            )
-            except Exception as _broken_err:
-                logging.debug(f'[NZBHealthCheck] Broken item check error: {_broken_err}')
-
-            # --- cli_mount log watcher: ARTICLE_NOT_FOUND + cache warm failures ---
-            # Tails cli_mount's log for two dead-file signals:
-            #   1. [webdav] Error streaming file: ... ARTICLE_NOT_FOUND
-            #   2. [manager] cache warm failed ... input/output error
-            # Both mean the same thing: segments expired, file is unreadable.
-            # Acting early (before Plex analyzes the file) prevents the Plex SQLite
-            # WAL deadlock caused by --analyze processes stuck in kernel D-state.
-            # Rate-limited to every 30s.
-            try:
-                _now_watcher = _time.monotonic()
-                if not hasattr(self, '_last_webdav_check_ts'):
-                    self._last_webdav_check_ts = 0.0
-                    self._last_webdav_log_pos = -1  # -1 = uninitialized, seek to EOF on first run
-                    self._webdav_repaired_entries = set()  # entries processed this session
-                if _now_watcher - self._last_webdav_check_ts >= 30:
-                    self._last_webdav_check_ts = _now_watcher
-                    import re as _re_wv, os as _os_wv
-                    from utilities.settings import get_setting as _gs_wv
-                    _dcy_data = _gs_wv('Usenet Provider', 'data_path', '/climount_data').rstrip('/')
-                    _dcy_log = f'{_dcy_data}/logs/climount.log'
-                    if _os_wv.path.isfile(_dcy_log):
-                        _fsize = _os_wv.path.getsize(_dcy_log)
-                        # On first run, skip to end of log — don't reprocess old errors
-                        if self._last_webdav_log_pos < 0:
-                            self._last_webdav_log_pos = _fsize
-                        # Reset position if log was rotated
-                        if _fsize < self._last_webdav_log_pos:
-                            self._last_webdav_log_pos = 0
-                        if _fsize > self._last_webdav_log_pos:
-                            with open(_dcy_log, 'r', errors='replace') as _lf:
-                                _lf.seek(self._last_webdav_log_pos)
-                                _new_lines = _lf.read()
-                                self._last_webdav_log_pos = _lf.tell()
-                            # Pattern 1a: DFS backend (Hanwen/native)
-                            # [dfs] download error error="NNTP ARTICLE_NOT_FOUND..." entry="<entry_name>"
-                            _dfs_pattern = _re_wv.compile(
-                                r'\[dfs\] download error error="(?:.*?)ARTICLE_NOT_FOUND[^"]*" count=\d+ entry="([^"]+)"'
-                            )
-                            # Pattern 1b: rclone/WebDAV backend
-                            # [webdav] Error streaming file: <entry_name>/<filename> error="NNTP ARTICLE_NOT_FOUND..."
-                            _webdav_pattern = _re_wv.compile(
-                                r'\[webdav\] Error streaming file: (.+?)/[^/]+ error="(?:.*?)ARTICLE_NOT_FOUND'
-                            )
-                            # Pattern 2: cache warm failures (file unreadable, I/O error)
-                            # Format: [dfs] stream error ... entry="<entry>" filename="<file>"
-                            # Also catches: [manager] cache warm failed error="read .../cli_debrid/<entry>/...: input/output error"
-                            _cache_warm_pattern = _re_wv.compile(
-                                r'(?:\[dfs\] stream error.*?entry="([^"]+)"|\[manager\] cache warm failed error="read [^/]+/[^/]+/([^/"]+)[^"]*: input/output error")'
-                            )
-                            _broken_entries = {}
-                            for _m in _dfs_pattern.finditer(_new_lines):
-                                _entry_name = _m.group(1).strip()
-                                if _entry_name and _entry_name not in _broken_entries and _entry_name not in self._webdav_repaired_entries:
-                                    _broken_entries[_entry_name] = True
-                            for _m in _webdav_pattern.finditer(_new_lines):
-                                _entry_name = _m.group(1).strip()
-                                if _entry_name and _entry_name not in _broken_entries and _entry_name not in self._webdav_repaired_entries:
-                                    _broken_entries[_entry_name] = True
-                            for _m in _cache_warm_pattern.finditer(_new_lines):
-                                # Two capture groups — one per sub-pattern alternative
-                                _entry_name = (_m.group(1) or _m.group(2) or '').strip()
-                                if _entry_name and _entry_name not in _broken_entries and _entry_name not in self._webdav_repaired_entries:
-                                    _broken_entries[_entry_name] = 'cache_warm'
-
-                            if _broken_entries:
-                                _webdav_count = sum(1 for v in _broken_entries.values() if v is True)
-                                _cache_count = sum(1 for v in _broken_entries.values() if v == 'cache_warm')
-                                logging.warning(
-                                    f'[NZBHealthCheck] Detected {len(_broken_entries)} dead entry(ies) '
-                                    f'from cli_mount log ({_webdav_count} ARTICLE_NOT_FOUND, {_cache_count} cache warm I/O error) '
-                                    f'— triggering immediate repair'
-                                )
-                                # Trigger repair immediately for these specific entries
-                                try:
-                                    from usenet.repair_engine import (
-                                        _find_db_items_by_entry_name,
-                                        _delete_from_provider,
-                                        _move_to_wanted,
-                                        _blacklist_broken_nzb,
-                                        _resolve_info_hash_from_provider,
-                                    )
-                                    from database.nzb_repair_activity import log_repair_activity
-                                    from usenet.repair_engine import _backfill_hash_for_item
-                                    for _ename in _broken_entries:
-                                        try:
-                                            # Resolve info_hash for provider deletion
-                                            _ihash = _resolve_info_hash_from_provider(_ename)
-                                            # Find DB items
-                                            from usenet.repair_engine import AMBIGUOUS as _AMBIGUOUS_WD
-                                            _items = _find_db_items_by_entry_name(_ename)
-                                            if _items is _AMBIGUOUS_WD:
-                                                # Multiple versions ambiguously matched — do not delete
-                                                # from provider, a live row we can't identify may need it.
-                                                logging.warning(f'[NZBHealthCheck] {_ename!r} — ambiguous multi-version match, skipping without deleting')
-                                                self._webdav_repaired_entries.add(_ename)
-                                                continue
-                                            _items = [i for i in _items
-                                                      if i.get('state') in ('Collected', 'Checking', 'Upgrading')]
-                                            if not _items:
-                                                # Also try hash lookup
-                                                if _ihash:
-                                                    from usenet.repair_engine import _find_db_item_by_info_hash
-                                                    _single = _find_db_item_by_info_hash(_ihash)
-                                                    if _single and _single.get('state') in ('Collected', 'Checking', 'Upgrading'):
-                                                        _items = [_single]
-                                            # If hash still empty but we have DB items, run targeted backfill
-                                            if not _ihash and _items:
-                                                _ihash = _backfill_hash_for_item(_items[0])
-                                                if _ihash:
-                                                    logging.info(f'[NZBHealthCheck] Targeted backfill resolved hash for {_ename!r}: {_ihash!r}')
-                                            if not _items:
-                                                logging.debug(f'[NZBHealthCheck] No DB items for broken webdav entry {_ename!r} — deleting from provider only')
-                                                _delete_from_provider(_ihash, _ename)
-                                                self._webdav_repaired_entries.add(_ename)
-                                                continue
-                                            logging.warning(
-                                                f'[NZBHealthCheck] Immediate repair: {_ename!r} — '
-                                                f'{len(_items)} item(s), hash={_ihash!r}'
-                                            )
-                                            # Blacklist all unique NZB URLs + segment IDs across all items in this entry
-                                            _seen_urls = set()
-                                            for _bi in _items:
-                                                _nzb_url = _bi.get('filled_by_magnet', '') or ''
-                                                _seg_id = _bi.get('nzb_segment_id', '') or ''
-                                                if _nzb_url and _nzb_url not in _seen_urls:
-                                                    _blacklist_broken_nzb(_nzb_url, segment_id=_seg_id)
-                                                    _seen_urls.add(_nzb_url)
-                                                elif _seg_id and _nzb_url in _seen_urls:
-                                                    # URL already seen but still blacklist segment if different item
-                                                    from database.not_wanted_magnets import add_to_not_wanted_nzb_segment as _add_seg
-                                                    _add_seg(_seg_id)
-                                            # Delete from Plex using folder path directly — works even if Plex never indexed the file.
-                                            # Primary: os.path.dirname(location_on_disk)
-                                            # Fallback: construct path from mount + entry name when location_on_disk is NULL
-                                            try:
-                                                from utilities.plex_functions import scan_and_empty_plex_trash
-                                                from utilities.settings import get_setting as _gs_plx
-                                                import os as _osp
-                                                _seen_folders = set()
-                                                for _dbi in _items:
-                                                    _loc = _dbi.get('location_on_disk') or ''
-                                                    _is_ep = _dbi.get('type') == 'episode'
-                                                    if _loc:
-                                                        _folder = _osp.path.dirname(_loc)
-                                                    else:
-                                                        # Fallback: build path from symlink/mount base + entry name
-                                                        _mode = _gs_plx('File Management', 'file_collection_management', 'Plex')
-                                                        if _mode == 'Symlinked/Local':
-                                                            _base = _gs_plx('File Management', 'symlinked_files_path', '').rstrip('/')
-                                                            _sub = 'TV Shows' if _is_ep else 'Movies'
-                                                            _folder = f'{_base}/{_sub}/{_ename}' if _base else ''
-                                                        else:
-                                                            _mount = _gs_plx('Usenet Provider', 'mount_path', '/debrid').rstrip('/')
-                                                            _sub = 'shows' if _is_ep else 'movies'
-                                                            _folder = f'{_mount}/{_sub}/{_ename}' if _mount else ''
-                                                    if _folder and _folder not in _seen_folders:
-                                                        _seen_folders.add(_folder)
-                                                        scan_and_empty_plex_trash(
-                                                            paths=[_folder],
-                                                            section_type='show' if _is_ep else 'movie',
-                                                            empty_trash=True,
-                                                        )
-                                                        logging.info(f'[NZBHealthCheck] Plex cleanup via path: {_folder!r}')
-                                            except Exception as _plx_err:
-                                                logging.debug(f'[NZBHealthCheck] Plex path cleanup error: {_plx_err}')
-                                            # Delete from provider once (hash → name search → path fallback)
-                                            _provider_deleted = _delete_from_provider(_ihash, _ename)
-                                            if not _provider_deleted:
-                                                # Path-based deletion fallback: remove file directly from mount
-                                                for _dbi in _items:
-                                                    _loc = _dbi.get('location_on_disk', '') or ''
-                                                    if _loc and not _provider_deleted:
-                                                        try:
-                                                            import os as _os
-                                                            from utilities.settings import get_setting as _gs
-                                                            _mount = _gs('Usenet Provider', 'mount_path', default='').rstrip('/')
-                                                            if _mount and _loc.startswith('/debrid/'):
-                                                                _rel = _loc[len('/debrid/'):]
-                                                                _full = f'{_mount}/{_rel}'
-                                                                if _os.path.exists(_full):
-                                                                    _os.remove(_full)
-                                                                    logging.info(f'[NZBHealthCheck] Path-deleted broken file: {_full!r}')
-                                                                    _provider_deleted = True
-                                                                else:
-                                                                    logging.debug(f'[NZBHealthCheck] Path delete: file not found at {_full!r}')
-                                                        except Exception as _pd_err:
-                                                            logging.debug(f'[NZBHealthCheck] Path delete error for {_loc!r}: {_pd_err}')
-                                            for _dbi in _items:
-                                                _move_to_wanted(_dbi)
-                                                log_repair_activity(
-                                                    item_id=_dbi.get('id'),
-                                                    title=_dbi.get('title'),
-                                                    media_type=_dbi.get('type'),
-                                                    season_number=_dbi.get('season_number'),
-                                                    episode_number=_dbi.get('episode_number'),
-                                                    broken_nzb_id=_ihash,
-                                                    broken_nzb_title=_ename,
-                                                    outcome='plex_deleted',
-                                                    triggered_by='cache_warm_error' if _broken_entries.get(_ename) == 'cache_warm' else 'webdav_error',
-                                                )
-                                            # Mark as handled — avoid infinite re-processing this session
-                                            self._webdav_repaired_entries.add(_ename)
-                                        except Exception as _ename_err:
-                                            logging.error(f'[NZBHealthCheck] Webdav repair error for {_ename!r}: {_ename_err}')
-                                            self._webdav_repaired_entries.add(_ename)
-                                except Exception as _wr_err:
-                                    logging.error(f'[NZBHealthCheck] Webdav repair import error: {_wr_err}')
-            except Exception as _watcher_err:
-                logging.debug(f'[NZBHealthCheck] Webdav log watcher error: {_watcher_err}')
+            self._nzb_broken_watch()
 
         except Exception as e:
             logging.error(f'[NZBHealthCheck] Task error: {e}', exc_info=True)
             self._nzb_health_last_duration = 0.0
 
+    def _nzb_broken_watch(self):
+        """Broken-file detection for task_nzb_health_check, run on every tick
+        whether or not anything is in Adding: the provider's broken list
+        (rate-limited to 5 min) and cli_mount's log watcher (30 s)."""
+        import time as _time
+        # --- ARTICLE_NOT_FOUND / broken item detection ---
+        # After each health check tick, poll provider for broken items.
+        # Rate-limited: only run every 5 minutes to avoid hammering the API.
+        # Safety guard: skip items whose info_hash matches something currently
+        # in Adding or Checking state — those are new submissions still in flight,
+        # not genuinely broken collected items.
+        try:
+            _now_ts = _time.monotonic()
+            if not hasattr(self, '_last_broken_check_ts'):
+                self._last_broken_check_ts = 0.0
+            if _now_ts - self._last_broken_check_ts >= 300:  # 5 minutes
+                self._last_broken_check_ts = _now_ts
+                from usenet.repair_engine import fetch_broken_items, run_repair
+                _broken = fetch_broken_items()
+                if _broken:
+                    # Build set of in-flight hashes (Adding + Checking) to exclude
+                    try:
+                        from database.core import get_db_connection as _get_dbc_hc
+                        with _get_dbc_hc() as _hc_conn:
+                            _inflight_rows = _hc_conn.execute(
+                                "SELECT filled_by_torrent_id FROM media_items "
+                                "WHERE state IN ('Adding','Checking') "
+                                "AND filled_by_torrent_id LIKE 'nzb:%'"
+                            ).fetchall()
+                        _inflight_hashes = {r[0][4:] for r in _inflight_rows if r[0]}
+                    except Exception:
+                        _inflight_hashes = set()
+                    # Filter out in-flight items — they're not genuinely broken
+                    _truly_broken = [
+                        e for e in _broken
+                        if (e.get('info_hash') or e.get('hash') or '') not in _inflight_hashes
+                    ]
+                    if _truly_broken:
+                        logging.warning(
+                            f'[NZBHealthCheck] Detected {len(_truly_broken)} broken item(s) '
+                            f'(excluded {len(_broken)-len(_truly_broken)} in-flight) — triggering repair'
+                        )
+                        run_repair(triggered_by='auto_detected')
+                    elif _broken:
+                        logging.debug(
+                            f'[NZBHealthCheck] {len(_broken)} broken item(s) all in-flight — skipping repair'
+                        )
+        except Exception as _broken_err:
+            logging.debug(f'[NZBHealthCheck] Broken item check error: {_broken_err}')
+
+        # --- cli_mount log watcher: ARTICLE_NOT_FOUND + cache warm failures ---
+        # Tails cli_mount's log for two dead-file signals:
+        #   1. [webdav] Error streaming file: ... ARTICLE_NOT_FOUND
+        #   2. [manager] cache warm failed ... input/output error
+        # Both mean the same thing: segments expired, file is unreadable.
+        # Acting early (before Plex analyzes the file) prevents the Plex SQLite
+        # WAL deadlock caused by --analyze processes stuck in kernel D-state.
+        # Rate-limited to every 30s.
+        try:
+            _now_watcher = _time.monotonic()
+            if not hasattr(self, '_last_webdav_check_ts'):
+                self._last_webdav_check_ts = 0.0
+                self._last_webdav_log_pos = -1  # -1 = uninitialized, seek to EOF on first run
+                self._webdav_repaired_entries = set()  # entries processed this session
+            if _now_watcher - self._last_webdav_check_ts >= 30:
+                self._last_webdav_check_ts = _now_watcher
+                import re as _re_wv, os as _os_wv
+                from utilities.settings import get_setting as _gs_wv
+                _dcy_data = _gs_wv('Usenet Provider', 'data_path', '/climount_data').rstrip('/')
+                _dcy_log = f'{_dcy_data}/logs/climount.log'
+                if _os_wv.path.isfile(_dcy_log):
+                    _fsize = _os_wv.path.getsize(_dcy_log)
+                    # On first run, skip to end of log — don't reprocess old errors
+                    if self._last_webdav_log_pos < 0:
+                        self._last_webdav_log_pos = _fsize
+                    # Reset position if log was rotated
+                    if _fsize < self._last_webdav_log_pos:
+                        self._last_webdav_log_pos = 0
+                    if _fsize > self._last_webdav_log_pos:
+                        with open(_dcy_log, 'r', errors='replace') as _lf:
+                            _lf.seek(self._last_webdav_log_pos)
+                            _new_lines = _lf.read()
+                            self._last_webdav_log_pos = _lf.tell()
+                        # Pattern 1a: DFS backend (Hanwen/native)
+                        # [dfs] download error error="NNTP ARTICLE_NOT_FOUND..." entry="<entry_name>"
+                        _dfs_pattern = _re_wv.compile(
+                            r'\[dfs\] download error error="(?:.*?)ARTICLE_NOT_FOUND[^"]*" count=\d+ entry="([^"]+)"'
+                        )
+                        # Pattern 1b: rclone/WebDAV backend
+                        # [webdav] Error streaming file: <entry_name>/<filename> error="NNTP ARTICLE_NOT_FOUND..."
+                        _webdav_pattern = _re_wv.compile(
+                            r'\[webdav\] Error streaming file: (.+?)/[^/]+ error="(?:.*?)ARTICLE_NOT_FOUND'
+                        )
+                        # Pattern 2: cache warm failures (file unreadable, I/O error)
+                        # Format: [dfs] stream error ... entry="<entry>" filename="<file>"
+                        # Also catches: [manager] cache warm failed error="read .../cli_debrid/<entry>/...: input/output error"
+                        _cache_warm_pattern = _re_wv.compile(
+                            r'(?:\[dfs\] stream error.*?entry="([^"]+)"|\[manager\] cache warm failed error="read [^/]+/[^/]+/([^/"]+)[^"]*: input/output error")'
+                        )
+                        _broken_entries = {}
+                        for _m in _dfs_pattern.finditer(_new_lines):
+                            _entry_name = _m.group(1).strip()
+                            if _entry_name and _entry_name not in _broken_entries and _entry_name not in self._webdav_repaired_entries:
+                                _broken_entries[_entry_name] = True
+                        for _m in _webdav_pattern.finditer(_new_lines):
+                            _entry_name = _m.group(1).strip()
+                            if _entry_name and _entry_name not in _broken_entries and _entry_name not in self._webdav_repaired_entries:
+                                _broken_entries[_entry_name] = True
+                        for _m in _cache_warm_pattern.finditer(_new_lines):
+                            # Two capture groups — one per sub-pattern alternative
+                            _entry_name = (_m.group(1) or _m.group(2) or '').strip()
+                            if _entry_name and _entry_name not in _broken_entries and _entry_name not in self._webdav_repaired_entries:
+                                _broken_entries[_entry_name] = 'cache_warm'
+
+                        if _broken_entries:
+                            _webdav_count = sum(1 for v in _broken_entries.values() if v is True)
+                            _cache_count = sum(1 for v in _broken_entries.values() if v == 'cache_warm')
+                            logging.warning(
+                                f'[NZBHealthCheck] Detected {len(_broken_entries)} dead entry(ies) '
+                                f'from cli_mount log ({_webdav_count} ARTICLE_NOT_FOUND, {_cache_count} cache warm I/O error) '
+                                f'— triggering immediate repair'
+                            )
+                            # Trigger repair immediately for these specific entries
+                            try:
+                                from usenet.repair_engine import (
+                                    _find_db_items_by_entry_name,
+                                    _delete_from_provider,
+                                    _move_to_wanted,
+                                    _blacklist_broken_nzb,
+                                    _resolve_info_hash_from_provider,
+                                )
+                                from database.nzb_repair_activity import log_repair_activity
+                                from usenet.repair_engine import _backfill_hash_for_item
+                                for _ename in _broken_entries:
+                                    try:
+                                        # Resolve info_hash for provider deletion
+                                        _ihash = _resolve_info_hash_from_provider(_ename)
+                                        # Find DB items
+                                        from usenet.repair_engine import AMBIGUOUS as _AMBIGUOUS_WD
+                                        _items = _find_db_items_by_entry_name(_ename)
+                                        if _items is _AMBIGUOUS_WD:
+                                            # Multiple versions ambiguously matched — do not delete
+                                            # from provider, a live row we can't identify may need it.
+                                            logging.warning(f'[NZBHealthCheck] {_ename!r} — ambiguous multi-version match, skipping without deleting')
+                                            self._webdav_repaired_entries.add(_ename)
+                                            continue
+                                        _items = [i for i in _items
+                                                  if i.get('state') in ('Collected', 'Checking', 'Upgrading')]
+                                        if not _items:
+                                            # Also try hash lookup
+                                            if _ihash:
+                                                from usenet.repair_engine import _find_db_item_by_info_hash
+                                                _single = _find_db_item_by_info_hash(_ihash)
+                                                if _single and _single.get('state') in ('Collected', 'Checking', 'Upgrading'):
+                                                    _items = [_single]
+                                        # If hash still empty but we have DB items, run targeted backfill
+                                        if not _ihash and _items:
+                                            _ihash = _backfill_hash_for_item(_items[0])
+                                            if _ihash:
+                                                logging.info(f'[NZBHealthCheck] Targeted backfill resolved hash for {_ename!r}: {_ihash!r}')
+                                        if not _items:
+                                            logging.debug(f'[NZBHealthCheck] No DB items for broken webdav entry {_ename!r} — deleting from provider only')
+                                            _delete_from_provider(_ihash, _ename)
+                                            self._webdav_repaired_entries.add(_ename)
+                                            continue
+                                        logging.warning(
+                                            f'[NZBHealthCheck] Immediate repair: {_ename!r} — '
+                                            f'{len(_items)} item(s), hash={_ihash!r}'
+                                        )
+                                        # Blacklist all unique NZB URLs + segment IDs across all items in this entry
+                                        _seen_urls = set()
+                                        for _bi in _items:
+                                            _nzb_url = _bi.get('filled_by_magnet', '') or ''
+                                            _seg_id = _bi.get('nzb_segment_id', '') or ''
+                                            if _nzb_url and _nzb_url not in _seen_urls:
+                                                _blacklist_broken_nzb(_nzb_url, segment_id=_seg_id)
+                                                _seen_urls.add(_nzb_url)
+                                            elif _seg_id and _nzb_url in _seen_urls:
+                                                # URL already seen but still blacklist segment if different item
+                                                from database.not_wanted_magnets import add_to_not_wanted_nzb_segment as _add_seg
+                                                _add_seg(_seg_id)
+                                        # Delete from Plex using folder path directly — works even if Plex never indexed the file.
+                                        # Primary: os.path.dirname(location_on_disk)
+                                        # Fallback: construct path from mount + entry name when location_on_disk is NULL
+                                        try:
+                                            from utilities.plex_functions import scan_and_empty_plex_trash
+                                            from utilities.settings import get_setting as _gs_plx
+                                            import os as _osp
+                                            _seen_folders = set()
+                                            for _dbi in _items:
+                                                _loc = _dbi.get('location_on_disk') or ''
+                                                _is_ep = _dbi.get('type') == 'episode'
+                                                if _loc:
+                                                    _folder = _osp.path.dirname(_loc)
+                                                else:
+                                                    # Fallback: build path from symlink/mount base + entry name
+                                                    _mode = _gs_plx('File Management', 'file_collection_management', 'Plex')
+                                                    if _mode == 'Symlinked/Local':
+                                                        _base = _gs_plx('File Management', 'symlinked_files_path', '').rstrip('/')
+                                                        _sub = 'TV Shows' if _is_ep else 'Movies'
+                                                        _folder = f'{_base}/{_sub}/{_ename}' if _base else ''
+                                                    else:
+                                                        _mount = _gs_plx('Usenet Provider', 'mount_path', '/debrid').rstrip('/')
+                                                        _sub = 'shows' if _is_ep else 'movies'
+                                                        _folder = f'{_mount}/{_sub}/{_ename}' if _mount else ''
+                                                if _folder and _folder not in _seen_folders:
+                                                    _seen_folders.add(_folder)
+                                                    scan_and_empty_plex_trash(
+                                                        paths=[_folder],
+                                                        section_type='show' if _is_ep else 'movie',
+                                                        empty_trash=True,
+                                                    )
+                                                    logging.info(f'[NZBHealthCheck] Plex cleanup via path: {_folder!r}')
+                                        except Exception as _plx_err:
+                                            logging.debug(f'[NZBHealthCheck] Plex path cleanup error: {_plx_err}')
+                                        # Delete from provider once (hash → name search → path fallback)
+                                        _provider_deleted = _delete_from_provider(_ihash, _ename)
+                                        if not _provider_deleted:
+                                            # Path-based deletion fallback: remove file directly from mount
+                                            for _dbi in _items:
+                                                _loc = _dbi.get('location_on_disk', '') or ''
+                                                if _loc and not _provider_deleted:
+                                                    try:
+                                                        import os as _os
+                                                        from utilities.settings import get_setting as _gs
+                                                        _mount = _gs('Usenet Provider', 'mount_path', default='').rstrip('/')
+                                                        if _mount and _loc.startswith('/debrid/'):
+                                                            _rel = _loc[len('/debrid/'):]
+                                                            _full = f'{_mount}/{_rel}'
+                                                            if _os.path.exists(_full):
+                                                                _os.remove(_full)
+                                                                logging.info(f'[NZBHealthCheck] Path-deleted broken file: {_full!r}')
+                                                                _provider_deleted = True
+                                                            else:
+                                                                logging.debug(f'[NZBHealthCheck] Path delete: file not found at {_full!r}')
+                                                    except Exception as _pd_err:
+                                                        logging.debug(f'[NZBHealthCheck] Path delete error for {_loc!r}: {_pd_err}')
+                                        for _dbi in _items:
+                                            _move_to_wanted(_dbi)
+                                            log_repair_activity(
+                                                item_id=_dbi.get('id'),
+                                                title=_dbi.get('title'),
+                                                media_type=_dbi.get('type'),
+                                                season_number=_dbi.get('season_number'),
+                                                episode_number=_dbi.get('episode_number'),
+                                                broken_nzb_id=_ihash,
+                                                broken_nzb_title=_ename,
+                                                outcome='plex_deleted',
+                                                triggered_by='cache_warm_error' if _broken_entries.get(_ename) == 'cache_warm' else 'webdav_error',
+                                            )
+                                        # Mark as handled — avoid infinite re-processing this session
+                                        self._webdav_repaired_entries.add(_ename)
+                                    except Exception as _ename_err:
+                                        logging.error(f'[NZBHealthCheck] Webdav repair error for {_ename!r}: {_ename_err}')
+                                        self._webdav_repaired_entries.add(_ename)
+                            except Exception as _wr_err:
+                                logging.error(f'[NZBHealthCheck] Webdav repair import error: {_wr_err}')
+        except Exception as _watcher_err:
+            logging.debug(f'[NZBHealthCheck] Webdav log watcher error: {_watcher_err}')
+
     def task_backfill_nzb_torrent_ids(self):
         """Backfill filled_by_torrent_id for collected items on cli_mount mount that have no torrent ID.
         Matches location_on_disk folder name against cli_mount /api/torrents entries."""
         try:
-            import requests as _req
             from utilities.settings import get_setting
             from database.database_reading import get_all_media_items
             from database.database_writing import update_media_item
+            from usenet import get_usenet_client
+            from usenet.base import supports, QUEUE
 
             # cli_mount-specific: this backfills filled_by_torrent_id for legacy
             # cli_mount-collected items that predate the nzb: convention, via
             # /api/torrents (which nzbdav doesn't implement). nzbdav items already
             # carry their nzb: id natively, so there is nothing to backfill — skip
             # cleanly to avoid failed requests + a misleading "Loaded 0 entries" log.
-            if (get_setting('Usenet Provider', 'provider', 'climount') or 'climount').strip().lower() != 'climount':
-                logging.info('[NZBBackfill] Skipped — cli_mount-specific backfill (active usenet provider is not climount).')
+            client = get_usenet_client()
+            if not supports(client, QUEUE):
+                logging.info('[NZBBackfill] Skipped — cli_mount-specific backfill (active usenet provider has no job queue listing).')
                 return
 
-            dcy_url = get_setting('Usenet Provider', 'url', default='').rstrip('/')
-            dcy_token = get_setting('Usenet Provider', 'api_token', default='')
-            if not dcy_url:
+            if not get_setting('Usenet Provider', 'url', default='').rstrip('/'):
                 logging.warning('[NZBBackfill] Usenet Provider URL not configured, skipping.')
                 return
-            headers = {'Authorization': f'Bearer {dcy_token}'} if dcy_token else {}
 
             # Fetch all cli_mount entries (paginated), build name→info_hash map
             logging.info('[NZBBackfill] Fetching cli_mount entries...')
             name_to_hash = {}
-            page = 1
-            while True:
-                for attempt in range(3):
-                    try:
-                        r = _req.get(f'{dcy_url}/api/torrents',
-                                     params={'page': page, 'limit': 100, 'sort_by': 'added_on', 'sort_order': 'desc'},
-                                     headers=headers, timeout=30)
-                        if r.status_code == 200:
-                            break
-                        logging.warning(f'[NZBBackfill] cli_mount API HTTP {r.status_code} on page {page} (attempt {attempt+1})')
-                    except Exception as _pe:
-                        logging.warning(f'[NZBBackfill] cli_mount API error on page {page} (attempt {attempt+1}): {_pe}')
-                    if attempt == 2:
-                        logging.error(f'[NZBBackfill] Giving up on page {page} after 3 attempts')
-                        break
-                else:
-                    break
-                if r.status_code != 200:
-                    break
-                data = r.json()
-                for t in data.get('torrents', []):
-                    name = (t.get('name') or '').strip()
-                    info_hash = (t.get('info_hash') or '').strip()
-                    if name and info_hash:
-                        name_to_hash[name] = info_hash
-                if not data.get('has_next'):
-                    break
-                page += 1
+            for t in client.iter_queue_jobs(page_size=100, timeout=30, retries=3):
+                name = (t.get('name') or '').strip()
+                info_hash = (t.get('info_hash') or '').strip()
+                if name and info_hash:
+                    name_to_hash[name] = info_hash
 
             logging.info(f'[NZBBackfill] Loaded {len(name_to_hash)} cli_mount entries.')
 

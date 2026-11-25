@@ -1234,52 +1234,6 @@ if (selTags) payload.selected_tags = selTags;
     }
 }
 
-async function requestContentDirectly(data) {
-    const mediaType = data.media_type === 'tv' ? 'tv' : 'movie';
-    const version = data.default_version || 'Default';
-
-    window.Loading.show();
-    try {
-        const response = await fetch('/content/request', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                id: data.tmdb_id || data.id,
-                mediaType: mediaType,
-                title: data.title,
-                versions: [version]
-            })
-        });
-
-        const result = await response.json();
-        if (result.success) {
-            window.showPopup({
-                type: window.POPUP_TYPES.SUCCESS,
-                title: 'Success',
-                message: result.message || `Successfully requested ${data.title}`,
-                autoClose: 3000
-            });
-        } else {
-            window.showPopup({
-                type: window.POPUP_TYPES.ERROR,
-                title: 'Error',
-                message: result.error || 'Error requesting content'
-            });
-        }
-    } catch (error) {
-        console.error('Error requesting content:', error);
-        window.showPopup({
-            type: window.POPUP_TYPES.ERROR,
-            title: 'Error',
-            message: 'Error requesting content'
-        });
-    } finally {
-        window.Loading.hide();
-    }
-}
-
 function alignSidebarWithFiles() {
     // Align the sidebar to start at the same height as the files container
     const movieHeader = document.getElementById('movie-header');

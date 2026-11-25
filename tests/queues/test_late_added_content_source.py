@@ -45,8 +45,8 @@ class RunInitializationSyncTests(unittest.TestCase):
 
 class AddRoutesReloadRunnerTests(unittest.TestCase):
     def _route_source(self, path, func):
-        with open(os.path.join(ROOT, path), encoding='utf-8') as f:
-            src = f.read()
+        from tests._source import project_source
+        src = project_source(path)
         start = src.index(f'def {func}(')
         end = src.find('\n@', start)
         return src[start:end]

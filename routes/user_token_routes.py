@@ -61,35 +61,64 @@ def load_user_tokens():
             except Exception as e:
                 current_app.logger.error(f"Error closing lock file handle during load: {e}")
 
+def _write_tokens_file(token_file, tokens):
+    """Atomic write, readable by this user only: the file holds other people's
+    Plex tokens and used to be created with the default (world-readable) mode."""
+    os.makedirs(os.path.dirname(token_file), exist_ok=True)
+    tmp = f"{token_file}.tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w') as f:
+        json.dump(tokens, f, indent=2)
+    os.replace(tmp, token_file)
+    try:
+        os.chmod(token_file, 0o600)
+    except OSError:
+        pass
+
+
 def save_user_tokens(tokens):
     """Saves user tokens to the JSON file."""
     token_file = get_user_token_file_path()
     lock_file_path = get_user_token_lock_file_path()
-    # Ensure lock file directory exists
     os.makedirs(os.path.dirname(lock_file_path), exist_ok=True)
-
-    fd = None
     try:
-        # Open the lock file first
-        fd = open(lock_file_path, 'r+') # Open for read/write, must exist or error (use 'a+' if create needed)
-        # If using 'a+', uncomment: fd.seek(0); fd.truncate() # Clear content if needed before write lock
-
-        with FileLock(fd): # Pass the file handle
-            # Create directory for token file if it doesn't exist
-            os.makedirs(os.path.dirname(token_file), exist_ok=True)
-            # Open and write the token file *inside* the lock
-            with open(token_file, 'w') as f:
-                json.dump(tokens, f, indent=2)
-    except (IOError, Exception) as e:
+        with open(lock_file_path, 'a+') as fd:
+            fd.seek(0)  # Windows locks the byte at the current position
+            with FileLock(fd):
+                _write_tokens_file(token_file, tokens)
+    except Exception as e:
         current_app.logger.error(f"Error saving user tokens: {e}", exc_info=True)
-        # Optionally re-raise or handle more gracefully
-    finally:
-         # Ensure the lock file handle is closed
-        if fd:
-            try:
-                fd.close()
-            except Exception as e:
-                current_app.logger.error(f"Error closing lock file handle during save: {e}")
+
+
+def update_user_tokens(change):
+    """Read, change and write the tokens under one lock. load + save took the lock
+    twice, so two sign-ins finishing together could drop one of the tokens.
+    change(tokens) edits the dict in place; its return value is passed back."""
+    token_file = get_user_token_file_path()
+    lock_file_path = get_user_token_lock_file_path()
+    os.makedirs(os.path.dirname(lock_file_path), exist_ok=True)
+    with open(lock_file_path, 'a+') as fd:
+        fd.seek(0)  # Windows locks the byte at the current position
+        lock = FileLock(fd)
+        lock.acquire()
+        try:
+            return _locked_update(token_file, change)
+        finally:
+            lock.release()
+
+
+def _locked_update(token_file, change):
+    tokens = {}
+    if os.path.exists(token_file):
+        try:
+            with open(token_file, 'r') as f:
+                tokens = json.loads(f.read() or '{}')
+        except (OSError, ValueError):
+            current_app.logger.error(f"Could not read {token_file}; starting from empty.")
+            tokens = {}
+    result = change(tokens)
+    _write_tokens_file(token_file, tokens)
+    return result
 
 
 # --- Routes ---
@@ -123,7 +152,7 @@ def initiate_user_plex_auth():
             'X-Plex-Device': 'Browser (User Auth)',
         }
 
-        response = requests.post('https://plex.tv/api/v2/pins', headers=headers, json={'strong': True})
+        response = requests.post('https://plex.tv/api/v2/pins', headers=headers, json={'strong': True}, timeout=15)
         response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
 
         pin_data = response.json()
@@ -171,7 +200,7 @@ def check_user_plex_pin():
             'X-Plex-Client-Identifier': client_id
         }
 
-        response = requests.get(f'https://plex.tv/api/v2/pins/{pin_id}', headers=headers)
+        response = requests.get(f'https://plex.tv/api/v2/pins/{pin_id}', headers=headers, timeout=15)
 
         if response.status_code == 200:
             pin_data = response.json()
@@ -180,7 +209,8 @@ def check_user_plex_pin():
                 # Pin authorized! Now get the username associated with this token
                 user_info_response = requests.get(
                     'https://plex.tv/api/v2/user',
-                    headers={**headers, 'X-Plex-Token': auth_token}
+                    headers={**headers, 'X-Plex-Token': auth_token},
+                    timeout=15,
                 )
                 if user_info_response.status_code == 200:
                     user_data = user_info_response.json()
@@ -189,9 +219,7 @@ def check_user_plex_pin():
                     username = user_data.get('username') or user_data.get('title') or 'Unknown Plex User'
 
                     # Immediately store the token upon successful verification
-                    tokens = load_user_tokens()
-                    tokens[username] = auth_token # Store token associated with username
-                    save_user_tokens(tokens)
+                    update_user_tokens(lambda t: t.__setitem__(username, auth_token))
 
                     return jsonify({
                         'success': True,
@@ -297,9 +325,7 @@ def add_home_user_token():
         if not token:
             return jsonify({'success': False, 'error': 'Plex did not return a token for that user.'}), 502
         key = _home_user_key(user_account) or _home_user_key(target)
-        tokens = load_user_tokens()
-        tokens[key] = token
-        save_user_tokens(tokens)
+        update_user_tokens(lambda t: t.__setitem__(key, token))
         current_app.logger.info(f"Stored a token for Plex Home user {key!r}.")
         # The token itself is never sent back to the browser.
         return jsonify({'success': True, 'username': key})
@@ -319,10 +345,7 @@ def delete_user_token():
         if not username_to_delete:
             return jsonify({'success': False, 'error': 'Username is required'}), 400
 
-        tokens = load_user_tokens()
-        if username_to_delete in tokens:
-            del tokens[username_to_delete]
-            save_user_tokens(tokens)
+        if update_user_tokens(lambda t: t.pop(username_to_delete, None) is not None):
             return jsonify({'success': True})
         else:
             return jsonify({'success': False, 'error': 'User token not found'}), 404

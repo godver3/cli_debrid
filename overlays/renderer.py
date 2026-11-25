@@ -978,9 +978,11 @@ class OverlayRenderer:
             condition_py = condition
             condition_py = condition_py.replace(' AND ', ' and ')
             condition_py = condition_py.replace(' OR ', ' or ')
-            condition_py = condition_py.replace(' NOT ', ' not ')
-            condition_py = condition_py.replace(' IS NULL', ' is None')
+            # IS NOT NULL before the bare NOT: replacing ' NOT ' first turned
+            # "x IS NOT NULL" into "x IS not NULL", a SyntaxError, so the element never rendered.
             condition_py = condition_py.replace(' IS NOT NULL', ' is not None')
+            condition_py = condition_py.replace(' IS NULL', ' is None')
+            condition_py = condition_py.replace(' NOT ', ' not ')
 
             # Evaluate in restricted context
             result = eval(condition_py, {"__builtins__": {}}, context)

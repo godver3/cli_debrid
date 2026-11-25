@@ -1920,38 +1920,6 @@ def get_available_versions():
     scraping_versions = get_setting('Scraping', 'versions', default={})
     return list(scraping_versions.keys())
 
-def get_media_details(media_id: str, media_type: str) -> Dict[str, Any]:
-    from metadata.metadata import get_metadata
-    #logging.info(f"Fetching media details for ID: {media_id}, Type: {media_type}")
-
-    # Fetch metadata using the TMDB ID, specifying the media type
-    metadata = get_metadata(tmdb_id=int(media_id), item_media_type=media_type)
-
-    if not metadata:
-        logging.error(f"Could not fetch metadata for TMDB ID: {media_id}")
-        return {}
-
-    # The get_metadata function now correctly handles the conversion and fetching.
-    # We can retrieve the imdb_id from the returned metadata.
-    imdb_id = metadata.get('imdb_id')
-    
-    if not imdb_id:
-        logging.error(f"Could not resolve IMDb ID for TMDB ID: {media_id}")
-        # Depending on requirements, you might still return partial metadata
-        # return metadata or {} 
-        return {}
-
-    # Add additional details that might be needed
-    metadata['media_type'] = media_type
-    if media_type in ['tv', 'show']: # More robust check
-        from metadata.metadata import get_all_season_episode_counts, get_show_airtime_by_imdb_id
-        metadata['seasons'] = get_all_season_episode_counts(imdb_id)
-        metadata['airtime'] = get_show_airtime_by_imdb_id(imdb_id)
-
-    logging.info(f"Successfully fetched media details for {metadata.get('title', 'Unknown Title')} ({metadata.get('year', 'Unknown Year')})")
-    return metadata
-
-    
 def process_torrent_selection(torrent_index: int, torrent_results: List[Dict[str, Any]]) -> Dict[str, Any]:
     logging.info(f"Processing torrent selection: {torrent_index}")
     

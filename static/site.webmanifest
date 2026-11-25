@@ -1,6 +1,6 @@
 {
-    "name": "cli_debrid",
-    "short_name": "cli_debrid",
+    "name": "Clyde",
+    "short_name": "Clyde",
     "icons": [
         {
             "src": "/static/android-chrome-192x192.png",
@@ -13,7 +13,7 @@
             "type": "image/png"
         }
     ],
-    "theme_color": "#007bff",
-    "background_color": "#ffffff",
+    "theme_color": "#0F1724",
+    "background_color": "#0F1724",
     "display": "standalone"
 }

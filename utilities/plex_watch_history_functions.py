@@ -22,7 +22,7 @@ async def get_watch_history_from_plex():
         }
         
         # Get Plex connection details
-        plex_url = get_setting('Plex', 'url')
+        plex_url = (get_setting('Plex', 'url') or '').rstrip('/')
         plex_token = get_setting('Plex', 'token')
         
         if not plex_url or not plex_token:
@@ -69,7 +69,10 @@ async def get_watch_history_from_plex():
         if 'source' not in columns:
             cursor.execute('ALTER TABLE watch_history ADD COLUMN source TEXT')
             logging.info("Added 'source' column to watch_history table")
-        
+
+        from database.core import ensure_watch_history_indexes
+        ensure_watch_history_indexes(conn)
+
         # Get all watched history from account
         logging.info("Fetching history from Plex account...")
         account = plex.myPlexAccount()

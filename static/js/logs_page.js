@@ -469,7 +469,7 @@ document.getElementById('log-lines-select').addEventListener('change', (event) =
     }
 });
 
-// ── LOG SOURCE TABS (cli_debrid live stream vs cli_mount polled logs) ──────
+// ── LOG SOURCE TABS (Clyde live stream vs cli_mount polled logs) ──────
 let currentSource = 'clidebrid';
 let climountPollTimer = null;
 
@@ -567,7 +567,7 @@ function fetchClimountLogs() {
 
         const lastPolled = document.getElementById('climount-last-polled');
         if (lastPolled) {
-            lastPolled.textContent = `cli_mount polled ${new Date().toLocaleTimeString()}`;
+            lastPolled.textContent = `${window.MOUNT_LOG_LABEL || 'cli_mount'} polled ${new Date().toLocaleTimeString()}`;
             lastPolled.style.display = 'inline';
         }
 
@@ -598,7 +598,7 @@ function fetchClimountLogs() {
 
         logEntries.innerHTML = '';
         if (fragment.childNodes.length === 0) {
-            renderClimountMessage('No cli_mount log lines found.', 'info');
+            renderClimountMessage(`No ${window.MOUNT_LOG_LABEL || 'cli_mount'} log lines found.`, 'info');
             renderChips();
         } else {
             logEntries.appendChild(fragment);
@@ -675,7 +675,16 @@ document.getElementById('log-search').addEventListener('input', filterLogs);
 function initialLoad() {
     loadSavedLogLevel();
     const logEntries = document.getElementById('log-entries');
-    updateLogs(true);
+    // /logs?source=climount&q=<name>: open the mount tab filtered to one file
+    // (links from Now playing / the Mount page's open streams).
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('q')) document.getElementById('log-search').value = params.get('q');
+    const tab = params.get('source') && document.querySelector('.log-source-tab[data-source="' + params.get('source') + '"]');
+    if (tab && params.get('source') !== currentSource) {
+        tab.click();
+    } else {
+        updateLogs(true);
+    }
     // Initial scroll to bottom and check position
     setTimeout(() => {
         scrollToBottom(logEntries);
@@ -778,12 +787,12 @@ function shareLogs(endpoint, button, urlLink, defaultLabel) {
 }
 
 document.getElementById('share-logs-btn').addEventListener('click', function() {
-    shareLogs('/logs/api/logs/share', this, document.getElementById('share-url'), 'Share cli_debrid Logs')
+    shareLogs('/logs/api/logs/share', this, document.getElementById('share-url'), 'Share Clyde Logs')
         .then(url => {
             showPopup({
                 type: POPUP_TYPES.SUCCESS,
                 title: 'Success!',
-                message: `cli_debrid logs uploaded successfully to paste.c-net.org! URL: ${url}`,
+                message: `Clyde logs uploaded successfully to paste.c-net.org! URL: ${url}`,
                 autoClose: 10000
             });
         })
@@ -828,7 +837,7 @@ if (shareBothBtn) {
         const bothButton = this;
         bothButton.disabled = true;
 
-        const cliDebridShare = shareLogs('/logs/api/logs/share', document.getElementById('share-logs-btn'), document.getElementById('share-url'), 'Share cli_debrid Logs');
+        const cliDebridShare = shareLogs('/logs/api/logs/share', document.getElementById('share-logs-btn'), document.getElementById('share-url'), 'Share Clyde Logs');
         const climountShare = shareLogs('/logs/api/climount/logs/share', document.getElementById('share-climount-logs-btn'), document.getElementById('share-url-climount'), 'Share cli_mount Logs');
 
         Promise.allSettled([cliDebridShare, climountShare]).then(([cliDebridResult, climountResult]) => {
@@ -836,11 +845,11 @@ if (shareBothBtn) {
 
             const lines = [];
             lines.push(cliDebridResult.status === 'fulfilled'
-                ? `cli_debrid: ${cliDebridResult.value}`
-                : `cli_debrid: FAILED (${cliDebridResult.reason.message})`);
+                ? `Clyde: ${cliDebridResult.value}`
+                : `Clyde: FAILED (${cliDebridResult.reason.message})`);
             lines.push(climountResult.status === 'fulfilled'
-                ? `cli_mount: ${climountResult.value}`
-                : `cli_mount: FAILED (${climountResult.reason.message})`);
+                ? `${window.MOUNT_LOG_LABEL || 'cli_mount'}: ${climountResult.value}`
+                : `${window.MOUNT_LOG_LABEL || 'cli_mount'}: FAILED (${climountResult.reason.message})`);
 
             const bothFailed = cliDebridResult.status === 'rejected' && climountResult.status === 'rejected';
             showPopup({

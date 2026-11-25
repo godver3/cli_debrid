@@ -16,6 +16,12 @@ def _set_setting(key, value):
     set_setting('Trakt', key, value)
 
 
+def is_connected() -> bool:
+    """A Trakt account was ever connected: an access or refresh token is saved.
+    With neither there is nothing to refresh; Trakt is simply not set up."""
+    return bool(_get_setting('access_token') or _get_setting('refresh_token'))
+
+
 def is_authenticated() -> bool:
     """Check if Trakt OAuth tokens are present and not expired.
 

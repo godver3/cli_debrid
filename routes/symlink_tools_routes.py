@@ -111,11 +111,21 @@ def handle_symlink_creation():
         success = create_symlink(source_file, symlink_path, skip_verification=True)
         
         if success:
+            item['original_path_for_symlink'] = source_file
             # Add to database if we have an IMDb ID
             if imdb_id:
-                add_to_database(item, symlink_path)
-            
-            flash(f'Successfully created symlink: {symlink_path}', 'success')
+                item_id = add_to_database(item, symlink_path)
+                if item_id:
+                    try:
+                        from database.symlink_verification import add_symlinked_file_for_verification
+                        add_symlinked_file_for_verification(item_id, symlink_path)
+                    except Exception as e:
+                        logging.warning(f"[Symlink Tools] Could not queue {symlink_path} for verification: {e}")
+                flash(f'Successfully created symlink: {symlink_path}', 'success')
+            else:
+                flash(f'Created symlink: {symlink_path}. Without an IMDb ID it is not added to the '
+                      'library, so Clyde will not track, verify or repair it.', 'warning')
+            _scan_media_server(symlink_path, media_type)
         else:
             flash('Failed to create symlink. Check the logs for details.', 'error')
         
@@ -126,12 +136,36 @@ def handle_symlink_creation():
         flash(f'Error creating symlink: {str(e)}', 'error')
         return redirect(url_for('symlink_tools.index'))
 
+def _scan_media_server(symlink_path, media_type):
+    """Ask the media server (Plex, Jellyfin/Emby or Silo) to scan the new symlink's
+    folder, in the background; the page used to leave it for the next full scan."""
+    import threading
+
+    def _run():
+        try:
+            from utilities.plex_functions import plex_update_item
+            folder = os.path.dirname(symlink_path)
+            plex_update_item({'full_path': folder, 'location_on_disk': folder, 'type': media_type})
+        except Exception as e:
+            logging.warning(f"[Symlink Tools] Media server scan for {symlink_path} failed: {e}")
+
+    threading.Thread(target=_run, daemon=True, name='symlink-tools-scan').start()
+
+
 def add_to_database(item, symlink_path):
     """Add the item to the database if it doesn't already exist.
 
     For multi-version support: if an item with the same identifiers but a DIFFERENT
     symlink path already exists, create a NEW entry instead of updating.
+
+    Returns the row id, or None. New rows carry the source path and file name:
+    without original_path_for_symlink, Resync, repair, verification and delete
+    could not find the file behind the symlink.
     """
+    source = item.get('original_path_for_symlink') or ''
+    filename = os.path.basename(source) if source else item.get('filled_by_file')
+    now = datetime.now()
+    row_id = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -156,9 +190,12 @@ def add_to_database(item, symlink_path):
             # Exact path match - just update the existing item
             cursor.execute('''
                 UPDATE media_items
-                SET last_updated = ?
+                SET last_updated = ?,
+                    original_path_for_symlink = COALESCE(NULLIF(original_path_for_symlink, ''), ?),
+                    filled_by_file = COALESCE(NULLIF(filled_by_file, ''), ?)
                 WHERE id = ?
-            ''', (datetime.now(), exact_match[0]))
+            ''', (now, source or None, filename, exact_match[0]))
+            row_id = exact_match[0]
             logging.info(f"Updated existing item {exact_match[0]} with same symlink path: {symlink_path}")
         else:
             # Check for existing blacklisted/ghostlisted entry before inserting
@@ -181,51 +218,46 @@ def add_to_database(item, symlink_path):
 
             if ghostlist_check:
                 logging.info(f"⛔ [Symlink Tools] Skipping insert for {item['title']} - found existing blacklisted/ghostlisted entry (ID: {ghostlist_check[0]})")
-                return
+                conn.close()
+                return None
 
             # Insert new item
-            if item['type'] == 'movie':
-                cursor.execute('''
-                    INSERT INTO media_items 
-                    (imdb_id, tmdb_id, title, year, type, version, content_source, 
-                     location_on_disk, state, last_updated, metadata_updated)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    item['imdb_id'], item['tmdb_id'], item['title'], item['year'],
-                    'movie', item['version'], item['content_source'], symlink_path,
-                    'Collected', datetime.now(), datetime.now()
-                ))
-            else:
-                cursor.execute('''
-                    INSERT INTO media_items 
-                    (imdb_id, tmdb_id, title, year, type, season_number, episode_number, 
-                     episode_title, version, content_source, location_on_disk, 
-                     state, last_updated, metadata_updated)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    item['imdb_id'], item['tmdb_id'], item['title'], item['year'],
-                    'episode', item['season_number'], item['episode_number'],
-                    item['episode_title'], item['version'], item['content_source'],
-                    symlink_path, 'Collected', datetime.now(), datetime.now()
-                ))
-            
+            cols = {
+                'imdb_id': item['imdb_id'], 'tmdb_id': item['tmdb_id'], 'title': item['title'],
+                'year': item['year'], 'type': item['type'], 'version': item['version'],
+                'content_source': item['content_source'], 'location_on_disk': symlink_path,
+                'original_path_for_symlink': source or None, 'filled_by_file': filename,
+                'state': 'Collected', 'collected_at': now, 'original_collected_at': now,
+                'last_updated': now, 'metadata_updated': now,
+            }
+            if item['type'] == 'episode':
+                cols.update({'season_number': item['season_number'],
+                             'episode_number': item['episode_number'],
+                             'episode_title': item['episode_title']})
+            cursor.execute(
+                f"INSERT INTO media_items ({', '.join(cols)}) VALUES ({', '.join('?' for _ in cols)})",
+                list(cols.values()))
+            row_id = cursor.lastrowid
+
             logging.info(f"Added new item to database with symlink path: {symlink_path}")
         
         conn.commit()
         conn.close()
-        
+        return row_id
+
     except Exception as e:
         logging.error(f"Error adding item to database: {str(e)}", exc_info=True)
         # Don't fail the symlink creation if database update fails
-        pass
+        return None
 
 @symlink_tools_bp.route('/api/browse-files', methods=['POST'])
 @admin_required
 def browse_files():
     """API endpoint to browse files and directories."""
     try:
-        data = request.get_json()
-        path = data.get('path', '/')
+        data = request.get_json() or {}
+        # Normalise first: '/mnt/../etc' passed the prefix check below.
+        path = os.path.normpath(data.get('path') or '/')
         
         # Security check: ensure path is within allowed directories
         allowed_paths = [
@@ -242,7 +274,8 @@ def browse_files():
         # Check if the requested path is within allowed paths
         path_allowed = False
         for allowed_path in allowed_paths:
-            if path.startswith(allowed_path) or path == '/':
+            allowed_path = os.path.normpath(allowed_path)
+            if path == '/' or path == allowed_path or path.startswith(allowed_path.rstrip('/') + '/'):
                 path_allowed = True
                 break
         

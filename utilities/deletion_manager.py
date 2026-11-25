@@ -42,6 +42,68 @@ def _item_from_plex_watchlist(item_source_types) -> bool:
     return any(t in _PLEX_WATCHLIST_SOURCE_TYPES for t in item_source_types)
 
 
+SIDECAR_SUBTITLE_EXTS = ('.srt', '.ass', '.ssa', '.sub', '.idx', '.vtt', '.smi')
+
+
+def remove_sidecar_subtitles(video_path):
+    """Delete the subtitle files that belong to a library file being removed:
+    regular files next to it named '<video stem>.<anything><subtitle ext>'
+    (Movie.en.srt, Movie.eng.forced.ass). Without this a deleted item left its
+    subtitles behind and its folder never emptied. Returns the paths removed."""
+    removed = []
+    folder, name = os.path.split(video_path or '')
+    stem = os.path.splitext(name)[0]
+    if not folder or not stem:
+        return removed
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return removed
+    # Another video still here whose name starts with this one's
+    # ('Movie.2020.1080p.REMUX.mkv' next to 'Movie.2020.1080p.mkv') owns
+    # the subtitles named after it.
+    longer = [s for s in (os.path.splitext(f)[0] for f in names if f.lower().endswith(VIDEO_EXTS))
+              if s != stem and s.startswith(stem + '.')]
+    for f in names:
+        if not f.startswith(stem + '.') or not f.lower().endswith(SIDECAR_SUBTITLE_EXTS):
+            continue
+        if any(f.startswith(s + '.') for s in longer):
+            continue
+        path = os.path.join(folder, f)
+        try:
+            if os.path.isfile(path) and not os.path.islink(path):
+                os.remove(path)
+                removed.append(path)
+        except OSError as e:
+            logging.warning(f"Could not remove subtitle {path}: {e}")
+    if removed:
+        logging.info(f"Removed {len(removed)} subtitle file(s) of {name}")
+    return removed
+
+
+VIDEO_EXTS = ('.mkv', '.mp4', '.avi', '.m4v', '.ts', '.m2ts', '.mov', '.wmv', '.webm', '.mpg', '.mpeg', '.iso')
+
+
+def find_orphan_subtitles(library_root):
+    """Every subtitle file in the symlink library that matches no video in its
+    folder (regular files only: never symlinks, so never subtitles that came
+    with a release, and never tracks inside a video). For the Subtitle
+    Manager's opt-in 'Remove orphaned subtitles' tool."""
+    found = []
+    if not library_root or not os.path.isdir(library_root):
+        return found
+    for folder, _dirs, files in os.walk(library_root):
+        stems = [os.path.splitext(f)[0] for f in files if f.lower().endswith(VIDEO_EXTS)]
+        if not stems:
+            continue        # no video here at all: not ours to judge
+        for f in files:
+            if f.lower().endswith(SIDECAR_SUBTITLE_EXTS) and not any(f.startswith(s + '.') for s in stems):
+                path = os.path.join(folder, f)
+                if os.path.isfile(path) and not os.path.islink(path):
+                    found.append(path)
+    return found
+
+
 class DeletionManager:
     """
     Unified deletion manager for all library deletion operations
@@ -78,7 +140,7 @@ class DeletionManager:
             else:
                 logging.warning(f"[DELETION_MANAGER] Symlinked/Local mode configured but symlink directory not found: {self.symlink_dir}")
         else:
-            logging.debug(f"[DELETION_MANAGER] Plex mode - symlink operations disabled")
+            logging.debug(f"[DELETION_MANAGER] Direct Mount - symlink operations disabled")
 
         # Media Server Type (stored in File Management section)
         media_server_raw = get_setting('File Management', 'media_server_type', 'plex')
@@ -89,7 +151,17 @@ class DeletionManager:
         self.mounted_location = get_setting('Plex', 'mounted_file_location', '')
 
         # Media Server Availability
-        self.plex_enabled = self._check_plex_available()
+        from utilities.silo_functions import is_silo_selected, is_silo_mode
+        # Silo picked as the media server (either mode): no Plex calls, even
+        # with a Plex URL left over from before
+        self.silo_enabled = is_silo_mode()
+        # Direct Mount run with Jellyfin/Emby: removals are rescans through its
+        # libraries, never Plex calls
+        from utilities.direct_mount import is_direct_mount_jellyfin
+        from utilities.jellyfin_direct import is_jellyfin_direct
+        self.jellyfin_direct_enabled = is_jellyfin_direct()
+        self.plex_enabled = (not is_silo_selected() and not is_direct_mount_jellyfin()
+                             and self._check_plex_available())
         self.jellyfin_enabled = self._check_jellyfin_available()
 
         # Limited Environment Mode
@@ -100,7 +172,7 @@ class DeletionManager:
 
         logging.info(f"DeletionManager initialized: file_mode={self.file_collection_mode}, using_symlinks={self.using_symlinks}, "
                     f"symlink_dir={self.symlink_dir}, media_server={self.media_server}, "
-                    f"plex_enabled={self.plex_enabled}, jellyfin_enabled={self.jellyfin_enabled}, "
+                    f"plex_enabled={self.plex_enabled}, jellyfin_enabled={self.jellyfin_enabled}, silo_enabled={self.silo_enabled}, "
                     f"limited_env={self.limited_env}")
 
     def _check_plex_available(self) -> bool:
@@ -258,6 +330,8 @@ class DeletionManager:
         if not plex_deletion_type or not content_title:
             logging.warning("[VERIFY_PLEX] Missing deletion type or title - assuming content exists")
             return True  # Conservative: assume it exists if we can't check
+        if self.silo_enabled or self.jellyfin_direct_enabled:
+            return False  # Silo or Jellyfin/Emby is the media server: there is no Plex content to check
 
         try:
             from utilities.settings import get_setting
@@ -442,6 +516,7 @@ class DeletionManager:
                 if os.path.islink(symlink_path):
                     os.unlink(symlink_path)
                     result['deleted_symlinks'].append(symlink_path)
+                    remove_sidecar_subtitles(symlink_path)
                 elif os.path.exists(symlink_path):
                     logging.warning(f"[BATCH_DELETE_SYMLINKS] Path exists but is not a symlink: {symlink_path}")
                 else:
@@ -680,12 +755,36 @@ class DeletionManager:
             'error': Optional[str]
         }
         """
+        if self.silo_enabled:
+            return self._remove_from_silo(item)
+        if self.jellyfin_direct_enabled:
+            return self._remove_from_jellyfin_direct(item)
         if self.plex_enabled:
             return self._remove_from_plex(item)
         elif self.jellyfin_enabled:
             return self._remove_from_jellyfin(item)
         else:
             return {'success': True, 'server_type': 'none'}
+
+    def _remove_from_jellyfin_direct(self, item: dict) -> dict:
+        """Direct Mount run with Jellyfin/Emby: rescan the file's folder once it is gone."""
+        from utilities.jellyfin_direct import remove_file
+        item_path = item.get('location_on_disk') or item.get('filled_by_file')
+        if not item_path:
+            return {'success': True, 'server_type': 'jellyfin', 'error': None}
+        episode_title = item.get('episode_title') if item.get('type') == 'episode' else None
+        ok = remove_file(item.get('title') or '', item_path, episode_title)
+        return {'success': ok, 'server_type': 'jellyfin', 'error': None if ok else 'Jellyfin/Emby did not take the rescan'}
+
+    def _remove_from_silo(self, item: dict) -> dict:
+        """Silo has no delete call: rescan the file's path once it is gone."""
+        from utilities.silo_functions import remove_file_from_silo
+        item_path = item.get('location_on_disk') or item.get('filled_by_file')
+        if not item_path:
+            return {'success': True, 'server_type': 'silo', 'error': None}
+        episode_title = item.get('episode_title') if item.get('type') == 'episode' else None
+        ok = remove_file_from_silo(item.get('title') or '', item_path, episode_title)
+        return {'success': ok, 'server_type': 'silo', 'error': None if ok else 'Silo did not take the rescan'}
 
     def _remove_from_plex(self, item: dict) -> dict:
         """Remove item from Plex using existing function"""
@@ -769,6 +868,17 @@ class DeletionManager:
         Returns:
             dict with 'success', 'paths_scanned', 'sections_cleaned', 'errors'
         """
+        if self.silo_enabled:
+            from utilities.silo_functions import scan_path
+            scanned = [p for p in (deleted_paths or []) if scan_path(p, item_type or '')]
+            return {'success': len(scanned) == len(deleted_paths or []), 'paths_scanned': scanned,
+                    'sections_cleaned': [], 'errors': []}
+        if self.jellyfin_direct_enabled:
+            from utilities.jellyfin_direct import scan_path as jellyfin_scan_path
+            jf_type = 'movie' if item_type == 'movie' else 'episode'
+            scanned = [p for p in (deleted_paths or []) if jellyfin_scan_path(p, jf_type, removed=True)]
+            return {'success': len(scanned) == len(deleted_paths or []), 'paths_scanned': scanned,
+                    'sections_cleaned': [], 'errors': []}
         if self.plex_enabled:
             try:
                 from utilities.plex_functions import scan_and_empty_plex_trash
@@ -919,7 +1029,7 @@ class DeletionManager:
 
                 headers = get_trakt_headers()
                 if headers:
-                    response = requests.get('https://api.trakt.tv/users/settings', headers=headers)
+                    response = requests.get('https://api.trakt.tv/users/settings', headers=headers, timeout=15)
                     if response.status_code == 200:
                         user_data = response.json()
                         authenticated_username = user_data.get('user', {}).get('username', '')
@@ -1586,11 +1696,13 @@ class DeletionManager:
                             os.unlink(symlink_path_to_remove)
                             result['deleted_symlinks'].append(symlink_path_to_remove)
                             logging.info(f"[DELETE_ITEM] Removed symlink {symlink_path_to_remove}")
+                            remove_sidecar_subtitles(symlink_path_to_remove)
                         elif os.path.islink(symlink_path_to_remove):
                             # Broken symlink - still remove it
                             os.unlink(symlink_path_to_remove)
                             result['deleted_symlinks'].append(symlink_path_to_remove)
                             logging.info(f"[DELETE_ITEM] Removed broken symlink {symlink_path_to_remove}")
+                            remove_sidecar_subtitles(symlink_path_to_remove)
                         else:
                             # Path doesn't exist - symlink already gone, still count as removed for accurate reporting
                             if not os.path.exists(symlink_path_to_remove) and not os.path.islink(symlink_path_to_remove):
@@ -1747,7 +1859,7 @@ class DeletionManager:
                         plex_result = remove_file_from_plex(item.get('title', 'Unknown'), path_for_plex_api, item.get('episode_title'))
                         if plex_result:
                             result['media_server_removed'] = True
-                            result['media_server_type'] = 'plex'
+                            result['media_server_type'] = ('silo' if self.media_server == 'silo' else 'jellyfin' if self.jellyfin_direct_enabled else 'plex')
                             logging.info(f"[DELETE_ITEM] Successfully removed {item.get('title')} from Plex")
                         else:
                             # Direct removal failed - try scan & empty trash as fallback

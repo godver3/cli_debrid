@@ -418,26 +418,3 @@ def get_correct_anime_episode_info(title: str, season: int, episode: int,
     return result
 
 
-def convert_anime_episode_format_smart(season: int, episode: int, 
-                                       season_episode_counts: Dict[int, int],
-                                       title: Optional[str] = None,
-                                       tmdb_id: Optional[str] = None,
-                                       imdb_id: Optional[str] = None) -> Dict[str, str]:
-    """
-    Smart anime episode format conversion that handles absolute numbering.
-    
-    This is a wrapper around the original convert_anime_episode_format that adds
-    detection for absolute-numbered anime.
-    """
-    # If we have title information, check if this anime uses absolute numbering
-    if title:
-        anime_info = get_correct_anime_episode_info(title, season, episode, tmdb_id, imdb_id)
-        
-        if anime_info['uses_absolute']:
-            logging.info(f"Using absolute numbering formats for {title}")
-            return anime_info['formats']
-    
-    # Otherwise, fall back to the original calculation
-    # This will do the traditional season-based absolute calculation
-    from scraper.scraper import convert_anime_episode_format
-    return convert_anime_episode_format(season, episode, season_episode_counts)

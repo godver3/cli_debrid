@@ -439,6 +439,48 @@ class TorboxProvider(DebridProvider):
                 self.update_status(torrent_id, TorrentStatus.ERROR)
             return None
 
+    # ---- built-in mount ---------------------------------------------------
+
+    supports_mount_links = True
+
+    def mount_files(self, torrent_id: str) -> Optional[Tuple[str, List[Dict]]]:
+        result = make_request('GET', '/torrents/mylist', self.api_key, params={'bypass_cache': 'true', 'id': torrent_id})
+        info = get_data_payload(result)
+        info = (info[0] if info else None) if isinstance(info, list) else info
+        if not isinstance(info, dict) or self._map_status(info) != TorrentStatus.CACHED or not info.get('download_present', True):
+            return None
+        files = self._normalize_files(info)
+        if not files:
+            return None
+        folder = self._common_root_folder(files) or info.get('name') or str(torrent_id)
+        return folder, [{'name': f['path'], 'size': int(f.get('bytes') or 0), 'file_id': str(f.get('id'))} for f in files]
+
+    def mount_check(self, torrent_id: str, file_id: str) -> Tuple[str, str]:
+        """cli_mount's TorBox CheckFile: the torrent's download no longer
+        present on TorBox = gone."""
+        from debrid.mount_proof import BROKEN, HEALTHY, UNKNOWN, HOSTER_UNAVAILABLE, MISSING_PROVIDER_LINK
+        try:
+            result = make_request('GET', '/torrents/mylist', self.api_key, params={'bypass_cache': 'true', 'id': torrent_id})
+        except Exception as exc:
+            return UNKNOWN, f'mylist: {exc}'
+        info = get_data_payload(result)
+        info = (info[0] if info else None) if isinstance(info, list) else info
+        if not isinstance(info, dict):
+            return UNKNOWN, 'torrent not listed'  # gone from the account: the mirror removes it
+        if info.get('download_present') is False:
+            return BROKEN, HOSTER_UNAVAILABLE
+        if str(file_id) not in {str(f.get('id')) for f in self._normalize_files(info)}:
+            return BROKEN, MISSING_PROVIDER_LINK
+        return HEALTHY, ''
+
+    def mount_link(self, torrent_id: str, file_id: str) -> Tuple[str, int]:
+        result = make_request('GET', '/torrents/requestdl', self.api_key,
+                              params={'token': self.api_key, 'torrent_id': torrent_id, 'file_id': file_id})
+        url = get_data_payload(result)
+        if not isinstance(url, str) or not url.startswith('http'):
+            raise ValueError(f'TorBox gave no download link for {torrent_id}/{file_id}')
+        return url, 2 * 3600
+
     def get_torrent_info_with_status(self, torrent_id: str) -> TorrentInfoStatus:
         try:
             info = self.get_torrent_info(torrent_id)

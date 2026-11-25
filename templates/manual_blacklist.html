@@ -576,6 +576,9 @@
       const imdbId = wrap.dataset.imdb;
       const allCb = wrap.querySelector('.bl-all-seasons-cb');
       const seasonCbs = wrap.querySelectorAll('.bl-season-cb:checked');
+      // Seasons never loaded and "All" not ticked: nothing was edited here.
+      // Posting it sent an empty list, which saved as "all seasons".
+      if (!(allCb && allCb.checked) && !wrap.querySelector('.bl-season-cb')) continue;
 
       const fd = new FormData();
       fd.append('action', 'update_seasons');

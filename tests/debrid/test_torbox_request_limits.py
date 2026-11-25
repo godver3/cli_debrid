@@ -131,3 +131,21 @@ def test_create_400_rate_limit_does_not_sleep_or_retry(monkeypatch, torbox_api):
         api_module.make_request('POST', '/torrents/createtorrent', 'key', data={'magnet': 'x'})
     assert post.call_count == 1
     sleep.assert_not_called()
+
+
+def test_create_sends_allow_zip_false(monkeypatch, torbox_api):
+    """TorBox zips 100+ file torrents unless asked not to (magnet and
+    .torrent upload alike); other endpoints are left alone."""
+    api_module, _ = torbox_api
+    post = mock.Mock(return_value=_Response(200, {'success': True, 'data': {'torrent_id': 1}}))
+    monkeypatch.setattr(api_module.api, 'post', post, raising=False)
+    monkeypatch.setattr(api_module, '_wait_for_rate_limit', lambda: None)
+
+    api_module.make_request('POST', '/torrents/createtorrent', 'key', data={'magnet': 'x'})
+    assert post.call_args.kwargs['data'] == {'magnet': 'x', 'allow_zip': 'false'}
+
+    api_module.make_request('POST', '/torrents/createtorrent', 'key', files={'file': ('a.torrent', b'')})
+    assert post.call_args.kwargs['data'] == {'allow_zip': 'false'}
+
+    api_module.make_request('POST', '/torrents/controltorrent', 'key', json_data={'operation': 'delete'})
+    assert post.call_args.kwargs['data'] is None

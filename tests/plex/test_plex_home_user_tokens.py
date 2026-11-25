@@ -60,6 +60,8 @@ class TestHomeUserTokens(unittest.TestCase):
         patchers = [
             mock.patch.object(utr, 'load_user_tokens', side_effect=lambda: dict(self.store)),
             mock.patch.object(utr, 'save_user_tokens', side_effect=lambda t: self.store.update(t)),
+            # Writers read-change-write under one lock now.
+            mock.patch.object(utr, 'update_user_tokens', side_effect=lambda change: change(self.store)),
         ]
         for p in patchers:
             p.start()

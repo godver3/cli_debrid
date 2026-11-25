@@ -1,6 +1,6 @@
-from flask import Blueprint, jsonify, request, render_template, redirect, url_for, flash
+from flask import Blueprint, jsonify, request, render_template, redirect, url_for
 from flask_login import login_required, current_user
-from werkzeug.security import generate_password_hash
+from werkzeug.security import generate_password_hash, check_password_hash
 from routes.extensions import db
 from .auth_routes import User, _generate_api_token
 from .models import admin_required, onboarding_required
@@ -8,23 +8,7 @@ from .settings_routes import is_user_system_enabled
 
 user_management_bp = Blueprint('user_management', __name__)
 
-@user_management_bp.route('/change_password', methods=['GET', 'POST'])
-@login_required
-def change_password():
-    if request.method == 'POST':
-        new_password = request.form['new_password']
-        confirm_password = request.form['confirm_password']
-        if new_password == confirm_password:
-            current_user.password = generate_password_hash(new_password)
-            current_user.is_default = False
-            db.session.commit()
-            flash('Password changed successfully.', 'success')
-            if current_user.role == 'admin' and 'manage_users' in request.referrer:
-                return redirect(url_for('user_management.manage_users'))
-            return redirect(url_for('root.root'))
-        else:
-            flash('Passwords do not match.', 'error')
-    return render_template('change_password.html')
+VALID_ROLES = ('admin', 'user', 'requester')
 
 @user_management_bp.route('/change_own_password', methods=['POST'])
 @login_required
@@ -32,7 +16,8 @@ def change_own_password():
     if current_user.oidc_sub and not current_user.password:
         return jsonify({'success': False, 'error': 'SSO accounts cannot change their password here. Manage your password through your identity provider.'}), 400
 
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
+    current_password = data.get('current_password') or ''
     new_password = data.get('new_password')
     confirm_password = data.get('confirm_password')
 
@@ -41,6 +26,10 @@ def change_own_password():
 
     if new_password != confirm_password:
         return jsonify({'success': False, 'error': 'Passwords do not match.'}), 400
+
+    # A session alone must not be enough to take over the account.
+    if current_user.password and not check_password_hash(current_user.password, current_password):
+        return jsonify({'success': False, 'error': 'Current password is incorrect.'}), 400
 
     try:
         current_user.password = generate_password_hash(new_password)
@@ -64,12 +53,14 @@ def manage_users():
 @user_management_bp.route('/add_user', methods=['POST'])
 @admin_required
 def add_user():
-    username = request.form.get('username')
+    username = (request.form.get('username') or '').strip()
     password = request.form.get('password')
     role = request.form.get('role')
-    
+
     if not all([username, password, role]):
         return jsonify({'success': False, 'error': 'Username, password, and role are required.'})
+    if role not in VALID_ROLES:
+        return jsonify({'success': False, 'error': f"Unknown role '{role}'."}), 400
 
     existing_user = User.query.filter_by(username=username).first()
     if existing_user:
@@ -90,6 +81,8 @@ def delete_user(user_id):
     user = User.query.get(user_id)
     if not user:
         return jsonify({'success': False, 'error': 'User not found'}), 404
+    if user.id == current_user.id:
+        return jsonify({'success': False, 'error': 'You cannot delete the account you are signed in with.'}), 400
 
     # Count number of admin users
     admin_count = User.query.filter_by(role='admin').count()

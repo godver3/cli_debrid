@@ -247,6 +247,10 @@ def _reset_battery_seasons(imdb_id: str) -> None:
 
 def _plex_server():
     import plexapi.server
+    from utilities.silo_functions import is_silo_selected
+    from utilities.direct_mount import is_direct_mount_jellyfin
+    if is_silo_selected() or is_direct_mount_jellyfin():
+        return None  # Silo or Jellyfin/Emby is the media server: no Plex to sync, even with an old Plex URL set
     if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
         url = get_setting('File Management', 'plex_url_for_symlink', default='')
         token = get_setting('File Management', 'plex_token_for_symlink', default='')
@@ -258,30 +262,33 @@ def _plex_server():
     return plexapi.server.PlexServer(url.rstrip('/'), token, timeout=30)
 
 
+def find_plex_show(plex, imdb_id: str, rating_keys: List[str]):
+    """The show in Plex: via one of its items' rating keys, else by IMDb GUID."""
+    for key in rating_keys:
+        try:
+            item = plex.fetchItem(int(key))
+            show = item.show() if item.type == 'episode' else item if item.type == 'show' else None
+            if show is not None:
+                return show
+        except Exception:
+            continue
+    for section in plex.library.sections():
+        if section.type != 'show':
+            continue
+        try:
+            return section.getGuid(f"imdb://{imdb_id}")
+        except Exception:
+            continue
+    return None
+
+
 def sync_plex_ordering(imdb_id: str, candidates: List[str], rating_keys: List[str]) -> str:
     """Set the show's episode ordering in Plex and refresh it. Returns a note."""
     try:
         plex = _plex_server()
         if plex is None:
             return 'Plex is not configured; ordering not changed there'
-        show = None
-        for key in rating_keys:
-            try:
-                item = plex.fetchItem(int(key))
-                show = item.show() if item.type == 'episode' else item if item.type == 'show' else None
-                if show is not None:
-                    break
-            except Exception:
-                continue
-        if show is None:
-            for section in plex.library.sections():
-                if section.type != 'show':
-                    continue
-                try:
-                    show = section.getGuid(f"imdb://{imdb_id}")
-                    break
-                except Exception:
-                    continue
+        show = find_plex_show(plex, imdb_id, rating_keys)
         if show is None:
             return 'Show not found in Plex; set its episode ordering there by hand'
         ordering = plex_ordering_value(show, candidates)
@@ -345,6 +352,13 @@ def apply_order_change(imdb_id: str, new_order: Optional[str], sync_plex: bool =
     if sync_plex and preview['plex_ordering']:
         rating_keys = [str(r['ms_item_id']) for r in _show_rows(imdb_id) if r.get('ms_item_id')]
         plex_note = sync_plex_ordering(imdb_id, preview['plex_ordering'], rating_keys)
+    if sync_plex:
+        # Plex numbers shows by TMDB after it drops TheTVDB: lock the chosen
+        # order's episode titles/summaries/dates in (or release them again).
+        from utilities.plex_order_metadata import sync_show
+        titles_note = sync_show(imdb_id, new_order)
+        if titles_note:
+            plex_note = f"{plex_note}; {titles_note}" if plex_note else titles_note
 
     logging.info(f"[EpisodeOrder] {imdb_id}: {preview['current_order']} -> {new_order}; "
                  f"{len(preview['moves'])} moved, {len(preview['removes'])} removed, "
