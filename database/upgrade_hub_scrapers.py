@@ -283,8 +283,12 @@ def scan_with_scrapers(items: List[Dict], threshold: float, default_version: str
                        not_wanted_hashes: Optional[frozenset] = None,
                        limit: int = DEFAULT_CHECKS_PER_SCAN,
                        progress_callback: Optional[Callable[[int, int], None]] = None,
-                       errors: Optional[List[str]] = None) -> List[Dict]:
-    """Search up to ``limit`` items (oldest-checked first) and return candidates."""
+                       errors: Optional[List[str]] = None,
+                       searched: Optional[List[int]] = None) -> List[Dict]:
+    """Search up to ``limit`` items (oldest-checked first) and return candidates.
+
+    ``searched``, if given, receives the ids of the items that were searched.
+    """
     chosen = pick_items_to_check(items, limit)
     if not chosen:
         return []
@@ -311,6 +315,8 @@ def scan_with_scrapers(items: List[Dict], threshold: float, default_version: str
             if progress_callback:
                 progress_callback(done, len(chosen))
     record_checked(checked)
+    if searched is not None:
+        searched.extend(checked)
     logger.info(f"[UPGRADE_HUB] Scraper search: {len(candidates)} upgrade(s) from {len(checked)} item(s)")
     return candidates
 

@@ -1258,9 +1258,11 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
 
     Args:
       scan_limit: If set, caps total Collected items processed (applied before type split).
-      recent_release_days: "Search recent releases": the scraper phase searches every
-        item released in the last N days (up to MAX_CHECKS_PER_SCAN) instead of the
-        usual rotating slice, even with "Search with my scrapers" off.
+      recent_release_days: "Search recent releases": a targeted run. Only the scraper
+        phase runs, over every item released in the last N days (up to
+        MAX_CHECKS_PER_SCAN), even with "Search with my scrapers" off. Zilean and
+        the NZB feed are skipped, and the finds are merged into the last results:
+        candidates for items this run didn't search are kept.
     """
     global _scan_in_progress, _last_scan_results, _last_scan_time, _scan_progress, _vs_cache
 
@@ -1297,9 +1299,14 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
             from database.upgrade_hub_scrapers import MAX_CHECKS_PER_SCAN
             use_scrapers = True
             scraper_limit = MAX_CHECKS_PER_SCAN
+            # Targeted run: reading Zilean / the NZB feed for the whole library
+            # would take minutes before the few recent items were searched.
+            use_zilean = use_nzb = False
+            logger.info('[UPGRADE_HUB] Search recent releases: scrapers only, '
+                        'Zilean and NZB phases skipped')
 
         zilean_info = get_zilean_config()
-        if use_zilean and not zilean_info:
+        if use_zilean and not zilean_info and recent_release_days is None:
             # Zilean wanted but not configured — carry on with the other sources
             use_zilean = False
             logger.info('[UPGRADE_HUB] Zilean not configured — skipping the Zilean phases')
@@ -1724,6 +1731,7 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
         # ── Phase D: search with the user's own scrapers ─────────────────────
         # A rotating slice of the library (oldest-checked first), so releases
         # that never reach Zilean or the NZB browse feed are still found.
+        scraper_searched_ids: List[int] = []
         if use_scrapers and scraper_pool:
             try:
                 from database.upgrade_hub_scrapers import scan_with_scrapers
@@ -1739,6 +1747,7 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
                     scraper_pool, threshold, default_version,
                     not_wanted_hashes=_not_wanted_hashes, limit=scraper_limit,
                     progress_callback=_scr_progress, errors=errors,
+                    searched=scraper_searched_ids,
                 )
                 by_item = {c['item_id']: c for c in upgrade_candidates if 'item_id' in c}
                 for c in scr_upgrades:
@@ -1884,16 +1893,33 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
         for c in upgrade_candidates + pack_candidates:
             c.pop('_phalanx_only', None)
 
+        scanned_movies, scanned_episodes = len(movies), len(episodes)
+        if recent_release_days is not None:
+            # Merge into the last results: keep candidates for everything this
+            # run didn't search, replace the ones for items it did.
+            searched = set(scraper_searched_ids)
+            scanned_movies = sum(1 for i in scraper_pool if i['id'] in searched and i['type'] == 'movie')
+            scanned_episodes = len(searched) - scanned_movies
+            _ensure_cache_initialized()
+            prev = _last_scan_results if _last_scan_results and 'error' not in _last_scan_results else {}
+            kept = [c for c in prev.get('upgrade_candidates', []) if c.get('item_id') not in searched]
+            upgrade_candidates = sorted(kept + upgrade_candidates, key=lambda x: -x.get('improvement_pct', 0))
+            pack_candidates = list(prev.get('pack_candidates', [])) + pack_candidates
+            logger.info(f"[UPGRADE_HUB] Search recent releases: {len(searched)} item(s) searched, "
+                        f"{len(upgrade_candidates) - len(kept)} upgrade(s) found; "
+                        f"{len(kept)} earlier candidate(s) kept")
+
         scanned_at = datetime.now().isoformat()
         result = {
             'upgrade_candidates': upgrade_candidates,
             'pack_candidates': pack_candidates,
-            'scanned_movies': len(movies),
-            'scanned_episodes': len(episodes),
+            'scanned_movies': scanned_movies,
+            'scanned_episodes': scanned_episodes,
             'used_db': used_db,
             'errors': errors,
             'scanned_at': scanned_at,
             'version_used': default_version,
+            'recent_release_days': recent_release_days,
         }
         _last_scan_results = result
         _last_scan_time = datetime.now()
@@ -1911,14 +1937,15 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
             'scan',
             triggered_by=triggered_by,
             result='success' if not errors else 'partial',
-            title=(f"Scan: {len(upgrade_candidates)} upgrade{'s' if len(upgrade_candidates) != 1 else ''}, "
+            title=((f"Recent releases ({recent_release_days}d): " if recent_release_days is not None else "Scan: ")
+                   + f"{len(upgrade_candidates)} upgrade{'s' if len(upgrade_candidates) != 1 else ''}, "
                    f"{len(pack_candidates)} pack{'s' if len(pack_candidates) != 1 else ''} "
-                   f"({len(movies)} movies, {len(episodes)} episodes scanned)"),
+                   f"({scanned_movies} movies, {scanned_episodes} episodes scanned)"),
             stats={
                 'upgrades': len(upgrade_candidates),
                 'packs': len(pack_candidates),
-                'movies_scanned': len(movies),
-                'episodes_scanned': len(episodes),
+                'movies_scanned': scanned_movies,
+                'episodes_scanned': scanned_episodes,
                 'errors': len(errors),
                 'scan_limit': scan_limit,
                 'recent_release_days': recent_release_days,

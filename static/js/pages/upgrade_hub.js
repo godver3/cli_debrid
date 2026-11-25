@@ -318,9 +318,9 @@ function setRecentBtnDisabled(disabled) {
     if (b) b.disabled = disabled;
 }
 
-// "Search Recent Releases": a scan whose scraper search covers every item
-// released in the last N days (default: the Release Age setting), instead of
-// the usual capped, oldest-checked-first slice.
+// "Search Recent Releases": a scrapers-only run over every item released in
+// the last N days (default: the Release Age setting). Its finds are merged
+// into the current results.
 function searchRecentReleases() {
     const upg = _settings.upgrading || {};
     const def = upg.upgrade_max_release_age_days ?? 7;
@@ -358,9 +358,9 @@ function searchRecentReleases() {
                 type: 'confirm',
                 title: 'Search Recent Releases',
                 message: `Search ${p.items} item(s) released in the last ${days} day(s) `
-                       + `(${p.movies} movie(s), ${p.episodes} episode(s))? Each one is a full search, `
-                       + `two at a time, as part of a normal scan.${capped} Better releases show up in the `
-                       + 'results to queue as usual.',
+                       + `(${p.movies} movie(s), ${p.episodes} episode(s))? Each one is a full search with `
+                       + `your scrapers, two at a time; Zilean and the NZB feed are skipped.${capped} `
+                       + 'Better releases are added to your current results; candidates for other items stay.',
                 confirmText: 'Search',
                 cancelText: 'Cancel',
                 onConfirm: () => startScan({ recent_release_days: days }),

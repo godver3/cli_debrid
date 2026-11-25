@@ -470,6 +470,56 @@ def test_recent_search_covers_every_recent_item_past_the_cap_and_toggle(hub_db, 
     assert uhs.count_recent_items(7) == {'items': 3, 'movies': 0, 'episodes': 3, 'cap': uhs.MAX_CHECKS_PER_SCAN}
 
 
+def test_recent_search_skips_zilean_and_nzb_and_keeps_other_candidates(hub_db, app_settings, monkeypatch):
+    # A targeted run: only the scraper search runs, and the last results are
+    # kept for every item it didn't search.
+    from datetime import date, timedelta
+    import database.zilean_upgrade as zu
+    import database.upgrade_hub_scrapers as uhs
+    import database.nzb_upgrade as nzb
+    app_settings['Upgrade Hub'] = {'upgrade_source': 'both', 'use_scrapers': True}
+    recent = (date.today() - timedelta(days=2)).isoformat()
+    conn = hub_db()
+    searched_no_upgrade = _insert(conn, type='movie', title='A', imdb_id='tt11', tmdb_id='11', year=2026,
+                                  filled_by_file='A.2026.1080p.mkv', size=5.0, release_date=recent)
+    searched_upgrade = _insert(conn, type='movie', title='B', imdb_id='tt12', tmdb_id='12', year=2026,
+                               filled_by_file='B.2026.1080p.mkv', size=5.0, release_date=recent)
+    old_item = _insert(conn, type='movie', title='C', imdb_id='tt13', tmdb_id='13', year=2010,
+                       filled_by_file='C.2010.720p.mkv', size=2.0, release_date='2010-01-01')
+    conn.close()
+    monkeypatch.setattr(zu, '_save_scan_results_to_db', lambda *a, **k: None)
+    monkeypatch.setattr(zu, '_cache_initialized', True)
+    monkeypatch.setattr(zu, '_last_scan_results', {
+        'upgrade_candidates': [{'item_id': old_item, 'improvement_pct': 50.0, 'title': 'C'},
+                               {'item_id': searched_no_upgrade, 'improvement_pct': 20.0, 'title': 'A'}],
+        'pack_candidates': [{'item_ids': [99], 'ratio_pct': 30.0}],
+    })
+    touched = []
+    for name in ('_api_query', '_load_rest_cache_from_db', '_db_batch_fetch_movies', '_get_db_config'):
+        monkeypatch.setattr(zu, name, lambda *a, _n=name, **k: touched.append(_n))
+    monkeypatch.setattr(zu, 'get_zilean_config', lambda: (object(), {'url': 'http://zilean'}))
+    monkeypatch.setattr(nzb, 'get_newznab_scrapers', lambda: [{'name': 'idx'}])
+    monkeypatch.setattr(nzb, 'scan_nzb_upgrades', lambda *a, **k: touched.append('nzb') or {})
+
+    def fake_scan(it, *a, **k):
+        if it['id'] != searched_upgrade:
+            return None
+        return {'type': 'movie', 'item_id': it['id'], 'title': 'B', 'current_score': 50, 'new_score': 100,
+                'improvement_pct': 100.0, 'new_title': 'B.2026.2160p', 'new_magnet': 'magnet:?xt=urn:btih:' + 'f' * 40,
+                'protocol': 'torrent', 'found_by': 'scrapers', '_alts': [], '_phalanx_only': False}
+
+    with mock.patch.object(uhs, '_scan_item', side_effect=fake_scan), \
+         mock.patch('database.upgrade_hub_activity.log_hub_activity'):
+        out = zu.scan_for_upgrades(recent_release_days=7)
+    assert 'error' not in out, out
+    assert touched == [] or touched == ['_get_db_config'], touched  # config read only, no queries
+    ids = [c['item_id'] for c in out['upgrade_candidates']]
+    assert ids == [searched_upgrade, old_item]          # A replaced (no upgrade now), C kept
+    assert out['pack_candidates'] == [{'item_ids': [99], 'ratio_pct': 30.0}]
+    assert (out['scanned_movies'], out['scanned_episodes']) == (2, 0)
+    assert out['recent_release_days'] == 7
+
+
 def _start_scan(json, **settings):
     from routes import upgrade_hub_routes as r
     started = {}
