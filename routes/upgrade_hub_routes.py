@@ -47,9 +47,7 @@ def status():
     s = get_scan_status()
     s['zilean_configured'] = get_zilean_config() is not None
     s['nzb_configured'] = len(get_newznab_scrapers()) > 0
-    from database.upgrade_hub_scrapers import fresh_search_settings
-    s['fresh_search_enabled'] = fresh_search_settings()['enabled']
-    s['any_source_configured'] = s['zilean_configured'] or s['nzb_configured'] or s['fresh_search_enabled']
+    s['any_source_configured'] = s['zilean_configured'] or s['nzb_configured']
     results = get_last_results()
     if results and 'error' not in results:
         try:
@@ -77,35 +75,20 @@ def start_scan():
     if get_scan_status()['in_progress']:
         return jsonify({'success': False, 'error': 'Scan already in progress'}), 409
 
-    # "Search recent releases": the scraper phase searches every item released
-    # in the last N days, whatever the per-scan cap and scraper toggle say.
-    data = request.get_json(silent=True) or {}
-    recent_days = data.get('recent_release_days')
-    if recent_days is not None:
-        try:
-            recent_days = int(recent_days)
-        except (TypeError, ValueError):
-            return jsonify({'success': False, 'error': 'Days must be a whole number'}), 400
-        if not 0 <= recent_days <= MAX_RECENT_DAYS:
-            return jsonify({'success': False,
-                            'error': f'Days must be between 0 and {MAX_RECENT_DAYS}'}), 400
-
-    from database.upgrade_hub_scrapers import fresh_search_settings
-    use_scrapers = fresh_search_settings()['enabled'] or recent_days is not None
-    from database.upgrade_hub_scrapers import upgrade_source as _upgrade_source
+    from database.upgrade_hub_sources import upgrade_source as _upgrade_source
     upgrade_source = _upgrade_source()
-    use_zilean = upgrade_source in ('both', 'zilean_only') and bool(get_zilean_config())
-    use_nzb    = upgrade_source in ('both', 'nzb_only') and bool(get_newznab_scrapers())
+    use_zilean = upgrade_source in ('both', 'zilean_only')
+    use_nzb    = upgrade_source in ('both', 'nzb_only')
 
-    if not (use_scrapers or use_zilean or use_nzb):
-        if upgrade_source == 'zilean_only':
-            err = 'Zilean scraper not enabled or URL not configured in Settings → Scrapers'
-        elif upgrade_source == 'nzb_only':
-            err = 'No enabled Newznab indexers configured in Settings → Scrapers'
-        else:
-            err = ('No upgrade source. Enable Zilean or a Newznab indexer in Settings → Scrapers, '
-                   'or turn on Fresh Release Search below')
-        return jsonify({'success': False, 'error': err}), 400
+    if use_zilean and not use_nzb and not get_zilean_config():
+        return jsonify({'success': False,
+                        'error': 'Zilean scraper not enabled or URL not configured in Settings → Scrapers'}), 400
+    if use_nzb and not use_zilean and not get_newznab_scrapers():
+        return jsonify({'success': False,
+                        'error': 'No enabled Newznab indexers configured in Settings → Scrapers'}), 400
+    if not get_zilean_config() and not get_newznab_scrapers():
+        return jsonify({'success': False,
+                        'error': 'No upgrade sources configured. Enable Zilean or a Newznab indexer in Settings → Scrapers'}), 400
 
     scan_limit = get_setting('Upgrade Hub', 'scan_limit', None)
     if scan_limit is not None:
@@ -115,7 +98,7 @@ def start_scan():
             scan_limit = None
 
     def _run():
-        scan_for_upgrades(scan_limit=scan_limit, recent_release_days=recent_days)
+        scan_for_upgrades(scan_limit=scan_limit)
 
     threading.Thread(target=_run, daemon=True, name='upgrade-hub-scan').start()
     try:
@@ -126,23 +109,6 @@ def start_scan():
     except Exception:
         pass
     return jsonify({'success': True, 'message': 'Scan started'})
-
-
-MAX_RECENT_DAYS = 3650
-
-
-@upgrade_hub_bp.route('/api/recent_preview')
-@admin_required
-def recent_preview():
-    """How many items "Search recent releases" would search for ?days=N."""
-    from database.upgrade_hub_scrapers import count_recent_items
-    try:
-        days = int(request.args.get('days', ''))
-    except (TypeError, ValueError):
-        return jsonify({'success': False, 'error': 'Days must be a whole number'}), 400
-    if not 0 <= days <= MAX_RECENT_DAYS:
-        return jsonify({'success': False, 'error': f'Days must be between 0 and {MAX_RECENT_DAYS}'}), 400
-    return jsonify({'success': True, 'days': days, **count_recent_items(days)})
 
 
 @upgrade_hub_bp.route('/api/results')
@@ -274,8 +240,6 @@ _SETTINGS_KEYS = {
     'excluded_genres': str,
     'exclude_nas_items': bool,
     'upgrade_source': str,
-    'fresh_search_days': int,
-    'fresh_search_limit': int,
 }
 _SETTINGS_DEFAULTS = {
     'min_improvement_threshold': 0,
@@ -287,8 +251,6 @@ _SETTINGS_DEFAULTS = {
     'excluded_genres': '',
     'exclude_nas_items': False,
     'upgrade_source': 'both',
-    'fresh_search_days': 30,
-    'fresh_search_limit': 20,
 }
 _BOOL_KEYS = ('show_recent_only', 'hide_pack_episodes', 'exclude_nas_items')
 
@@ -329,11 +291,6 @@ def get_settings():
         # Coerce stored strings back to correct types
         if key == 'scan_limit':
             settings[key] = int(val) if val not in (None, '', 'null', 0) else None
-        elif key in ('fresh_search_days', 'fresh_search_limit'):
-            try:
-                settings[key] = max(0, int(val))
-            except (TypeError, ValueError):
-                settings[key] = default
         elif key in ('min_improvement_threshold', 'max_upgrades_per_run'):
             try:
                 settings[key] = int(val or default)
@@ -343,7 +300,7 @@ def get_settings():
             settings[key] = bool(val) if not isinstance(val, str) else val.lower() == 'true'
         else:
             settings[key] = val
-    from database.upgrade_hub_scrapers import upgrade_source as _upgrade_source
+    from database.upgrade_hub_sources import upgrade_source as _upgrade_source
     settings['upgrade_source'] = _upgrade_source()
     settings['upgrading'] = {
         key: _coerce(kind, get_setting(section, key, default), default)

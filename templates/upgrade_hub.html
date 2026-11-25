@@ -19,14 +19,6 @@
                 </svg>
                 Scan for Upgrades
             </button>
-            <button class="uh-btn" id="recent-btn" onclick="searchRecentReleases()"
-                    title="Search your scrapers for every item released in the last N days (default: Release Age)">
-                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                          d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                </svg>
-                Search Recent Releases
-            </button>
         </div>
     </div>
 
@@ -46,11 +38,11 @@
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
         </svg>
-        <span><strong>Note:</strong> Scans search with your
-        <a href="/settings#scrapers" class="uh-note-link">configured scrapers</a> (a set number of items per scan,
-        longest-unchecked first), and can also read a <a href="/settings#scrapers" class="uh-note-link">Zilean</a>
-        instance and <a href="/settings#scrapers" class="uh-note-link">Newznab indexers'</a> latest releases.
-        Choose sources in the Settings tab below.</span>
+        <span><strong>Note:</strong> Requires at least one upgrade source — a local
+        <a href="/settings#scrapers" class="uh-note-link">Zilean</a> instance and/or enabled
+        <a href="/settings#scrapers" class="uh-note-link">Newznab indexers</a>. Every release your indexers post
+        for your library is kept for 90 days and checked by each scan. Configure sources in
+        Settings → Scraper Settings. Select which source(s) to use in the Settings tab below.</span>
     </div>
 
     <!-- Progress bar (shown during scan) -->
@@ -376,18 +368,6 @@
                     </div>
                 </div>
 
-                <div class="uh-settings-section">
-                    <div class="uh-settings-subsection-title">Fresh Release Search</div>
-                    <p class="uh-settings-desc">Each scan also searches your scrapers for items released recently, when better encodes keep appearing. Each item is one full search (one API call per indexer), so it's capped. Items checked longest ago go first. Set items to 0 to turn it off.</p>
-                    <div class="uh-number-input-wrap">
-                        <span class="uh-settings-unit">Released within</span>
-                        <input type="number" id="settings-fresh-days" class="uh-number-input" min="0" max="3650" step="1">
-                        <span class="uh-settings-unit">days, up to</span>
-                        <input type="number" id="settings-fresh-limit" class="uh-number-input" min="0" max="2000" step="5">
-                        <span class="uh-settings-unit">items per scan</span>
-                    </div>
-                </div>
-
                 <!-- Sub-card: Scan Limit -->
                 <div class="uh-settings-section">
                     <div class="uh-settings-subsection-title">Scan Limit</div>
@@ -454,13 +434,12 @@
 
                 <!-- Sub-card: Upgrade Source -->
                 <div class="uh-settings-section">
-                    <div class="uh-settings-subsection-title">Bulk Sources</div>
-                    <p class="uh-settings-desc">Optional sources that check the whole library each scan, on top of the scraper search. Zilean reads its database (fast with the direct DB connection in Settings → Scrapers, slow without it); NZB indexers read the latest releases.</p>
+                    <div class="uh-settings-subsection-title">Upgrade Source</div>
+                    <p class="uh-settings-desc">Which sources to scan for upgrade candidates. Zilean is fast with its direct DB connection (Settings → Scrapers) and slow without it.</p>
                     <select id="settings-upgrade-source" class="uh-filter-select" style="margin-top:6px">
                         <option value="both">Both (Zilean + NZB Indexers)</option>
                         <option value="zilean_only">Zilean Only</option>
                         <option value="nzb_only">NZB Indexers Only</option>
-                        <option value="none">None (fresh-release search only)</option>
                     </select>
                 </div>
 

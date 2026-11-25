@@ -966,8 +966,8 @@ class MaintenanceTasks:
                 scan_limit = None
             logging.info("[UPGRADE_HUB] Starting scheduled upgrade scan")
 
-            # Runs in its own thread: with scraper searches a scan can take a
-            # while, and this executor is shared by every maintenance task.
+            # Runs in its own thread: a scan can take a while (Zilean without its
+            # DB connection), and this executor is shared by every maintenance task.
             def _run():
                 try:
                     result = scan_for_upgrades(scan_limit=scan_limit, triggered_by='scheduled')
@@ -993,7 +993,7 @@ class MaintenanceTasks:
             # Follows the hub's automatic scan: no scans, no need for history.
             if 'task_upgrade_hub_scan' not in self.enabled_tasks:
                 return
-            from database.upgrade_hub_scrapers import upgrade_source
+            from database.upgrade_hub_sources import upgrade_source
             if upgrade_source() not in ('both', 'nzb_only'):
                 return
             from database.nzb_feed_history import sync_feeds

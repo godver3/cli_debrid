@@ -1285,12 +1285,10 @@ def _scan_season_pack(imdb_id: str, season_num: int, season_eps: List[Dict],
 # ---------------------------------------------------------------------------
 
 def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
-                      triggered_by: str = 'manual',
-                      recent_release_days: Optional[int] = None) -> Dict[str, Any]:
+                      triggered_by: str = 'manual') -> Dict[str, Any]:
     """
-    Scan Collected items for better releases: Zilean, the NZB feed history
-    (database/nzb_feed_history.py), and a capped fresh-release search with the
-    configured scrapers.
+    Scan Collected items for better releases: Zilean and the NZB feed history
+    (database/nzb_feed_history.py).
 
     Performance design:
       DB mode  — Pre-fetch ALL data upfront in bulk queries (1 query for all movies,
@@ -1305,11 +1303,6 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
 
     Args:
       scan_limit: If set, caps total Collected items processed (applied before type split).
-      recent_release_days: "Search recent releases": a targeted run. Only the scraper
-        phase runs, over every item released in the last N days (up to
-        MAX_CHECKS_PER_SCAN), even with Fresh Release Search off. Zilean and
-        the NZB feed are skipped, and the finds are merged into the last results:
-        candidates for items this run didn't search are kept.
     """
     global _scan_in_progress, _last_scan_results, _last_scan_time, _scan_progress, _vs_cache
 
@@ -1333,38 +1326,19 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
 
     used_db = False
     try:
-        from database.upgrade_hub_scrapers import upgrade_source as _upgrade_source
-        upgrade_source = _upgrade_source()  # both|zilean_only|nzb_only|none
+        from database.upgrade_hub_sources import upgrade_source as _upgrade_source
+        upgrade_source = _upgrade_source()  # both|zilean_only|nzb_only
         use_zilean = upgrade_source in ('both', 'zilean_only')
         use_nzb    = upgrade_source in ('both', 'nzb_only')
         logger.info(f'[UPGRADE_HUB] Upgrade source: {upgrade_source} (zilean={use_zilean}, nzb={use_nzb})')
 
-        # Fresh-release search: a capped scraper search of recently released
-        # items. Search Recent Releases widens the window and lifts the cap.
-        from database.upgrade_hub_scrapers import fresh_search_settings
-        _fresh = fresh_search_settings()
-        use_scrapers = _fresh['enabled']
-        scraper_limit = _fresh['limit']
-        scraper_days = _fresh['days']
-        if recent_release_days is not None:
-            scraper_days = recent_release_days
-            from database.upgrade_hub_scrapers import MAX_CHECKS_PER_SCAN
-            use_scrapers = True
-            scraper_limit = MAX_CHECKS_PER_SCAN
-            # Targeted run: reading Zilean / the NZB feed for the whole library
-            # would take minutes before the few recent items were searched.
-            use_zilean = use_nzb = False
-            logger.info('[UPGRADE_HUB] Search recent releases: scrapers only, '
-                        'Zilean and NZB phases skipped')
-
         zilean_info = get_zilean_config()
-        if use_zilean and not zilean_info and recent_release_days is None:
+        if use_zilean and not zilean_info:
             # Zilean wanted but not configured — carry on with the other sources
             use_zilean = False
             logger.info('[UPGRADE_HUB] Zilean not configured — skipping the Zilean phases')
-        if not (use_zilean or use_nzb or use_scrapers):
-            return {'error': 'No upgrade source: set up Zilean or a Newznab indexer, '
-                             'or turn on Fresh Release Search'}
+        if not (use_zilean or use_nzb):
+            return {'error': 'No upgrade source: set up Zilean or a Newznab indexer'}
 
         zilean_instance = zilean_settings = zilean_url = db_cfg = None
         if zilean_info:
@@ -1387,7 +1361,7 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
         columns = ['id', 'type', 'imdb_id', 'title', 'year',
                    'season_number', 'episode_number', 'version',
                    'current_score', 'filled_by_file', 'location_on_disk', 'location_basename',
-                   'state', 'genres', 'size', 'filled_by_torrent_id', 'release_date',
+                   'state', 'genres', 'size', 'filled_by_torrent_id',
                    'original_scraped_torrent_title', 'filled_by_title']
         all_collected = [
             dict(row) for row in get_all_media_items(state='Collected', columns=columns)
@@ -1426,39 +1400,26 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
                     logger.info(f"[UPGRADE_HUB] NAS exclusion: skipped {skipped} items "
                                 f"(matched configured NAS path prefixes)")
 
-        # Deduplicate movies by (imdb_id, version): keep only the largest file per
-        # group. Torrents often contain extras (interviews, samples, featurettes)
-        # that end up as separate Collected rows with the same imdb_id. Scanning
-        # them individually produces spurious high-% upgrades (a 0.09 GB Sample.mkv
-        # looks like a +300% improvement vs. any real release).
-        def _dedupe_movies(items):
-            best: dict = {}
-            for _m in items:
-                _key = (_m['imdb_id'], (_m.get('version') or default_version).rstrip('*').strip())
-                _existing = best.get(_key)
-                if _existing is None or _item_size_gb(_m) > _item_size_gb(_existing):
-                    best[_key] = _m
-            return list(best.values())
-
-        # The fresh-release search picks its own slice (recent items, oldest-checked
-        # first, capped per scan), so it starts from the whole filtered library,
-        # not the Scan Limit slice.
-        scraper_pool = (_dedupe_movies([i for i in all_collected if i['type'] == 'movie'])
-                        + [i for i in all_collected if i['type'] == 'episode'])
-        if use_scrapers:
-            from database.upgrade_hub_scrapers import released_within
-            scraper_pool = released_within(scraper_pool, scraper_days)
-            logger.info(f"[UPGRADE_HUB] Fresh-release search: {len(scraper_pool)} item(s) released "
-                        f"in the last {scraper_days} day(s), up to {scraper_limit} searched")
-
-        # Apply scan limit before splitting by type (Zilean / NZB phases)
+        # Apply scan limit before splitting by type
         if scan_limit and scan_limit > 0 and len(all_collected) > scan_limit:
             logger.info(f"[UPGRADE_HUB] Scan limit {scan_limit}: scanning {scan_limit}/{len(all_collected)} items")
             all_collected = all_collected[:scan_limit]
 
         movies_raw = [i for i in all_collected if i['type'] == 'movie']
         episodes   = [i for i in all_collected if i['type'] == 'episode']
-        movies = _dedupe_movies(movies_raw)
+
+        # Deduplicate movies by (imdb_id, version): keep only the largest file per
+        # group. Torrents often contain extras (interviews, samples, featurettes)
+        # that end up as separate Collected rows with the same imdb_id. Scanning
+        # them individually produces spurious high-% upgrades (a 0.09 GB Sample.mkv
+        # looks like a +300% improvement vs. any real release).
+        _movie_best: dict = {}
+        for _m in movies_raw:
+            _key = (_m['imdb_id'], (_m.get('version') or default_version).rstrip('*').strip())
+            _existing = _movie_best.get(_key)
+            if _existing is None or _item_size_gb(_m) > _item_size_gb(_existing):
+                _movie_best[_key] = _m
+        movies = list(_movie_best.values())
         _dedup_removed = len(movies_raw) - len(movies)
         if _dedup_removed:
             logger.info(f"[UPGRADE_HUB] Deduped {_dedup_removed} extra/duplicate movie files "
@@ -1781,40 +1742,6 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
         except Exception as _nzb_e:
             logger.warning(f'[UPGRADE_HUB] NZB scan phase failed: {_nzb_e}', exc_info=True)
 
-        # ── Phase D: fresh-release search with the user's own scrapers ───────
-        # Recently released items only, capped per scan, oldest-checked first:
-        # better encodes keep appearing in the first weeks after release.
-        scraper_searched_ids: List[int] = []
-        if use_scrapers and scraper_pool:
-            try:
-                from database.upgrade_hub_scrapers import scan_with_scrapers
-                _scan_progress.update({'phase': 'scrapers', 'done': 0,
-                                       'total': min(scraper_limit, len(scraper_pool))})
-
-                def _scr_progress(done, total):
-                    with _state_lock:
-                        _scan_progress['done'] = done
-                        _scan_progress['total'] = total
-
-                scr_upgrades = scan_with_scrapers(
-                    scraper_pool, threshold, default_version,
-                    not_wanted_hashes=_not_wanted_hashes, limit=scraper_limit,
-                    progress_callback=_scr_progress, errors=errors,
-                    searched=scraper_searched_ids,
-                )
-                by_item = {c['item_id']: c for c in upgrade_candidates if 'item_id' in c}
-                for c in scr_upgrades:
-                    existing = by_item.get(c['item_id'])
-                    if existing is None:
-                        upgrade_candidates.append(c)
-                        by_item[c['item_id']] = c
-                    elif c.get('improvement_pct', 0) > existing.get('improvement_pct', 0):
-                        upgrade_candidates.remove(existing)
-                        upgrade_candidates.append(c)
-                        by_item[c['item_id']] = c
-            except Exception as _scr_e:
-                logger.warning(f'[UPGRADE_HUB] Scraper search phase failed: {_scr_e}', exc_info=True)
-
         # Tag protocol on all candidates so the UI can show NZB/Debrid badges
         for c in upgrade_candidates + pack_candidates:
             if 'protocol' not in c:
@@ -1876,8 +1803,6 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
                 c['new_magnet']      = chosen_result.get('magnet', '')
                 c['new_ingested_at'] = chosen_result.get('ingested_at', '')
                 c['new_info_hash']   = chosen_result.get('info_hash', '')
-                if c.get('found_by') == 'scrapers':
-                    c['protocol'] = 'nzb' if chosen_result.get('nzb_url') else 'torrent'
                 if 'current_score' in c:
                     c['new_score']       = round(chosen_score, 2)
                     c['improvement_pct'] = round(
@@ -1917,7 +1842,7 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
         # TorBox's checkcached, or Phalanx for Real-Debrid. Anything else stays
         # unknown and is checked by the adding queue when it is queued.
         try:
-            from database.upgrade_hub_scrapers import annotate_cache_status
+            from database.upgrade_hub_sources import annotate_cache_status
             annotate_cache_status(all_candidates)
         except Exception as _ce:
             logger.debug(f"[UPGRADE_HUB] Cache check skipped: {_ce}")
@@ -1946,33 +1871,16 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
         for c in upgrade_candidates + pack_candidates:
             c.pop('_phalanx_only', None)
 
-        scanned_movies, scanned_episodes = len(movies), len(episodes)
-        if recent_release_days is not None:
-            # Merge into the last results: keep candidates for everything this
-            # run didn't search, replace the ones for items it did.
-            searched = set(scraper_searched_ids)
-            scanned_movies = sum(1 for i in scraper_pool if i['id'] in searched and i['type'] == 'movie')
-            scanned_episodes = len(searched) - scanned_movies
-            _ensure_cache_initialized()
-            prev = _last_scan_results if _last_scan_results and 'error' not in _last_scan_results else {}
-            kept = [c for c in prev.get('upgrade_candidates', []) if c.get('item_id') not in searched]
-            upgrade_candidates = sorted(kept + upgrade_candidates, key=lambda x: -x.get('improvement_pct', 0))
-            pack_candidates = list(prev.get('pack_candidates', [])) + pack_candidates
-            logger.info(f"[UPGRADE_HUB] Search recent releases: {len(searched)} item(s) searched, "
-                        f"{len(upgrade_candidates) - len(kept)} upgrade(s) found; "
-                        f"{len(kept)} earlier candidate(s) kept")
-
         scanned_at = datetime.now().isoformat()
         result = {
             'upgrade_candidates': upgrade_candidates,
             'pack_candidates': pack_candidates,
-            'scanned_movies': scanned_movies,
-            'scanned_episodes': scanned_episodes,
+            'scanned_movies': len(movies),
+            'scanned_episodes': len(episodes),
             'used_db': used_db,
             'errors': errors,
             'scanned_at': scanned_at,
             'version_used': default_version,
-            'recent_release_days': recent_release_days,
         }
         _last_scan_results = result
         _last_scan_time = datetime.now()
@@ -1990,18 +1898,16 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
             'scan',
             triggered_by=triggered_by,
             result='success' if not errors else 'partial',
-            title=((f"Recent releases ({recent_release_days}d): " if recent_release_days is not None else "Scan: ")
-                   + f"{len(upgrade_candidates)} upgrade{'s' if len(upgrade_candidates) != 1 else ''}, "
+            title=(f"Scan: {len(upgrade_candidates)} upgrade{'s' if len(upgrade_candidates) != 1 else ''}, "
                    f"{len(pack_candidates)} pack{'s' if len(pack_candidates) != 1 else ''} "
-                   f"({scanned_movies} movies, {scanned_episodes} episodes scanned)"),
+                   f"({len(movies)} movies, {len(episodes)} episodes scanned)"),
             stats={
                 'upgrades': len(upgrade_candidates),
                 'packs': len(pack_candidates),
-                'movies_scanned': scanned_movies,
-                'episodes_scanned': scanned_episodes,
+                'movies_scanned': len(movies),
+                'episodes_scanned': len(episodes),
                 'errors': len(errors),
                 'scan_limit': scan_limit,
-                'recent_release_days': recent_release_days,
             },
         )
 

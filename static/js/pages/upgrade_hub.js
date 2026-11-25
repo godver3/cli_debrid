@@ -206,9 +206,7 @@ function cacheBadges(x, iatLabel) {
     const service = x.cache_service || (x.rd_cached !== undefined ? 'Real-Debrid' : '');
     const fresh = bypass
         ? `<span class="uh-cache-badge uh-cache-bypass" title="No recent Zilean result — kept because ${escAttr(service || 'the debrid service')} reports this torrent cached">⚡ Cached Bypass</span>`
-        : x.found_by === 'scrapers'
-            ? '<span class="uh-cache-badge uh-cache-yes" title="Found by searching with your scrapers during this scan">Live search</span>'
-            : x.is_recent
+        : x.is_recent
                 ? '<span class="uh-cache-badge uh-cache-yes">Recent</span>'
                 : '<span class="uh-cache-badge uh-cache-no">Older' + (iatLabel ? ' · ' + iatLabel : '') + '</span>';
     const cache = cached === true && !bypass
@@ -284,10 +282,9 @@ function togglePackExpand(btn) {
 // ---------------------------------------------------------------------------
 // Scan
 // ---------------------------------------------------------------------------
-async function startScan(body = {}) {
+async function startScan() {
     const btn = document.getElementById('scan-btn');
     btn.disabled = true;
-    setRecentBtnDisabled(true);
     btn.innerHTML = '<span class="uh-spinner"></span> Scanning…';
     showProgress('starting', 0, 0);
 
@@ -295,12 +292,13 @@ async function startScan(body = {}) {
         const res = await fetch('/upgrade_hub/api/scan', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
+            body: JSON.stringify({}),
         });
         const data = await res.json();
         if (!data.success) {
             showStatus('error', data.error || 'Failed to start scan');
-            resetScanBtn();
+            btn.disabled = false;
+            btn.innerHTML = svgSearch() + ' Scan for Upgrades';
             hideProgress();
             return;
         }
@@ -308,65 +306,10 @@ async function startScan(body = {}) {
         pollStatus();
     } catch(e) {
         showStatus('error', 'Network error: ' + e.message);
-        resetScanBtn();
+        btn.disabled = false;
+        btn.innerHTML = svgSearch() + ' Scan for Upgrades';
         hideProgress();
     }
-}
-
-function setRecentBtnDisabled(disabled) {
-    const b = document.getElementById('recent-btn');
-    if (b) b.disabled = disabled;
-}
-
-// "Search Recent Releases": a scrapers-only run over every item released in
-// the last N days (default: the Release Age setting). Its finds are merged
-// into the current results.
-function searchRecentReleases() {
-    const upg = _settings.upgrading || {};
-    const def = upg.upgrade_max_release_age_days ?? 7;
-    showPopup({
-        type: 'prompt',
-        title: 'Search Recent Releases',
-        message: 'Search your scrapers for a better release of every collected item released in the last:',
-        formHtml: `<form onsubmit="return false"><input type="number" name="days" min="0" max="3650" step="1" value="${escAttr(String(def))}" style="width:90px"> days</form>`,
-        confirmText: 'Next',
-        cancelText: 'Cancel',
-        onConfirm: async (vals) => {
-            const days = parseInt((vals || {}).days, 10);
-            if (isNaN(days) || days < 0) {
-                showStatus('error', 'Enter a number of days (0 or more)');
-                return;
-            }
-            let p;
-            try {
-                const res = await fetch(`/upgrade_hub/api/recent_preview?days=${days}`);
-                p = await res.json();
-            } catch (e) {
-                showStatus('error', 'Network error: ' + e.message);
-                return;
-            }
-            if (!p.success) { showStatus('error', p.error || 'Could not count items'); return; }
-            if (!p.items) {
-                showPopup({ type: 'info', title: 'Search Recent Releases',
-                            message: `No collected items were released in the last ${days} day(s).` });
-                return;
-            }
-            const capped = p.items > p.cap
-                ? ` Only ${p.cap} are searched per run (the ones checked longest ago); run it again for the rest.`
-                : '';
-            showPopup({
-                type: 'confirm',
-                title: 'Search Recent Releases',
-                message: `Search ${p.items} item(s) released in the last ${days} day(s) `
-                       + `(${p.movies} movie(s), ${p.episodes} episode(s))? Each one is a full search with `
-                       + `your scrapers, two at a time; Zilean and the NZB feed are skipped.${capped} `
-                       + 'Better releases are added to your current results; candidates for other items stay.',
-                confirmText: 'Search',
-                cancelText: 'Cancel',
-                onConfirm: () => startScan({ recent_release_days: days }),
-            });
-        },
-    });
 }
 
 function pollStatus() {
@@ -411,7 +354,6 @@ setInterval(() => { if (_lastScanAt && !_scanInProgress) updateScanBtnAge(); }, 
 function resetScanBtn() {
     const btn = document.getElementById('scan-btn');
     btn.disabled = false;
-    setRecentBtnDisabled(false);
     if (_lastScanAt) {
         updateScanBtnAge();
     } else {
@@ -690,7 +632,6 @@ const PHASE_LABELS = {
     scoring:   'Scoring episodes & packs…',
     scanning:  'Scanning movies…',
     nzb_scan:  'Checking NZB indexers…',
-    scrapers:  'Searching fresh releases with your scrapers…',
     done:      'Done',
     error:     'Error',
 };
@@ -896,12 +837,6 @@ function applySettingsToUI() {
     const upgradeSourceSel = document.getElementById('settings-upgrade-source');
     if (upgradeSourceSel) upgradeSourceSel.value = _settings.upgrade_source || 'both';
 
-    // Scraper search
-    const freshDays = document.getElementById('settings-fresh-days');
-    if (freshDays) freshDays.value = _settings.fresh_search_days ?? 30;
-    const freshLimit = document.getElementById('settings-fresh-limit');
-    if (freshLimit) freshLimit.value = _settings.fresh_search_limit ?? 20;
-
     // Upgrading (Scraping / Debug settings shown here)
     const upg = _settings.upgrading || {};
     const setChk = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
@@ -1022,8 +957,6 @@ async function saveSettings() {
         excluded_genres:        _uhExcludedGenres.join(','),
         exclude_nas_items:      excludeNasChk ? excludeNasChk.checked : false,
         upgrade_source:         (document.getElementById('settings-upgrade-source') || {}).value || 'both',
-        fresh_search_days:      (v => isNaN(v) ? 30 : Math.max(0, v))(parseInt((document.getElementById('settings-fresh-days') || {}).value)),
-        fresh_search_limit:     (v => isNaN(v) ? 20 : Math.max(0, v))(parseInt((document.getElementById('settings-fresh-limit') || {}).value)),
         // Only sent once loaded, so a failed load can't save blank defaults over them.
         upgrading: !_settings.upgrading ? undefined : {
             enable_upgrading:               !!(document.getElementById('upg-enable') || {}).checked,
@@ -1307,14 +1240,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         const s = await res.json();
 
         if (!s.any_source_configured) {
-            showStatus('error', 'No upgrade source — enable Zilean or a Newznab indexer in Settings → Scrapers, or turn on Fresh Release Search in the Settings tab');
+            showStatus('error', 'No upgrade source configured — enable Zilean or a Newznab indexer in Settings → Scrapers');
             document.getElementById('scan-btn').disabled = true;
         }
 
         if (s.in_progress) {
             _scanInProgress = true;
             document.getElementById('scan-btn').disabled = true;
-            setRecentBtnDisabled(true);
             document.getElementById('scan-btn').innerHTML = '<span class="uh-spinner"></span> Scanning…';
             const _initP = s.progress || {};
             const _initPct = _initP.total > 0 ? Math.round((_initP.done || 0) / _initP.total * 100) : 0;
