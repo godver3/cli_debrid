@@ -1241,7 +1241,8 @@ def _scan_season_pack(imdb_id: str, season_num: int, season_eps: List[Dict],
 def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
                       triggered_by: str = 'manual') -> Dict[str, Any]:
     """
-    Scan Collected items against Zilean for better releases.
+    Scan Collected items for better releases: the configured scrapers (a rotating
+    slice per scan), Zilean and the Newznab browse feed.
 
     Performance design:
       DB mode  — Pre-fetch ALL data upfront in bulk queries (1 query for all movies,
@@ -1279,18 +1280,23 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
 
     used_db = False
     try:
-        upgrade_source = get_setting('Upgrade Hub', 'upgrade_source', 'both') or 'both'
+        upgrade_source = get_setting('Upgrade Hub', 'upgrade_source', 'both') or 'both'  # both|zilean_only|nzb_only|none
         use_zilean = upgrade_source in ('both', 'zilean_only')
         use_nzb    = upgrade_source in ('both', 'nzb_only')
         logger.info(f'[UPGRADE_HUB] Upgrade source: {upgrade_source} (zilean={use_zilean}, nzb={use_nzb})')
 
+        from database.upgrade_hub_scrapers import scraper_settings
+        _scr = scraper_settings()
+        use_scrapers = _scr['enabled'] and _scr['limit'] > 0
+
         zilean_info = get_zilean_config()
         if use_zilean and not zilean_info:
-            if not use_nzb:
-                return {'error': 'Zilean scraper not enabled or URL not configured'}
-            # Zilean wanted but not configured — fall back to NZB only
+            # Zilean wanted but not configured — carry on with the other sources
             use_zilean = False
-            logger.warning('[UPGRADE_HUB] Zilean not configured — falling back to NZB-only scan')
+            logger.info('[UPGRADE_HUB] Zilean not configured — skipping the Zilean phases')
+        if not (use_zilean or use_nzb or use_scrapers):
+            return {'error': 'No upgrade source: turn on "Search with my scrapers", '
+                             'or set up Zilean / Newznab indexers'}
 
         zilean_instance = zilean_settings = zilean_url = db_cfg = None
         if zilean_info:
@@ -1693,6 +1699,38 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
         except Exception as _nzb_e:
             logger.warning(f'[UPGRADE_HUB] NZB scan phase failed: {_nzb_e}', exc_info=True)
 
+        # ── Phase D: search with the user's own scrapers ─────────────────────
+        # A rotating slice of the library (oldest-checked first), so releases
+        # that never reach Zilean or the NZB browse feed are still found.
+        if use_scrapers and (movies or episodes):
+            try:
+                from database.upgrade_hub_scrapers import scan_with_scrapers
+                _scan_progress.update({'phase': 'scrapers', 'done': 0,
+                                       'total': min(_scr['limit'], len(movies) + len(episodes))})
+
+                def _scr_progress(done, total):
+                    with _state_lock:
+                        _scan_progress['done'] = done
+                        _scan_progress['total'] = total
+
+                scr_upgrades = scan_with_scrapers(
+                    movies + episodes, threshold, default_version,
+                    not_wanted_hashes=_not_wanted_hashes, limit=_scr['limit'],
+                    progress_callback=_scr_progress, errors=errors,
+                )
+                by_item = {c['item_id']: c for c in upgrade_candidates if 'item_id' in c}
+                for c in scr_upgrades:
+                    existing = by_item.get(c['item_id'])
+                    if existing is None:
+                        upgrade_candidates.append(c)
+                        by_item[c['item_id']] = c
+                    elif c.get('improvement_pct', 0) > existing.get('improvement_pct', 0):
+                        upgrade_candidates.remove(existing)
+                        upgrade_candidates.append(c)
+                        by_item[c['item_id']] = c
+            except Exception as _scr_e:
+                logger.warning(f'[UPGRADE_HUB] Scraper search phase failed: {_scr_e}', exc_info=True)
+
         # Tag protocol on all candidates so the UI can show NZB/Debrid badges
         for c in upgrade_candidates + pack_candidates:
             if 'protocol' not in c:
@@ -1754,6 +1792,8 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
                 c['new_magnet']      = chosen_result.get('magnet', '')
                 c['new_ingested_at'] = chosen_result.get('ingested_at', '')
                 c['new_info_hash']   = chosen_result.get('info_hash', '')
+                if c.get('found_by') == 'scrapers':
+                    c['protocol'] = 'nzb' if chosen_result.get('nzb_url') else 'torrent'
                 if 'current_score' in c:
                     c['new_score']       = round(chosen_score, 2)
                     c['improvement_pct'] = round(
@@ -1788,52 +1828,36 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
             if _fn_dropped:
                 logger.info(f"[UPGRADE_HUB] Filename filter: dropped {_fn_dropped} candidate(s) with filtered term in new_title")
 
-        # ── Phalanx RD cache check ────────────────────────────────────────────
-        # Batch-query community cache data for all candidate info_hashes.
-        # Old/established releases have high network coverage so hits are common.
+        # ── Cache status ─────────────────────────────────────────────────────
+        # Asked of whichever service can answer without adding the torrent:
+        # TorBox's checkcached, or Phalanx for Real-Debrid. Anything else stays
+        # unknown and is checked by the adding queue when it is queued.
         try:
-            phalanx_enabled = get_setting('UI Settings', 'enable_phalanx_db', default=False)
-            if phalanx_enabled and all_candidates:
-                from utilities.phalanx_db_cache_manager import PhalanxDBClassManager
-                _phalanx = PhalanxDBClassManager()
-                hashes = [c['new_info_hash'] for c in all_candidates if c.get('new_info_hash')]
-                if hashes:
-                    cache_map = _phalanx.get_multi_cache_status(hashes)
-                    for c in all_candidates:
-                        h = c.get('new_info_hash', '')
-                        status = cache_map.get(h) if h else None
-                        c['rd_cached'] = status['is_cached'] if status is not None else None
-                    known_cached   = sum(1 for c in all_candidates if c.get('rd_cached') is True)
-                    known_uncached = sum(1 for c in all_candidates if c.get('rd_cached') is False)
-                    unknown        = sum(1 for c in all_candidates if c.get('rd_cached') is None)
-                    logger.info(f"[UPGRADE_HUB] Phalanx RD cache: {known_cached} cached, "
-                                f"{known_uncached} not cached, {unknown} unknown")
-        except Exception as _pe:
-            logger.debug(f"[UPGRADE_HUB] Phalanx cache check skipped: {_pe}")
+            from database.upgrade_hub_scrapers import annotate_cache_status
+            annotate_cache_status(all_candidates)
+        except Exception as _ce:
+            logger.debug(f"[UPGRADE_HUB] Cache check skipped: {_ce}")
 
-        # ── Phalanx bypass filter ─────────────────────────────────────────────
-        # Candidates flagged _phalanx_only had NO recent Zilean results; they
-        # were scored against the full (older) pool.  We keep them only when
-        # Phalanx confirms the chosen torrent is already cached on RD — without
-        # that signal we cannot safely recommend old/untested releases.
-        # If Phalanx is disabled entirely, _phalanx_only candidates are always
-        # dropped (rd_cached is never populated → not True).
+        # ── Older-only candidates under "recent only" ────────────────────────
+        # Candidates flagged _phalanx_only had NO recent Zilean result and were
+        # scored against the older pool. With "only show recent" on, keep them
+        # only when the cache check says the chosen torrent is cached.
         if after_date:
             rescued = 0
             for c in all_candidates:
-                if c.get('_phalanx_only') and c.get('rd_cached') is True:
-                    c['rd_cached_bypass'] = True
+                if c.get('_phalanx_only') and c.get('cached') is True:
+                    c['cached_bypass'] = True
                     rescued += 1
             before_u = len(upgrade_candidates)
             before_p = len(pack_candidates)
             upgrade_candidates = [c for c in upgrade_candidates
-                                  if not c.get('_phalanx_only') or c.get('rd_cached') is True]
+                                  if not c.get('_phalanx_only') or c.get('cached') is True]
             pack_candidates    = [c for c in pack_candidates
-                                  if not c.get('_phalanx_only') or c.get('rd_cached') is True]
+                                  if not c.get('_phalanx_only') or c.get('cached') is True]
             dropped = (before_u + before_p) - (len(upgrade_candidates) + len(pack_candidates))
             if rescued or dropped:
-                logger.info(f"[UPGRADE_HUB] Phalanx bypass: {rescued} old candidates rescued "
-                            f"(RD-cached), {dropped} dropped (not cached / Phalanx disabled)")
+                logger.info(f"[UPGRADE_HUB] Older candidates: {rescued} kept (cached), "
+                            f"{dropped} dropped (not confirmed cached)")
         # Clean up internal flag before storing results
         for c in upgrade_candidates + pack_candidates:
             c.pop('_phalanx_only', None)

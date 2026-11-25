@@ -143,6 +143,12 @@ SECTIONS = {
             "min": 0.0,
             "max": 1.0
         },
+        "upgrade_max_release_age_days": {
+            "type": "integer",
+            "description": "Only items released this many days ago or less go to the Upgrading queue when collected (default: 7). Edited on the Upgrade Hub.",
+            "default": 7,
+            "min": 0
+        },
         "delayed_upgrade_scrape_days": {
             "type": "integer",
             "description": "Number of days to wait before attempting a single upgrade scrape on an item. Set to 0 to disable delayed upgrade scraping.",

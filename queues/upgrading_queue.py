@@ -8,13 +8,57 @@ from utilities.log_context import logs_for_item
 from database.not_wanted_magnets import is_magnet_not_wanted, is_url_not_wanted
 import os
 import pickle
+import time
 from pathlib import Path
 from utilities.atomic_io import atomic_write_bytes
 from database.database_writing import update_media_item
 from database.core import get_db_connection
-from difflib import SequenceMatcher
+import re
 from debrid.common import extract_hash_from_magnet
 from database.torrent_tracking import record_torrent_addition, update_torrent_tracking, get_torrent_history
+
+
+_VIDEO_EXT_RE = re.compile(r'\.(mkv|mp4|avi|m4v|ts|m2ts|wmv|mov|webm)$', re.IGNORECASE)
+_NON_ALNUM_RE = re.compile(r'[^a-z0-9]')
+
+
+def _normalize_release_name(name: Optional[str]) -> str:
+    """Lower-case, drop a video extension and every non-alphanumeric char."""
+    if not name:
+        return ''
+    return _NON_ALNUM_RE.sub('', _VIDEO_EXT_RE.sub('', name.strip()).lower())
+
+
+def is_same_release(item: Dict[str, Any], result: Dict[str, Any],
+                    current_title: Optional[str] = None) -> bool:
+    """True when a scrape result is the release the item already has.
+
+    Matches on info hash first, then on the normalized release name against the
+    original torrent title and the collected filename.
+    """
+    result_link = result.get('magnet') or ''
+    current_link = item.get('filled_by_magnet') or ''
+    if result_link and current_link:
+        try:
+            a = extract_hash_from_magnet(result_link) if result_link.startswith('magnet:') else None
+            b = extract_hash_from_magnet(current_link) if current_link.startswith('magnet:') else None
+            if a and b and a.lower() == b.lower():
+                return True
+        except Exception:
+            pass
+    result_name = _normalize_release_name(result.get('title') or result.get('original_title'))
+    if not result_name:
+        return False
+    for name in (current_title, item.get('original_scraped_torrent_title'), item.get('filled_by_file')):
+        if name and _normalize_release_name(name) == result_name:
+            return True
+    return False
+
+
+# Seconds of searching one Upgrading pass may start before it hands the queue
+# worker back. Items not reached are searched on the next pass (every 5 min).
+PASS_BUDGET_SECONDS = 120
+
 
 class UpgradingQueue:
     def __init__(self):
@@ -356,6 +400,12 @@ class UpgradingQueue:
 
     def process(self, queue_manager=None):
         current_time = datetime.now()
+        # Each upgrade search is a full scrape. Doing every due item in one pass
+        # held a queue worker for as long as the list took, so other queues
+        # stalled when the window was long. Stop starting new searches once the
+        # pass has used its budget; the rest go on the next pass.
+        pass_started = time.monotonic()
+        deferred = 0
         # Run delayed upgrade scrape once per day based on setting Scraping.delayed_upgrade_scrape_days
         try:
             days_setting = get_setting('Scraping', 'delayed_upgrade_scrape_days', '0')
@@ -412,7 +462,7 @@ class UpgradingQueue:
 
                     time_in_queue = current_time - collected_at
 
-                    logging.info(f"Item {item_id} has been in the Upgrading queue for {time_in_queue}.")
+                    logging.debug(f"Item {item_id} has been in the Upgrading queue for {time_in_queue}.")
 
                     # Get the configured duration from settings, default to 24 hours if blank or invalid
                     try:
@@ -431,8 +481,12 @@ class UpgradingQueue:
                     except Exception:
                         pass
 
+                    budget_spent = (time.monotonic() - pass_started) >= PASS_BUDGET_SECONDS
+
                     # Process immediately if hub magnet is ready; otherwise respect hourly timer
-                    if _has_hub_magnet:
+                    if _has_hub_magnet and budget_spent:
+                        deferred += 1
+                    elif _has_hub_magnet:
                         logging.info(f"Item {item_id} has hub magnet ready — processing immediately (bypassing scrape timer).")
                         self.hourly_scrape(item, queue_manager)
                         self.last_scrape_times[item_id] = current_time
@@ -449,6 +503,14 @@ class UpgradingQueue:
                         self.remove_item(item)
                         from database import update_media_item_state
                         update_media_item_state(item_id, state="Collected")
+                    elif budget_spent and self.should_perform_hourly_scrape(item_id, current_time):
+                        if time_in_queue > max_duration:
+                            logging.info(f"Item {item_id} timed out (in queue > {queue_duration_hours} hours); pass budget spent, so no final search.")
+                            self.remove_item(item)
+                            from database import update_media_item_state
+                            update_media_item_state(item_id, state="Collected")
+                        else:
+                            deferred += 1
                     elif self.should_perform_hourly_scrape(item_id, current_time):
                         logging.info(f"Performing hourly scrape for item {item_id} which has been in queue for {time_in_queue}.")
                         self.hourly_scrape(item, queue_manager) # This might remove the item if upgraded
@@ -478,6 +540,10 @@ class UpgradingQueue:
             except Exception as e:
                 logging.error(f"Error processing item {item.get('id', 'unknown')}: {str(e)}")
                 logging.exception("Traceback:")
+
+        if deferred:
+            logging.info(f"[UpgradingQueue] Pass used its {PASS_BUDGET_SECONDS}s budget; "
+                         f"{deferred} item(s) left for the next pass.")
 
         # Clean up upgrade times for items no longer in the queue
         self.clean_up_upgrade_times()
@@ -534,7 +600,7 @@ class UpgradingQueue:
         if should_run:
             logging.info(f"Running scrape for item {item_id} - Last scrape was {time_since_last_scrape} ago")
         else:
-            logging.info(f"Skipping scrape for item {item_id} - Only {time_since_last_scrape} since last scrape, waiting for 1 hour")
+            logging.debug(f"Skipping scrape for item {item_id} - Only {time_since_last_scrape} since last scrape, waiting for 1 hour")
             
         return should_run
 
@@ -800,17 +866,7 @@ class UpgradingQueue:
 
             # --- Start Filtering ---
 
-            # Get similarity threshold from settings, default to 95%
-            similarity_threshold = 0.95 # Default, consider making configurable if not already indirectly
             try:
-                # Note: This threshold seems high (0.95), maybe meant to be lower?
-                # Re-using upgrading_percentage_threshold name, but it's for title similarity here.
-                # Let's clarify the setting name or use a different one if needed.
-                # Assuming 'upgrading_percentage_threshold' IS for score diff, and 0.95 is hardcoded/intended for title similarity.
-                # If 0.95 is meant for score diff, the logic below needs adjustment.
-                # If 'upgrading_percentage_threshold' is for title similarity, rename setting variable.
-                # --> Let's assume similarity_threshold = 0.95 is for TITLE similarity <--
-
                 # Get SCORE percentage threshold
                 threshold_value = get_setting('Scraping', 'upgrading_percentage_threshold', '0.1')
                 if isinstance(threshold_value, str):
@@ -849,13 +905,13 @@ class UpgradingQueue:
                      logging.info(f"Result '{result.get('title', 'N/A')}' filtered out as a previously failed upgrade attempt.")
                      continue
 
-                # 3. Check Title Similarity (if we have a title to compare against)
-                # This prevents replacing with something that has the same name but might be slightly different release/encoding if scores are close
-                if current_title_for_similarity:
-                    similarity = SequenceMatcher(None, current_title_for_similarity.lower(), result.get('title', '').lower()).ratio()
-                    if similarity >= similarity_threshold:
-                        logging.info(f"Result '{result.get('title', 'N/A')}' filtered out due to high title similarity ({similarity:.2%}) to current item.")
-                        continue
+                # 3. Skip the release we already have (same hash, or same name once
+                # punctuation and the file extension are ignored). Names that only
+                # look alike are kept: "…1080p…-GRP" and "…2160p…-GRP" differ by
+                # one token, which a fuzzy ratio used to treat as the same file.
+                if is_same_release(item, result, current_title_for_similarity):
+                    logging.info(f"Result '{result.get('title', 'N/A')}' filtered out: same release as the current file.")
+                    continue
 
                 # If passed all filters, add to list
                 filtered_results.append(result)

@@ -177,7 +177,7 @@ _SPECS = [
     _q('Unreleased', 'Unreleased', 300),
     _q('Blacklisted', 'Blacklisted', 2 * HOUR),
     _q('Pending Uncached', 'Pending Uncached', HOUR),
-    _q('Upgrading', 'Upgrading', HOUR),
+    _q('Upgrading', 'Upgrading', 300),
     _q('final_check_queue', 'Final Scrape', 900),
     _q('Pre_release', 'Pre-release', DAY),
 

@@ -24,7 +24,10 @@ document.querySelectorAll('.uh-tab').forEach(btn => {
 
 // Restore last active tab
 (function() {
-    const saved = sessionStorage.getItem('uh_active_tab');
+    // A #<tab> link (e.g. /upgrade_hub/#settings from the Settings page) wins.
+    const fromHash = (location.hash || '').replace('#', '');
+    const saved = (fromHash && document.querySelector(`.uh-tab[data-tab="${fromHash}"]`))
+        ? fromHash : sessionStorage.getItem('uh_active_tab');
     if (saved) {
         const btn = document.querySelector(`.uh-tab[data-tab="${saved}"]`);
         if (btn) btn.click();
@@ -173,16 +176,7 @@ function buildUpgradeRow(u) {
         const days = Math.round((Date.now() - new Date(iatStr)) / 86400000);
         iatLabel = days < 1 ? 'today' : days + 'd ago';
     }
-    const cacheBadge = u.rd_cached_bypass
-        ? '<span class="uh-cache-badge uh-cache-bypass" title="No recent Zilean result — included because Phalanx confirms this torrent is cached on RD">⚡ Cached Bypass</span>'
-        : u.is_recent
-            ? '<span class="uh-cache-badge uh-cache-yes">Recent</span>'
-            : '<span class="uh-cache-badge uh-cache-no">Older' + (iatLabel ? ' · ' + iatLabel : '') + '</span>';
-    const rdBadge = u.rd_cached === true && !u.rd_cached_bypass
-        ? '<span class="uh-cache-badge uh-rd-cached">⚡ RD Cached</span>'
-        : u.rd_cached === false
-            ? '<span class="uh-cache-badge uh-rd-uncached">✗ Not Cached</span>'
-            : '';
+    const [cacheBadge, rdBadge] = cacheBadges(u, iatLabel);
     const chk = _Selected.upgrades.has(String(u.item_id)) ? 'checked' : '';
     return `<tr data-item-id="${u.item_id}">
         <td class="uh-col-check"><input type="checkbox" class="uh-row-check" data-id="${u.item_id}" ${chk} onchange="onRowCheck(event,'upgrades',${u.item_id})"></td>
@@ -204,6 +198,27 @@ function buildUpgradeRow(u) {
     </tr>`;
 }
 
+// Freshness badge + cache badge for a candidate. Scan results saved by older
+// versions carry rd_cached / rd_cached_bypass instead of cached / cached_bypass.
+function cacheBadges(x, iatLabel) {
+    const cached  = x.cached !== undefined ? x.cached : x.rd_cached;
+    const bypass  = x.cached_bypass || x.rd_cached_bypass;
+    const service = x.cache_service || (x.rd_cached !== undefined ? 'Real-Debrid' : '');
+    const fresh = bypass
+        ? `<span class="uh-cache-badge uh-cache-bypass" title="No recent Zilean result — kept because ${escAttr(service || 'the debrid service')} reports this torrent cached">⚡ Cached Bypass</span>`
+        : x.found_by === 'scrapers'
+            ? '<span class="uh-cache-badge uh-cache-yes" title="Found by searching with your scrapers during this scan">Live search</span>'
+            : x.is_recent
+                ? '<span class="uh-cache-badge uh-cache-yes">Recent</span>'
+                : '<span class="uh-cache-badge uh-cache-no">Older' + (iatLabel ? ' · ' + iatLabel : '') + '</span>';
+    const cache = cached === true && !bypass
+        ? `<span class="uh-cache-badge uh-rd-cached" title="${escAttr(service)} reports this torrent cached">⚡ Cached</span>`
+        : cached === false
+            ? `<span class="uh-cache-badge uh-rd-uncached" title="${escAttr(service)} reports this torrent not cached">✗ Not Cached</span>`
+            : '';
+    return [fresh, cache];
+}
+
 function buildPackRow(p) {
     const ids    = (p.item_ids || []).join(',');
     const iatStr = p.new_ingested_at || '';
@@ -212,16 +227,7 @@ function buildPackRow(p) {
         const days = Math.round((Date.now() - new Date(iatStr)) / 86400000);
         iatLabel = days < 1 ? 'today' : days + 'd ago';
     }
-    const cacheBadge = p.rd_cached_bypass
-        ? '<span class="uh-cache-badge uh-cache-bypass" title="No recent Zilean result — included because Phalanx confirms this torrent is cached on RD">⚡ Cached Bypass</span>'
-        : p.is_recent
-            ? '<span class="uh-cache-badge uh-cache-yes">Recent</span>'
-            : '<span class="uh-cache-badge uh-cache-no">Older' + (iatLabel ? ' · ' + iatLabel : '') + '</span>';
-    const rdBadge = p.rd_cached === true && !p.rd_cached_bypass
-        ? '<span class="uh-cache-badge uh-rd-cached">⚡ RD Cached</span>'
-        : p.rd_cached === false
-            ? '<span class="uh-cache-badge uh-rd-uncached">✗ Not Cached</span>'
-            : '';
+    const [cacheBadge, rdBadge] = cacheBadges(p, iatLabel);
     const chk     = _Selected.packs.has(ids) ? 'checked' : '';
     const safeIds = escAttr(ids);
 
@@ -627,6 +633,8 @@ const PHASE_LABELS = {
     prefetch:  'Loading Zilean data…',
     scoring:   'Scoring episodes & packs…',
     scanning:  'Scanning movies…',
+    nzb_scan:  'Checking NZB indexers…',
+    scrapers:  'Searching with your scrapers…',
     done:      'Done',
     error:     'Error',
 };
@@ -832,6 +840,24 @@ function applySettingsToUI() {
     const upgradeSourceSel = document.getElementById('settings-upgrade-source');
     if (upgradeSourceSel) upgradeSourceSel.value = _settings.upgrade_source || 'both';
 
+    // Scraper search
+    const useScr = document.getElementById('settings-use-scrapers');
+    if (useScr) useScr.checked = _settings.use_scrapers !== false;
+    const scrChecks = document.getElementById('settings-scraper-checks');
+    if (scrChecks) scrChecks.value = _settings.scraper_checks_per_scan || 50;
+
+    // Upgrading (Scraping / Debug settings shown here)
+    const upg = _settings.upgrading || {};
+    const setChk = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
+    const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+    setChk('upg-enable', upg.enable_upgrading);
+    setVal('upg-max-age-days', upg.upgrade_max_release_age_days ?? 7);
+    setVal('upg-window-hours', upg.upgrade_queue_duration_hours ?? 24);
+    setVal('upg-threshold-pct', Math.round((upg.upgrading_percentage_threshold ?? 0.1) * 100));
+    setVal('upg-max-score', upg.max_upgrading_score ?? 0);
+    setVal('upg-delayed-days', upg.delayed_upgrade_scrape_days ?? 0);
+    setChk('upg-cleanup', upg.enable_upgrading_cleanup !== false);
+
     // Excluded genres chips
     const rawGenres = _settings.excluded_genres || '';
     _uhExcludedGenres = rawGenres ? rawGenres.split(',').map(g => g.trim()).filter(Boolean) : [];
@@ -940,6 +966,18 @@ async function saveSettings() {
         excluded_genres:        _uhExcludedGenres.join(','),
         exclude_nas_items:      excludeNasChk ? excludeNasChk.checked : false,
         upgrade_source:         (document.getElementById('settings-upgrade-source') || {}).value || 'both',
+        use_scrapers:           !!(document.getElementById('settings-use-scrapers') || {}).checked,
+        scraper_checks_per_scan: parseInt((document.getElementById('settings-scraper-checks') || {}).value) || 50,
+        // Only sent once loaded, so a failed load can't save blank defaults over them.
+        upgrading: !_settings.upgrading ? undefined : {
+            enable_upgrading:               !!(document.getElementById('upg-enable') || {}).checked,
+            upgrade_max_release_age_days:   (v => isNaN(v) ? 7 : v)(parseInt((document.getElementById('upg-max-age-days') || {}).value)),
+            upgrade_queue_duration_hours:   parseInt((document.getElementById('upg-window-hours') || {}).value) || 24,
+            upgrading_percentage_threshold: (parseFloat((document.getElementById('upg-threshold-pct') || {}).value) || 0) / 100,
+            max_upgrading_score:            parseFloat((document.getElementById('upg-max-score') || {}).value) || 0,
+            delayed_upgrade_scrape_days:    parseInt((document.getElementById('upg-delayed-days') || {}).value) || 0,
+            enable_upgrading_cleanup:       !!(document.getElementById('upg-cleanup') || {}).checked,
+        },
     };
     try {
         const res = await fetch('/upgrade_hub/api/settings', {
@@ -1213,7 +1251,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const s = await res.json();
 
         if (!s.any_source_configured) {
-            showStatus('error', 'No upgrade source configured — enable Zilean or a Newznab indexer in Settings → Scrapers');
+            showStatus('error', 'No upgrade source — turn on "Search With My Scrapers" in the Settings tab, or enable Zilean or a Newznab indexer in Settings → Scrapers');
             document.getElementById('scan-btn').disabled = true;
         }
 
