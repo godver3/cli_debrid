@@ -190,13 +190,16 @@ def _norm(s: str) -> str:
 
 
 def _filter_pool_for_item(pool: List[Dict], title: str, year: Optional[int],
-                           title_threshold: float = 0.90, imdb_id: str = '') -> List[Dict]:
+                           title_threshold: float = 0.90, imdb_id: str = '',
+                           trust_imdb: bool = True) -> List[Dict]:
     """
     Filter pool to candidates matching title + year.
 
-    A release the indexer tags with an IMDb id matches on that id alone: the
-    item's id (any title spelling), never another title's. Untagged releases
-    fall back to the title + year match below.
+    A release the indexer tags with the item's IMDb id matches whatever its
+    title. With trust_imdb (movies), a release tagged with another title's id
+    never matches. TV tags are less reliable (NZBGeek has tagged a show's
+    episode with an unrelated id), so for TV a different id falls back to the
+    title + year match below, like an untagged release.
 
     Requires:
       1. token_sort_ratio(query_title, nzb_ptt_title) >= title_threshold
@@ -216,7 +219,9 @@ def _filter_pool_for_item(pool: List[Dict], title: str, year: Optional[int],
         if release_imdb and want_imdb:
             if release_imdb == want_imdb:
                 candidates.append(r)
-            continue
+                continue
+            if trust_imdb:
+                continue
         nzb_title = pi.get('title') or r.get('title', '')
         nzb_year  = pi.get('year')
 
@@ -345,7 +350,7 @@ def scan_nzb_episode(item: Dict, pool_tv: List[Dict],
         return None
 
     title_candidates = _filter_pool_for_item(pool_tv, item['title'], item.get('year'),
-                                             imdb_id=item.get('imdb_id') or '')
+                                             imdb_id=item.get('imdb_id') or '', trust_imdb=False)
     candidates = _filter_pool_for_episode(title_candidates, season, episode)
     if not candidates:
         return None
@@ -443,7 +448,7 @@ def scan_nzb_season_pack(imdb_id: str, season_num: int, season_eps: List[Dict],
     vs = _get_version_settings(version)
 
     title_candidates = _filter_pool_for_item(pool_tv, sample['title'], sample.get('year'),
-                                             imdb_id=imdb_id or '')
+                                             imdb_id=imdb_id or '', trust_imdb=False)
     pack_results = _filter_pool_for_pack(title_candidates, season_num)
     if not pack_results:
         return None

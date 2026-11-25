@@ -16,6 +16,7 @@ the table small on busy indexers.
 
 import json
 import logging
+import re
 import threading
 import time
 from email.utils import parsedate_to_datetime
@@ -76,10 +77,13 @@ def _ensure_tables() -> None:
 # Library keys: which releases are worth keeping
 # ---------------------------------------------------------------------------
 
+_NON_ALNUM = re.compile(r'[^a-z0-9]+')
+
+
 def title_key(title: str) -> str:
-    """Lower-case, alphanumerics only, words sorted (word order doesn't matter)."""
-    from database.nzb_upgrade import _norm
-    return ' '.join(sorted(_norm(title).split()))
+    """Lower-case words, punctuation as word breaks, sorted (word order doesn't
+    matter): 'Dexter: Resurrection' and 'Dexter-Resurrection' give the same key."""
+    return ' '.join(sorted(_NON_ALNUM.sub(' ', (title or '').lower()).split()))
 
 
 def library_keys() -> Tuple[Set[str], Set[str]]:
@@ -107,9 +111,12 @@ def _release_imdb(result: Dict) -> str:
 
 
 def _wanted(result: Dict, imdb_ids: Set[str], keys: Set[str]) -> bool:
+    """Keep a release if its IMDb id or its title matches the library. Either is
+    enough: indexers sometimes tag a release with the wrong id (seen on NZBGeek
+    TV), and the scan's matching decides what it really is."""
     imdb = _release_imdb(result)
-    if imdb:
-        return imdb in imdb_ids
+    if imdb and imdb in imdb_ids:
+        return True
     pi = result.get('parsed_info') or {}
     return title_key(pi.get('title') or result.get('title', '')) in keys
 

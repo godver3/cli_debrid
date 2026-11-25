@@ -70,6 +70,7 @@ def _stored(conn):
 def test_title_key_ignores_case_punctuation_and_word_order():
     from database.nzb_feed_history import title_key
     assert title_key('The Long Walk') == title_key('walk, long: the') == 'long the walk'
+    assert title_key('Dexter: Resurrection') == title_key('Dexter-Resurrection') == 'dexter resurrection'
 
 
 def test_sync_keeps_only_the_librarys_releases(feed_db, app_settings):
@@ -79,11 +80,12 @@ def test_sync_keeps_only_the_librarys_releases(feed_db, app_settings):
         _item('The.Long.Walk.2025.2160p.WEB-DL-GRP', 'a', 1),                 # title match
         _item('Fjord.2026.1080p.AMZN.WEB-DL-CHORTLE', 'b', 2, imdb='35410859'),  # IMDb match (Wanted item)
         _item('Some.Other.Movie.2025.1080p.WEB', 'c', 3),                      # not in the library
-        _item('The.Long.Walk.2025.1080p.WEB', 'd', 4, imdb='9999999'),          # same title, other film's id
+        _item('Other.Film.2025.1080p.WEB', 'd', 4, imdb='9999999'),            # other film's id and title
+        _item('Fjord.2026.1080p.WEB-DL-X', 'e', 5, imdb='1111111'),             # wrong id, library title: kept
     ])
     totals = _sync(fake)
-    assert _stored(conn) == ['a', 'b']
-    assert totals['read'] == 4 and totals['kept'] == 2
+    assert _stored(conn) == ['a', 'b', 'e']
+    assert totals['read'] == 5 and totals['kept'] == 3
     conn.close()
 
 
@@ -153,6 +155,14 @@ def test_release_tagged_with_another_imdb_id_never_matches():
     from database.nzb_upgrade import _filter_pool_for_item
     pool = [_release('The.Long.Walk.2025.1080p', imdb='999')]
     assert _filter_pool_for_item(pool, 'The Long Walk', 2025, imdb_id='tt0123456') == []
+
+
+def test_tv_release_with_a_wrong_imdb_id_still_matches_by_title():
+    # NZBGeek tagged Marshals.S02E07…-LuCY with an unrelated show's id.
+    from database.nzb_upgrade import _filter_pool_for_item
+    pool = [_release('Marshals.S02E07.1080p.WEBRip.HEVC-LuCY', imdb='2891070')]
+    assert _filter_pool_for_item(pool, 'Marshals', 2026, imdb_id='tt36849871', trust_imdb=False) == pool
+    assert _filter_pool_for_item(pool, 'Marshals', 2026, imdb_id='tt36849871') == []  # movies stay strict
 
 
 def test_untagged_release_falls_back_to_title_and_year():
