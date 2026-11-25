@@ -20,7 +20,7 @@ It works with **Real-Debrid, AllDebrid, TorBox, Premiumize, Debrid-Link and High
 **📖 [Getting Started](#getting-started)** · [Documentation](https://godver3.github.io/cli_docs/) · [Discord](https://discord.gg/ynqnXGJ4hU)
 
 > [!IMPORTANT]
-> **The `dev` branch is recommended.** Run the `godver3/cli_debrid:dev` image (the compose files below already do). It gets new features and fixes first; `main` is updated less often. See [dev vs main](#dev-vs-main).
+> **The `dev` branch is recommended.** Run the `godver3/clyde:dev` image (the compose files below already do). It gets new features and fixes first; `main` is updated less often. See [dev vs main](#dev-vs-main).
 
 ## Getting Started
 
@@ -59,8 +59,10 @@ The [Docker guide](https://godver3.github.io/cli_docs/installation/docker/) expl
 
 Each image tag works on both AMD64 and ARM64:
 
-- **Dev (recommended)**: `godver3/cli_debrid:dev` (also `:latest`)
-- **Main**: `godver3/cli_debrid:main`
+- **Dev (recommended)**: `godver3/clyde:dev` (also `:latest`)
+- **Main**: `godver3/clyde:main`
+
+The old name, `godver3/cli_debrid`, gets the same builds under the same tags, so existing installs don't need to change anything.
 
 Clyde needs a mount for your debrid and/or Usenet files: its own built-in mount, or a separate one. **[cli_mount](https://github.com/mash2k3/decypharr/tree/dev)** is mash2k3's fork of Decypharr built alongside Clyde; it handles debrid and Usenet in its own container and talks to Clyde directly for repairs and imports.
 
@@ -198,7 +200,7 @@ Clyde will always be free.
 
 cli_debrid is now called Clyde. Only the name and logo changed:
 
-- **Updating needs nothing from you.** The Docker image is still `godver3/cli_debrid`, and your config, database and logs stay where they are. Every build is also published as `godver3/clyde` with the same tags, so either name works.
+- **Updating needs nothing from you.** The Docker image is now `godver3/clyde`, but `godver3/cli_debrid` keeps getting every build under the same tags, so an existing install keeps updating as it is. To switch, change `godver3/cli_debrid` to `godver3/clyde` in your compose file and recreate the container; your config, database and logs stay where they are.
 - **Environment variables, folder names and the GitHub address** keep the `cli_debrid` name for now, so existing compose files, scripts and links keep working.
 - **The Firefox extension** is still listed as *cli_debrid magnet assign*.
 
