@@ -179,6 +179,15 @@ func (r *RemoteFile) fetchChunk(ctx context.Context, prio nntp.Priority, i int) 
 				}
 				continue
 			}
+			if serverUnreachable(status, err) && !relinked {
+				// The link's server is down: one fresh link, which may be on
+				// another server, then the usual retries.
+				relinked = true
+				if _, err := r.links.Link(ctx, r.ref, true); err != nil {
+					return nil, fmt.Errorf("stream: new link for %s: %w", r.ref, err)
+				}
+				continue
+			}
 			// 429/5xx, connection reset, stall: transient, same link after a pause.
 			select {
 			case <-ctx.Done():

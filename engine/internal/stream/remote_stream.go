@@ -290,6 +290,15 @@ func (d *downloader) run(ctx context.Context) {
 			}
 			continue
 		}
+		if serverUnreachable(status, err) && !relinked {
+			// The link's server is down: one fresh link (maybe another server)
+			relinked = true
+			if _, lerr := r.links.Link(ctx, r.ref, true); lerr != nil {
+				d.fail(fmt.Errorf("stream: new link for %s: %w", r.ref, lerr))
+				return
+			}
+			continue
+		}
 		if fails++; fails > streamRetries {
 			if status == http.StatusServiceUnavailable && !relinked {
 				// Still 503: ask the service for a fresh link once; a dead

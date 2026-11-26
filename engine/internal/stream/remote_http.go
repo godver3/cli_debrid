@@ -2,11 +2,14 @@ package stream
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -112,6 +115,27 @@ func (p progressReader) Read(b []byte) (int, error) {
 // bad". cli_mount backs off on these and keeps the link; asking for a new
 // link on a 429 only adds load (and AllDebrid suspends accounts that
 // unlock the same file too often).
+// serverUnreachable: the request never reached the link's server (refused,
+// no route, host gone). Retrying the same link can't help when that CDN
+// server is down: found live, TorBox's nexus-405.ecan refused every
+// connection for hours while the engine kept its cached link (6 h). A fresh
+// link lets the service mint one on a server that works (TorBox: another
+// region's CDN).
+func serverUnreachable(status int, err error) bool {
+	if status != 0 || err == nil {
+		return false
+	}
+	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.EHOSTUNREACH) || errors.Is(err, syscall.ENETUNREACH) {
+		return true
+	}
+	var dns *net.DNSError
+	if errors.As(err, &dns) && dns.IsNotFound {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "connection refused") || strings.Contains(msg, "actively refused") // Windows wording
+}
+
 func transientStatus(code int) bool {
 	switch code {
 	case http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway,
