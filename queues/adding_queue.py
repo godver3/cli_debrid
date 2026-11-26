@@ -12,7 +12,7 @@ import time # Add time import
 from debrid import get_debrid_provider
 from utilities.settings import get_setting
 from utilities.log_context import logs_for_item
-from .torrent_processor import TorrentProcessor
+from .torrent_processor import TorrentProcessor, NZB_COOLDOWN_WAIT_KEY
 from .media_matcher import MediaMatcher
 from database.torrent_tracking import update_adding_error
 from database.scraper_grabs import record_grab, mark_current_grab, queue_grab_trigger
@@ -263,11 +263,40 @@ def partition_adding_items(items, downloading_job_ids=None, upgrade_locks=None, 
     return actionable, nzb_awaiting, nzb_downloading, upgrade_locked
 
 
+# item id -> time.monotonic() when an item whose only usable results are NZBs from
+# a cooling-down indexer is worth processing again. In memory only: after a restart
+# the item is simply tried once and parks itself again.
+_cooldown_wake: Dict[Any, float] = {}
+
+
+def park_for_indexer_cooldown(item_id, wait_seconds: float) -> None:
+    _cooldown_wake[item_id] = time.monotonic() + max(1.0, float(wait_seconds))
+
+
+def unpark_item(item_id) -> None:
+    _cooldown_wake.pop(item_id, None)
+
+
+def item_parked_for_cooldown(item_id) -> bool:
+    """True while the item waits for its NZB indexer's cooldown to end."""
+    wake = _cooldown_wake.get(item_id)
+    if wake is None:
+        return False
+    if time.monotonic() >= wake:
+        del _cooldown_wake[item_id]
+        return False
+    return True
+
+
 def adding_item_blocks_scraping(adding_item: Dict) -> bool:
     """True when an Adding row should defer Scraping for the same IMDb show.
 
     NZB-awaiting rows are owned by health check and must not freeze Scraping.
+    Rows waiting out an indexer cooldown aren't working on anything either: one
+    cooling-down indexer froze 43 episodes of Survivor for up to an hour.
     """
+    if item_parked_for_cooldown(adding_item.get('id')):
+        return False
     return not str(adding_item.get('filled_by_torrent_id', '')).startswith('nzb:')
 
 
@@ -354,6 +383,7 @@ class AddingQueue:
             self._nzb_submitted_ids -= removed
             for _rid in removed:
                 self._adding_ticks.pop(_rid, None)
+                unpark_item(_rid)
             # Clean up downloading set: remove job IDs no longer referenced by any remaining item
             _active_job_ids = {
                 str(item.get('filled_by_torrent_id', ''))[4:]
@@ -572,6 +602,11 @@ class AddingQueue:
                     logging.debug(f"Skipping item {item_id} — in submitted set, awaiting health check")
                     silent_skips += 1
                     continue
+            if item_parked_for_cooldown(item_id):
+                # Only NZBs from a cooling-down indexer are left; nothing to retry
+                # (and no cache checks to repeat) until the cooldown ends.
+                silent_skips += 1
+                continue
             reached_handler += 1
             logging.info(f"Processing item {item_id}: {item_identifier}")
             processed_this_item = False # Flag for applying delay
@@ -628,6 +663,7 @@ class AddingQueue:
                 if isinstance(_first_res, dict) and (_first_res.get('protocol') == 'nzb' or _first_res.get('nzb_url')):
                     _nzb_attempt_made = True
 
+                item.pop(NZB_COOLDOWN_WAIT_KEY, None)
                 # Now returns torrent_info, magnet, and chosen_result_info
                 torrent_info, magnet, chosen_result_info = self._process_results_with_mode(
                     results, item_identifier, accept_uncached, item=item
@@ -681,6 +717,15 @@ class AddingQueue:
                         (r.get('protocol') == 'nzb' or r.get('nzb_url'))
                         for r in _remaining_sr
                     ) if _remaining_sr else False
+                    _cooldown_wait = item.pop(NZB_COOLDOWN_WAIT_KEY, None)
+                    if _is_nzb_item and _cooldown_wait is not None:
+                        # Nothing failed: the NZB(s) are only held back by their indexer's
+                        # cooldown. Keep every result, don't touch state, and skip the item
+                        # (and let its siblings scrape) until the cooldown ends.
+                        park_for_indexer_cooldown(item_id, _cooldown_wait)
+                        logging.info(f"[AddingQueue] {item_identifier}: {len(_remaining_sr)} NZB result(s) kept, "
+                                     f"indexer cooling down — next attempt in {int(_cooldown_wait // 60) + 1} min")
+                        continue
                     if _is_nzb_item:
                         logging.info(f"[AddingQueue] NZB attempt failed for {item_identifier}, {len(_remaining_sr)} result(s) remaining — retrying next tick")
                         # Rotate to end so other items aren't starved by one slow NZB

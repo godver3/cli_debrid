@@ -263,3 +263,80 @@ class TestProcessResultsKeepsCooledResults(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+@unittest.skipIf(TorrentProcessor is None, f'torrent_processor not importable: {_IMPORT_ERR}')
+class TestCooldownParksItemInAdding(unittest.TestCase):
+    """A cooling-down NZB keeps the item's results but must not freeze the show."""
+
+    URL = 'https://ninjacentral.co.za/getnzb/abc.nzb'
+
+    def setUp(self):
+        import queues.adding_queue as aq
+        self.aq = aq
+        aq._cooldown_wake.clear()
+        cd.reset_fetch_cooldowns()
+        self.addCleanup(aq._cooldown_wake.clear)
+        self.addCleanup(cd.reset_fetch_cooldowns)
+        self.nzb = {'title': 'Survivor.S21E04.1080p', 'nzb_url': self.URL, 'protocol': 'nzb'}
+        self.item = {'id': 7, 'title': 'Survivor', 'imdb_id': 'tt0239195', 'type': 'episode',
+                     'state': 'Adding', 'filled_by_torrent_id': None,
+                     'scrape_results': [dict(self.nzb)]}
+        self.proc = TorrentProcessor.__new__(TorrentProcessor)
+        self.proc._check_sibling_debrid_pack = lambda *a, **k: None
+        p = mock.patch('database.database_writing.update_media_item')
+        self.update = p.start()
+        self.addCleanup(p.stop)
+
+    def _process(self, nzb_outcome):
+        self.proc._process_nzb_result = lambda r, item, adding_queue_items=None: nzb_outcome
+        return self.proc._process_results_inner([dict(self.nzb)], False, self.item)
+
+    def test_cooling_indexer_records_wait_until_cooldown_ends(self):
+        cd.record_indexer_limit(self.URL, 1800)
+        out = self._process(NZB_DEFERRED_INDEXER_COOLDOWN)
+        self.assertEqual(out, (None, None, None))
+        wait = self.item[self.aq.NZB_COOLDOWN_WAIT_KEY]
+        self.assertTrue(1700 < wait <= 1800, wait)
+        # Nothing dropped, blacklisted or marked not-wanted.
+        self.assertEqual(len(self.item['scrape_results']), 1)
+        self.update.assert_not_called()
+
+    def test_parked_item_does_not_block_sibling_scraping(self):
+        self.assertTrue(self.aq.adding_item_blocks_scraping(self.item))
+        self.aq.park_for_indexer_cooldown(self.item['id'], 1800)
+        self.assertTrue(self.aq.item_parked_for_cooldown(7))
+        self.assertFalse(self.aq.adding_item_blocks_scraping(self.item))
+        # Another show's Adding item is unaffected.
+        self.assertTrue(self.aq.adding_item_blocks_scraping({'id': 8, 'filled_by_torrent_id': ''}))
+
+    def test_item_retried_once_cooldown_ends(self):
+        with mock.patch.object(self.aq.time, 'monotonic', return_value=1000.0):
+            self.aq.park_for_indexer_cooldown(7, 1800)
+            self.assertTrue(self.aq.item_parked_for_cooldown(7))
+        with mock.patch.object(self.aq.time, 'monotonic', return_value=1000.0 + 1801):
+            self.assertFalse(self.aq.item_parked_for_cooldown(7))
+            self.assertTrue(self.aq.adding_item_blocks_scraping(self.item))
+        # The NZB result is still there to be submitted.
+        self.assertEqual(self.item['scrape_results'][0]['nzb_url'], self.URL)
+
+    def test_quota_hold_without_end_time_rechecks_soon(self):
+        self._process(NZB_DEFERRED_INDEXER_COOLDOWN)
+        from queues.torrent_processor import NZB_QUOTA_RECHECK_SECONDS
+        self.assertEqual(self.item[self.aq.NZB_COOLDOWN_WAIT_KEY], NZB_QUOTA_RECHECK_SECONDS)
+
+    def test_normal_nzb_failure_pops_result_and_does_not_park(self):
+        out = self._process(None)
+        self.assertEqual(out, (None, None, None))
+        self.assertNotIn(self.aq.NZB_COOLDOWN_WAIT_KEY, self.item)
+        self.assertEqual(self.item['scrape_results'], [])
+
+    def test_rejected_result_after_a_cooled_one_clears_the_wait(self):
+        cd.record_indexer_limit(self.URL, 1800)
+        other = {'title': 'B', 'nzb_url': 'https://other/b', 'protocol': 'nzb'}
+        self.item['scrape_results'] = [dict(self.nzb), other]
+        self.proc._process_nzb_result = lambda r, item, adding_queue_items=None: (
+            NZB_DEFERRED_INDEXER_COOLDOWN if 'ninja' in r['nzb_url'] else None)
+        self.proc._process_results_inner([dict(self.nzb), dict(other)], False, self.item)
+        self.assertNotIn(self.aq.NZB_COOLDOWN_WAIT_KEY, self.item)
+        self.assertEqual([r['title'] for r in self.item['scrape_results']], [self.nzb['title']])

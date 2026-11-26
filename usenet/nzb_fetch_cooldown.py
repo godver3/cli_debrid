@@ -144,6 +144,14 @@ def cooldown_reason(url: str) -> Optional[str]:
     return f'indexer {key} is refusing downloads (cooling down, {max(1, int(remaining // 60))} min left)'
 
 
+def cooldown_remaining(url: str) -> float:
+    """Seconds until this URL's indexer cooldown ends; 0 when it is not cooling down."""
+    key = _indexer_key(url)
+    with _lock:
+        until = _until.get(key)
+    return max(0.0, until - time.monotonic()) if until is not None else 0.0
+
+
 _skip_logged: dict = {}
 
 

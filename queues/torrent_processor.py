@@ -38,6 +38,14 @@ class TorrentAdditionError(TorrentProcessingError):
 # refusing downloads: the result is kept (not dropped from scrape_results) and
 # the next one is tried.
 NZB_DEFERRED_INDEXER_COOLDOWN = object()
+# Set on the item dict (seconds until the earliest cooling-down NZB is usable
+# again) when results were kept only because of a cooldown. The Adding queue
+# reads it to stop re-processing the item every tick and to stop it holding up
+# Scraping for the rest of the show.
+NZB_COOLDOWN_WAIT_KEY = '_nzb_cooldown_wait_s'
+# Re-check interval when a result is held back by something that has no end time
+# here (the indexer's daily grab quota).
+NZB_QUOTA_RECHECK_SECONDS = 300
 
 # Per process_results call, for providers whose cache check adds the magnet to the
 # account (AllDebrid, which suspends accounts that generate links without downloading).
@@ -1521,6 +1529,13 @@ class TorrentProcessor:
                         # Its indexer is refusing downloads for now. Keep the result for
                         # a later tick and try the next one; if every remaining result is
                         # cooling down, the item just stays in Adding with them intact.
+                        # Note when the earliest one is usable again: the Adding queue
+                        # then leaves the item alone until then (see item_cooldown_wait).
+                        if item is not None:
+                            from usenet.nzb_fetch_cooldown import cooldown_remaining
+                            _wait = cooldown_remaining(result.get('nzb_url') or '') or NZB_QUOTA_RECHECK_SECONDS
+                            _prev = item.get(NZB_COOLDOWN_WAIT_KEY)
+                            item[NZB_COOLDOWN_WAIT_KEY] = _wait if _prev is None else min(_prev, _wait)
                         continue
                     if nzb_result:
                         return nzb_result
@@ -1529,6 +1544,10 @@ class TorrentProcessor:
                     # move on to other items immediately (one attempt per item per tick).
                     # Pop the attempted result itself: earlier ones may have been kept
                     # above because their indexer is cooling down.
+                    # A result that was really attempted and rejected means the item
+                    # has work to retry next tick: it isn't just waiting on a cooldown.
+                    if item is not None:
+                        item.pop(NZB_COOLDOWN_WAIT_KEY, None)
                     if item:
                         try:
                             import json as _json_tp
