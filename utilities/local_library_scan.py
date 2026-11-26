@@ -1083,6 +1083,27 @@ def _get_video_extensions() -> set:
     return {'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.mpg', '.mpeg', '.ts', '.m2ts'}
 
 
+def _other_episode_owning_file(conn, item: Dict[str, Any], filename: str) -> Optional[tuple]:
+    """(id, season, episode) of another episode of the same show whose file
+    this is, or None.
+
+    The multi-file scan calls a pack file an alternate version of the item
+    when the file's own SxxEyy matches the item's. A pack numbered in another
+    order (Pokémon's SRS pack is in aired order, the show in tvdb:dvd) puts
+    a different episode's file on those numbers: S11E19 in the pack is
+    "Kidnapped Riolu (1)", which Clyde has as S11E29. Such a file already
+    belongs to that other episode (manual assignment and pack fills set its
+    filled_by_file), so it is not a second version of this one.
+    """
+    row = conn.execute(
+        "SELECT id, season_number, episode_number FROM media_items "
+        "WHERE type = 'episode' AND imdb_id = ? AND filled_by_file = ? AND id IS NOT ? "
+        "AND NOT (season_number IS ? AND episode_number IS ?) LIMIT 1",
+        (item.get('imdb_id'), filename, item.get('id'),
+         item.get('season_number'), item.get('episode_number'))).fetchone()
+    return tuple(row) if row else None
+
+
 def _additional_video_files(all_video_files: List[str], primary_file: str) -> List[str]:
     """The folder's other videos that may be more versions of the item: every
     video except the primary file, samples and trailers.
@@ -2215,6 +2236,17 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                                             logging.debug(f"[MultiFile] Skipping {additional_filename} - S{parsed_season:02d}E{parsed_episode:02d} != S{current_season:02d}E{current_episode:02d} (different episode in season pack)")
                                             continue
 
+                                        from database.core import get_db_connection
+                                        owner_conn = get_db_connection()
+                                        try:
+                                            owner = _other_episode_owning_file(owner_conn, item, additional_filename)
+                                        finally:
+                                            owner_conn.close()
+                                        if owner:
+                                            logging.info(f"[MultiFile] Skipping {additional_filename} - it is item {owner[0]}'s file "
+                                                         f"(S{owner[1]}E{owner[2]}), not another version of S{current_season:02d}E{current_episode:02d}")
+                                            continue
+
                                         logging.info(f"[MultiFile] Processing additional file: {additional_filename} (alternate version of S{current_season:02d}E{current_episode:02d})")
 
                                     except Exception as parse_err:
@@ -2294,9 +2326,14 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                                             continue
 
                                         # Check if this specific file already exists in the database
+                                        # as this episode: a row of another show or episode with
+                                        # the same file name must not be repointed at this link
                                         cursor = conn.execute(
-                                            'SELECT id, blacklisted_date, ghostlisted FROM media_items WHERE filled_by_file = ? AND type = ?',
-                                            (additional_filename, item_type)
+                                            'SELECT id, blacklisted_date, ghostlisted FROM media_items '
+                                            'WHERE filled_by_file = ? AND type = ? AND imdb_id IS ? '
+                                            'AND season_number IS ? AND episode_number IS ?',
+                                            (additional_filename, item_type, item.get('imdb_id'),
+                                             additional_item.get('season_number'), additional_item.get('episode_number'))
                                         )
                                         existing = cursor.fetchone()
                                         cursor.close()
