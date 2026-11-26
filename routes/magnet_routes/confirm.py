@@ -14,10 +14,19 @@ import json
 from ._common import _order_change_blocked, _requested_episode_order, _save_episode_order, _saved_episode_order, _seasons_for_order, _sync_plex_order_for_new_show, magnet_bp
 from .item_create import create_episode_item, create_movie_item
 
+#: Room for about 10,000 episodes (a few fields each beyond the per-episode ones).
+CONFIRM_MAX_FORM_PARTS = 20_000
+CONFIRM_MAX_FORM_MEMORY_SIZE = 16 * 1024 * 1024
+
 @magnet_bp.route('/confirm_manual_assignment', methods=['POST'])
 @admin_required
 def confirm_manual_assignment():
     """Confirm the manual file assignments and add items to the database."""
+    # One form field per episode: a long show's pack (Pokémon, 1,240 episodes)
+    # passes Flask's defaults of 1,000 parts / 500 KB and fails with a 413.
+    # Raise them for this view only, before the form is parsed.
+    request.max_form_parts = CONFIRM_MAX_FORM_PARTS
+    request.max_form_memory_size = CONFIRM_MAX_FORM_MEMORY_SIZE
     try:
         # Get data submitted from the manual assignment form
         assignments = request.form.to_dict(flat=False) # Get as dict of lists
