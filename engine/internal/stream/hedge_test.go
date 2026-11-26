@@ -2,8 +2,10 @@ package stream
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/godver3/cli_debrid/engine/internal/nntp"
@@ -89,4 +91,85 @@ func TestHedgeCancelledWhenSlowFetchWins(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("hedge download kept running after the slow fetch won")
 	}
+}
+
+func TestJoinedFetchHonorsCancellation(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		cache := NewCache(1 << 20)
+		const key = "remote:joined" // lower-priority fetches for this key are never hedged
+		release := make(chan struct{})
+		go cache.Do(key, nntp.Prefetch, func(ctx context.Context) ([]byte, error) {
+			nntp.FireAcquireHook(ctx)
+			<-release
+			return nil, errors.New("background fetch failed")
+		})
+		synctest.Wait()
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		var retries atomic.Int32
+		go func() {
+			_, err := cache.DoCtx(ctx, key, nntp.Read, func(context.Context) ([]byte, error) {
+				retries.Add(1)
+				return nil, errors.New("unexpected retry")
+			})
+			done <- err
+		}()
+		synctest.Wait()
+		cancel()
+		synctest.Wait()
+		close(release)
+		select {
+		case err := <-done:
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("joined read error = %v, want cancellation", err)
+			}
+		default:
+			t.Error("joined read kept waiting for the background fetch after cancellation")
+		}
+		synctest.Wait()
+		if got := retries.Load(); got != 0 {
+			t.Errorf("cancelled read started %d retries", got)
+		}
+	})
+}
+
+func TestHedgeHonorsCancellationAfterBackgroundFetchFails(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		cache := NewCache(1 << 20)
+		oldRelease := make(chan struct{})
+		go cache.Do("k", nntp.Prefetch, func(ctx context.Context) ([]byte, error) {
+			nntp.FireAcquireHook(ctx)
+			<-oldRelease
+			return nil, errors.New("background fetch failed")
+		})
+		synctest.Wait()
+
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		hedgeStarted, hedgeRelease := make(chan struct{}), make(chan struct{})
+		defer close(hedgeRelease)
+		done := make(chan error, 1)
+		go func() {
+			_, err := cache.DoCtx(ctx, "k", nntp.Read, func(context.Context) ([]byte, error) {
+				close(hedgeStarted)
+				<-hedgeRelease // simulate a fetch stuck on the wire
+				return nil, errors.New("hedge failed")
+			})
+			done <- err
+		}()
+		<-hedgeStarted
+		close(oldRelease)
+		synctest.Wait()
+		cancel()
+		synctest.Wait()
+		select {
+		case err := <-done:
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("hedged read error = %v, want cancellation", err)
+			}
+		default:
+			t.Fatal("hedged read kept waiting after cancellation")
+		}
+	})
 }

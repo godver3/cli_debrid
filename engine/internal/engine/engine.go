@@ -156,7 +156,7 @@ func (c *Config) defaults() {
 	}
 
 	if c.ImportWorkers <= 0 {
-		c.ImportWorkers = 2
+		c.ImportWorkers = 8
 	}
 	if c.HealthWorkers <= 0 {
 		c.HealthWorkers = 1
@@ -480,108 +480,157 @@ func (e *Engine) worker() {
 	}
 }
 
+const importTimeoutGrace = time.Second
+
 func (e *Engine) importJob(id string) {
-	e.importsActive.Add(1)
-	defer e.importsActive.Add(-1)
-	data, err := e.Store.NZB(id)
-	if err != nil {
-		return // deleted while queued
-	}
-	started, err := e.Store.Update(id, func(j *store.Job) { j.Status = store.Importing })
+	started, ctx, finish, err := e.Store.BeginImport(e.ctx, id)
 	if err != nil {
 		return
 	}
+	defer finish()
+	e.importsActive.Add(1)
+	defer e.importsActive.Add(-1)
 	e.log.Info("import started", "job", id, "name", started.Name, "attempt", started.Attempts+1,
 		"since_received", time.Since(started.CreatedAt).Round(time.Second))
 	start := time.Now()
-	fail := func(err error) {
-		// Only failures that prove nothing may be retried (dead-marking
-		// needs proof). Those are retried here, the job staying queued, so
-		// cli_debrid never blacklists a release over a network blip.
-		retry := errors.Is(err, job.ErrInconclusive)
-		var attempts int
-		j, _ := e.Store.Update(id, func(j *store.Job) {
-			j.Error, j.Retryable = err.Error(), retry
-			if retry && j.Attempts < len(e.cfg.RetryBackoff) {
-				j.Status = store.Queued
-				j.Attempts++
-			} else {
-				j.Status = store.Failed
+	res, err := e.runImport(ctx, started)
+	e.Store.CommitImport(ctx, func() {
+		if err != nil {
+			if res != nil && len(res.Failures) > 0 && !strings.Contains(err.Error(), res.Failures[0].Name) {
+				err = fmt.Errorf("%w (%s)", err, failureSummary(res.Failures))
 			}
-			attempts = j.Attempts
-		})
-		if j.Status == store.Queued {
-			wait := e.cfg.RetryBackoff[attempts-1]
-			e.log.Warn("import inconclusive, retrying", "job", id, "err", err, "attempt", attempts, "in", wait)
-			time.AfterFunc(wait, func() { e.requeue(id) })
+			e.logBuild(id, res, true)
+			e.failImport(id, err)
 			return
 		}
-		e.log.Warn("import failed", "job", id, "name", j.Name, "err", err, "retryable", retry)
+		if _, err := e.publish(id, res); err != nil {
+			e.failImport(id, err)
+			return
+		}
+		e.log.Info("imported", "job", id, "entries", len(res.Entries), "failures", len(res.Failures), "took", time.Since(start))
+		e.logBuild(id, res, false)
+	})
+}
+
+// runImport keeps the build separate from publication. If the build ignores
+// cancellation, its late result can be discarded and the worker can move on.
+func (e *Engine) runImport(parent context.Context, started store.Job) (*job.Result, error) {
+	ctx := parent
+	timeout := time.Duration(e.cfg.ImportTimeout) * time.Second
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(parent, timeout)
+		defer cancel()
+	}
+	type outcome struct {
+		result *job.Result
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		res, err := e.buildImport(ctx, started)
+		done <- outcome{res, err}
+	}()
+	var res *job.Result
+	select {
+	case out := <-done:
+		if ctx.Err() == nil {
+			return out.result, out.err
+		}
+		res = out.result
+	case <-ctx.Done():
+		if parent.Err() != nil {
+			return nil, parent.Err()
+		}
+		deadline, _ := ctx.Deadline()
+		grace := time.NewTimer(time.Until(deadline.Add(importTimeoutGrace)))
+		defer grace.Stop()
+		select {
+		case out := <-done:
+			res = out.result
+		case <-grace.C:
+		case <-parent.Done():
+			return nil, parent.Err()
+		}
+	}
+	if err := parent.Err(); err != nil {
+		return nil, err
+	}
+	return res, fmt.Errorf("%w: import took longer than %ds", job.ErrInconclusive, e.cfg.ImportTimeout)
+}
+
+func (e *Engine) buildImport(ctx context.Context, started store.Job) (*job.Result, error) {
+	data, err := e.Store.NZB(started.ID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: reading stored NZB: %v", job.ErrInconclusive, err)
 	}
 	parsed, err := nzb.Parse(bytes.NewReader(data))
 	if err != nil {
-		fail(fmt.Errorf("%w: %v", ErrBadNZB, err))
-		return
+		return nil, fmt.Errorf("%w: %v", ErrBadNZB, err)
 	}
-	ctx := e.ctx
-	if e.cfg.ImportTimeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(e.ctx, time.Duration(e.cfg.ImportTimeout)*time.Second)
-		defer cancel()
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	res, err := job.Build(ctx, e.Client, e.Cache, parsed, job.Options{Parallel: e.cfg.Parallel})
-	if err == nil && e.cfg.DeobfuscateMode != "" {
-		if j, _, gerr := e.Store.Get(id); gerr == nil {
+	if err != nil {
+		return res, err
+	}
+	if err := ctx.Err(); err != nil {
+		return res, err
+	}
+	if e.cfg.DeobfuscateMode != "" {
+		if j, _, err := e.Store.Get(started.ID); err == nil {
 			if n := Deobfuscate(res, e.cfg.DeobfuscateMode, j.Name); n > 0 {
-				e.log.Debug("import: renamed obfuscated files", "job", id, "files", n, "mode", e.cfg.DeobfuscateMode)
+				e.log.Debug("import: renamed obfuscated files", "job", j.ID, "files", n, "mode", e.cfg.DeobfuscateMode)
 			}
 		}
 	}
-	if err == nil && e.cfg.ImportSample > 0 {
-		err = e.importSample(ctx, parsed, res)
+	if e.cfg.ImportSample > 0 {
+		if err := e.importSample(ctx, parsed, res); err != nil {
+			return res, err
+		}
 	}
-	if err == nil && e.HiddenByExtension(res) {
-		// Nothing the mount would show: the library can't use this release,
-		// so fail it (final) and let cli_debrid pick another one.
-		err = fmt.Errorf("%w (has %s; allowed: %s)", ErrNoAllowedFiles,
+	if e.HiddenByExtension(res) {
+		return res, fmt.Errorf("%w (has %s; allowed: %s)", ErrNoAllowedFiles,
 			strings.Join(entryExts(res.Entries), ", "), strings.Join(e.cfg.AllowedExt, ", "))
 	}
-	if err == nil && ctx.Err() != nil {
-		// The deadline hit part-way: files not yet probed failed with a
-		// context error, so a "success" here would be a partial job.
-		err = ctx.Err()
-	}
-	if err != nil {
-		if e.ctx.Err() != nil {
-			return // shutting down: stays "importing", reopens as queued
-		}
-		if ctx.Err() != nil {
-			err = fmt.Errorf("%w: import took longer than %ds", job.ErrInconclusive, e.cfg.ImportTimeout)
-		}
-		if res != nil && len(res.Failures) > 0 && !strings.Contains(err.Error(), res.Failures[0].Name) {
-			err = fmt.Errorf("%w (%s)", err, failureSummary(res.Failures))
-		}
-		e.logBuild(id, res, true)
-		fail(err)
-		return
-	}
-	if _, err := e.publish(id, res); err != nil {
-		fail(err)
-		return
-	}
-	e.log.Info("imported", "job", id, "entries", len(res.Entries), "failures", len(res.Failures), "took", time.Since(start))
-	e.logBuild(id, res, false)
+	return res, nil
 }
 
-// requeue puts a still-queued job back on the import queue (unless it was
-// deleted or retried by hand meanwhile).
-func (e *Engine) requeue(id string) {
+func (e *Engine) failImport(id string, cause error) {
+	// Dead-marking needs proof. A job waits in the queue during backoff
+	// and remains retryable even after exhausting its automatic retries.
+	retry := errors.Is(cause, job.ErrInconclusive)
+	j, err := e.Store.Update(id, func(j *store.Job) {
+		j.Error, j.Retryable = cause.Error(), retry
+		j.Status = store.Failed
+		if retry && j.Attempts < len(e.cfg.RetryBackoff) {
+			j.Status = store.Queued
+			j.Attempts++
+		}
+	})
+	if err != nil {
+		e.log.Error("recording import failure", "job", id, "err", err, "cause", cause)
+		return
+	}
+	if j.Status == store.Queued {
+		wait := e.cfg.RetryBackoff[j.Attempts-1]
+		e.log.Warn("import inconclusive, retrying", "job", id, "err", cause, "attempt", j.Attempts, "in", wait)
+		time.AfterFunc(wait, func() { e.requeue(j) })
+		return
+	}
+	e.log.Warn("import failed", "job", id, "name", j.Name, "err", cause, "retryable", retry)
+}
+
+// requeue puts the waiting attempt back on the import queue if it is still current.
+func (e *Engine) requeue(waiting store.Job) {
 	if e.ctx.Err() != nil {
 		return
 	}
-	if j, _, err := e.Store.Get(id); err == nil && j.Status == store.Queued {
+	if j, _, err := e.Store.Get(waiting.ID); err == nil && j.Status == store.Queued &&
+		j.CreatedAt.Equal(waiting.CreatedAt) && j.Attempts == waiting.Attempts {
 		select {
-		case e.queue <- id:
+		case e.queue <- j.ID:
 		case <-e.ctx.Done():
 		}
 	}

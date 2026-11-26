@@ -196,6 +196,11 @@ SECTIONS = {
             "description": "Built-in mount only. Cache cleanup interval in minutes (how often cache expiry runs).",
             "default": 1
         },
+        "import_workers": {
+            "type": "integer",
+            "description": "Built-in mount only. Number of NZB imports that can run at the same time.",
+            "default": 8
+        },
         "processing_connections": {
             "type": "integer",
             "description": "Built-in mount only. Processing connections per file: parallel downloads while importing an NZB (reading archive headers, PAR2).",

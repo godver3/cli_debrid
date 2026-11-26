@@ -129,23 +129,35 @@ func (c *Cache) Do(key string, prio nntp.Priority, fetch func(ctx context.Contex
 // DoCtx is Do with a parent context for the fetch.
 func (c *Cache) DoCtx(ctx context.Context, key string, prio nntp.Priority,
 	fetch func(ctx context.Context) ([]byte, error)) ([]byte, error) {
+	return c.doCtx(ctx, key, prio, fetch, true)
+}
+
+func (c *Cache) doCtx(ctx context.Context, key string, prio nntp.Priority,
+	fetch func(ctx context.Context) ([]byte, error), joinLower bool) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	c.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		c.mu.Unlock()
+		return nil, err
+	}
 	if el, ok := c.items[key]; ok {
 		c.ll.MoveToFront(el)
 		c.mu.Unlock()
 		return el.Value.(*entry).data, nil
 	}
-	if cl, ok := c.inflight[key]; ok && (cl.prio >= prio || cl.started.Load()) {
+	if cl, ok := c.inflight[key]; ok && (cl.prio >= prio || (joinLower && cl.started.Load())) {
 		c.mu.Unlock()
 		if cl.prio < prio && hedgeable(key) {
 			return c.joinOrHedge(ctx, key, prio, fetch, cl)
 		}
-		<-cl.done
-		if cl.err == nil || cl.prio >= prio {
-			return cl.data, cl.err
+		data, err := waitCall(ctx, cl)
+		if err == nil || cl.prio >= prio {
+			return data, err
 		}
-		// A live read that joined a failed prefetch gets its own attempt.
-		return c.DoCtx(ctx, key, prio, fetch)
+		// Try once at our priority after a failed lower-priority fetch.
+		return c.doCtx(ctx, key, prio, fetch, false)
 	}
 	cl := &call{done: make(chan struct{}), prio: prio}
 	c.inflight[key] = cl // a live call replaces a prefetch one for later joiners
@@ -157,12 +169,26 @@ func (c *Cache) DoCtx(ctx context.Context, key string, prio nntp.Priority,
 		}
 	}
 	fetched := false
-	if cl.data == nil {
+	if err := ctx.Err(); err != nil {
+		cl.err = err
+	} else if cl.data == nil {
 		cl.data, cl.err = fetch(nntp.WithAcquireHook(ctx, cl.markStarted))
 		fetched = cl.err == nil
 	}
 	c.complete(key, cl, fetched)
-	return cl.data, cl.err
+	return waitCall(ctx, cl)
+}
+
+func waitCall(ctx context.Context, cl *call) ([]byte, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-cl.done:
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return cl.data, cl.err
+	}
 }
 
 // complete publishes a finished call: memory, disk (fetched: it came from
@@ -203,10 +229,13 @@ func (c *Cache) joinOrHedge(ctx context.Context, key string, prio nntp.Priority,
 		select {
 		case <-old.done:
 			t.Stop()
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			if old.err == nil {
 				return old.data, nil
 			}
-			return c.DoCtx(ctx, key, prio, fetch) // failed prefetch: own attempt
+			return c.doCtx(ctx, key, prio, fetch, false)
 		case <-ctx.Done():
 			t.Stop()
 			return nil, ctx.Err()
@@ -214,6 +243,10 @@ func (c *Cache) joinOrHedge(ctx context.Context, key string, prio nntp.Priority,
 		}
 	}
 	c.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		c.mu.Unlock()
+		return nil, err
+	}
 	if el, ok := c.items[key]; ok {
 		c.ll.MoveToFront(el)
 		c.mu.Unlock()
@@ -222,8 +255,7 @@ func (c *Cache) joinOrHedge(ctx context.Context, key string, prio nntp.Priority,
 	if cur, ok := c.inflight[key]; ok && cur != old && cur.prio >= prio {
 		// Another live read already hedged: share its fetch.
 		c.mu.Unlock()
-		<-cur.done
-		return cur.data, cur.err
+		return waitCall(ctx, cur)
 	}
 	own := &call{done: make(chan struct{}), prio: prio}
 	c.inflight[key] = own
@@ -253,13 +285,19 @@ func (c *Cache) joinOrHedge(ctx context.Context, key string, prio nntp.Priority,
 		if old.err == nil {
 			own.data = old.data // the slow fetch made it after all
 		} else {
-			r := <-res
-			own.data, own.err = r.data, r.err
-			fetched = r.err == nil
+			select {
+			case r := <-res:
+				own.data, own.err = r.data, r.err
+				fetched = r.err == nil
+			case <-ctx.Done():
+				own.err = ctx.Err()
+			}
 		}
+	case <-ctx.Done():
+		own.err = ctx.Err()
 	}
 	c.complete(key, own, fetched)
-	return own.data, own.err
+	return waitCall(ctx, own)
 }
 
 // put stores data; caller holds mu.

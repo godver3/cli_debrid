@@ -265,3 +265,42 @@ func TestWrongArticleOnOneServerReadsFromTheNext(t *testing.T) {
 		t.Fatalf("got %v; want segment 2 from the second server", err)
 	}
 }
+
+func TestReadHandlesShortCachedSegment(t *testing.T) {
+	for _, tc := range []struct {
+		name, providerCopy string
+		wantErr            error
+	}{
+		{"valid provider copy", "abcd", nil},
+		{"short provider copy", "abc", ErrLayout},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cache := NewCache(1 << 20)
+			cache.Put("short", []byte("abc"))
+			file := Open(idFetcher{"short": []byte(tc.providerCopy)}, cache, nzb.File{
+				Name: "index.par2", Segments: []nzb.Segment{{ID: "short", Number: 1}},
+			}, Layout{Size: 4, PartSize: 4}, ReadAhead{})
+			ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+			defer cancel()
+			buf := make([]byte, 4)
+			done := make(chan error, 1)
+			go func() {
+				_, err := file.ReadAtCtx(ctx, nntp.Read, buf, 0)
+				done <- err
+			}()
+			select {
+			case err := <-done:
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("read error = %v, want %v", err, tc.wantErr)
+				}
+				if err == nil && string(buf) != tc.providerCopy {
+					t.Fatalf("read %q, want %q", buf, tc.providerCopy)
+				}
+			case <-time.After(500 * time.Millisecond):
+				cache.Purge() // let the old read loop exit once it tries the fetcher
+				<-done
+				t.Fatal("read spun on a short cache hit past its deadline")
+			}
+		})
+	}
+}

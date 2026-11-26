@@ -55,7 +55,7 @@ GROUPS = [
                           'debrid_sync_seconds', 'debrid_link_lifetime_hours', 'debrid_download_api_keys',
                           'debrid_proxy', 'debrid_user_agent']),
     ('Disk cache', ['cache_dir', 'cache_size_gb', 'cache_expiry_hours', 'cache_cleanup_minutes']),
-    ('Importing & health checks', ['processing_connections', 'processing_timeout_minutes',
+    ('Importing & health checks', ['import_workers', 'processing_connections', 'processing_timeout_minutes',
                                    'import_sample_percent', 'health_sample_percent', 'media_probe']),
     ('Advanced', ['debug_logging', 'api_port', 'api_token']),
 ]
@@ -73,7 +73,7 @@ LABELS = {
     'plex_playback_protection': 'Stream protection (reserve only for what your media server is playing)', 'cache_dir': 'Cache directory',
     'cache_size_gb': 'Disk cache size (GB)', 'cache_expiry_hours': 'Cache expiry (hours)',
     'cache_cleanup_minutes': 'Cache cleanup interval (minutes)', 'processing_connections': 'Processing connections per file',
-    'processing_timeout_minutes': 'Processing timeout (minutes)', 'import_sample_percent': 'NZB import availability sample %',
+    'import_workers': 'Concurrent NZB imports', 'processing_timeout_minutes': 'Processing timeout (minutes)', 'import_sample_percent': 'NZB import availability sample %',
     'health_sample_percent': 'Repair availability sample %', 'media_probe': 'Check playability with ffprobe',
     'debug_logging': 'Debug logging', 'plex_url': 'Plex URL', 'plex_token': 'Plex token',
     'jellyfin_url': 'Jellyfin / Emby URL', 'jellyfin_token': 'Jellyfin / Emby API key',
