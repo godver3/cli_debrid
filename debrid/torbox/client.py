@@ -626,6 +626,16 @@ class TorboxProvider(DebridProvider):
     def get_torrent_file_list(self, magnet_link: str) -> Optional[Tuple[List[Dict], str, str]]:
         torrent_id = None
         info = None
+        # A torrent already on the account (add_torrent hands back its id) is
+        # listed, never removed: this preview add used to delete the user's own
+        # copy (and the mount's folder for it) on every Magnet Assign.
+        preexisting = False
+        try:
+            from ..common import extract_hash_from_magnet as _hash_of  # aliased: the name is local below
+            hash_value = _hash_of(magnet_link) if magnet_link.startswith('magnet:') else None
+            preexisting = bool(hash_value and self._find_existing_torrent(hash_value))
+        except Exception as e:
+            logging.debug(f"[Torbox] Could not check for an existing torrent before listing: {e}")
         try:
             torrent_id = self.add_torrent(magnet_link)
             if not torrent_id:
@@ -662,7 +672,7 @@ class TorboxProvider(DebridProvider):
             logging.error(f"An unexpected error occurred during Torbox torrent file listing: {str(e)}")
             return None
         finally:
-            if torrent_id:
+            if torrent_id and not preexisting:
                 try:
                     self.remove_torrent(torrent_id, "Temporary add for file listing")
                 except Exception as e:
