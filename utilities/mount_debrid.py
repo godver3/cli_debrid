@@ -253,6 +253,29 @@ def engine_holds_debrid(get_setting) -> bool:
     return builtin_engine.selected({'Usenet Provider': get_setting('Usenet Provider') or {}, 'Built-in Mount': bm})
 
 
+def engine_folder(torrent_id, get_setting) -> Optional[str]:
+    """The folder the built-in mount shows a debrid torrent in, from the
+    engine itself. Two torrents with one name get "Name" and "Name (2)",
+    and the second keeps its suffix after the first is gone, so a folder
+    worked out from the release name can be wrong (17 Married... with
+    Children episodes stuck in Checking on "... [i_c]" while their files
+    were in "... [i_c] (2)")."""
+    if not torrent_id:
+        return None
+    try:
+        if not engine_holds_debrid(get_setting):
+            return None
+        from usenet.builtin_client import get_builtin_client
+        client = get_builtin_client()
+        for p in providers():
+            code, job = client._call('GET', f'/jobs/{_job_id(provider_key(p), str(torrent_id))}', timeout=10)
+            if code == 200 and isinstance(job, dict) and job.get('folder'):
+                return job['folder']
+    except Exception as exc:
+        logging.debug(f'[mount debrid] folder lookup for {torrent_id} failed: {exc}')
+    return None
+
+
 #: Video types a release can carry; the built-in mount's allowed list
 #: decides which of them it shows.
 _VIDEO_EXTS = {'mkv', 'mp4', 'm4v', 'avi', 'mov', 'mpg', 'mpeg', 'ts', 'm2ts', 'wmv', 'webm', 'flv'}

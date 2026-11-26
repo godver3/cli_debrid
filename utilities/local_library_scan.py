@@ -1592,6 +1592,28 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                     found_file = True
                     logging.info(f"Found file using debrid_folder_name: {source_file}")
 
+            # 0b. The built-in mount knows the torrent's real folder, which
+            # can differ from any release name ("Name (2)" next to a duplicate).
+            if not found_file and item.get('filled_by_torrent_id'):
+                from utilities.mount_debrid import engine_folder
+                folder = engine_folder(item['filled_by_torrent_id'], get_setting)
+                if folder and folder != debrid_folder_name:
+                    potential_folder = os.path.join(original_path, folder)
+                    potential_path = os.path.join(potential_folder, current_filename)
+                    logging.debug(f"Attempt 0b: Checking the built-in mount's folder: {potential_path}")
+                    if os.path.exists(potential_path):
+                        source_file, source_folder, found_file = potential_path, potential_folder, True
+                        logging.info(f"Found file in the built-in mount's folder for the torrent: {source_file}")
+                        if item.get('id'):
+                            try:
+                                # Aliased: a plain local import would make update_media_item
+                                # local to the whole function and break its later uses.
+                                from database.database_writing import update_media_item as _store_folder
+                                _store_folder(item['id'], debrid_folder_name=folder)
+                                item['debrid_folder_name'] = folder
+                            except Exception as e:
+                                logging.debug(f"Could not store folder {folder!r} for item {item.get('id')}: {e}")
+
             # 1. Check original_scraped_torrent_title (raw)
             if original_torrent_title:
                 potential_folder = os.path.join(original_path, original_torrent_title)
