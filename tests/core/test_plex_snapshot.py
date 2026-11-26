@@ -150,6 +150,57 @@ class SnapshotTests(unittest.TestCase):
         self.assertFalse(ps.carry_to_symlink(1, self.rows[0]['location_on_disk']))
         self.assertFalse(os.path.exists(new[:-4] + '.nfo'))
 
+    def _upgrade_first_episode(self, name):
+        self._take()
+        old = self.rows[0]['location_on_disk']
+        new = os.path.join(self.s1, name)
+        os.symlink('/nonexistent/other.mkv', new)
+        os.unlink(old)
+        nw.remove_for_video(old)
+        self.rows[0]['location_on_disk'] = new
+        return new
+
+    def test_upgrade_in_changed_mode_keeps_the_snapshot_nfo(self):
+        # NFO files on ('changed'), the show on its default order: the
+        # writer doesn't cover it, so the upgrade keeps the snapshot's NFO
+        new = self._upgrade_first_episode('Shetland (2013) - S01E01 - 2160p.mkv')
+        conn = mock.Mock()
+        conn.execute.return_value.fetchall.return_value = [(1, 'tt2396135', 'episode')]
+        with mock.patch.object(nw, 'mode', return_value='changed'), \
+                mock.patch.object(nw, 'wants_show', return_value=False), \
+                mock.patch('database.core.get_db_connection', return_value=conn):
+            nw._write_batch({1: new})
+        self.assertIn('<title>Red Bones (1)</title>', self._read(new[:-4] + '.nfo'))
+
+    def test_upgrade_with_a_name_without_sxxeyy_keeps_the_snapshot_nfo(self):
+        new = self._upgrade_first_episode('Shetland 1x01 2160p.mkv')
+        self.assertTrue(ps.carry_to_symlink(1, new))
+        self.assertIn('<title>Red Bones (1)</title>', self._read(new[:-4] + '.nfo'))
+
+    def test_file_episodes(self):
+        self.assertEqual(ps._file_episodes('Show - S01E17 - x.mkv'), {(1, 17)})
+        self.assertEqual(ps._file_episodes('Show - S01E17-E18 - x.mkv'), {(1, 17), (1, 18)})
+        self.assertEqual(ps._file_episodes('Show.S01E17E18.mkv'), {(1, 17), (1, 18)})
+        self.assertEqual(ps._file_episodes('Show.S01E17-1080p.mkv'), {(1, 17)})
+        self.assertIsNone(ps._file_episodes('Show 1x17.mkv'))
+
+    def test_two_libraries_on_one_folder_list_each_episode_once(self):
+        sections = [mock.Mock(key='1', title='TV Shows'), mock.Mock(key='2', title='TV again')]
+        with mock.patch('utilities.plex_nfo_agent.tv_sections', return_value=sections):
+            self._take()
+        self.assertEqual(self._read(self.nfo(1)).count('<episodedetails>'), 1)
+
+    def test_nfo_shared_by_mkv_and_mp4_stays_while_one_is_left(self):
+        self._take()
+        mp4 = self.rows[0]['location_on_disk'][:-4] + '.mp4'
+        os.symlink('/nonexistent/target.mp4', mp4)
+        os.unlink(self.rows[0]['location_on_disk'])
+        nw.remove_for_video(self.rows[0]['location_on_disk'])
+        self.assertTrue(os.path.exists(self.nfo(1)))
+        os.unlink(mp4)
+        nw.remove_for_video(mp4)
+        self.assertFalse(os.path.exists(self.nfo(1)))
+
     def test_no_snapshot_in_use_is_a_no_op(self):
         self.assertFalse(ps.carry_to_symlink(1, self.rows[0]['location_on_disk']))
         self.assertFalse(os.path.exists(os.path.join(self.tmp, 'plex_metadata_snapshot.db')))

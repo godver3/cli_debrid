@@ -33,7 +33,8 @@ from utilities.settings import get_setting, set_setting
 
 _LOG = '[PlexSnapshot]'
 PLEX_DROPS_TVDB = date(2026, 12, 3)
-_SXXEXX = re.compile(r'(?<![a-z0-9])s(\d{1,4})[ ._-]?e(\d{1,4})', re.I)
+# S01E17, and a multi-episode file's S01E17-E18 / S01E17E18 / S01E17-18
+_SXXEXX = re.compile(r'(?<![a-z0-9])s(\d{1,4})[ ._-]?e(\d{1,4})(?:-?e(\d{1,4})|-(\d{1,4})(?![0-9p]))?', re.I)
 
 
 # ─── store ───────────────────────────────────────────────────────────────────
@@ -267,7 +268,10 @@ def _take() -> int:
                 ambiguous += amb
                 if path:
                     ep = ep or _episode(el)
-                    files.setdefault(path, {})[ep['rating_key']] = ep
+                    # Two TV libraries reading the same folder list the
+                    # file twice: keep one entry per episode number
+                    key = (ep['season'], ep['episode']) if ep['episode'] is not None else ep['rating_key']
+                    files.setdefault(path, {}).setdefault(key, ep)
             if ep is None:
                 unmatched += 1
             if seen % 500 == 0:
@@ -433,6 +437,18 @@ def restore_all() -> Dict[str, int]:
     return {}
 
 
+def _file_episodes(name: str) -> Optional[set]:
+    """The (season, episode) numbers a file name holds, None without SxxEyy."""
+    m = _SXXEXX.search(name)
+    if not m:
+        return None
+    season, first = int(m.group(1)), int(m.group(2))
+    last = int(m.group(3) or m.group(4) or first)
+    if not first <= last <= first + 20:
+        last = first
+    return {(season, e) for e in range(first, last + 1)}
+
+
 def carry_to_symlink(media_item_id: int, new_path: str) -> bool:
     """A new symlink for an episode in the snapshot (an upgrade): give it the
     episode's snapshot NFO. Only when the item and the new file name still
@@ -448,9 +464,13 @@ def carry_to_symlink(media_item_id: int, new_path: str) -> bool:
         if not item:
             return False
         old_path, season, episode = item
-        m = _SXXEXX.search(os.path.basename(new_path))
-        if not m or (int(m.group(1)), int(m.group(2))) != (season, episode):
+        # The new file's name must still hold the episode (a renumbered file
+        # gets nothing). A name without SxxEyy (a custom template) is judged
+        # by the item's numbers below.
+        in_file = _file_episodes(os.path.basename(new_path))
+        if in_file is not None and (season, episode) not in in_file:
             return False
+        in_file = in_file or {(season, episode)}
         current = nfo_writer._episode_rows_by_id(int(media_item_id))
         if not current or (current[0].get('season_number'), current[0].get('episode_number')) != (season, episode):
             return False
@@ -462,13 +482,18 @@ def carry_to_symlink(media_item_id: int, new_path: str) -> bool:
         if imdb_id and nfo_writer.wants_show(imdb_id):
             return False
         pairs = _episodes_for_file(numbers, data)
-        eps = [e for (ep, _plan), e in zip(pairs, sorted(data, key=lambda e: (e.get('season') or 0, e.get('episode') or 0)))
-               if (ep['season'], ep['episode']) == (season, episode)]
-        if not eps:
+        # Every episode of the old file the new file holds too (a
+        # multi-episode file keeps all of them, whichever item came first)
+        kept = [(tuple(ep_nums), e) for (ep_nums, e) in
+                zip([(ep['season'], ep['episode']) for ep, _plan in pairs],
+                    sorted(data, key=lambda e: (e.get('season') or 0, e.get('episode') or 0)))
+                if (ep_nums[0], ep_nums[1]) in in_file]
+        if (season, episode) not in {k for k, _e in kept}:
             return False
+        eps = [e for _k, e in kept]
         show_row = conn.execute("SELECT data FROM shows WHERE snapshot_id = ? AND imdb_id = ?", (sid, imdb_id)).fetchone()
         show = json.loads(show_row[0]) if show_row else None
-        new_numbers = [[season, episode]]
+        new_numbers = [list(k) for k, _e in kept]
         result = nfo_writer._write(nfo_writer.episode_nfo_path(new_path),
                                    _episode_xml(new_numbers, eps, (show or {}).get('title') or eps[0].get('show_title') or ''),
                                    replace=(nfo_writer.SNAPSHOT,))

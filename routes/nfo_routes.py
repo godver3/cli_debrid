@@ -201,8 +201,9 @@ def api_plex(action):
         if action == 'apply':
             # As when NFO files are turned on: old title locks would block the NFOs
             from utilities.plex_order_metadata import release_all_for_nfo
+            released = release_all_for_nfo()
             result = plex_nfo_agent.apply(refresh=refresh)
-            result['released_shows'] = release_all_for_nfo()
+            result['released_shows'] = released
         else:
             result = plex_nfo_agent.restore(refresh=refresh)
         return jsonify({'success': True, 'result': result})

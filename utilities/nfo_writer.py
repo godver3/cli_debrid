@@ -368,7 +368,9 @@ def remove_for_video(video_path: str) -> List[str]:
     kinds = (WRITER, SNAPSHOT)
     # Called just before or after the file itself is removed
     nfo = episode_nfo_path(video_path)
-    if _remove_ours(nfo, kinds):
+    # A .mkv and a .mp4 with the same name share one NFO: it stays while
+    # the other one is still here
+    if not _same_stem_video_left(video_path) and _remove_ours(nfo, kinds):
         removed.append(nfo)
     folder = show_folder(video_path)
     show_nfo = os.path.join(folder, SHOW_NFO) if folder else None
@@ -379,6 +381,17 @@ def remove_for_video(video_path: str) -> List[str]:
     if removed:
         logging.info(f"{_LOG} removed {len(removed)} NFO file(s) of {os.path.basename(video_path)}")
     return removed
+
+
+def _same_stem_video_left(video_path: str) -> bool:
+    folder, name = os.path.split(video_path)
+    stem = os.path.splitext(name)[0]
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return False
+    return any(f != name and f.lower().endswith(VIDEO_EXTS) and os.path.splitext(f)[0] == stem
+               and os.path.lexists(os.path.join(folder, f)) for f in names)
 
 
 def _videos_in(folder: str) -> List[str]:
@@ -614,12 +627,7 @@ def write_for_symlink(media_item_id: Optional[int], symlink_path: str) -> None:
     if not media_item_id:
         return
     if not enabled():
-        # An upgraded episode keeps the NFO made from Plex's metadata
-        try:
-            from utilities import plex_snapshot
-            plex_snapshot.carry_to_symlink(media_item_id, symlink_path)
-        except Exception as e:
-            logging.debug(f"{_LOG} snapshot NFO for {symlink_path}: {e}")
+        _carry_snapshot(media_item_id, symlink_path)
         return
     with _pending_lock:
         _pending[int(media_item_id)] = symlink_path
@@ -627,6 +635,16 @@ def write_for_symlink(media_item_id: Optional[int], symlink_path: str) -> None:
             _worker = threading.Thread(target=_drain, name='nfo-write', daemon=True)
             _worker.start()
     _pending_event.set()
+
+
+def _carry_snapshot(media_item_id: int, symlink_path: str) -> None:
+    """An upgraded episode of a show the writer doesn't cover keeps the NFO
+    made from Plex's metadata."""
+    try:
+        from utilities import plex_snapshot
+        plex_snapshot.carry_to_symlink(media_item_id, symlink_path)
+    except Exception as e:
+        logging.debug(f"{_LOG} snapshot NFO for {symlink_path}: {e}")
 
 
 def _drain() -> None:
@@ -663,6 +681,13 @@ def _write_batch(batch: Dict[int, str]) -> None:
             if kind == 'episode' and imdb_id:
                 by_show.setdefault(imdb_id, []).append(item_id)
         for imdb_id, item_ids in by_show.items():
+            if not wants_show(imdb_id):
+                # 'changed' mode on a default-order show, or the show's
+                # override is 'none': no NFO of the writer's, so an upgrade
+                # keeps the snapshot's (its old file's NFO is gone by now)
+                for i in item_ids:
+                    _carry_snapshot(i, batch[i])
+                continue
             paths = {os.path.normpath(batch[i]) for i in item_ids}
             show_rows = _episode_rows(imdb_id)
             rows_here = [r for r in show_rows if os.path.normpath(r['location_on_disk']) in paths]

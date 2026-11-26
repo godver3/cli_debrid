@@ -297,6 +297,7 @@ class SymlinkHookBatchTests(unittest.TestCase):
 
         with mock.patch('database.core.get_db_connection', return_value=Conn()), \
                 mock.patch.object(nw, '_episode_rows', return_value=rows), \
+                mock.patch.object(nw, 'wants_show', return_value=True), \
                 mock.patch.object(nw, 'write_show', return_value=nw._empty_counts()) as write:
             nw._write_batch({r['id']: r['location_on_disk'] for r in rows})
         write.assert_called_once()
