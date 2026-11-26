@@ -7,6 +7,19 @@ function scrEsc(v) {
     return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+// A result's clean title as HTML: the show title escaped, the season/episode
+// tags as markup. Escaping the whole string showed the tags as text
+// ("<span class="season-info">S02</span>").
+function scrCleanTitleHtml(title, year, season, episode, seasonCount) {
+    const t = String(title ?? '');
+    const withYear = year && !t.trim().endsWith(`(${year})`) ? `${t} (${year})` : t;
+    const pad = n => n.toString().padStart(2, '0');
+    const tags = [];
+    if (season) tags.push(`<span class="season-info">S${pad(season)}${seasonCount > 1 ? ` - ${seasonCount}` : ''}</span>`);
+    if (episode) tags.push(`<span class="ds-episode-info"> E${pad(episode)}</span>`);
+    return scrEsc(withYear) + (tags.length ? ' ' + tags.join(' ') : '');
+}
+
 function addToRealDebrid(magnetLink, torrent) {
     // Check if user is a requester before making the request
     const isRequesterEl = document.getElementById('is_requester');
@@ -1248,9 +1261,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 const qualityBadgesHtml = qualityTags.map(tag => createQualityBadge(tag)).join('');
                 
                 // Use clean title from header, store filename for toggle
-                const ShowInfo = `${season ? `<span class="season-info">S${season.toString().padStart(2, '0')}` : ''}${(torrent.parsed_info?.seasons?.length || 0) > 1 ? ` - ${torrent.parsed_info.seasons.length}</span>` : `</span>`} ${episode ? `<span class="ds-episode-info"> E${episode.toString().padStart(2, '0')}</span>`: ''}`;
-                const titleHasYear = year && title.trim().endsWith(`(${year})`);
-                const cleanTitle = `${title}${year && !titleHasYear ? ` (${year})` : ''}${ShowInfo ? ` ${ShowInfo}` : ''}`;
+                const cleanTitle = scrCleanTitleHtml(title, year, season, episode, torrent.parsed_info?.seasons?.length || 0);
                 const filename = torrent.title || torrent.original_title || 'N/A';
                 
                 // Get score and color class
@@ -1272,7 +1283,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 row.innerHTML = `
                     <td>
                         <div class="release-title-wrapper">
-                            <div class="release-title" data-clean-title="${scrEsc(cleanTitle)}" data-filename="${scrEsc(filename)}">${scrEsc(cleanTitle)}</div>
+                            <div class="release-title" data-clean-title="${scrEsc(cleanTitle)}" data-filename="${scrEsc(filename)}">${cleanTitle}</div>
                             <div class="release-tags">${qualityBadgesHtml}</div>
                         </div>
                     </td>
@@ -1408,7 +1419,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                             if (this.checked) {
                                 titleDiv.textContent = filename;
                             } else {
-                                titleDiv.textContent = cleanTitle;
+                                titleDiv.innerHTML = cleanTitle;  // built by scrCleanTitleHtml (title escaped)
                             }
                         }
                     });
@@ -1608,9 +1619,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                     const qualityTags = extractQualityTags(torrent.title || torrent.original_title || '');
                     const qualityBadgesHtml = qualityTags.map(tag => createQualityBadge(tag)).join('');
 
-                    const ShowInfo = `${season ? `<span class="season-info">S${season.toString().padStart(2, '0')}` : ''}${(torrent.parsed_info?.seasons?.length || 0) > 1 ? ` - ${torrent.parsed_info.seasons.length}</span>` : `</span>`} ${episode ? `<span class="ds-episode-info"> E${episode.toString().padStart(2, '0')}</span>` : ''}`;
-                    const titleHasYear = year && title.trim().endsWith(`(${year})`);
-                    const cleanTitle = `${title}${year && !titleHasYear ? ` (${year})` : ''}${ShowInfo ? ` ${ShowInfo}` : ''}`;
+                    const cleanTitle = scrCleanTitleHtml(title, year, season, episode, torrent.parsed_info?.seasons?.length || 0);
                     const filename = torrent.title || torrent.original_title || 'N/A';
 
                     const score = torrent.score_breakdown?.total_score || 0;
@@ -1630,7 +1639,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                     row.innerHTML = `
                         <td>
                             <div class="release-title-wrapper">
-                                <div class="release-title" data-clean-title="${scrEsc(cleanTitle)}" data-filename="${scrEsc(filename)}">${scrEsc(cleanTitle)}</div>
+                                <div class="release-title" data-clean-title="${scrEsc(cleanTitle)}" data-filename="${scrEsc(filename)}">${cleanTitle}</div>
                                 <div class="release-tags">${qualityBadgesHtml}</div>
                             </div>
                         </td>
@@ -1743,9 +1752,11 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                         tbody.querySelectorAll('tr').forEach(row => {
                             const titleDiv = row.querySelector('.release-title');
                             if (titleDiv) {
-                                titleDiv.textContent = this.checked
-                                    ? titleDiv.getAttribute('data-filename')
-                                    : titleDiv.getAttribute('data-clean-title');
+                                if (this.checked) {
+                                    titleDiv.textContent = titleDiv.getAttribute('data-filename');
+                                } else {
+                                    titleDiv.innerHTML = titleDiv.getAttribute('data-clean-title');  // scrCleanTitleHtml (title escaped)
+                                }
                             }
                         });
                     });
