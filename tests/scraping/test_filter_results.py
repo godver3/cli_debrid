@@ -416,7 +416,10 @@ class TestFilterResultsAnimeXEM(unittest.TestCase):
             direct_api=self.mock_direct_api
         )
         
-        self.assertEqual(len(filtered_results), 0, "Should reject anime season pack in single mode")
+        # A torrent season pack is kept for a single episode (ranked below singles);
+        # only NZB packs are still rejected in single mode.
+        self.assertEqual(len(filtered_results), 1, "Torrent season pack is kept in single mode")
+        self.assertTrue(filtered_results[0].get('pack_for_single_episode'))
 
     def test_anime_heuristic_pack_detection(self):
         """Test anime heuristic pack detection for titles without explicit pack indicators."""

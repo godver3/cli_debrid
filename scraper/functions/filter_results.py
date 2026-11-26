@@ -274,6 +274,42 @@ def _sub_series_alias_words(alias, main_title):
             if word not in _TITLE_FILLER_WORDS and word != 'series' and not _YEAR_TOKEN.fullmatch(word)}
 
 
+def _is_nzb_result(result):
+    return bool(result.get('protocol') == 'nzb' or result.get('nzb_url')
+                or str(result.get('scraper_type') or '').lower() == 'newznab')
+
+
+# Words a pack adds after the show's name that aren't part of it.
+_PACK_TITLE_WORDS = {'complete', 'collection', 'series', 'season', 'seasons', 'box', 'set', 'boxset', 'pack'}
+
+
+def _named_season_or_pack_title(parsed_title, query_title, season_words, result_seasons, result_episodes, season):
+    """True when the parsed title is the show's title plus only the searched season's
+    own name or pack words: 'Survivor Borneo' (Season 1 of Survivor is 'Borneo') or
+    'Survivor Collection' (an S01-S21 pack). Without this they score 0.4 and are
+    dropped, though TorBox has both cached.
+
+    Season-name words count only when the release covers that season (or names no
+    season); pack words only on a release with seasons and no episodes.
+    """
+    if not parsed_title or not query_title:
+        return False
+    parsed = re.findall(r'[a-z0-9]+', parsed_title)
+    query = re.findall(r'[a-z0-9]+', query_title)
+    if not query or len(parsed) <= len(query) or parsed[:len(query)] != query:
+        return False
+    extra = {w for w in parsed[len(query):] if w not in _TITLE_FILLER_WORDS and not _YEAR_TOKEN.fullmatch(w)}
+    if not extra:
+        return False
+    seasons = set(result_seasons or [])
+    allowed = set()
+    if season_words and (not seasons or season in seasons):
+        allowed |= season_words
+    if seasons and not result_episodes:
+        allowed |= _PACK_TITLE_WORDS
+    return extra <= allowed
+
+
 def _inserts_a_title_word(parsed_title, target_title):
     """True when parsed_title is target_title with a word added in the middle:
     'spider.man.the.new.animated.series' against 'spider.man.the.animated.series'
@@ -974,6 +1010,14 @@ def filter_results(
                         and _sub_series_alias_words(normalized_translated_title, normalized_query_title)
                         - season_title_words):
                     translated_title_sim = 0.0
+
+            if (main_title_sim < result_similarity_threshold
+                    and _named_season_or_pack_title(
+                        normalized_parsed_title, normalized_query_title, season_title_words,
+                        parsed_info.get('seasons'), parsed_info.get('episodes'),
+                        original_season if original_season is not None else season)):
+                logging.info(f"Title match: '{original_title}' is '{title}' plus its season name or pack words")
+                main_title_sim = result_similarity_threshold
 
             best_sim = max(main_title_sim, best_alias_sim, translated_title_sim, paren_title_sim)
 
@@ -1796,12 +1840,23 @@ def filter_results(
                     season_pack = season_episode_info.get('season_pack', 'Unknown')
                     is_potential_single_season_pack = False # Default to false
 
+                    # A torrent pack that covers the season is kept for a single episode:
+                    # the debrid service serves the one file from it, and a cached pack
+                    # (TorBox had Survivor S01-S22, 2026-11-26) beats an uncached or
+                    # missing single. Ranking puts packs below singles (-500 in single
+                    # mode), so they're only tried once the singles fail. NZBs still
+                    # take singles only: a pack would be downloaded whole.
+                    torrent_pack_for_episode = not multi and not _is_nzb_result(result)
                     if not multi:
                         # Check for multi-season packs (e.g., "Complete", "S01,S02")
                         if (season_pack == 'Complete' or (season_pack not in ['N/A', 'Unknown'] and ',' in season_pack)):
-                            result['filter_reason'] = "Multi-season pack when searching for single episode"
-                            logging.info(f"Rejected: Multi-season pack in single episode mode for '{original_title}' (Size: {result['size']:.2f}GB)")
-                            continue
+                            if torrent_pack_for_episode and (not result_seasons or season in result_seasons):
+                                result['pack_for_single_episode'] = True
+                                logging.info(f"Keeping multi-season torrent pack for S{season}E{episode}: '{original_title}'")
+                            else:
+                                result['filter_reason'] = "Multi-season pack when searching for single episode"
+                                logging.info(f"Rejected: Multi-season pack in single episode mode for '{original_title}' (Size: {result['size']:.2f}GB)")
+                                continue
 
                         # Allow multi-episode files (e.g. S01E01E02) if target episode is included
                         # Reject only if target episode is NOT in the file
@@ -1954,6 +2009,13 @@ def filter_results(
                             episode_match = True
                             logging.info(f"Episode matched via original episode number {original_episode} found in title for '{original_title}'")
                     # --- End original episode fallback ---
+
+                    if not episode_match and (result.get('pack_for_single_episode') or (
+                            torrent_pack_for_episode and is_potential_single_season_pack)):
+                        if not result.get('pack_for_single_episode'):
+                            logging.info(f"Keeping season torrent pack for S{season}E{episode}: '{original_title}'")
+                        result['pack_for_single_episode'] = True
+                        episode_match = True
 
                     if not episode_match:
                         # Before rejecting, check if it was identified as a potential single season pack earlier
