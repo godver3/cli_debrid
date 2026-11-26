@@ -166,6 +166,7 @@ class EpisodeOrderPlexSupportTests(unittest.TestCase):
                 mock.patch('metadata.metadata.get_imdb_id_if_missing', return_value='tt1409055'), \
                 mock.patch('cli_battery.app.episode_order.list_episode_orders', return_value=orders), \
                 mock.patch('utilities.nfo_writer.enabled', return_value=True), \
+                mock.patch('utilities.nfo_writer.plex_reads_nfos', return_value=True), \
                 patch_in_package(mr, '_saved_episode_order', return_value='default'), \
                 patch_in_package(mr, '_library_episode_rows', return_value=0):
             data = app.test_client().get('/magnet/episode_orders?tmdb_id=61709').get_json()

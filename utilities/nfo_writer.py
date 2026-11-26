@@ -2,10 +2,10 @@
 NFO files for the symlinked TV library (Symlinked/Local mode).
 
 Plex numbers shows by TMDB once it drops TheTVDB (2026-12-03), while
-cli_debrid names episode files by its own metadata (TVDB numbering, or the
+Clyde names episode files by its own metadata (TVDB numbering, or the
 order chosen for the show). Where the two disagree (anime, specials, split
 seasons, DVD/absolute orders) Plex would show the wrong episode titles. An
-NFO next to every episode file carries cli_debrid's title, plot and air date
+NFO next to every episode file carries Clyde's title, plot and air date
 for exactly the numbers in the file name, and Plex's NFO agent, Jellyfin,
 Emby and Kodi all read it.
 
@@ -14,11 +14,13 @@ Files follow the Kodi format (as Sonarr writes it):
     <show folder>/tvshow.nfo        <tvshow> ... </tvshow>
     <episode file stem>.nfo         one <episodedetails> per episode in the file
 
-Every file written here carries MARKER. Files without it (made by the user
-or another tool) are never overwritten or deleted. Unchanged files are not
-rewritten, so the media server isn't sent a change for nothing.
+Every file written here carries MARKER; NFOs made from a snapshot of Plex's
+own metadata (utilities/plex_snapshot.py) carry SNAPSHOT_MARKER. Files with
+neither (made by the user or another tool) are never overwritten or deleted.
+Unchanged files are not rewritten, so the media server isn't sent a change
+for nothing.
 
-Off unless turned on from Tools → NFO Files (setting NFO.enabled;
+Off unless turned on from Tools → NFO Files (setting NFO.mode;
 Symlinked/Local only).
 """
 
@@ -33,7 +35,13 @@ from xml.sax.saxutils import escape
 from utilities.settings import get_setting
 
 _LOG = '[NFO]'
-MARKER = '<!-- written by cli_debrid -->'
+MARKER = '<!-- written by Clyde -->'
+# Files from before the rename count as this writer's too
+LEGACY_MARKERS = ('<!-- written by cli_debrid -->',)
+# Made from a snapshot of Plex's metadata: kept when NFO files are off or a
+# show gets no NFOs of its own; the writer may replace them
+SNAPSHOT_MARKER = '<!-- written by Clyde from Plex metadata -->'
+WRITER, SNAPSHOT = 'writer', 'snapshot'
 SHOW_NFO = 'tvshow.nfo'
 VIDEO_EXTS = ('.mkv', '.mp4', '.avi', '.m4v', '.ts', '.m2ts', '.mov', '.wmv', '.webm', '.mpg', '.mpeg', '.iso')
 _SEASON_DIR = re.compile(r'^(season[ ._-]*\d+|specials|s\d{1,4})$', re.I)
@@ -63,6 +71,24 @@ def mode() -> str:
 def enabled() -> bool:
     """NFO files are on (either mode) and the library is symlinked."""
     return mode() != 'off' and symlinked_mode()
+
+
+def switch_plex_agent() -> bool:
+    """Turning NFO files on also switches the Plex TV library to the NFO
+    agent (NFO.plex_agent = 'switch', the default). 'leave': the files are
+    written and Plex is left exactly as it is."""
+    return str(get_setting(SECTION, 'plex_agent', 'switch') or 'switch').strip().lower() != 'leave'
+
+
+def plex_reads_nfos() -> bool:
+    """Clyde switched a Plex TV library to its NFO agent. Only then do NFO
+    files change what Clyde does in Plex (TMDB numbering, releasing old
+    title locks); written but unread, Plex is handled as without them."""
+    try:
+        from utilities.plex_nfo_agent import applied
+        return applied()
+    except Exception:
+        return False
 
 
 # Per-show override (Tools -> NFO Files -> Check a show):
@@ -166,7 +192,7 @@ def _uniqueids(ids: Dict[str, Optional[str]], default: Optional[str]) -> List[st
     return out
 
 
-def build_tvshow_nfo(show: Dict, full: bool = False) -> str:
+def build_tvshow_nfo(show: Dict, full: bool = False, marker: str = MARKER) -> str:
     """tvshow.nfo for a show: {'title', 'year', 'overview', 'runtime',
     'premiered', 'status', 'network', 'genres', 'ids': {imdb, tmdb, tvdb}}.
 
@@ -174,7 +200,7 @@ def build_tvshow_nfo(show: Dict, full: bool = False) -> str:
     then supply the show's title, description, artwork, cast and ratings
     exactly as without NFOs. full=True writes the show details too."""
     ids = {k: (str(v) if v else None) for k, v in (show.get('ids') or {}).items()}
-    # The default id is the one cli_debrid numbers episodes by: TVDB when
+    # The default id is the one Clyde numbers episodes by: TVDB when
     # known, else TMDB (Kodi/Plex use it to identify the show).
     default = 'tvdb' if ids.get('tvdb') else 'tmdb' if ids.get('tmdb') else 'imdb'
     lines = []
@@ -193,7 +219,7 @@ def build_tvshow_nfo(show: Dict, full: bool = False) -> str:
         lines += [_tag('genre', g) for g in (show.get('genres') or []) if g]
     lines += _uniqueids(ids, default)
     body = '\n'.join(x for x in lines if x)
-    return f'{_XML_DECL}\n{MARKER}\n<tvshow>\n{body}\n</tvshow>\n'
+    return f'{_XML_DECL}\n{marker}\n<tvshow>\n{body}\n</tvshow>\n'
 
 
 def _status(status) -> Optional[str]:
@@ -205,10 +231,12 @@ def _status(status) -> Optional[str]:
     return 'Continuing'
 
 
-def build_episode_nfo(episodes: List[Dict], show_title: str, plans: Optional[List[Dict]] = None) -> str:
+def build_episode_nfo(episodes: List[Dict], show_title: str, plans: Optional[List[Dict]] = None,
+                      marker: str = MARKER) -> str:
     """One <episodedetails> per episode in the file (multi-episode files get
     several, as Sonarr writes them). Each episode: {'season', 'episode',
-    'title', 'overview', 'aired', 'runtime', 'tvdb_id', 'imdb_id'}.
+    'title', 'overview', 'aired', 'runtime', 'tvdb_id', 'imdb_id', and
+    optionally 'tmdb_id'}.
 
     plans (utilities/nfo_sources.plan_episodes), one per episode:
     'minimal' writes only the numbers and ids, so the media server's own
@@ -217,7 +245,7 @@ def build_episode_nfo(episodes: List[Dict], show_title: str, plans: Optional[Lis
     plans = plans or [{'mode': 'full'}] * len(episodes)
     blocks = []
     for ep, plan in sorted(zip(episodes, plans), key=lambda x: (x[0].get('season') or 0, x[0].get('episode') or 0)):
-        ids = {'tvdb': ep.get('tvdb_id'), 'imdb': ep.get('imdb_id')}
+        ids = {'tvdb': ep.get('tvdb_id'), 'tmdb': ep.get('tmdb_id'), 'imdb': ep.get('imdb_id')}
         lines = [
             _tag('season', ep.get('season') if ep.get('season') is not None else None),
             _tag('episode', ep.get('episode') if ep.get('episode') is not None else None),
@@ -242,34 +270,44 @@ def build_episode_nfo(episodes: List[Dict], show_title: str, plans: Optional[Lis
                 parts.append(f'    <order>{_text(a["order"] if a.get("order") is not None else n)}</order>')
                 lines.append('  <actor>\n' + '\n'.join(parts) + '\n  </actor>')
         lines += _uniqueids({k: (str(v) if v else None) for k, v in ids.items()},
-                            'tvdb' if ids['tvdb'] else 'imdb')
+                            'tvdb' if ids['tvdb'] else 'tmdb' if ids['tmdb'] else 'imdb')
         body = '\n'.join(x for x in lines if x is not None)
         blocks.append(f'<episodedetails>\n{body}\n</episodedetails>')
-    return f'{_XML_DECL}\n{MARKER}\n' + '\n'.join(blocks) + '\n'
+    return f'{_XML_DECL}\n{marker}\n' + '\n'.join(blocks) + '\n'
 
 
 # ─── files ───────────────────────────────────────────────────────────────────
 
-def _ours(path: str) -> bool:
-    """True when the file at `path` was written here (or doesn't exist)."""
+def _kind_of(head: str) -> Optional[str]:
+    """WRITER, SNAPSHOT or None (not ours) for the start of an NFO file."""
+    if SNAPSHOT_MARKER in head:
+        return SNAPSHOT
+    if MARKER in head or any(m in head for m in LEGACY_MARKERS):
+        return WRITER
+    return None
+
+
+def nfo_kind(path: str) -> Optional[str]:
+    """WRITER, SNAPSHOT, None (someone else's) or '' (no file)."""
     try:
         with open(path, encoding='utf-8', errors='replace') as f:
-            return MARKER in f.read(400)
+            return _kind_of(f.read(400))
     except FileNotFoundError:
-        return True
+        return ''
     except OSError:
-        return False
+        return None
 
 
-def _write(path: str, content: str) -> str:
-    """'written', 'unchanged', 'foreign' (not ours, left alone) or 'error'."""
+def _write(path: str, content: str, replace: Tuple[str, ...] = (WRITER, SNAPSHOT)) -> str:
+    """'written', 'unchanged', 'foreign' (not one of `replace`, left alone) or
+    'error'."""
     try:
         if os.path.lexists(path):
             if os.path.islink(path) or not os.path.isfile(path):
                 return 'foreign'
             with open(path, encoding='utf-8', errors='replace') as f:
                 old = f.read()
-            if MARKER not in old[:400]:
+            if _kind_of(old[:400]) not in replace:
                 return 'foreign'
             if old == content:
                 return 'unchanged'
@@ -283,8 +321,8 @@ def _write(path: str, content: str) -> str:
         return 'error'
 
 
-def _remove_ours(path: str) -> bool:
-    if os.path.isfile(path) and not os.path.islink(path) and _ours(path):
+def _remove_ours(path: str, kinds: Tuple[str, ...] = (WRITER,)) -> bool:
+    if os.path.isfile(path) and not os.path.islink(path) and nfo_kind(path) in kinds:
         try:
             os.remove(path)
             return True
@@ -322,19 +360,22 @@ def remove_for_video(video_path: str) -> List[str]:
     """A library file is being removed: drop its episode NFO, and the show's
     tvshow.nfo once no video is left in the show folder. Only our files."""
     removed = []
-    # NFO files off: nothing of ours exists (turning them off deletes them),
-    # so deletions stay exactly as they were without this feature
-    if not video_path or not enabled():
+    # Also with NFO files off: snapshot NFOs (made from Plex's metadata) stay
+    # then. Without any NFO of ours this is two file checks, so deletions
+    # work exactly as without the feature.
+    if not video_path or not symlinked_mode():
         return removed
+    kinds = (WRITER, SNAPSHOT)
     # Called just before or after the file itself is removed
     nfo = episode_nfo_path(video_path)
-    if _remove_ours(nfo):
+    if _remove_ours(nfo, kinds):
         removed.append(nfo)
     folder = show_folder(video_path)
-    if folder and os.path.isdir(folder):
+    show_nfo = os.path.join(folder, SHOW_NFO) if folder else None
+    if show_nfo and nfo_kind(show_nfo) in kinds:
         others = [f for f in _videos_in(folder) if os.path.normpath(f) != os.path.normpath(video_path)]
-        if not others and _remove_ours(os.path.join(folder, SHOW_NFO)):
-            removed.append(os.path.join(folder, SHOW_NFO))
+        if not others and _remove_ours(show_nfo, kinds):
+            removed.append(show_nfo)
     if removed:
         logging.info(f"{_LOG} removed {len(removed)} NFO file(s) of {os.path.basename(video_path)}")
     return removed
@@ -355,7 +396,7 @@ def prune_orphans(folder: str) -> int:
         stems = {os.path.splitext(f)[0] for f in files if f.lower().endswith(VIDEO_EXTS)}
         for f in files:
             if f.lower().endswith('.nfo') and f != SHOW_NFO and os.path.splitext(f)[0] not in stems:
-                if _remove_ours(os.path.join(d, f)):
+                if _remove_ours(os.path.join(d, f), (WRITER, SNAPSHOT)):
                     n += 1
     return n
 
@@ -495,6 +536,9 @@ def write_show(imdb_id: str, rows: Optional[List[Dict]] = None, prune: bool = Tr
         # mode changed): its NFO files go, so Plex shows its own details
         if only_paths is None:
             counts['removed'] += remove_show(imdb_id, rows)
+            if counts['removed']:
+                # NFOs made from a Plex snapshot come back in their place
+                _restore_snapshot(imdb_id)
         return counts
     root = library_root()
     rows = [r for r in rows if r.get('location_on_disk') and os.path.lexists(r['location_on_disk'])]
@@ -567,7 +611,15 @@ def write_for_symlink(media_item_id: Optional[int], symlink_path: str) -> None:
     writes queued files per show after a short pause, so re-linking a whole
     show (an order change, a resync) loads the show's metadata once."""
     global _worker
-    if not media_item_id or not enabled():
+    if not media_item_id:
+        return
+    if not enabled():
+        # An upgraded episode keeps the NFO made from Plex's metadata
+        try:
+            from utilities import plex_snapshot
+            plex_snapshot.carry_to_symlink(media_item_id, symlink_path)
+        except Exception as e:
+            logging.debug(f"{_LOG} snapshot NFO for {symlink_path}: {e}")
         return
     with _pending_lock:
         _pending[int(media_item_id)] = symlink_path
@@ -636,6 +688,14 @@ def _episode_rows_by_id(media_item_id: int) -> List[Dict]:
         return [dict(zip(_COLS, r))] if r else []
     finally:
         conn.close()
+
+
+def _restore_snapshot(imdb_id: str) -> None:
+    try:
+        from utilities import plex_snapshot
+        plex_snapshot.restore_show(imdb_id)
+    except Exception as e:
+        logging.debug(f"{_LOG} snapshot NFOs for {imdb_id} not restored: {e}")
 
 
 def refresh_show(imdb_id: str) -> str:
@@ -732,7 +792,8 @@ def remove_show(imdb_id: str, rows: Optional[List[Dict]] = None) -> int:
 
 
 def remove_library() -> Dict[str, int]:
-    """Delete every NFO written here (turning the feature off)."""
+    """Delete every NFO written here (turning the feature off). Snapshot
+    NFOs stay (plex_snapshot.write_nfos puts back the ones replaced)."""
     root = library_root()
     n = 0
     if root and os.path.isdir(root):
@@ -740,5 +801,5 @@ def remove_library() -> Dict[str, int]:
             for f in files:
                 if f.lower().endswith('.nfo') and _remove_ours(os.path.join(d, f)):
                     n += 1
-    logging.info(f"{_LOG} removed {n} NFO file(s) written by cli_debrid")
+    logging.info(f"{_LOG} removed {n} NFO file(s) written by Clyde")
     return {'removed': n}

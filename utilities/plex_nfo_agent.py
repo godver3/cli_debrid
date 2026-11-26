@@ -1,5 +1,5 @@
 """
-Point Plex's TV libraries at an agent that reads cli_debrid's NFO files.
+Point Plex's TV libraries at an agent that reads Clyde's NFO files.
 
 Plex (PMS 1.43+) builds agents from "metadata agent provider groups"
 (GET/POST /media/providers/metadata/group, documented in the PMS OpenAPI
@@ -8,7 +8,7 @@ library uses by default). This makes one custom group:
 
     primary:  Plex Series          (items keep their plex:// guids, so watch
                                     state, Discover and collections stay)
-    order:    Plex NFO Series      (cli_debrid's titles/plots/dates win)
+    order:    Plex NFO Series      (Clyde's titles/plots/dates win)
               Plex Series          (everything an NFO doesn't say)
               Plex Local Media     (local artwork/tags)
 
@@ -27,7 +27,8 @@ from urllib.parse import urlencode
 from utilities.settings import get_setting
 
 _LOG = '[PlexNFOAgent]'
-GROUP_TITLE = 'cli_debrid NFO + Plex Series'
+GROUP_TITLE = 'Clyde NFO + Plex Series'
+LEGACY_GROUP_TITLES = ('cli_debrid NFO + Plex Series',)
 SERIES = 'tv.plex.agents.series'
 NFO_SERIES = 'tv.plex.agents.nfo.series'
 LOCAL_MEDIA = 'tv.plex.agents.localmedia'
@@ -100,7 +101,7 @@ def _wanted_order(providers: Dict[str, int]) -> List[int]:
 
 
 def ensure_group(plex=None) -> Dict:
-    """The cli_debrid NFO group, created or repaired so its providers are
+    """The Clyde NFO group, created or repaired so its providers are
     NFO Series, Plex Series, Local Media in that order."""
     plex = plex or _server()
     if plex is None:
@@ -117,7 +118,8 @@ def ensure_group(plex=None) -> Dict:
     state = _load_state()
     group = _group_by_id(plex, state['group_id']) if state.get('group_id') else None
     if group is None:
-        group = next((g for g in _groups(plex) if g['title'] == GROUP_TITLE and not g['builtIn']), None)
+        group = next((g for g in _groups(plex)
+                      if g['title'] in (GROUP_TITLE,) + LEGACY_GROUP_TITLES and not g['builtIn']), None)
     if group is None:
         _q(plex, '/media/providers/metadata/group', 'post',
            [('title', GROUP_TITLE), ('primaryIdentifier', SERIES)])
@@ -153,7 +155,7 @@ def _norm(p: str) -> str:
 
 
 def tv_sections(plex=None) -> List:
-    """TV libraries that read cli_debrid's symlinked folder. Plex may see
+    """TV libraries that read Clyde's symlinked folder. Plex may see
     the folder under another path (another container): then a location
     ending in the same last two folders counts too."""
     plex = plex or _server()
@@ -194,6 +196,13 @@ def _set_section(plex, section, agent: str, gid: Optional[int]) -> None:
     if gid is not None:
         params.append(('metadataAgentProviderGroupId', str(gid)))
     _q(plex, f'/library/sections/{section.key}', 'put', params)
+
+
+def applied() -> bool:
+    """Clyde switched at least one TV library to its NFO agent (and hasn't
+    put it back). From the saved state: no Plex request."""
+    state = _load_state()
+    return bool(state.get('group_id') and state.get('previous'))
 
 
 def status(plex=None) -> Dict:
