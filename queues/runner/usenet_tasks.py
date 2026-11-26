@@ -641,6 +641,19 @@ class UsenetTasks:
                                 _idle_hours = (datetime.now() - _last_provider_progress).total_seconds() / 3600.0
                                 if _idle_hours <= _download_timeout_hours:
                                     _timed_out_dl = False
+                        if _timed_out_dl:
+                            # The built-in engine owns its jobs: it fails them with proof
+                            # (status 'failed', non-retryable), retries inconclusive ones and
+                            # has an import watchdog. A job still queued/importing is the
+                            # engine's to resolve, so keep waiting; a job gone from the engine
+                            # never reaches here (404 reads as complete/ghost).
+                            try:
+                                from usenet.builtin_client import BuiltinClient as _BI_to
+                                if isinstance(_nzb_client, _BI_to):
+                                    _timed_out_dl = False
+                                    logging.debug(f'[NZB] {torrent_id} past {_download_timeout_hours:.1f}h but the built-in engine still owns it — waiting')
+                            except Exception:
+                                pass
                         if not _timed_out_dl:
                             # Mark job as actively downloading after 1 minute so Adding queue skips it
                             _job_id_dl = torrent_id[4:] if torrent_id.startswith('nzb:') else torrent_id
@@ -670,20 +683,13 @@ class UsenetTasks:
                             logging.error('[NZBPlayback] Could not persist timed-out candidate %s: %s',
                                           job_id, _playback_timeout_err, exc_info=True)
                             continue
-                        # Download timed out — treat like a failed job: add URL to not-wanted,
-                        # delete from cli_mount, try next scrape result or move to Wanted.
+                        # Download timed out. A stall is not proof the release is bad (the
+                        # provider may simply be backed up), so do NOT mark it not-wanted:
+                        # delete the stalled job and move on to the next result.
                         logging.warning(
                             f'[NZB] {torrent_id} stalled at {progress}% after >{_download_timeout_hours:.1f}h — '
-                            f'adding to not-wanted and requeuing'
+                            f'timed out (no verdict) — trying next result, not marking it not-wanted'
                         )
-                        try:
-                            from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_guid_to
-                            _nzb_url_to = item.get('filled_by_magnet', '')
-                            if _nzb_url_to:
-                                _add_guid_to(_nzb_url_to)
-                                logging.info(f'[NZB] Added stalled URL to not-wanted')
-                        except Exception:
-                            pass
                         # Delete the stalled job from cli_mount
                         try:
                             from usenet import get_usenet_client as _guc_to
@@ -721,12 +727,6 @@ class UsenetTasks:
                                 if s.get('filled_by_torrent_id') == torrent_id and s.get('id') != item_id
                             ]
                             for _ss in _stalled_siblings:
-                                _ss_url = _ss.get('filled_by_magnet', '')
-                                if _ss_url:
-                                    try:
-                                        _add_guid_to(_ss_url)
-                                    except Exception:
-                                        pass
                                 self.queue_manager.move_to_wanted(_ss, 'Adding')
                                 logging.info(f'[NZB] Moved stalled sibling {_ss["id"]} to Wanted')
                         except Exception:
