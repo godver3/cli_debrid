@@ -275,8 +275,10 @@ class TestCooldownParksItemInAdding(unittest.TestCase):
         import queues.adding_queue as aq
         self.aq = aq
         aq._cooldown_wake.clear()
+        aq._cooldown_notes.clear()
         cd.reset_fetch_cooldowns()
         self.addCleanup(aq._cooldown_wake.clear)
+        self.addCleanup(aq._cooldown_notes.clear)
         self.addCleanup(cd.reset_fetch_cooldowns)
         self.nzb = {'title': 'Survivor.S21E04.1080p', 'nzb_url': self.URL, 'protocol': 'nzb'}
         self.item = {'id': 7, 'title': 'Survivor', 'imdb_id': 'tt0239195', 'type': 'episode',
@@ -340,3 +342,31 @@ class TestCooldownParksItemInAdding(unittest.TestCase):
         self.proc._process_results_inner([dict(self.nzb), dict(other)], False, self.item)
         self.assertNotIn(self.aq.NZB_COOLDOWN_WAIT_KEY, self.item)
         self.assertEqual([r['title'] for r in self.item['scrape_results']], [self.nzb['title']])
+
+    def test_note_names_the_indexer_and_why(self):
+        cd.record_indexer_limit(self.URL, 1800, cd.refusal_why(429, ''))
+        with mock.patch('usenet.indexer_quota.instance_for_url', return_value='NinjaCentral_1'):
+            self._process(NZB_DEFERRED_INDEXER_COOLDOWN)
+        self.assertEqual(self.item[self.aq.NZB_COOLDOWN_NOTES_KEY], {'NinjaCentral': 'out of downloads'})
+
+    def test_note_falls_back_to_host_and_quota_reason(self):
+        with mock.patch('usenet.indexer_quota.instance_for_url', return_value=None):
+            self._process(NZB_DEFERRED_INDEXER_COOLDOWN)
+        self.assertEqual(self.item[self.aq.NZB_COOLDOWN_NOTES_KEY],
+                         {'ninjacentral.co.za': 'daily grab limit used up'})
+
+    def test_queue_page_note_while_parked(self):
+        with mock.patch.object(self.aq.time, 'monotonic', return_value=1000.0):
+            self.aq.park_for_indexer_cooldown(7, 1800, {'NinjaCentral': 'out of downloads'})
+            self.assertEqual(self.aq.cooldown_note(7), 'NinjaCentral out of downloads, retrying in 30 min')
+            self.assertIsNone(self.aq.cooldown_note(8))
+        with mock.patch.object(self.aq.time, 'monotonic', return_value=1000.0 + 1801):
+            self.assertIsNone(self.aq.cooldown_note(7))
+        self.aq.unpark_item(7)
+        self.assertNotIn(7, self.aq._cooldown_notes)
+
+    def test_refusal_why(self):
+        self.assertEqual(cd.refusal_why(429, ''), 'out of downloads')
+        self.assertEqual(cd.refusal_why(200, '<error code="501" description="Download limit reached"/>'),
+                         'out of downloads')
+        self.assertEqual(cd.refusal_why(503, '<html>maintenance</html>'), 'unavailable (HTTP 503)')

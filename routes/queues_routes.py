@@ -42,6 +42,8 @@ def _stream_item_copy(item: dict, queue_name: str) -> dict:
     time_added on items the queue thread was working on.
     """
     copy = {k: v for k, v in item.items() if k not in _STREAM_DROP_FIELDS}
+    if queue_name == 'Adding':
+        _add_waiting_note(copy)
     if queue_name in ('Adding', 'Checking'):
         torrent_id = str(item.get('filled_by_torrent_id') or '')
         if torrent_id.startswith('nzb:'):
@@ -54,6 +56,17 @@ def _stream_item_copy(item: dict, queue_name: str) -> dict:
                 _nzb_provider_display_cache[key] = label
             copy['provider_display'] = label
     return copy
+
+
+def _add_waiting_note(item: dict) -> None:
+    """Say why an Adding item is sitting still (its NZB indexer is out of downloads)."""
+    try:
+        from queues.adding_queue import cooldown_note
+        note = cooldown_note(item.get('id'))
+    except Exception:
+        note = None
+    if note:
+        item['waiting_note'] = note
 
 
 def _get_provider_display(item: dict) -> str:
@@ -818,6 +831,8 @@ def process_item_for_response(item, queue_name, currently_processing_upgrade_id=
 
         if queue_name in ['Adding', 'Checking'] and 'provider_display' not in item:
             item['provider_display'] = _get_provider_display(item)
+        if queue_name == 'Adding' and 'waiting_note' not in item:
+            _add_waiting_note(item)
 
         # Optimize JSON serialization - only process problematic fields
         datetime_fields = ['final_check_display_time', 'time_added', 'last_updated']

@@ -43,6 +43,9 @@ NZB_DEFERRED_INDEXER_COOLDOWN = object()
 # reads it to stop re-processing the item every tick and to stop it holding up
 # Scraping for the rest of the show.
 NZB_COOLDOWN_WAIT_KEY = '_nzb_cooldown_wait_s'
+# Set alongside it: {indexer name: reason}, shown on the Queue page so an item
+# stuck in Adding says which indexer it is waiting for and why.
+NZB_COOLDOWN_NOTES_KEY = '_nzb_cooldown_notes'
 # Re-check interval when a result is held back by something that has no end time
 # here (the indexer's daily grab quota).
 NZB_QUOTA_RECHECK_SECONDS = 300
@@ -50,6 +53,31 @@ NZB_QUOTA_RECHECK_SECONDS = 300
 # Per process_results call, for providers whose cache check adds the magnet to the
 # account (AllDebrid, which suspends accounts that generate links without downloading).
 MAX_ACCOUNT_ADDING_CACHE_CHECKS_PER_ITEM = 10
+
+def _indexer_cooldown_note(result: Dict) -> Tuple[str, str]:
+    """(indexer name, why) for an NZB result held back by its indexer's cooldown."""
+    import re as _re
+    from urllib.parse import urlparse as _urlparse
+    from usenet import indexer_quota
+    from usenet.nzb_fetch_cooldown import cooldown_why
+    url = result.get('nzb_url') or ''
+    name = ''
+    try:
+        name = indexer_quota.instance_for_url(url) or ''
+    except Exception:
+        name = ''
+    if not name:
+        source = str(result.get('source') or '')
+        name = source if source and not source.isdigit() else ''
+    if not name:
+        try:
+            name = _urlparse(url).netloc
+        except Exception:
+            name = ''
+    name = _re.sub(r'_\d+$', '', name) or 'NZB indexer'
+    why = cooldown_why(url) or 'daily grab limit used up'
+    return name, why
+
 
 class TorrentProcessor:
     """Handles torrent file/magnet processing and caching checks"""
@@ -1297,6 +1325,7 @@ class TorrentProcessor:
         # Only a fresh submission (below) is blocked.
         from usenet.nzb_fetch_cooldown import (
             classify_refusal, cooldown_reason, first_skip_this_window, record_indexer_limit,
+            refusal_why,
         )
         _indexer_refusal = cooldown_reason(nzb_url)
         if not _indexer_refusal:
@@ -1319,7 +1348,8 @@ class TorrentProcessor:
                     if _cooldown_s:
                         # cli_mount's URL fetch and the direct-upload fallback would hit
                         # the same refusal, so don't send either.
-                        record_indexer_limit(nzb_url, _cooldown_s)
+                        record_indexer_limit(nzb_url, _cooldown_s,
+                                             refusal_why(_nr_early.status_code, _nr_early.text[:2000]))
                         _indexer_refusal = (f'indexer refused the download (HTTP {_nr_early.status_code}); '
                                             f'skipping its NZBs for {max(1, _cooldown_s // 60)} min')
             except Exception as _nzb_early_err:
@@ -1336,7 +1366,9 @@ class TorrentProcessor:
                     except Exception:
                         _cooldown_s = 0
                 if _cooldown_s:
-                    record_indexer_limit(nzb_url, _cooldown_s)
+                    record_indexer_limit(nzb_url, _cooldown_s,
+                                         refusal_why(_err_resp.status_code,
+                                                     (getattr(_err_resp, 'text', '') or '')[:2000]))
                     _indexer_refusal = (f'indexer refused the download (HTTP {_err_resp.status_code}); '
                                         f'skipping its NZBs for {max(1, _cooldown_s // 60)} min')
                 else:
@@ -1536,6 +1568,8 @@ class TorrentProcessor:
                             _wait = cooldown_remaining(result.get('nzb_url') or '') or NZB_QUOTA_RECHECK_SECONDS
                             _prev = item.get(NZB_COOLDOWN_WAIT_KEY)
                             item[NZB_COOLDOWN_WAIT_KEY] = _wait if _prev is None else min(_prev, _wait)
+                            _name, _why = _indexer_cooldown_note(result)
+                            item.setdefault(NZB_COOLDOWN_NOTES_KEY, {}).setdefault(_name, _why)
                         continue
                     if nzb_result:
                         return nzb_result
@@ -1548,6 +1582,7 @@ class TorrentProcessor:
                     # has work to retry next tick: it isn't just waiting on a cooldown.
                     if item is not None:
                         item.pop(NZB_COOLDOWN_WAIT_KEY, None)
+                        item.pop(NZB_COOLDOWN_NOTES_KEY, None)
                     if item:
                         try:
                             import json as _json_tp

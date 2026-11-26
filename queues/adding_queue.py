@@ -12,7 +12,7 @@ import time # Add time import
 from debrid import get_debrid_provider
 from utilities.settings import get_setting
 from utilities.log_context import logs_for_item
-from .torrent_processor import TorrentProcessor, NZB_COOLDOWN_WAIT_KEY
+from .torrent_processor import TorrentProcessor, NZB_COOLDOWN_WAIT_KEY, NZB_COOLDOWN_NOTES_KEY
 from .media_matcher import MediaMatcher
 from database.torrent_tracking import update_adding_error
 from database.scraper_grabs import record_grab, mark_current_grab, queue_grab_trigger
@@ -267,14 +267,37 @@ def partition_adding_items(items, downloading_job_ids=None, upgrade_locks=None, 
 # a cooling-down indexer is worth processing again. In memory only: after a restart
 # the item is simply tried once and parks itself again.
 _cooldown_wake: Dict[Any, float] = {}
+# item id -> {indexer name: reason} for the Queue page.
+_cooldown_notes: Dict[Any, Dict[str, str]] = {}
 
 
-def park_for_indexer_cooldown(item_id, wait_seconds: float) -> None:
+def park_for_indexer_cooldown(item_id, wait_seconds: float, notes: Optional[Dict[str, str]] = None) -> None:
+    _cooldown_notes[item_id] = dict(notes or {})
     _cooldown_wake[item_id] = time.monotonic() + max(1.0, float(wait_seconds))
 
 
 def unpark_item(item_id) -> None:
     _cooldown_wake.pop(item_id, None)
+    _cooldown_notes.pop(item_id, None)
+
+
+def cooldown_note(item_id) -> Optional[str]:
+    """'NinjaCentral out of downloads, retrying in 23 min' while the item is parked, else None.
+
+    Read-only: the Queue page calls it from the web thread.
+    """
+    wake = _cooldown_wake.get(item_id)
+    if wake is None:
+        return None
+    remaining = wake - time.monotonic()
+    if remaining <= 0:
+        return None
+    notes = _cooldown_notes.get(item_id) or {}
+    if notes:
+        what = '; '.join(f'{name} {why}' for name, why in sorted(notes.items()))
+    else:
+        what = 'NZB indexer refusing downloads'
+    return f'{what}, retrying in {max(1, int(remaining // 60) + (1 if remaining % 60 else 0))} min'
 
 
 def item_parked_for_cooldown(item_id) -> bool:
@@ -285,6 +308,7 @@ def item_parked_for_cooldown(item_id) -> bool:
     if time.monotonic() >= wake:
         # Scraping and Adding both ask; pop so neither trips on the other's delete.
         _cooldown_wake.pop(item_id, None)
+        _cooldown_notes.pop(item_id, None)
         return False
     return True
 
@@ -665,6 +689,7 @@ class AddingQueue:
                     _nzb_attempt_made = True
 
                 item.pop(NZB_COOLDOWN_WAIT_KEY, None)
+                item.pop(NZB_COOLDOWN_NOTES_KEY, None)
                 # Now returns torrent_info, magnet, and chosen_result_info
                 torrent_info, magnet, chosen_result_info = self._process_results_with_mode(
                     results, item_identifier, accept_uncached, item=item
@@ -682,6 +707,11 @@ class AddingQueue:
                     torrent_info, magnet, chosen_result_info = self._process_results_with_mode(
                         results, item_identifier, accept_uncached=True, item=item
                     )
+
+                # Read once, after both passes: the keys are scratch state and must not ride along
+                # on the item into later DB/state updates.
+                _cooldown_wait = item.pop(NZB_COOLDOWN_WAIT_KEY, None)
+                _cooldown_notes_found = item.pop(NZB_COOLDOWN_NOTES_KEY, None)
 
                 updated_item = get_media_item_by_id(item['id']) # Check state after processing
                 if updated_item and updated_item.get('state') == 'Pending Uncached':
@@ -718,12 +748,11 @@ class AddingQueue:
                         (r.get('protocol') == 'nzb' or r.get('nzb_url'))
                         for r in _remaining_sr
                     ) if _remaining_sr else False
-                    _cooldown_wait = item.pop(NZB_COOLDOWN_WAIT_KEY, None)
                     if _is_nzb_item and _cooldown_wait is not None:
                         # Nothing failed: the NZB(s) are only held back by their indexer's
                         # cooldown. Keep every result, don't touch state, and skip the item
                         # (and let its siblings scrape) until the cooldown ends.
-                        park_for_indexer_cooldown(item_id, _cooldown_wait)
+                        park_for_indexer_cooldown(item_id, _cooldown_wait, _cooldown_notes_found)
                         logging.info(f"[AddingQueue] {item_identifier}: {len(_remaining_sr)} NZB result(s) kept, "
                                      f"indexer cooling down — next attempt in {int(_cooldown_wait // 60) + 1} min")
                         continue

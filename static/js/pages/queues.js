@@ -307,6 +307,10 @@ function generateSingleItem(item, queueName) {
         const providerLabel = (item.filled_by_torrent_id && item.filled_by_torrent_id.startsWith('nzb:')) ? 'Indexer:' : 'Provider:';
         itemContent += `<span class="item-separator"> - </span><span class="item-source" style="font-size: smaller; font-style: italic;"><span class="item-label">${providerLabel}</span> ${item.provider_display}</span>`;
     }
+    // Adding item parked because its NZB indexer is refusing downloads
+    if (queueName === 'Adding' && item.waiting_note) {
+        itemContent += `<span class="item-separator"> - </span><span class="item-waiting"><i class="fas fa-hourglass-half"></i> <span class="item-label">Waiting:</span> ${escapeHtml(item.waiting_note)}</span>`;
+    }
 
     itemContent += processingIndicator;
     itemContent += `</div>`;
