@@ -808,6 +808,12 @@ def migrate_compare():
     if not root:
         return jsonify({'success': False, 'error': "cli_mount's mount path isn't known (File Management → original files path)."}), 400
     out = bm.compare(client, os.path.join(root, '__all__'), os.path.join(client.mount_path, '__all__'), sample)
+    try:
+        from utilities import builtin_engine
+        out['hidden_extensions'] = bm.hidden_library_extensions(
+            builtin_engine.allowed_extensions(get_setting('Built-in Mount') or {}))
+    except Exception as exc:
+        logging.warning(f'[migrate] library extension check failed: {exc}')
     return jsonify({'success': True, **out})
 
 
@@ -843,11 +849,18 @@ def migrate_switch():
     cur = (get_setting('Built-in Mount') or {}).get('mount_path') or '/mnt/clid'
     if cur.rstrip('/') != root.rstrip('/'):
         set_setting(SECTION, 'pre_migration_mount_path', cur)
+    # Before the mount moves: files of the library's types that cli_mount
+    # showed must stay listed, or their symlinks go dead.
+    try:
+        added = bm.keep_library_extensions(get_setting, set_setting)
+    except Exception as exc:
+        logging.warning(f'[migrate] keeping library extensions failed: {exc}')
+        added = {}
     set_setting(SECTION, 'mount_path', root)
     set_setting(SECTION, 'run_alongside', False)
     set_setting('Usenet Provider', 'provider', 'builtin')  # URL/token kept for switching back
     _sync_in_background()
-    return jsonify({'success': True, 'mount_path': root})
+    return jsonify({'success': True, 'mount_path': root, 'added_extensions': added})
 
 
 @mount_bp.route('/api/migrate/rollback', methods=['POST'])

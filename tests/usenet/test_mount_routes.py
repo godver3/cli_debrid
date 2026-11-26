@@ -214,6 +214,22 @@ class MountRoutesTests(unittest.TestCase):
         self.assertEqual((code, self.store['Usenet Provider']['provider']), (200, 'builtin'))
         self.assertEqual(self.store['Built-in Mount']['mount_path'], '/mnt/climount')
 
+    def test_switch_keeps_extensions_the_library_uses(self):
+        # cli_mount listed Real-Debrid files whatever its allowed_file_types
+        # said; the built-in mount applies its list everywhere, so .ts
+        # episodes in the library would vanish at the switch.
+        from utilities import builtin_migrate as bm
+        lib = {'mkv': 900, 'ts': 174, 'm2ts': 2}
+        with self._switch_ready(False, {}), mock.patch.object(mr, '_fuse_mounted', return_value=False), \
+                mock.patch.object(bm, 'library_extensions', return_value=lib):
+            code, body = self._post(mr.migrate_switch)
+        self.assertEqual(code, 200)
+        self.assertEqual(body['added_extensions'], {'m2ts': 2, 'ts': 174})
+        self.assertEqual(self.store['Built-in Mount']['allowed_extensions'], 'mkv,mp4,m4v,avi,mov,mpg,mpeg,m2ts,ts')
+        # An empty list already shows everything: nothing to add.
+        self.store['Built-in Mount']['allowed_extensions'] = ''
+        self.assertEqual(bm.hidden_library_extensions([], lib), {})
+
     def test_switch_explains_a_mount_left_in_the_container(self):
         with self._switch_ready(False, {}), mock.patch.object(mr, '_fuse_mounted', return_value=True):
             with mock.patch.object(mr, '_dead_mount', return_value=False):
