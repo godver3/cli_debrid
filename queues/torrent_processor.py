@@ -451,6 +451,37 @@ class TorrentProcessor:
             logging.error(f"Error checking cache: {str(e)}", exc_info=True)
             return None
         
+    def _skip_hidden_release(self, info: Dict, item_identifier: str, prefix: str) -> bool:
+        """True when the built-in mount would hide every video file of the
+        torrent just added (a .ts-only release under the default allowed
+        extensions): it is marked not wanted and the next result is tried,
+        instead of being taken and failing in Checking because its folder
+        never appears. Removed from the account unless an item uses it."""
+        from utilities.mount_debrid import videos_all_hidden
+        exts = videos_all_hidden(info.get('files') or [], get_setting)
+        if not exts:
+            return False
+        logging.warning(f"[{item_identifier}] {prefix} Skipping: its video files are "
+                        f"{', '.join('.' + e for e in exts)}, which the built-in mount doesn't list "
+                        "(Built-in Mount > Allowed file extensions)")
+        h, tid = (info.get('hash') or '').lower(), info.get('id')
+        if h:
+            add_to_not_wanted(h)
+        if tid:
+            try:
+                from database.core import get_db_connection
+                conn = get_db_connection()
+                try:
+                    used = conn.execute("SELECT 1 FROM media_items WHERE filled_by_torrent_id = ? LIMIT 1",
+                                        (str(tid),)).fetchone()
+                finally:
+                    conn.close()
+                if not used:
+                    self.debrid_provider.remove_torrent(tid, removal_reason="Built-in mount hides its video files")
+            except Exception as e:
+                logging.error(f"[{item_identifier}] {prefix} Error removing hidden-extension torrent {tid}: {e}")
+        return True
+
     def add_to_account(self, magnet_or_url: str, preferred_provider: Optional[DebridProvider] = None) -> Optional[Dict]:
         """Add a magnet/torrent to the debrid account, trying each provider in order.
 
@@ -1885,6 +1916,8 @@ class TorrentProcessor:
                     info['original_scraped_torrent_title'] = result.get('original_title')
                     info['downloading'] = not is_cached
                     logging.debug(f"[{item_identifier}] [Result {idx}/{len(results)}] Full torrent info response: {info}")
+                    if self._skip_hidden_release(info, item_identifier, f"[Result {idx}/{len(results)}]"):
+                        continue
                     if len(info.get('files', [])) > 0:
                         definitive_hash = info.get('hash')
 

@@ -253,6 +253,37 @@ def engine_holds_debrid(get_setting) -> bool:
     return builtin_engine.selected({'Usenet Provider': get_setting('Usenet Provider') or {}, 'Built-in Mount': bm})
 
 
+#: Video types a release can carry; the built-in mount's allowed list
+#: decides which of them it shows.
+_VIDEO_EXTS = {'mkv', 'mp4', 'm4v', 'avi', 'mov', 'mpg', 'mpeg', 'ts', 'm2ts', 'wmv', 'webm', 'flv'}
+
+
+def videos_all_hidden(files: List[Dict], get_setting) -> List[str]:
+    """The extensions that hide every video file of a torrent on the
+    built-in mount (a .ts-only release under the default list), or [] when
+    the mount isn't serving debrid, lists everything, or shows at least one
+    video. Picking such a torrent can never produce a playable file."""
+    try:
+        if not engine_holds_debrid(get_setting):
+            return []
+        from utilities import builtin_engine
+        allowed = builtin_engine.allowed_extensions(get_setting('Built-in Mount') or {})
+    except Exception as exc:
+        logging.debug(f'[mount debrid] extension check skipped: {exc}')
+        return []
+    if not allowed:
+        return []
+    exts = []
+    for f in files or []:
+        name = str(f.get('path') or f.get('name') or '')
+        ext = os.path.splitext(name)[1].lstrip('.').lower()
+        if ext in _VIDEO_EXTS:
+            if ext in allowed:
+                return []
+            exts.append(ext)
+    return sorted(set(exts))
+
+
 def hidden_by_extension(torrent_id: str) -> bool:
     """The built-in mount holds this finished debrid torrent but the allowed
     extensions hide all of its files (a .ts-only release): its folder will
