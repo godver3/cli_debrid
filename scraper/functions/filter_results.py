@@ -105,8 +105,29 @@ def release_country_suffix(normalized_parsed_title: str, normalized_base_title: 
     if rest in _COUNTRY_NAMES:
         return _COUNTRY_NAMES[rest]
     code = rest.upper()
-    code = 'UK' if code == 'GB' else code
+    # Scene name for South Africa ("Survivor.SA"); only read right after the base title.
+    code = {'GB': 'UK', 'SA': 'ZA'}.get(code, code)
     return code if code in _COUNTRY_CODES else None
+
+
+def release_country_in_name(release_name: str, normalized_base_title: str) -> Optional[str]:
+    """Country right after the base title in the raw release name, for names whose
+    country PTT drops from its title ('Survivor.IL.VIP.S02E03' -> 'IL'). Only a
+    country name or code directly following the whole base title counts."""
+    if not release_name or not normalized_base_title:
+        return None
+    words = [w for w in re.split(r'[\s._-]+', release_name.lower()) if w]
+    base = normalized_base_title.split('.')
+    if words[:len(base)] != base:
+        return None
+    rest = words[len(base):]
+    for n in (2, 1):
+        if len(rest) >= n:
+            code = release_country_suffix(normalized_base_title + '.' + '.'.join(rest[:n]),
+                                          normalized_base_title)
+            if code:
+                return code
+    return None
 
 
 _YEAR_PATTERN = r'\b(19[0-9]{2}|20[0-9]{2})\b'
@@ -1181,8 +1202,14 @@ def filter_results(
                 result_language_code = None
                 if result_country:
                     result_language_code = country_code_mapping.get(result_country.lower(), result_country.upper())
-                elif normalized_base_title:
-                    result_language_code = release_country_suffix(normalized_parsed_title, normalized_base_title)
+                else:
+                    # The show's title may carry no tag ("Survivor"): the release's
+                    # own country word right after the title still names another version.
+                    suffix_base = normalized_base_title or normalized_query_title
+                    result_language_code = (
+                        release_country_suffix(normalized_parsed_title, suffix_base)
+                        or release_country_in_name(original_title, suffix_base)
+                    )
 
                 if result_language_code:
                     # Result has language codes - check if they match expected

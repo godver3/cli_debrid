@@ -117,6 +117,49 @@ class HelperTests(unittest.TestCase):
         self.assertIsNone(release_country_suffix("love.in.the.traitors", "the.traitors"))
 
 
+class UntaggedShowTitleTests(unittest.TestCase):
+    """"Survivor" (US) has no tag on its title; the US comes from its aliases.
+    Other countries' releases carry theirs right after the title, in a form PTT
+    often misses (lowercase, "IL.VIP", "SA")."""
+
+    def _passed(self, title, titles, aliases=("Survivor (US)",)):
+        from scraper.functions.filter_results import filter_results
+        passed, _ = filter_results([_result(t) for t in titles], "1", title, 2000, "episode",
+                                   11, 3, False, VERSION, 60, 10, {11: 10}, ["Reality"],
+                                   list(aliases))
+        return {r["original_title"] for r in passed}
+
+    def test_foreign_survivors_rejected(self):
+        foreign = ["survivor.au.s11e01.1080p.hdtv.h264-ferengi.mkv",
+                   "Survivor.IL.S11E08.1080p.WEBRip.x264-HebTV",
+                   "Survivor.IL.VIP.S02E03.720p.WEBRip.x264-HebTV-RakuvArrow",
+                   "Survivor.SA.S11E07.1080p.WEB.h264-GRP",
+                   "Survivor.ZA.S11E01.1080p.WEB.h264-GRP",
+                   "Survivor.AU.S11E03.720p.HDTV.x264-FQM"]
+        self.assertEqual(set(), self._passed("Survivor", foreign))
+
+    def test_matching_and_untagged_not_rejected(self):
+        ok = ["Survivor.US.S11E03.720p.HDTV.x264-GRP", "Survivor.S11E03.1080p.WEB.h264-GRP"]
+        self.assertEqual(set(ok), self._passed("Survivor", ok))
+
+    def test_two_letter_title_words(self):
+        # Big Brother Canada is a different show; "Who Is America" has no code after it.
+        self.assertEqual(set(), self._passed("Big Brother", ["Big.Brother.CA.S11E03.1080p.WEB.h264-GRP"],
+                                             aliases=("Big Brother (US)",)))
+        us = ["Who.Is.America.S11E03.1080p.WEB.h264-GRP"]
+        self.assertEqual(set(us), self._passed("Who Is America", us, aliases=("Who Is America (US)",)))
+
+    def test_release_country_in_name(self):
+        from scraper.functions.filter_results import release_country_in_name, release_country_suffix
+        self.assertEqual("IL", release_country_in_name("Survivor.IL.VIP.S02E03.720p", "survivor"))
+        self.assertEqual("AU", release_country_in_name("survivor.au.s11e01.1080p", "survivor"))
+        self.assertEqual("ZA", release_country_in_name("Survivor.South.Africa.S01E01", "survivor"))
+        self.assertIsNone(release_country_in_name("Survivor.S11E03.1080p", "survivor"))
+        self.assertIsNone(release_country_in_name("Survivor.Winners.At.War.S11E03", "survivor"))
+        self.assertIsNone(release_country_in_name("Love.Survivor.IL.S01E01", "survivor"))
+        self.assertEqual("ZA", release_country_suffix("survivor.sa", "survivor"))
+
+
 if __name__ == '__main__':
     unittest.main()
 
