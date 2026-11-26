@@ -96,12 +96,28 @@ def _get_provider_display(item: dict) -> str:
                     return scraper_type
                 return ''
 
-            # Use first NZB result's indexer (all NZB results in a pack come from same indexer search)
-            for r in results:
-                if r.get('protocol') == 'nzb':
+            # The submitted NZB's indexer: its URL is filled_by_magnet. scrape_results
+            # mixes indexers, so its first NZB can be a different (even disabled) one.
+            submitted_url = str(item.get('filled_by_magnet') or '')
+            if submitted_url.startswith('http'):
+                try:
+                    from usenet.indexer_quota import instance_for_url
+                    name = _re.sub(r'_\d+$', '', instance_for_url(submitted_url) or '')
+                    if name:
+                        return name
+                except Exception:
+                    pass
+            nzb_results = [r for r in results if isinstance(r, dict) and r.get('protocol') == 'nzb']
+            for r in nzb_results:
+                if (submitted_url and r.get('nzb_url') == submitted_url) or (
+                        title and title in (r.get('original_title'), r.get('title'))):
                     name = _extract_indexer(r)
                     if name:
                         return name
+            for r in nzb_results:
+                name = _extract_indexer(r)
+                if name:
+                    return name
         except Exception:
             pass
         return 'Usenet'
