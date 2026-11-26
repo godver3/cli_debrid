@@ -577,6 +577,13 @@ class MediaMatcher:
                     season_match = True
                     lenient_season_pass = True
                     logging.debug(f"Allowing anime result ({filename_for_check}) parsed as S1/None when target is S{target_season} (absolute episode evidence found)")
+                    # "Show - 14 - [BD]" is S2E1 by its absolute number: the
+                    # file's own episode is the absolute, not the item's E1
+                    file_episodes = ptt_result.get('episodes') or (
+                        [ptt_result['fallback_episode']] if ptt_result.get('fallback_episode') is not None else [])
+                    if abs_target in file_episodes:
+                        episode_match = True
+                        logging.debug(f"Anime absolute match: episode {abs_target} is S{target_season}E{target_episode}")
                 elif ptt_result.get('episodes') and not ptt_result.get('seasons') and not fallback_season:
                     # This is likely an absolute numbered episode. We can't confirm the season here,
                     # but we shouldn't reject it either. We'll let it pass the season check
@@ -1090,6 +1097,32 @@ class MediaMatcher:
                 for pf in by_episode_only.get(target_episode, []):
                     if id(pf) not in seen_ids:
                         seen_ids.add(id(pf)); candidate_files.append(pf)
+                # Anime packs numbered straight through ("Ep14", " - 14 - ",
+                # "S01E14") hold a later season's episodes under their absolute
+                # number: S2E1 of a 13-episode first season is file 14.
+                # _check_match decides whether such a file really is this episode.
+                abs_target = None
+                if is_anime and target_season and target_season > 1:
+                    try:
+                        abs_target = self._absolute_for(item, target_season, target_episode,
+                                                        metadata_numbering=not xem_mapping)
+                    except Exception as e:
+                        logging.debug(f"Could not compute absolute episode for candidate lookup: {e}")
+                if abs_target and abs_target != target_episode:
+                    for key in ((None, abs_target), (1, abs_target)):
+                        for pf in by_season_episode.get(key, []):
+                            if id(pf) not in seen_ids:
+                                seen_ids.add(id(pf)); candidate_files.append(pf)
+                    for pf in by_episode_only.get(abs_target, []):
+                        if id(pf) not in seen_ids:
+                            seen_ids.add(id(pf)); candidate_files.append(pf)
+                    # "[Grp] Show 14 (BD 720p)": PTT reads no episode; the
+                    # filename fallback has it (not indexed, see above)
+                    for pf in parsed_files:
+                        info = pf.get('parsed_info', {})
+                        if (not info.get('episodes') and info.get('fallback_episode') == abs_target
+                                and id(pf) not in seen_ids):
+                            seen_ids.add(id(pf)); candidate_files.append(pf)
             else:
                 candidate_files = parsed_files  # Fallback if no episode available
 
