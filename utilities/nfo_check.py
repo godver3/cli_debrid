@@ -1,9 +1,9 @@
 """
 Tools -> NFO Files -> Check a show: does Plex show each library file's
-episode the way cli_debrid numbers it?
+episode the way Clyde numbers it?
 
 For every episode file of the show, the Plex episode at the same
-season/episode is compared with cli_debrid's: it counts as right when the
+season/episode is compared with Clyde's: it counts as right when the
 title matches closely or the air dates agree (Plex's own wording differs a
 little on episodes it numbers the same way, "Raven Black - Part 1" vs
 "Raven Black (1)"). Read-only; fix_show() rewrites the show's NFO files (or,
@@ -46,6 +46,9 @@ def _nfo_kind(path: str) -> str:
             text = f.read()
     except OSError:
         return 'none'
+    from utilities.nfo_writer import SNAPSHOT_MARKER
+    if SNAPSHOT_MARKER in text[:400]:
+        return 'Plex snapshot'
     return 'full' if '<title>' in text else 'minimal'
 
 
@@ -62,7 +65,7 @@ def check_show(imdb_id: str, plex=None) -> Dict:
         out['error'] = problem or 'show not found in Plex'
         return out
     out['plex_show'] = show.title
-    if out['gets_nfos']:
+    if out['gets_nfos'] and nfo_writer.switch_plex_agent():
         # The TV library must still use the NFO agent (editing the library's
         # settings with an older client can put it back on plain Plex Series)
         try:
@@ -103,11 +106,19 @@ def fix_show(imdb_id: str) -> str:
     if nfo_writer.wants_show(imdb_id):
         from utilities import plex_nfo_agent
         agent_note = ''
-        if not plex_nfo_agent.status().get('configured'):
+        if nfo_writer.switch_plex_agent() and not plex_nfo_agent.status().get('configured'):
             plex_nfo_agent.apply(refresh=False)
             agent_note = 'TV library put back on the NFO agent. '
         c = nfo_writer.write_show(imdb_id)
-        note = release_for_nfo(imdb_id)
+        if nfo_writer.plex_reads_nfos():
+            note = release_for_nfo(imdb_id)
+        else:
+            # The library keeps its own agent: Plex isn't changed, only asked
+            # to re-read the show
+            show, _problem = _plex_show(imdb_id)
+            if show is not None:
+                show.refresh()
+            note = 'Plex keeps its own agent (NFO files are written only)'
         return f"{agent_note}NFO files: {c['written']} written, {c['unchanged']} unchanged. {note}".strip()
     removed = nfo_writer.write_show(imdb_id)['removed'] if nfo_writer.enabled() else 0
     show_note = sync_show(imdb_id)

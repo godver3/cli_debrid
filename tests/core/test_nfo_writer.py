@@ -42,6 +42,7 @@ class NfoWriterTests(unittest.TestCase):
         patches = [
             mock.patch.object(nw, 'library_root', return_value=self.root),
             mock.patch.object(nw, 'enabled', return_value=True),
+            mock.patch.object(nw, 'symlinked_mode', return_value=True),
             mock.patch.object(nw, 'mode', return_value='all'),
             mock.patch.object(nw, '_battery', return_value=(META, SEASONS)),
             mock.patch.object(nw, '_show_imdb_ids_in', return_value={'tt2396135'}),
@@ -152,14 +153,30 @@ class NfoWriterTests(unittest.TestCase):
             c = nw.write_show('tt2396135')
         self.assertEqual(c['written'], 0)
 
-    def test_off_means_deletions_touch_nothing(self):
-        nw.write_show('tt2396135')
-        nfo = self.rows[0]['location_on_disk'][:-4] + '.nfo'
+    def test_off_without_nfos_of_ours_deletions_touch_nothing(self):
+        # A user's own NFO stays, and no folder walk happens
+        mine = self.rows[0]['location_on_disk'][:-4] + '.nfo'
+        with open(mine, 'w') as f:
+            f.write('<episodedetails/>')
         with mock.patch.object(nw, 'enabled', return_value=False), \
                 mock.patch.object(nw, '_videos_in') as walk:
             self.assertEqual(nw.remove_for_video(self.rows[0]['location_on_disk']), [])
         walk.assert_not_called()
+        self.assertTrue(os.path.exists(mine))
+
+    def test_plex_mode_deletions_touch_nothing(self):
+        nw.write_show('tt2396135')
+        nfo = self.rows[0]['location_on_disk'][:-4] + '.nfo'
+        with mock.patch.object(nw, 'symlinked_mode', return_value=False):
+            self.assertEqual(nw.remove_for_video(self.rows[0]['location_on_disk']), [])
         self.assertTrue(os.path.exists(nfo))
+
+    def test_legacy_marker_counts_as_ours(self):
+        nfo = self.rows[0]['location_on_disk'][:-4] + '.nfo'
+        with open(nfo, 'w') as f:
+            f.write('<?xml version="1.0"?>\n<!-- written by cli_debrid -->\n<episodedetails/>')
+        nw.write_show('tt2396135')
+        self.assertIn(nw.MARKER, self._read(nfo))
 
     def test_off_means_order_change_writes_nothing(self):
         with mock.patch.object(nw, 'enabled', return_value=False), \
@@ -262,9 +279,11 @@ class PlanTests(unittest.TestCase):
 class SymlinkHookBatchTests(unittest.TestCase):
     def test_hook_is_a_no_op_when_off(self):
         with mock.patch.object(nw, 'enabled', return_value=False), \
+                mock.patch('utilities.plex_snapshot.carry_to_symlink') as carry, \
                 mock.patch.object(nw.threading, 'Thread') as thread:
             nw.write_for_symlink(5, '/x.mkv')
         thread.assert_not_called()
+        carry.assert_called_once_with(5, '/x.mkv')
 
     def test_batch_writes_each_show_once(self):
         rows = [{'id': i, 'imdb_id': 'tt1', 'location_on_disk': f'/lib/S/Season 01/e{i}.mkv'} for i in (1, 2, 3)]

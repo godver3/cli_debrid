@@ -70,10 +70,11 @@ def _plex_ordering_for(order: str) -> Optional[List[str]]:
 
 
 def _nfo_mode(imdb_id: str) -> bool:
-    """This show's order is carried by NFO files (Tools -> NFO Files)."""
+    """This show's order is carried by NFO files (Tools -> NFO Files) that
+    Plex reads (the library is on Clyde's NFO agent)."""
     try:
-        from utilities.nfo_writer import wants_show
-        return wants_show(imdb_id)
+        from utilities.nfo_writer import plex_reads_nfos, wants_show
+        return wants_show(imdb_id) and plex_reads_nfos()
     except Exception:
         return False
 

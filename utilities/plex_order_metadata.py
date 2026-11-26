@@ -67,10 +67,12 @@ def _plex_show(imdb_id: str, plex=None):
 
 
 def _nfo_mode(imdb_id: str) -> bool:
-    """This show's order is carried by NFO files (Tools -> NFO Files)."""
+    """This show's order is carried by NFO files (Tools -> NFO Files) that
+    Plex reads: files written while the library keeps its own agent change
+    nothing in Plex."""
     try:
-        from utilities.nfo_writer import wants_show
-        return wants_show(imdb_id)
+        from utilities.nfo_writer import plex_reads_nfos, wants_show
+        return wants_show(imdb_id) and plex_reads_nfos()
     except Exception:
         return False
 
