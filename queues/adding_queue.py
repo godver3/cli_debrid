@@ -283,7 +283,8 @@ def item_parked_for_cooldown(item_id) -> bool:
     if wake is None:
         return False
     if time.monotonic() >= wake:
-        del _cooldown_wake[item_id]
+        # Scraping and Adding both ask; pop so neither trips on the other's delete.
+        _cooldown_wake.pop(item_id, None)
         return False
     return True
 
