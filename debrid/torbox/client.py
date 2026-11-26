@@ -12,6 +12,7 @@ from ..base import DebridProvider, ProviderUnavailableError, TooManyDownloadsErr
 from ..common import extract_hash_from_magnet, timed_lru_cache
 from ..status import TorrentFetchStatus, TorrentInfoStatus, TorrentStatus
 from .api import get_all_torrents, get_api_key, get_data_payload, make_request
+from . import zip_index
 from .exceptions import TorboxAPIError, TorboxAuthError
 from database.not_wanted_magnets import add_to_not_wanted
 from utilities.phalanx_db_cache_manager import PhalanxDBClassManager
@@ -74,7 +75,7 @@ class TorboxProvider(DebridProvider):
                 hash_value = magnet_or_hash.lower()
         return hash_value.lower() if hash_value else None
 
-    def _normalize_files(self, info: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _normalize_files(self, info: Dict[str, Any], build_zip_index: bool = False) -> List[Dict[str, Any]]:
         files = []
         for file_info in info.get('files', []) or []:
             name = file_info.get('name') or file_info.get('short_name') or ''
@@ -85,7 +86,22 @@ class TorboxProvider(DebridProvider):
                 'bytes': file_info.get('size', 0),
                 'selected': True,
             })
-        return files
+        return self._unzipped(info, files, build_zip_index)
+
+    def _unzipped(self, info: Dict[str, Any], files: List[Dict[str, Any]], build: bool) -> List[Dict[str, Any]]:
+        """A torrent TorBox stores as one stored .zip, as the files inside
+        it (see zip_index). build=False only uses an index already read:
+        account-wide listings must not make range requests per torrent."""
+        zf = zip_index.zip_only(files)
+        if not zf or self._map_status(info) != TorrentStatus.CACHED:
+            return files
+        hash_value, tid = (info.get('hash') or '').lower(), str(info.get('id', ''))
+        if build and tid:
+            members = zip_index.index(hash_value, zf.get('id'), int(zf.get('bytes') or 0),
+                                      lambda: self.mount_link(tid, str(zf.get('id')))[0])
+        else:
+            members = zip_index.cached(hash_value, zf.get('id'), int(zf.get('bytes') or 0))
+        return zip_index.expand(zf, members) if members else files
 
     @staticmethod
     def _common_root_folder(files: List[Dict[str, Any]]) -> str:
@@ -115,7 +131,7 @@ class TorboxProvider(DebridProvider):
             return TorrentStatus.ERROR
         return TorrentStatus.UNKNOWN
 
-    def _normalize_torrent_info(self, info: Dict[str, Any]) -> Dict[str, Any]:
+    def _normalize_torrent_info(self, info: Dict[str, Any], build_zip_index: bool = False) -> Dict[str, Any]:
         status = self._map_status(info)
         progress_fraction = info.get('progress', 0) or 0
         if progress_fraction <= 1:
@@ -127,7 +143,7 @@ class TorboxProvider(DebridProvider):
         normalized['id'] = str(info.get('id', ''))
         normalized['hash'] = (info.get('hash') or '').lower()
         normalized['filename'] = info.get('name', '')
-        normalized['files'] = self._normalize_files(info)
+        normalized['files'] = self._normalize_files(info, build_zip_index)
         normalized['debrid_folder_name'] = (
             self._common_root_folder(normalized['files'])
             or info.get('name', '') or info.get('download_path', '')
@@ -419,7 +435,7 @@ class TorboxProvider(DebridProvider):
             else:
                 return None
 
-            normalized = self._normalize_torrent_info(info)
+            normalized = self._normalize_torrent_info(info, build_zip_index=True)
             hash_value = normalized.get('hash', '')
             status = self._map_status(info)
             self.update_status(torrent_id, status)
@@ -449,11 +465,17 @@ class TorboxProvider(DebridProvider):
         info = (info[0] if info else None) if isinstance(info, list) else info
         if not isinstance(info, dict) or self._map_status(info) != TorrentStatus.CACHED or not info.get('download_present', True):
             return None
-        files = self._normalize_files(info)
+        files = self._normalize_files(info, build_zip_index=True)
         if not files:
             return None
         folder = self._common_root_folder(files) or info.get('name') or str(torrent_id)
-        return folder, [{'name': f['path'], 'size': int(f.get('bytes') or 0), 'file_id': str(f.get('id'))} for f in files]
+        out = []
+        for f in files:
+            row = {'name': f['path'], 'size': int(f.get('bytes') or 0), 'file_id': str(f.get('id'))}
+            if f.get('zip_size'):  # a member of a stored zip: its byte range of the zip's file
+                row.update(offset=int(f['zip_offset']), source_size=int(f['zip_size']))
+            out.append(row)
+        return folder, out
 
     def mount_check(self, torrent_id: str, file_id: str) -> Tuple[str, str]:
         """cli_mount's TorBox CheckFile: the torrent's download no longer

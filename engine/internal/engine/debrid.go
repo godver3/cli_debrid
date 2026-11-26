@@ -34,6 +34,14 @@ type DebridFile struct {
 	Name string `json:"name"`
 	Size int64  `json:"size"`
 	Ref  string `json:"ref"` // provider file reference, handed back to the link callback
+	// SourceSize, when set, says the file is the Size bytes at Offset of
+	// the provider file Ref (SourceSize bytes long): a member of a stored
+	// zip the provider serves as one file (TorBox's zipped big packs).
+	// Each such file still gets its own source (its own reader, connection
+	// slots and read-ahead, so two episodes playing don't share them); the
+	// chunk cache is keyed by ref, so they share cached bytes.
+	Offset     int64 `json:"offset,omitempty"`
+	SourceSize int64 `json:"source_size,omitempty"`
 }
 
 // AddDebrid registers a debrid torrent as a ready job (no download).
@@ -47,9 +55,20 @@ func (e *Engine) AddDebrid(id, name, category, provider string, files []DebridFi
 		if f.Name == "" || f.Size <= 0 || f.Ref == "" || seen[f.Name] || strings.ContainsAny(f.Name, "/\\") {
 			return store.Job{}, fmt.Errorf("%w: file %d (%q) needs a unique plain name, size and ref", ErrBadNZB, i, f.Name)
 		}
+		srcSize := f.Size
+		if f.SourceSize > 0 {
+			if f.Offset < 0 || f.Offset+f.Size > f.SourceSize {
+				return store.Job{}, fmt.Errorf("%w: file %d (%q) lies outside its source (%d+%d of %d)",
+					ErrBadNZB, i, f.Name, f.Offset, f.Size, f.SourceSize)
+			}
+			srcSize = f.SourceSize
+		} else if f.Offset != 0 {
+			return store.Job{}, fmt.Errorf("%w: file %d (%q) has an offset but no source_size", ErrBadNZB, i, f.Name)
+		}
 		seen[f.Name] = true
-		res.Sources = append(res.Sources, job.Source{NZBIndex: -1, Name: f.Name, Layout: stream.Layout{Size: f.Size}, Remote: f.Ref})
-		res.Entries = append(res.Entries, job.Entry{Name: f.Name, Size: f.Size, Pieces: []job.Piece{{Source: i, Length: f.Size}}})
+		res.Sources = append(res.Sources, job.Source{NZBIndex: -1, Name: f.Name, Layout: stream.Layout{Size: srcSize}, Remote: f.Ref})
+		res.Entries = append(res.Entries, job.Entry{Name: f.Name, Size: f.Size,
+			Pieces: []job.Piece{{Source: i, Offset: f.Offset, Length: f.Size}}})
 	}
 	j, err := e.Store.Create(store.Job{ID: id, Name: cleanFolderName(name), Category: category, Protocol: ProtocolDebrid, Provider: provider},
 		[]byte("<nzb></nzb>"))

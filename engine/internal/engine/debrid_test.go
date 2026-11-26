@@ -235,3 +235,63 @@ func TestLinkWaiterContextCancel(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Members of a stored zip the provider serves as one file (TorBox's zipped
+// big packs) are byte ranges of that file: each reads its own bytes over
+// the zip's one link, and a range outside the zip is refused.
+func TestDebridZipMembersReadTheirRange(t *testing.T) {
+	zip := data(33, 2*1<<20+777)
+	var links atomic.Int64
+	cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		a, b := rangeOf(r, len(zip))
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", a, b, len(zip)))
+		w.WriteHeader(http.StatusPartialContent)
+		w.Write(zip[a : b+1])
+	}))
+	defer cdn.Close()
+	cb := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		links.Add(1)
+		json.NewEncoder(w).Encode(map[string]any{"url": cdn.URL + "/z", "expires_in": 3600})
+	}))
+	defer cb.Close()
+
+	s := nntptest.Start(t)
+	e := newEngine(t, s, func(c *Config) { c.LinkCallback, c.Token = cb.URL, "tok" })
+	size := int64(len(zip))
+	members := []DebridFile{
+		{Name: "Show.S01E01.mkv", Size: 1000, Ref: "Z:1", Offset: 100, SourceSize: size},
+		{Name: "Show.S01E02.mkv", Size: 1<<20 + 50, Ref: "Z:1", Offset: 1<<20 + 600, SourceSize: size},
+	}
+	j, err := e.AddDebrid("torbox-Z1", "Show.S01", "tv", "torbox", members)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := e.Files(j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, res, _ := e.Store.Get(j.ID)
+	for i, m := range members {
+		got := make([]byte, m.Size)
+		r := files.Entry(res.Entries[i])
+		if n, err := r.ReadAt(got, 0); int64(n) != m.Size || (err != nil && err != io.EOF) ||
+			!bytes.Equal(got, zip[m.Offset:m.Offset+m.Size]) {
+			t.Fatalf("%s: n=%d err=%v", m.Name, n, err)
+		}
+		if r.Size() != m.Size {
+			t.Fatalf("%s: size %d", m.Name, r.Size())
+		}
+	}
+	if links.Load() != 1 {
+		t.Fatalf("members of one zip should share its link: %d callbacks", links.Load())
+	}
+
+	for _, bad := range [][]DebridFile{
+		{{Name: "a.mkv", Size: 10, Ref: "Z:2", Offset: size - 5, SourceSize: size}},
+		{{Name: "a.mkv", Size: 10, Ref: "Z:2", Offset: 5}},
+	} {
+		if _, err := e.AddDebrid("torbox-Z2", "Bad", "", "torbox", bad); err == nil {
+			t.Fatalf("accepted %+v", bad[0])
+		}
+	}
+}

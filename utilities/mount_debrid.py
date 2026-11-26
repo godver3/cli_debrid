@@ -366,7 +366,10 @@ def sync_once(engine, provs: Optional[List] = None, budget: int = ADD_PER_PASS) 
             folder, files = found
             files = unique_names([f for f in files if int(f.get('size') or 0) > 0])
             body = {'id': jid, 'name': folder, 'provider': key, 'hash': str(t.get('hash') or '').lower(), 'files': [
-                {'name': f['name'], 'size': int(f['size']), 'ref': f"{key}:{t['id']}:{f['file_id']}"} for f in files]}
+                {'name': f['name'], 'size': int(f['size']), 'ref': f"{key}:{t['id']}:{f['file_id']}",
+                 # a byte range of a provider file (member of a TorBox stored zip)
+                 **({'offset': int(f['offset']), 'source_size': int(f['source_size'])} if f.get('source_size') else {})}
+                for f in files]}
             c, resp = engine._call('POST', '/debrid/jobs', timeout=30, json=body)
             if c == 201:
                 out['added'] += 1
