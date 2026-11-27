@@ -629,13 +629,32 @@ class TorboxProvider(DebridProvider):
         # A torrent already on the account (add_torrent hands back its id) is
         # listed, never removed: this preview add used to delete the user's own
         # copy (and the mount's folder for it) on every Magnet Assign.
-        preexisting = False
-        try:
-            from ..common import extract_hash_from_magnet as _hash_of  # aliased: the name is local below
-            hash_value = _hash_of(magnet_link) if magnet_link.startswith('magnet:') else None
-            preexisting = bool(hash_value and self._find_existing_torrent(hash_value))
-        except Exception as e:
-            logging.debug(f"[Torbox] Could not check for an existing torrent before listing: {e}")
+        # Only delete when we KNOW the torrent was not on the account before:
+        #   True  -> verified absent before add_torrent (safe to delete)
+        #   False -> already on the account (keep)
+        #   None  -> lookup failed / inconclusive (keep; never delete when unsure)
+        is_new_torrent: Optional[bool] = None
+        preexisting_ids: Optional[set] = None
+        hash_value = extract_hash_from_magnet(magnet_link) if magnet_link.startswith('magnet:') else None
+        if hash_value:
+            for attempt in range(2):
+                try:
+                    is_new_torrent = not bool(self._find_existing_torrent(hash_value))
+                    break
+                except Exception as e:
+                    logging.debug(
+                        f"[Torbox] Could not check for an existing torrent before listing "
+                        f"(attempt {attempt + 1}/2): {e}"
+                    )
+        else:
+            try:
+                preexisting_ids = {
+                    str(t.get('id'))
+                    for t in get_all_torrents(self.api_key)
+                    if t.get('id') is not None
+                }
+            except Exception as e:
+                logging.debug(f"[Torbox] Could not list existing torrents before preview add: {e}")
         try:
             torrent_id = self.add_torrent(magnet_link)
             if not torrent_id:
@@ -643,8 +662,6 @@ class TorboxProvider(DebridProvider):
 
             # If queued, resolve to real torrent_id by polling via hash
             if str(torrent_id).startswith('queued:'):
-                from ..common import extract_hash_from_magnet
-                hash_value = extract_hash_from_magnet(magnet_link) if magnet_link.startswith('magnet:') else None
                 resolved_id = None
                 for _ in range(20):
                     time.sleep(3)
@@ -672,12 +689,24 @@ class TorboxProvider(DebridProvider):
             logging.error(f"An unexpected error occurred during Torbox torrent file listing: {str(e)}")
             return None
         finally:
-            if torrent_id and not preexisting:
-                try:
-                    self.remove_torrent(torrent_id, "Temporary add for file listing")
-                except Exception as e:
-                    logging.error(f"Error removing temporary Torbox torrent {torrent_id}: {str(e)}")
-                    self.update_status(torrent_id, TorrentStatus.UNKNOWN)
+            if torrent_id:
+                if (
+                    is_new_torrent is None
+                    and preexisting_ids is not None
+                    and not str(torrent_id).startswith('queued:')
+                ):
+                    is_new_torrent = str(torrent_id) not in preexisting_ids
+                if is_new_torrent is True:
+                    try:
+                        self.remove_torrent(torrent_id, "Temporary add for file listing")
+                    except Exception as e:
+                        logging.error(f"Error removing temporary Torbox torrent {torrent_id}: {str(e)}")
+                        self.update_status(torrent_id, TorrentStatus.UNKNOWN)
+                elif is_new_torrent is None:
+                    logging.info(
+                        f"[Torbox] Keeping torrent {torrent_id} after file listing: "
+                        f"could not verify whether it already existed on the account"
+                    )
 
     def is_cached_sync(
         self,

@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy.orm import Session as SqlAlchemySession, selectinload
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import func
+from sqlalchemy import and_, case, func, or_
 from thefuzz import fuzz
 
 from .logger_config import logger
@@ -562,10 +562,27 @@ def _upsert_seasons_and_episodes(item_id: int, seasons_data: dict, session: SqlA
 
     if season_rows:
         stmt = insert(Season).values(season_rows)
+        incoming_trimmed = func.trim(func.coalesce(stmt.excluded.title, ''))
+        incoming_lower = func.lower(incoming_trimmed)
+        season_suffix = func.trim(func.substr(incoming_lower, 8))
+        incoming_is_generic = or_(
+            incoming_trimmed == '',
+            incoming_lower == 'specials',
+            and_(
+                func.substr(incoming_lower, 1, 7) == 'season ',
+                season_suffix != '',
+                func.ltrim(season_suffix, '0123456789') == '',
+            ),
+        )
+        existing_has_title = func.trim(func.coalesce(Season.title, '')) != ''
         stmt = stmt.on_conflict_do_update(
             index_elements=['item_id', 'season_number'],
             set_=dict(
-                title=stmt.excluded.title,
+                title=case(
+                    (and_(incoming_is_generic, existing_has_title), Season.title),
+                    (incoming_trimmed == '', Season.title),
+                    else_=stmt.excluded.title,
+                ),
                 episode_count=stmt.excluded.episode_count,
                 plex_guid=func.coalesce(stmt.excluded.plex_guid, Season.plex_guid),
                 tmdb_id=func.coalesce(stmt.excluded.tmdb_id, Season.tmdb_id),
