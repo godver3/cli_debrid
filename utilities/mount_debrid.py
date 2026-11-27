@@ -21,6 +21,7 @@ suspends accounts that generate many links without downloads.
 import json
 import logging
 import os
+import re
 import threading
 import time
 from typing import Dict, List, Optional, Tuple
@@ -253,13 +254,24 @@ def engine_holds_debrid(get_setting) -> bool:
     return builtin_engine.selected({'Usenet Provider': get_setting('Usenet Provider') or {}, 'Built-in Mount': bm})
 
 
-def engine_folder(torrent_id, get_setting) -> Optional[str]:
-    """The folder the built-in mount shows a debrid torrent in, from the
-    engine itself. Two torrents with one name get "Name" and "Name (2)",
-    and the second keeps its suffix after the first is gone, so a folder
-    worked out from the release name can be wrong (17 Married... with
-    Children episodes stuck in Checking on "... [i_c]" while their files
-    were in "... [i_c] (2)")."""
+def _engine_job_id(torrent_id) -> List[str]:
+    """Engine job ids a Clyde torrent id can be: debrid "<key>-<id>" per
+    configured provider, or the id of a usenet job ("nzb:<id>")."""
+    tid = str(torrent_id)
+    if tid.startswith('nzb:'):
+        return [tid[4:]]
+    return [_job_id(provider_key(p), tid) for p in providers()]
+
+
+def folder_for(torrent_id, get_setting) -> Optional[str]:
+    """The folder the built-in mount REALLY made for a torrent or NZB, from
+    the engine's job record, or None when it can't be told (another mount,
+    engine down, job unknown). Two torrents with one name get "Name" and
+    "Name (2)", and the second keeps its suffix after the first is gone, so
+    a folder worked out from the release name can be wrong (17 Married...
+    with Children episodes stuck in Checking on "... [i_c]" while their
+    files were in "... [i_c] (2)"). Every place that builds a mount path
+    for a known torrent asks this first; a name is only a last fallback."""
     if not torrent_id:
         return None
     try:
@@ -267,13 +279,43 @@ def engine_folder(torrent_id, get_setting) -> Optional[str]:
             return None
         from usenet.builtin_client import get_builtin_client
         client = get_builtin_client()
-        for p in providers():
-            code, job = client._call('GET', f'/jobs/{_job_id(provider_key(p), str(torrent_id))}', timeout=10)
+        for jid in _engine_job_id(torrent_id):
+            code, job = client._call('GET', f'/jobs/{jid}', timeout=10)
             if code == 200 and isinstance(job, dict) and job.get('folder'):
                 return job['folder']
     except Exception as exc:
         logging.debug(f'[mount debrid] folder lookup for {torrent_id} failed: {exc}')
     return None
+
+
+engine_folder = folder_for  # the name c2b981cb introduced
+
+
+_SIBLING = re.compile(r' \(\d{1,3}\)$')
+
+
+def folder_family(entries, name: str) -> List[str]:
+    """Folders of one name on the mount: "Name" and every "Name (N)", from the
+    names in a directory listing. More than one means a name guess can pick
+    the wrong torrent."""
+    base = _SIBLING.sub('', name)
+    pat = re.compile(re.escape(base) + r'(?: \(\d{1,3}\))?$')
+    return sorted(e for e in entries if pat.match(e))
+
+
+def mount_file_name(files: List[Dict], path: str) -> str:
+    """The name the built-in mount gives one file of a torrent (members of
+    different season folders are flattened to distinct names, see
+    unique_names). files: the provider's file rows with 'path' or 'name',
+    'bytes' or 'size' and 'id' or 'file_id'; path: the matched file's path."""
+    rows = [{'name': f.get('path') or f.get('name') or '', 'file_id': f.get('id', f.get('file_id')),
+             'size': int(f.get('bytes') or f.get('size') or 0)} for f in files or []]
+    rows = [r for r in rows if r['size'] > 0]
+    want = (path or '').replace('\\', '/')
+    for r, u in zip(rows, unique_names(rows)):
+        if r['name'].replace('\\', '/') == want:
+            return u['name']
+    return os.path.basename(want)
 
 
 #: Video types a release can carry; the built-in mount's allowed list
@@ -369,6 +411,49 @@ def _removals(key: str, have: set, on_account: set, now: float) -> List[str]:
     return sorted(ready)
 
 
+def _register(engine, key: str, t: dict, jid: str, folder: str, files: List[Dict]):
+    """POST one torrent's files to the engine under mount names that are
+    unique within the folder (see unique_names)."""
+    files = unique_names([f for f in files if int(f.get('size') or 0) > 0])
+    body = {'id': jid, 'name': folder, 'provider': key, 'hash': str(t.get('hash') or '').lower(), 'files': [
+        {'name': f['name'], 'size': int(f['size']), 'ref': f"{key}:{t['id']}:{f['file_id']}",
+         # a byte range of a provider file (member of a TorBox stored zip)
+         **({'offset': int(f['offset']), 'source_size': int(f['source_size'])} if f.get('source_size') else {})}
+        for f in files]}
+    return engine._call('POST', '/debrid/jobs', timeout=30, json=body)
+
+
+_zip_checked: Dict[str, float] = {}  # job id -> when its zip was last looked at
+
+
+def _reregister_zip(engine, p, key: str, t: dict, jid: str) -> str:
+    """Replace a job that holds a TorBox zip as one file by one with the
+    zip's members, once the zip's index can be read. Only a job the mount
+    hides (a .zip isn't a shown extension, so nothing is playable, linked or
+    streamed from it) is touched, so no link or open stream can break; a
+    failed re-add leaves no job and the next pass registers it normally.
+    Returns '' (nothing to do, no provider call), 'asked' or 'added'."""
+    code, job = engine._call('GET', f'/jobs/{jid}', timeout=10)
+    if code != 200 or not isinstance(job, dict) or not job.get('hidden_by_extension'):
+        return ''
+    try:
+        found = p.mount_files(str(t['id']))
+    except Exception as exc:
+        logging.debug(f'[mount debrid] {key} {t.get("id")}: {exc}')
+        return 'asked'
+    if not found or not any(f.get('source_size') for f in found[1]):
+        return 'asked'  # the index still can't be read: look again later
+    folder, files = found
+    if engine._call('DELETE', f'/jobs/{jid}', timeout=20)[0] not in (204, 404):
+        return 'asked'
+    c, resp = _register(engine, key, t, jid, folder, files)
+    if c != 201:
+        logging.warning(f'[mount debrid] re-adding zip {folder} failed: {c} {resp}')
+        return 'asked'
+    logging.info(f'[mount debrid] {folder}: zip registered with its {len(files)} files')
+    return 'added'
+
+
 def sync_once(engine, provs: Optional[List] = None, budget: int = ADD_PER_PASS) -> Dict[str, int]:
     """Mirror the debrid accounts into the engine. Returns counts; pending
     is finished torrents still to add (more passes needed)."""
@@ -397,7 +482,20 @@ def sync_once(engine, provs: Optional[List] = None, budget: int = ADD_PER_PASS) 
         on_account = {_job_id(key, str(t.get('id'))) for t in torrents if t.get('id')}
         for t in torrents:
             jid = _job_id(key, str(t.get('id')))
-            if jid in have or not _finished(t):
+            if not _finished(t):
+                continue
+            if jid in have:
+                # A TorBox zip registered before its member index existed (or
+                # while reading it failed) is one hidden .zip: register the
+                # members now that they can be listed.
+                if (getattr(p, 'mounts_zip_members', False) and budget > 0
+                        and now - _zip_checked.get(jid, 0) >= SKIP_RETRY_SECONDS):
+                    _zip_checked[jid] = now
+                    state = _reregister_zip(engine, p, key, t, jid)
+                    if state:
+                        budget -= 1  # asked the provider
+                    if state == 'added':
+                        out['added'] += 1
                 continue
             if now - _skipped.get(jid, 0) < SKIP_RETRY_SECONDS:
                 out['skipped'] += 1
@@ -418,13 +516,7 @@ def sync_once(engine, provs: Optional[List] = None, budget: int = ADD_PER_PASS) 
                 out['skipped'] += 1
                 continue
             folder, files = found
-            files = unique_names([f for f in files if int(f.get('size') or 0) > 0])
-            body = {'id': jid, 'name': folder, 'provider': key, 'hash': str(t.get('hash') or '').lower(), 'files': [
-                {'name': f['name'], 'size': int(f['size']), 'ref': f"{key}:{t['id']}:{f['file_id']}",
-                 # a byte range of a provider file (member of a TorBox stored zip)
-                 **({'offset': int(f['offset']), 'source_size': int(f['source_size'])} if f.get('source_size') else {})}
-                for f in files]}
-            c, resp = engine._call('POST', '/debrid/jobs', timeout=30, json=body)
+            c, resp = _register(engine, key, t, jid, folder, files)
             if c == 201:
                 out['added'] += 1
                 _skipped.pop(jid, None)

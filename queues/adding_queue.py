@@ -4,6 +4,7 @@ Orchestrates the process of adding content and managing queue state.
 """
 
 import logging
+import os
 import json
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timedelta
@@ -1046,7 +1047,8 @@ class AddingQueue:
                     from_queue="Adding",
                     title=torrent_title, # This title has now been effectively filtered
                     link=magnet,
-                    filled_by_file=matched_file_basename,
+                    filled_by_file=self._mount_file_name(torrent_info, parsed_torrent_files, matched_file_basename,
+                                                         item, xem_mapping),
                     torrent_id=torrent_info.get('id'),
                     debrid_folder_name=debrid_folder_name,
                     debrid_provider=torrent_info.get('_provider'),
@@ -1095,7 +1097,8 @@ class AddingQueue:
                                 from_queue=related_item_state,
                                 title=torrent_title,
                                 link=magnet,
-                                filled_by_file=related_file_basename, # Pass the basename
+                                filled_by_file=self._mount_file_name(torrent_info, parsed_torrent_files,
+                                                                     related_file_basename, related_item, xem_mapping),
                                 torrent_id=torrent_info.get('id'),
                                 debrid_folder_name=debrid_folder_name,
                                 # Same torrent as the primary item, so the same provider
@@ -1163,6 +1166,26 @@ class AddingQueue:
             return None, None, None # Return None for all three on error
 
     @logs_for_item
+    def _mount_file_name(self, torrent_info: Dict, parsed_files: List[Dict], basename: str, item: Dict,
+                         xem_mapping=None) -> str:
+        """The name the built-in mount shows a matched file under. Files of
+        one torrent that share a base name (S01/01.mkv, S02/01.mkv) get
+        distinct flattened names there, so Checking must look for that one,
+        not the base name. Anything else keeps the base name."""
+        try:
+            same = [pf for pf in parsed_files if os.path.basename(pf['path']) == basename]
+            if len(same) < 2:
+                return basename
+            from utilities import mount_debrid
+            if not mount_debrid.engine_holds_debrid(get_setting):
+                return basename
+            for pf in same:
+                if self.media_matcher.find_best_match_from_parsed([pf], item, xem_mapping=xem_mapping):
+                    return mount_debrid.mount_file_name(torrent_info.get('files') or [], pf['path'])
+        except Exception as exc:
+            logging.debug(f"Could not work out the mount name of '{basename}': {exc}")
+        return basename
+
     def _handle_failed_item(self, item: Dict, error: str, queue_manager: Any, *, is_nzb: bool = False):
         """
         Handle a failed item by moving it back to Wanted queue if media matching failed,

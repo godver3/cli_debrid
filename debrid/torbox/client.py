@@ -459,6 +459,9 @@ class TorboxProvider(DebridProvider):
 
     supports_mount_links = True
 
+    #: mount_debrid may re-register a job whose zip was added as one file.
+    mounts_zip_members = True
+
     def mount_files(self, torrent_id: str) -> Optional[Tuple[str, List[Dict]]]:
         result = make_request('GET', '/torrents/mylist', self.api_key, params={'bypass_cache': 'true', 'id': torrent_id})
         info = get_data_payload(result)

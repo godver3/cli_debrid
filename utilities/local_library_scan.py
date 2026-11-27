@@ -1571,6 +1571,47 @@ def _find_file_in_folder_tree(base_folder: str, filename: str, max_depth: int = 
     return None
 
 
+def _unambiguous_source(original_path: str, source_file: str, source_folder: str, filename: str,
+                        item: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+    """(source_file, source_folder) of a file found by a folder-name guess, or
+    (None, None) when sibling folders "Name (N)" exist and the real folder of
+    the torrent is unknown. Without the built-in mount (cli_mount, Zurg) no
+    engine can tell, so a file present in exactly one of the sibling folders
+    is still taken; present in several, it is left waiting."""
+    try:
+        rel = os.path.relpath(source_file, original_path)
+    except ValueError:
+        return source_file, source_folder
+    top = rel.split(os.sep)[0]
+    if rel.startswith('..') or top in ('', '.') or rel == top:
+        return source_file, source_folder  # directly under the mount root, no folder name involved
+    try:
+        entries = [n for names in _root_folder_index(original_path).values() for n in names]
+    except OSError:
+        return source_file, source_folder
+    from utilities.mount_debrid import folder_family
+    family = folder_family(entries, top)
+    if len(family) < 2:
+        return source_file, source_folder
+    holders = [f for f in family if os.path.exists(os.path.join(original_path, f, filename))
+               or _find_file_in_folder_tree(os.path.join(original_path, f), filename)]
+    try:
+        from utilities.mount_debrid import engine_holds_debrid
+        engine = engine_holds_debrid(get_setting)
+    except Exception:
+        engine = False
+    if len(holders) == 1 and not engine:
+        if holders[0] != top:
+            direct = os.path.join(original_path, holders[0], filename)
+            source_file = direct if os.path.exists(direct) else _find_file_in_folder_tree(
+                os.path.join(original_path, holders[0]), filename) or source_file
+            source_folder = os.path.dirname(source_file)
+        return source_file, source_folder
+    logging.info(f"Not linking '{filename}' yet: folders {family} share one name on the mount and the real "
+                 f"folder of torrent {item.get('filled_by_torrent_id')} is not known")
+    return None, None
+
+
 def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, extended_search: bool = False, on_success_callback: Optional[Callable[[str], None]] = None, skip_multifile_scan: bool = False) -> bool:
     """
     Check if the local file for the item exists and create symlink if needed.
@@ -1613,6 +1654,37 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
 
             # --- Check Order: Exact provider folder -> Original Torrent Title -> Filled By Title ---
 
+            # 0a. The folder the mount really made for this torrent (the engine's
+            # job record) beats every name worked out from the release: two
+            # torrents with one name get "Name" and "Name (2)". When it is known,
+            # no name guess is tried at all.
+            real_folder = None
+            if item.get('filled_by_torrent_id'):
+                from utilities.mount_debrid import folder_for
+                real_folder = folder_for(item['filled_by_torrent_id'], get_setting)
+            if real_folder:
+                real_dir = os.path.join(original_path, real_folder)
+                direct = os.path.join(real_dir, current_filename)
+                hit = direct if os.path.exists(direct) else (
+                    _find_file_in_folder_tree(real_dir, current_filename) if os.path.isdir(real_dir) else None)
+                if hit:
+                    source_file, source_folder, found_file = hit, os.path.dirname(hit), True
+                    logging.info(f"Found file in the mount's own folder for the torrent: {source_file}")
+                    if real_folder != debrid_folder_name and item.get('id'):
+                        try:
+                            # Aliased: a plain local import would make update_media_item
+                            # local to the whole function and break its later uses.
+                            from database.database_writing import update_media_item as _store_folder
+                            _store_folder(item['id'], debrid_folder_name=real_folder)
+                        except Exception as e:
+                            logging.debug(f"Could not store folder {real_folder!r} for item {item.get('id')}: {e}")
+                    item['debrid_folder_name'] = real_folder
+                else:
+                    # Not shown yet: wait for it there rather than guess another folder.
+                    logging.debug(f"'{current_filename}' is not in the mount's folder '{real_folder}' yet")
+                    debrid_folder_name = original_torrent_title = real_debrid_original_title = filled_by_title = ''
+                    extended_search = False
+
             # 0. Check exact provider folder name persisted from the debrid API.
             if debrid_folder_name and not found_file:
                 potential_folder = os.path.join(original_path, debrid_folder_name)
@@ -1624,30 +1696,8 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                     found_file = True
                     logging.info(f"Found file using debrid_folder_name: {source_file}")
 
-            # 0b. The built-in mount knows the torrent's real folder, which
-            # can differ from any release name ("Name (2)" next to a duplicate).
-            if not found_file and item.get('filled_by_torrent_id'):
-                from utilities.mount_debrid import engine_folder
-                folder = engine_folder(item['filled_by_torrent_id'], get_setting)
-                if folder and folder != debrid_folder_name:
-                    potential_folder = os.path.join(original_path, folder)
-                    potential_path = os.path.join(potential_folder, current_filename)
-                    logging.debug(f"Attempt 0b: Checking the built-in mount's folder: {potential_path}")
-                    if os.path.exists(potential_path):
-                        source_file, source_folder, found_file = potential_path, potential_folder, True
-                        logging.info(f"Found file in the built-in mount's folder for the torrent: {source_file}")
-                        if item.get('id'):
-                            try:
-                                # Aliased: a plain local import would make update_media_item
-                                # local to the whole function and break its later uses.
-                                from database.database_writing import update_media_item as _store_folder
-                                _store_folder(item['id'], debrid_folder_name=folder)
-                                item['debrid_folder_name'] = folder
-                            except Exception as e:
-                                logging.debug(f"Could not store folder {folder!r} for item {item.get('id')}: {e}")
-
             # 1. Check original_scraped_torrent_title (raw)
-            if original_torrent_title:
+            if not found_file and original_torrent_title:
                 potential_folder = os.path.join(original_path, original_torrent_title)
                 potential_path = os.path.join(potential_folder, current_filename)
                 logging.debug(f"Attempt 1: Checking path using original_scraped_torrent_title: {potential_path}")
@@ -1869,6 +1919,15 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                         # tick. Nested lookup is scoped to the item's own candidate folders (8.5).
                 except Exception as ext_err:
                     logging.warning(f"Extended search failed: {ext_err}")
+
+            # A name guess must not pick between "Name" and "Name (2)": with the
+            # real folder unknown and sibling folders on the mount, the file is
+            # only taken when it can't belong to another torrent's folder.
+            if found_file and not real_folder:
+                source_file, source_folder = _unambiguous_source(
+                    original_path, source_file, source_folder, current_filename, item)
+                if not source_file:
+                    found_file = False
 
             # --- Handling not found after all checks ---
             if not found_file:

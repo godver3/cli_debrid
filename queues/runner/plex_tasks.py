@@ -29,10 +29,27 @@ class _SkipPlexConnect(Exception):
     """Plex mode run with Silo: task_check_plex_files skips the Plex connection."""
 
 
+def _real_mount_folder(item_dict):
+    """The folder the built-in mount really made for the item's torrent (it
+    can be "Name (2)"), tried before any name worked out from the release."""
+    try:
+        tid = item_dict['filled_by_torrent_id']
+    except (KeyError, IndexError):
+        return None
+    if not tid:
+        return None
+    from utilities.mount_debrid import folder_for
+    from utilities.settings import get_setting
+    return folder_for(tid, get_setting)
+
+
 def _mount_file_candidates(item_dict, base_path):
     """Where an item's file can be under the mount, in task_check_plex_files' order."""
     filename = item_dict['filled_by_file']
     names = []
+    real = _real_mount_folder(item_dict)
+    if real:
+        names.append(real)
     for key in ('debrid_folder_name', 'original_scraped_torrent_title', 'real_debrid_original_title', 'filled_by_title'):
         name = item_dict[key] or ''
         if name:
@@ -389,7 +406,7 @@ class PlexTasks:
                 # --- START: Ensure new field is fetched ---
                 original_scraped_torrent_title = item_dict['original_scraped_torrent_title'] or ''
                 real_debrid_original_title = item_dict['real_debrid_original_title'] or ''
-                debrid_folder_name = item_dict['debrid_folder_name'] or ''
+                debrid_folder_name = _real_mount_folder(item_dict) or item_dict['debrid_folder_name'] or ''
                 # --- END: Ensure new field is fetched ---
 
                 if not filled_by_title or not filled_by_file: # This check might need re-evaluation if filled_by_title can be empty but other titles exist
@@ -651,7 +668,7 @@ class PlexTasks:
                 # --- START: Ensure new field is fetched ---
                 original_scraped_torrent_title = item_dict['original_scraped_torrent_title'] or ''
                 real_debrid_original_title = item_dict['real_debrid_original_title'] or ''
-                debrid_folder_name = item_dict['debrid_folder_name'] or ''
+                debrid_folder_name = _real_mount_folder(item_dict) or item_dict['debrid_folder_name'] or ''
                 # --- END: Ensure new field is fetched ---
 
                 if not filled_by_title or not current_filename: 
