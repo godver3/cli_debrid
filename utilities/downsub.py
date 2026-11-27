@@ -1156,6 +1156,41 @@ def _direct_mount_subtitle_server():
     return None
 
 
+def _choose_sidecar_path(symlink_dir, base_name, lang, ext, cli_mount_folder=None):
+    """Pick a sidecar path that never overwrites a release/user subtitle (regular
+    file or symlink). Re-writing a file Clyde itself wrote earlier (recorded in
+    subtitle_history) is allowed.
+
+    Plex local-subtitle naming ("Adding Local Subtitles to Your Media", 200471133)
+    reads the ISO language code from the dot-separated segment immediately before
+    the extension (or before `.forced`/`.sdh`/`.hi`/`.cc`). Putting a custom tag
+    AFTER the language code (`{stem}.{lang}.clyde{ext}`) makes Plex show the track
+    as "Unknown"; putting it BEFORE the language code (`{stem}.clyde.{lang}{ext}`)
+    keeps the language in both Plex and Jellyfin/Emby (which also uses the extra
+    segment as a track label) and in Clyde's own `sidecar_lang()`.
+    """
+    from database import subtitle_history
+    n = 0
+    while True:
+        if n == 0:
+            filename = f"{base_name}.{lang}{ext}"
+        elif n == 1:
+            filename = f"{base_name}.clyde.{lang}{ext}"
+        else:
+            filename = f"{base_name}.clyde{n}.{lang}{ext}"
+        full_path = symlink_dir / filename
+        if not os.path.lexists(full_path):
+            return full_path, filename
+        if not os.path.islink(full_path):
+            if cli_mount_folder is None:
+                if subtitle_history.is_clyde_path(str(full_path), saved_via='sidecar'):
+                    return full_path, filename
+            else:
+                if subtitle_history.is_clyde_path(f"{cli_mount_folder}/{filename}", saved_via='cli_mount'):
+                    return full_path, filename
+        n += 1
+
+
 def save_subtitles(ctx, subs, source='auto'):
     """Save downloaded subtitles next to the file (sidecar), to Plex (read-only
     mount) or through cli_mount, and record each in the subtitle history.
@@ -1208,7 +1243,7 @@ def save_subtitles(ctx, subs, source='auto'):
                 saved += 1
                 _record_history(ctx, sub, lang, fmt, 'plex', None, source)
         elif can_write_sidecar:
-            symlink_srt = symlink_dir / f"{base_name}.{lang}{ext}"
+            symlink_srt, _ = _choose_sidecar_path(symlink_dir, base_name, lang, ext)
             try:
                 with open(symlink_srt, 'wb') as f:
                     f.write(content)
@@ -1254,7 +1289,8 @@ def save_subtitles(ctx, subs, source='auto'):
                         logging.debug(f"[subs] Using job UUID for sidecar injection: {torrent_name}")
                 except Exception as _dbl:
                     logging.debug(f"[subs] Could not resolve job UUID from DB: {_dbl}")
-                srt_filename = f"{base_name}.{lang}{ext}"
+                _, srt_filename = _choose_sidecar_path(
+                    symlink_dir, base_name, lang, ext, cli_mount_folder=torrent_name)
                 client = get_climount_client()
                 if client.inject_sidecar_file(torrent_name, srt_filename, content):
                     logging.info(f"[subs] Injected sidecar subtitle via cli_mount: {torrent_name}/{srt_filename}")

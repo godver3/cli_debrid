@@ -100,15 +100,45 @@ def _fetch_item_info(rating_key):
         return None, None
 
 
+def _item_media_keys(item):
+    from database import subtitle_history
+    return tuple(k for k in {subtitle_history.media_key_of(item), str((item or {}).get('ms_item_id') or '')} if k)
+
+
+def _is_clyde_sidecar(path):
+    """True only for regular sidecar files Clyde itself recorded writing."""
+    from database import subtitle_history
+    return bool(path) and not os.path.islink(path) and subtitle_history.is_clyde_path(path, saved_via='sidecar')
+
+
+def is_clyde_plex_stream(item, st):
+    """True only when `st` is an external Plex stream that Clyde uploaded
+    (recorded in subtitle_history with saved_via='plex'), never a release
+    sidecar Plex picked up from disk."""
+    if not (st and st.get('external') and st.get('key')):
+        return False
+    from database import subtitle_history
+    from utilities.subtitle_lang import covers as _covers
+    from utilities.subtitle_status import sidecar_langs
+    lang = st.get('language') or 'und'
+    sidecars = sidecar_langs((item or {}).get('location_on_disk'), {})
+    if _covers(lang, set(sidecars)):
+        return False
+    uploaded = subtitle_history.plex_uploaded_languages((item or {}).get('id'), _item_media_keys(item))
+    return bool(uploaded) and _covers(lang, uploaded)
+
+
 def plex_stream_of_item(item, stream_id):
-    """The external subtitle stream `stream_id` of this item, or None."""
+    """The Clyde-uploaded external subtitle stream `stream_id` of this item, or None."""
     for st in plex_streams(item_rk(item)) or []:
-        if str(st.get('id')) == str(stream_id) and st.get('external') and st.get('key'):
+        if str(st.get('id')) == str(stream_id) and is_clyde_plex_stream(item, st):
             return st
     return None
 
 
-def plex_delete(st):
+def plex_delete(st, item=None):
+    if item is not None and not is_clyde_plex_stream(item, st):
+        return False, 403
     url, token = plex_conn()
     r = requests.delete(url + st['key'], params={'X-Plex-Token': token}, headers=PLEX_HEADERS, timeout=30)
     return r.status_code in (200, 204), r.status_code
@@ -208,8 +238,11 @@ class _HashFinder:
 
 
 def _hash_replace_sidecar(item, path, finder):
-    """Replace a sidecar with a subtitle made for this exact file. Returns a
-    result dict, or None when there's no hash match."""
+    """Replace a Clyde-written sidecar with a subtitle made for this exact
+    file. Returns a result dict, or None when there's no hash match or the
+    sidecar was not written by Clyde."""
+    if not _is_clyde_sidecar(path):
+        return None
     from utilities import downsub
     name = os.path.basename(path)
     from utilities.subtitle_lang import sidecar_lang
@@ -230,6 +263,8 @@ def _hash_replace_sidecar(item, path, finder):
             _mark(content, kind)
             return {'changed': False, 'message': f'already the subtitle made for this file ({kind})'}
     target = os.path.splitext(path)[0] + ext
+    if target != path and os.path.lexists(target) and not _is_clyde_sidecar(target):
+        return None
     tmp = target + '.syncing'
     with open(tmp, 'wb') as f:
         f.write(content)
@@ -247,6 +282,8 @@ def _hash_replace_sidecar(item, path, finder):
 
 
 def _hash_replace_plex(item, st, finder):
+    if not is_clyde_plex_stream(item, st):
+        return None
     from utilities import downsub
     got = finder.best(st.get('language') or '', hi=False)
     if not got:
@@ -257,7 +294,7 @@ def _hash_replace_plex(item, st, finder):
     if not downsub.upload_subtitle_to_plex(item_rk(item), content, lang3, fmt=fmt):
         return None
     _mark(content, kind)
-    ok, code = plex_delete(st)
+    ok, code = plex_delete(st, item=item)
     ctx = finder.ctx()
     downsub._record_history(dict(ctx, _sync_note=f'{kind}, no sync needed'), sub,
                             getattr(sub.language, 'ietf', None) or str(sub.language), fmt, 'plex', None,
@@ -294,9 +331,12 @@ def resync_item(item, skip_checked=True):
     changed = checked = 0
     notes = []
     sidecars = sidecar_langs(item.get('location_on_disk'), {})
+    clyde_paths = subtitle_history.clyde_sidecar_paths()
     finder = _HashFinder(item)
     for lang, paths in sidecars.items():
         for p in paths:
+            if os.path.islink(p) or os.path.normpath(p) not in clyde_paths:
+                continue
             try:
                 with open(p, 'rb') as f:
                     content = f.read()
@@ -316,13 +356,9 @@ def resync_item(item, skip_checked=True):
             notes.append(f"{lang}: {res['message']}")
             changed += 1 if res.get('changed') else 0
     if is_plex_mode():
-        from utilities.subtitle_lang import covers as _covers
-        have = set(sidecars)
         for st in plex_item_info(item_rk(item))[0] or []:
-            if not (st.get('external') and st.get('key')):
+            if not is_clyde_plex_stream(item, st):
                 continue
-            if _covers(st.get('language') or 'und', have):
-                continue          # that's the sidecar file Plex picked up
             prev = content = None
             url, token = plex_conn()
             try:
@@ -350,14 +386,18 @@ def resync_item(item, skip_checked=True):
 
 
 def needs_check(item, cache=None):
-    """True when the item has a subtitle Sync existing hasn't checked yet: an
-    unchecked sidecar file, or (Plex mode) a subtitle cli_debrid uploaded to
-    Plex. Sidecars are read and hashed locally; Plex isn't asked."""
+    """True when the item has a Clyde-written subtitle Sync existing hasn't
+    checked yet: an unchecked Clyde sidecar file, or (Plex mode) a subtitle
+    Clyde uploaded to Plex. Release sidecars are read-only and never checked
+    for replacement."""
     from database import subtitle_history
     from utilities.subtitle_status import is_plex_mode, sidecar_langs
+    clyde_paths = subtitle_history.clyde_sidecar_paths()
     paths = [p for ps in sidecar_langs(item.get('location_on_disk'), cache if cache is not None else {}).values()
              for p in ps]
     for p in paths:
+        if os.path.islink(p) or os.path.normpath(p) not in clyde_paths:
+            continue
         try:
             with open(p, 'rb') as f:
                 if not _checked(f.read()):
@@ -367,8 +407,7 @@ def needs_check(item, cache=None):
     if is_plex_mode() and item.get('id') is not None:
         from utilities.subtitle_lang import covers as _covers
         langs_with_file = set(sidecar_langs(item.get('location_on_disk'), cache if cache is not None else {}))
-        uploaded = subtitle_history.languages_by_item(
-            [item['id']], {item['id']: subtitle_history.media_key_of(item)}).get(item['id'], set())
+        uploaded = subtitle_history.plex_uploaded_languages(item['id'], _item_media_keys(item))
         if any(not _covers(lang, langs_with_file) for lang in uploaded):
             return True
     return False

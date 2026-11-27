@@ -114,7 +114,9 @@ def test_symlink_500_episodes_5_seasons_batches_plex_sleep_db_and_nfo(tmp_path):
         }
         return table.get((section, key), default)
 
+    clyde_subs = {os.path.normpath(os.path.splitext(it['location_on_disk'])[0] + '.en.srt') for it in items}
     with mock.patch('utilities.deletion_manager.get_setting', side_effect=fake_get_setting), \
+         mock.patch('database.subtitle_history.clyde_sidecar_paths', return_value=clyde_subs), \
          mock.patch('utilities.plex_functions.scan_cleanup.get_setting', side_effect=fake_get_setting), \
          mock.patch('utilities.silo_functions.is_silo_selected', return_value=False), \
          mock.patch('utilities.direct_mount.is_direct_mount_jellyfin', return_value=False), \
@@ -237,6 +239,8 @@ def test_nfo_and_subtitle_guards_preserved_in_batch(tmp_path):
 
     with mock.patch('utilities.deletion_manager.get_setting',
                     side_effect=lambda s, k, d=None: str(symlink_root) if k == 'symlinked_files_path' else d), \
+         mock.patch('database.subtitle_history.clyde_sidecar_paths',
+                    return_value={os.path.normpath(str(ep2_sub)), os.path.normpath(str(ep2_remux_sub))}), \
          mock.patch.object(nw, 'symlinked_mode', return_value=True), \
          mock.patch.object(nw, 'library_root', return_value=str(symlink_root)), \
          mock.patch('database.database_reading.get_items_by_ids', return_value=items), \
@@ -277,7 +281,9 @@ def test_direct_mount_500_episodes_batches_media_server_calls(tmp_path, server_k
         }
         return table.get((section, key), default)
 
+    clyde_subs = {os.path.normpath(os.path.splitext(it['location_on_disk'])[0] + '.en.srt') for it in items}
     with mock.patch('utilities.deletion_manager.get_setting', side_effect=fake_get_setting), \
+         mock.patch('database.subtitle_history.clyde_sidecar_paths', return_value=clyde_subs), \
          mock.patch('utilities.plex_functions.scan_cleanup.get_setting', side_effect=fake_get_setting), \
          mock.patch('utilities.silo_functions.is_silo_selected', return_value=(server_kind == 'silo')), \
          mock.patch('utilities.direct_mount.is_direct_mount_jellyfin', return_value=(server_kind == 'jellyfin')), \

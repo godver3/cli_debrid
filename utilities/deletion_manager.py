@@ -46,10 +46,10 @@ SIDECAR_SUBTITLE_EXTS = ('.srt', '.ass', '.ssa', '.sub', '.idx', '.vtt', '.smi')
 
 
 def remove_sidecar_subtitles(video_path, check_show_nfo: bool = True):
-    """Delete the subtitle files that belong to a library file being removed:
-    regular files next to it named '<video stem>.<anything><subtitle ext>'
-    (Movie.en.srt, Movie.eng.forced.ass). Without this a deleted item left its
-    subtitles behind and its folder never emptied. Returns the paths removed."""
+    """Delete only the Clyde-written subtitle files that belong to a library
+    file being removed (recorded in subtitle_history, regular files only).
+    Subtitles that came with a release — symlinked or regular files — are
+    never deleted. Returns the paths removed."""
     removed = []
     folder, name = os.path.split(video_path or '')
     stem = os.path.splitext(name)[0]
@@ -59,6 +59,11 @@ def remove_sidecar_subtitles(video_path, check_show_nfo: bool = True):
         names = os.listdir(folder)
     except OSError:
         return removed
+    try:
+        from database import subtitle_history
+        clyde_paths = subtitle_history.clyde_sidecar_paths()
+    except Exception:
+        clyde_paths = set()
     # Another video still here whose name starts with this one's
     # ('Movie.2020.1080p.REMUX.mkv' next to 'Movie.2020.1080p.mkv') owns
     # the subtitles named after it.
@@ -70,6 +75,8 @@ def remove_sidecar_subtitles(video_path, check_show_nfo: bool = True):
         if any(f.startswith(s + '.') for s in longer):
             continue
         path = os.path.join(folder, f)
+        if os.path.normpath(path) not in clyde_paths:
+            continue
         try:
             if os.path.isfile(path) and not os.path.islink(path):
                 os.remove(path)
@@ -92,12 +99,19 @@ VIDEO_EXTS = ('.mkv', '.mp4', '.avi', '.m4v', '.ts', '.m2ts', '.mov', '.wmv', '.
 
 
 def find_orphan_subtitles(library_root):
-    """Every subtitle file in the symlink library that matches no video in its
-    folder (regular files only: never symlinks, so never subtitles that came
-    with a release, and never tracks inside a video). For the Subtitle
-    Manager's opt-in 'Remove orphaned subtitles' tool."""
+    """Every Clyde-written subtitle file in the symlink library that matches
+    no video in its folder (recorded in subtitle_history, regular files only:
+    never symlinks, never release subtitles, never tracks inside a video).
+    For the Subtitle Manager's opt-in 'Remove orphaned subtitles' tool."""
     found = []
     if not library_root or not os.path.isdir(library_root):
+        return found
+    try:
+        from database import subtitle_history
+        clyde_paths = subtitle_history.clyde_sidecar_paths()
+    except Exception:
+        return found
+    if not clyde_paths:
         return found
     for folder, _dirs, files in os.walk(library_root):
         stems = [os.path.splitext(f)[0] for f in files if f.lower().endswith(VIDEO_EXTS)]
@@ -106,7 +120,7 @@ def find_orphan_subtitles(library_root):
         for f in files:
             if f.lower().endswith(SIDECAR_SUBTITLE_EXTS) and not any(f.startswith(s + '.') for s in stems):
                 path = os.path.join(folder, f)
-                if os.path.isfile(path) and not os.path.islink(path):
+                if os.path.normpath(path) in clyde_paths and os.path.isfile(path) and not os.path.islink(path):
                     found.append(path)
     return found
 
