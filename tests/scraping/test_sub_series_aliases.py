@@ -89,6 +89,18 @@ def test_named_season_alias_does_not_accept_the_wrong_padded_episode():
     assert results[0]["filter_reason"].startswith("Episode mismatch")
 
 
+def test_season_alias_with_generic_suffix_word_passes():
+    passed, results = _filter(
+        ["One.Piece.East.Blue.Saga.S01E01.1080p.WEB-DL"],
+        show="One Piece",
+        aliases={"us": ["One Piece", "One Piece: East Blue Saga"]},
+        season_title="East Blue",
+        season=1,
+        episode=1,
+    )
+    assert passed == results, results[0]["filter_reason"]
+
+
 def test_tmdb_season_title_from_alias_response_survives_battery_cache(monkeypatch):
     from sqlalchemy import create_engine
     from sqlalchemy.orm import Session

@@ -141,6 +141,36 @@ class SnapshotTests(unittest.TestCase):
         # and the moved entry is what a later rewrite uses
         self.assertEqual(ps._write_all(int(self.settings[('NFO', 'snapshot_id')]))['unchanged'], 3)
 
+    def test_upgrade_two_single_files_into_multi_episode_file_merges_nfo_and_rows(self):
+        sid, _ = self._take()
+        new = os.path.join(self.s1, 'Shetland (2013) - S01E01-E02 - 2160p.mkv')
+        os.symlink('/nonexistent/multi.mkv', new)
+        for row in self.rows:
+            old = row['location_on_disk']
+            os.unlink(old)
+            nw.remove_for_video(old)
+            row['location_on_disk'] = new
+        self.assertTrue(ps.carry_to_symlink(1, new))
+        self.assertTrue(ps.carry_to_symlink(2, new))
+        body = self._read(new[:-4] + '.nfo')
+        self.assertEqual(body.count('<episodedetails>'), 2)
+        self.assertIn('<title>Red Bones (1)</title>', body)
+        self.assertIn('<title>Red Bones (2)</title>', body)
+        self.assertIn('<episode>1</episode>', body)
+        self.assertIn('<episode>2</episode>', body)
+        # Subsequent rewrite sees the merged multi-episode file as unchanged
+        res = ps._write_all(sid)
+        self.assertEqual((res['written'], res['unchanged']), (0, 2))
+        # Both items rows point at the new path and the files row keeps both episodes
+        conn = ps._conn()
+        try:
+            item_paths = dict(conn.execute("SELECT media_item_id, path FROM items WHERE snapshot_id = ?", (sid,)).fetchall())
+            nums = conn.execute("SELECT numbers FROM files WHERE snapshot_id = ? AND path = ?", (sid, new)).fetchone()[0]
+        finally:
+            conn.close()
+        self.assertEqual(item_paths, {1: new, 2: new})
+        self.assertEqual(nums, '[[1, 1], [1, 2]]')
+
     def test_renumbered_file_gets_no_snapshot_nfo(self):
         self._take()
         new = os.path.join(self.s1, 'Shetland (2013) - S01E05 - x.mkv')

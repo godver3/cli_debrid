@@ -357,7 +357,7 @@ def _write_show_nfo(folder: str, imdb_id: str, show: Optional[Dict], counts: Dic
                              replace=(nfo_writer.SNAPSHOT,))] += 1
 
 
-def _write_all(snapshot_id: int, imdb_id: Optional[str] = None) -> Dict[str, int]:
+def _write_all(snapshot_id: int, imdb_id: Optional[str] = None, *, track_job: bool = True) -> Dict[str, int]:
     """Write a snapshot's NFO files (one show's with imdb_id). Shows Clyde's
     NFO writer covers are left to it; files that aren't snapshot NFOs are
     never replaced."""
@@ -385,7 +385,8 @@ def _write_all(snapshot_id: int, imdb_id: Optional[str] = None) -> Dict[str, int
     for path, imdb, numbers, data in rows:
         by_show.setdefault(imdb or '', []).append((path, json.loads(numbers or '[]'), json.loads(data or '[]')))
     for n, (imdb, files) in enumerate(sorted(by_show.items())):
-        _job['step'] = f'writing NFO files ({n + 1}/{len(by_show)} shows)'
+        if track_job:
+            _job['step'] = f'writing NFO files ({n + 1}/{len(by_show)} shows)'
         if imdb and nfo_writer.wants_show(imdb):
             counts['writer_shows'] += 1
             continue
@@ -426,15 +427,26 @@ def restore_show(imdb_id: str) -> None:
     put the snapshot's back."""
     sid = in_use()
     if sid and os.path.exists(_db_path()):
-        _write_all(sid, imdb_id)
+        _write_all(sid, imdb_id, track_job=False)
 
 
 def restore_all() -> Dict[str, int]:
     """NFO files were turned off: put the snapshot's NFOs back."""
     sid = in_use()
     if sid and os.path.exists(_db_path()):
-        return _write_all(sid)
+        return _write_all(sid, track_job=False)
     return {}
+
+
+_carry_lock = threading.Lock()
+
+
+def _kept_episodes(numbers: List, data: List[Dict], in_file: set) -> List[Tuple[Tuple[int, int], Dict]]:
+    pairs = _episodes_for_file(numbers, data)
+    return [(tuple(ep_nums), e) for (ep_nums, e) in
+            zip([(ep['season'], ep['episode']) for ep, _plan in pairs],
+                sorted(data, key=lambda e: (e.get('season') or 0, e.get('episode') or 0)))
+            if (ep_nums[0], ep_nums[1]) in in_file]
 
 
 def _file_episodes(name: str) -> Optional[set]:
@@ -457,54 +469,59 @@ def carry_to_symlink(media_item_id: int, new_path: str) -> bool:
     sid = in_use()
     if not sid or not new_path or not os.path.exists(_db_path()):
         return False
-    conn = _conn()
-    try:
-        item = conn.execute("SELECT path, season, episode FROM items WHERE snapshot_id = ? AND media_item_id = ?",
-                            (sid, int(media_item_id))).fetchone()
-        if not item:
-            return False
-        old_path, season, episode = item
-        # The new file's name must still hold the episode (a renumbered file
-        # gets nothing). A name without SxxEyy (a custom template) is judged
-        # by the item's numbers below.
-        in_file = _file_episodes(os.path.basename(new_path))
-        if in_file is not None and (season, episode) not in in_file:
-            return False
-        in_file = in_file or {(season, episode)}
-        current = nfo_writer._episode_rows_by_id(int(media_item_id))
-        if not current or (current[0].get('season_number'), current[0].get('episode_number')) != (season, episode):
-            return False
-        f = conn.execute("SELECT imdb_id, numbers, data FROM files WHERE snapshot_id = ? AND path = ?",
-                         (sid, old_path)).fetchone()
-        if not f:
-            return False
-        imdb_id, numbers, data = f[0], json.loads(f[1] or '[]'), json.loads(f[2] or '[]')
-        if imdb_id and nfo_writer.wants_show(imdb_id):
-            return False
-        pairs = _episodes_for_file(numbers, data)
-        # Every episode of the old file the new file holds too (a
-        # multi-episode file keeps all of them, whichever item came first)
-        kept = [(tuple(ep_nums), e) for (ep_nums, e) in
-                zip([(ep['season'], ep['episode']) for ep, _plan in pairs],
-                    sorted(data, key=lambda e: (e.get('season') or 0, e.get('episode') or 0)))
-                if (ep_nums[0], ep_nums[1]) in in_file]
-        if (season, episode) not in {k for k, _e in kept}:
-            return False
-        eps = [e for _k, e in kept]
-        show_row = conn.execute("SELECT data FROM shows WHERE snapshot_id = ? AND imdb_id = ?", (sid, imdb_id)).fetchone()
-        show = json.loads(show_row[0]) if show_row else None
-        new_numbers = [list(k) for k, _e in kept]
-        result = nfo_writer._write(nfo_writer.episode_nfo_path(new_path),
-                                   _episode_xml(new_numbers, eps, (show or {}).get('title') or eps[0].get('show_title') or ''),
-                                   replace=(nfo_writer.SNAPSHOT,))
-        if os.path.normpath(old_path) != os.path.normpath(new_path):
-            conn.execute("INSERT OR REPLACE INTO files (snapshot_id, path, imdb_id, numbers, data) VALUES (?, ?, ?, ?, ?)",
-                         (sid, new_path, imdb_id, json.dumps(new_numbers), json.dumps(eps)))
-            conn.execute("UPDATE items SET path = ? WHERE snapshot_id = ? AND media_item_id = ?",
-                         (new_path, sid, int(media_item_id)))
-            conn.commit()
-    finally:
-        conn.close()
+    with _carry_lock:
+        conn = _conn()
+        try:
+            item = conn.execute("SELECT path, season, episode FROM items WHERE snapshot_id = ? AND media_item_id = ?",
+                                (sid, int(media_item_id))).fetchone()
+            if not item:
+                return False
+            old_path, season, episode = item
+            # The new file's name must still hold the episode (a renumbered file
+            # gets nothing). A name without SxxEyy (a custom template) is judged
+            # by the item's numbers below.
+            in_file = _file_episodes(os.path.basename(new_path))
+            if in_file is not None and (season, episode) not in in_file:
+                return False
+            in_file = in_file or {(season, episode)}
+            current = nfo_writer._episode_rows_by_id(int(media_item_id))
+            if not current or (current[0].get('season_number'), current[0].get('episode_number')) != (season, episode):
+                return False
+            f = conn.execute("SELECT imdb_id, numbers, data FROM files WHERE snapshot_id = ? AND path = ?",
+                             (sid, old_path)).fetchone()
+            if not f:
+                return False
+            imdb_id, numbers, data = f[0], json.loads(f[1] or '[]'), json.loads(f[2] or '[]')
+            if imdb_id and nfo_writer.wants_show(imdb_id):
+                return False
+            # Every episode of the old file the new file holds too (a
+            # multi-episode file keeps all of them, whichever item came first)
+            kept = _kept_episodes(numbers, data, in_file)
+            if (season, episode) not in {k for k, _e in kept}:
+                return False
+            same_path = os.path.normpath(old_path) == os.path.normpath(new_path)
+            if not same_path:
+                existing = conn.execute("SELECT imdb_id, numbers, data FROM files WHERE snapshot_id = ? AND path = ?",
+                                        (sid, new_path)).fetchone()
+                if existing and (not existing[0] or not imdb_id or existing[0] == imdb_id):
+                    merged = dict(_kept_episodes(json.loads(existing[1] or '[]'), json.loads(existing[2] or '[]'), in_file))
+                    merged.update(kept)
+                    kept = sorted(merged.items())
+            eps = [e for _k, e in kept]
+            show_row = conn.execute("SELECT data FROM shows WHERE snapshot_id = ? AND imdb_id = ?", (sid, imdb_id)).fetchone()
+            show = json.loads(show_row[0]) if show_row else None
+            new_numbers = [list(k) for k, _e in kept]
+            result = nfo_writer._write(nfo_writer.episode_nfo_path(new_path),
+                                       _episode_xml(new_numbers, eps, (show or {}).get('title') or eps[0].get('show_title') or ''),
+                                       replace=(nfo_writer.SNAPSHOT,))
+            if not same_path:
+                conn.execute("INSERT OR REPLACE INTO files (snapshot_id, path, imdb_id, numbers, data) VALUES (?, ?, ?, ?, ?)",
+                             (sid, new_path, imdb_id, json.dumps(new_numbers), json.dumps(eps)))
+                conn.execute("UPDATE items SET path = ? WHERE snapshot_id = ? AND media_item_id = ?",
+                             (new_path, sid, int(media_item_id)))
+                conn.commit()
+        finally:
+            conn.close()
     folder = nfo_writer.show_folder(new_path)
     if folder and not os.path.exists(os.path.join(folder, nfo_writer.SHOW_NFO)):
         _write_show_nfo(folder, imdb_id, show, {'written': 0, 'unchanged': 0, 'foreign': 0, 'error': 0,

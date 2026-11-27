@@ -6,7 +6,6 @@ metadata into NFO files before Plex drops TheTVDB (utilities/plex_snapshot.py).
 """
 
 import logging
-import threading
 
 from flask import Blueprint, jsonify, render_template, request
 
@@ -93,7 +92,10 @@ def api_mode():
     set_setting(nfo_writer.SECTION, 'enabled', new != 'off')
     logging.info(f"[NFO] mode {old} -> {new}")
     if new != 'off':
-        nfo_writer.write_library(on_done=lambda: _plex_step('apply'))
+        if not nfo_writer.write_library(on_done=lambda: _plex_step('apply')):
+            set_setting(nfo_writer.SECTION, 'mode', old)
+            set_setting(nfo_writer.SECTION, 'enabled', old != 'off')
+            return jsonify({'success': False, 'error': 'A run is already going; wait for it to finish.'}), 409
         what = 'every show' if new == 'all' else 'shows with a changed episode order'
         then = ('Plex is set up and refreshed when that finishes.' if nfo_writer.switch_plex_agent()
                 else "Plex's agent is left as it is.")
@@ -111,7 +113,11 @@ def api_mode():
                 nfo_writer._set_job(snapshot_restored=restored)
         except Exception as e:
             logging.warning(f"[NFO] snapshot NFOs not restored: {e}")
-    threading.Thread(target=off, name='nfo-off', daemon=True).start()
+
+    if not nfo_writer.start_job('off', off, name='nfo-off'):
+        set_setting(nfo_writer.SECTION, 'mode', old)
+        set_setting(nfo_writer.SECTION, 'enabled', old != 'off')
+        return jsonify({'success': False, 'error': 'A run is already going; wait for it to finish.'}), 409
     return jsonify({'success': True, 'message': "Restoring Plex's previous agent and removing Clyde's NFO files."})
 
 

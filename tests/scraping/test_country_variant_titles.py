@@ -135,11 +135,15 @@ class UntaggedShowTitleTests(unittest.TestCase):
                    "Survivor.IL.VIP.S02E03.720p.WEBRip.x264-HebTV-RakuvArrow",
                    "Survivor.SA.S11E07.1080p.WEB.h264-GRP",
                    "Survivor.ZA.S11E01.1080p.WEB.h264-GRP",
-                   "Survivor.AU.S11E03.720p.HDTV.x264-FQM"]
+                   "Survivor.AU.S11E03.720p.HDTV.x264-FQM",
+                   "Survivor.2000.AU.S11E03.720p.HDTV.x264-FQM",
+                   "Survivor.2000.IL.S11E03.1080p.WEB-DL"]
         self.assertEqual(set(), self._passed("Survivor", foreign))
 
     def test_matching_and_untagged_not_rejected(self):
-        ok = ["Survivor.US.S11E03.720p.HDTV.x264-GRP", "Survivor.S11E03.1080p.WEB.h264-GRP"]
+        ok = ["Survivor.US.S11E03.720p.HDTV.x264-GRP",
+              "Survivor.S11E03.1080p.WEB.h264-GRP",
+              "Survivor.2000.S11E03.1080p.WEB.h264-GRP"]
         self.assertEqual(set(ok), self._passed("Survivor", ok))
 
     def test_two_letter_title_words(self):
@@ -148,13 +152,21 @@ class UntaggedShowTitleTests(unittest.TestCase):
                                              aliases=("Big Brother (US)",)))
         us = ["Who.Is.America.S11E03.1080p.WEB.h264-GRP"]
         self.assertEqual(set(us), self._passed("Who Is America", us, aliases=("Who Is America (US)",)))
+        # A show whose real title contains a country word is unaffected.
+        title_country = ["Made.in.Chelsea.2000.S11E03.1080p.WEB.h264-GRP"]
+        self.assertEqual(set(title_country), self._passed("Made in Chelsea", title_country,
+                                                          aliases=("Made in Chelsea (UK)",)))
 
     def test_release_country_in_name(self):
         from scraper.functions.filter_results import release_country_in_name, release_country_suffix
         self.assertEqual("IL", release_country_in_name("Survivor.IL.VIP.S02E03.720p", "survivor"))
         self.assertEqual("AU", release_country_in_name("survivor.au.s11e01.1080p", "survivor"))
+        self.assertEqual("AU", release_country_in_name("Survivor.2000.AU.S11E03.720p", "survivor"))
         self.assertEqual("ZA", release_country_in_name("Survivor.South.Africa.S01E01", "survivor"))
         self.assertIsNone(release_country_in_name("Survivor.S11E03.1080p", "survivor"))
+        self.assertIsNone(release_country_in_name("Survivor.2000.S11E03.1080p", "survivor"))
+        self.assertIsNone(release_country_in_name("Survivor.S11E03.AU.1080p", "survivor"))
+        self.assertIsNone(release_country_in_name("Survivor.2000.S11E03.Australia.1080p", "survivor"))
         self.assertIsNone(release_country_in_name("Survivor.Winners.At.War.S11E03", "survivor"))
         self.assertIsNone(release_country_in_name("Love.Survivor.IL.S01E01", "survivor"))
         self.assertEqual("ZA", release_country_suffix("survivor.sa", "survivor"))

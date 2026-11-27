@@ -768,6 +768,27 @@ def _set_job(**kw):
     _job.update(kw)
 
 
+def start_job(kind: str, target, *, name: Optional[str] = None) -> bool:
+    """Run a background NFO job under _job_lock. False when a run is already going."""
+    if not _job_lock.acquire(blocking=False):
+        return False
+    _job.clear()
+    _job.update({'running': True, 'kind': kind, 'started': time.time(), 'current': '', 'error': None})
+
+    def run():
+        try:
+            target()
+        except Exception as e:
+            logging.error(f"{_LOG} {kind} job failed: {e}", exc_info=True)
+            _set_job(error=str(e))
+        finally:
+            _set_job(running=False, finished=time.time(), current='')
+            _job_lock.release()
+
+    threading.Thread(target=run, name=name or f'nfo-{kind}', daemon=True).start()
+    return True
+
+
 def write_library(on_done=None) -> bool:
     """Write NFOs for every show in the library, in the background. False
     when a run is already going."""

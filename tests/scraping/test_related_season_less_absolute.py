@@ -88,6 +88,25 @@ class RelatedSeasonLessTests(unittest.TestCase):
         items[1]['season_number'] = 2
         self.assertEqual(self._related(title, names, self._item(2, 1), items), [(2, 53)])
 
+    def test_season_titled_pack_with_absolute_range_maps_as_absolute(self):
+        # S1=12, S2=24: "Season 2" pack with files 13..36 is absolute (file 14 is S2E2, not S2E14)
+        self.counts = {1: 12, 2: 24}
+        title = '[Grp] Show - Season 2 [BD]'
+        names = [f'[Grp] Show - {n:02d} - Ep [BD].mkv' for n in range(13, 37)]
+        parsed = [p for p in (self.m._parse_file_info({'path': f'/{title}/{n}', 'bytes': 1}) for n in names) if p]
+        ctx = self.m._seasonless_context(parsed, self._item(2, 1, '["animation"]'), title_season=2, pack_season=2)
+        file_14 = parsed[1]  # "Show - 14 - Ep [BD].mkv"
+        self.assertTrue(self.m._seasonless_file_fits(file_14, self._item(2, 2, '["animation"]'), None, ctx))
+        self.assertFalse(self.m._seasonless_file_fits(file_14, self._item(2, 14, '["animation"]'), None, ctx))
+        items = [self._item(2, e, '["anime"]') for e in range(1, 25)]
+        with mock.patch('utilities.settings.get_setting', return_value=False):
+            related = self.m.find_related_items(parsed, [], items, self._item(2, 1, '["anime"]'), torrent_title=title)
+        by_ep = {(i['season_number'], i['episode_number']): fn for i, fn in related}
+        self.assertEqual(len(by_ep), 24)
+        self.assertIn(' - 14 - ', by_ep[(2, 2)])
+        self.assertIn(' - 26 - ', by_ep[(2, 14)])
+        self.assertIn(' - 36 - ', by_ep[(2, 24)])
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -111,9 +111,11 @@ def release_country_suffix(normalized_parsed_title: str, normalized_base_title: 
 
 
 def release_country_in_name(release_name: str, normalized_base_title: str) -> Optional[str]:
-    """Country right after the base title in the raw release name, for names whose
-    country PTT drops from its title ('Survivor.IL.VIP.S02E03' -> 'IL'). Only a
-    country name or code directly following the whole base title counts."""
+    """Country right after the base title (or base title + year) in the raw
+    release name, for names whose country PTT drops from its title
+    ('Survivor.IL.VIP.S02E03' -> 'IL', 'Survivor.2000.AU.S11E03' -> 'AU').
+    Only a country name or code directly following the whole base title and
+    optional year counts."""
     if not release_name or not normalized_base_title:
         return None
     words = [w for w in re.split(r'[\s._-]+', release_name.lower()) if w]
@@ -121,6 +123,8 @@ def release_country_in_name(release_name: str, normalized_base_title: str) -> Op
     if words[:len(base)] != base:
         return None
     rest = words[len(base):]
+    if rest and _YEAR_TOKEN.fullmatch(rest[0].strip('()')):
+        rest = rest[1:]
     for n in (2, 1):
         if len(rest) >= n:
             code = release_country_suffix(normalized_base_title + '.' + '.'.join(rest[:n]),
@@ -262,6 +266,9 @@ def _episode_words_after_title(parsed_title, target_titles, episode_title):
     return ''
 
 
+_SUB_SERIES_GENERIC_WORDS = {'series', 'saga', 'arc', 'part', 'season', 'chapter', 'cour', 'volume', 'vol'}
+
+
 def _sub_series_alias_words(alias, main_title):
     """Distinguishing words in a title extension such as 'Pokémon the Series: XY'."""
     main_words = re.findall(r'[a-z0-9]+', main_title)
@@ -271,7 +278,9 @@ def _sub_series_alias_words(alias, main_title):
     if release_country_suffix('.'.join(alias_words), '.'.join(main_words)):
         return set()
     return {word for word in alias_words[len(main_words):]
-            if word not in _TITLE_FILLER_WORDS and word != 'series' and not _YEAR_TOKEN.fullmatch(word)}
+            if word not in _TITLE_FILLER_WORDS
+            and word not in _SUB_SERIES_GENERIC_WORDS
+            and not _YEAR_TOKEN.fullmatch(word)}
 
 
 def _is_nzb_result(result):

@@ -80,6 +80,25 @@ class LaterSeasonAbsolutePackTests(unittest.TestCase):
         self.assertIn('Utena 14 (BD', self._match(SINGLE, 2, 1))
         kuchi = [f'/{i:02d} Shoujo Kakumei Utena (1997) [BD 720p Hi10p 5.1 AAC][dual-audio][kuchikirukia].mkv'
                  for i in range(1, 40)]
+        self.assertTrue(self._match(kuchi, 1, 5).startswith('05 Shoujo'))
         self.assertTrue(self._match(kuchi, 2, 1).startswith('14 Shoujo'))
         self.assertTrue(self._match(kuchi, 4, 6).startswith('39 Shoujo'))
         self.assertIsNone(self._match(SINGLE, 2, 2))
+
+    def test_related_items_match_non_delimited_fallback_episodes(self):
+        kuchi = [f'/{i:02d} Shoujo Kakumei Utena (1997) [BD 720p Hi10p 5.1 AAC][dual-audio][kuchikirukia].mkv'
+                 for i in range(1, 40)]
+        parsed = [p for p in (self.m._parse_file_info({'path': f, 'bytes': 1}) for f in kuchi) if p]
+        items = [dict(self._item(s, e), id=s * 100 + e)
+                 for s, count in COUNTS.items() for e in range(1, count + 1)]
+        def _setting(section, key, default=None):
+            return 'Symlinked/Local' if key == 'file_collection_management' else default
+
+        with mock.patch('utilities.settings.get_setting', side_effect=_setting):
+            related = self.m.find_related_items(parsed, [], items, self._item(2, 1),
+                                                torrent_title='Shoujo Kakumei Utena (1997) [BD 720p]')
+        by_ep = {(i['season_number'], i['episode_number']): fn for i, fn in related}
+        self.assertEqual(len(by_ep), 39)
+        self.assertTrue(by_ep[(1, 5)].startswith('05 Shoujo'))
+        self.assertTrue(by_ep[(2, 1)].startswith('14 Shoujo'))
+        self.assertTrue(by_ep[(4, 6)].startswith('39 Shoujo'))
