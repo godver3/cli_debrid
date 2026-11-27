@@ -334,5 +334,31 @@ class NoDirectNameJoinTest(unittest.TestCase):
         self.assertEqual(found, self.ALLOWED)
 
 
+class PlexHoldNzbAmbiguousFolderTest(unittest.TestCase):
+    """A finished NZB whose folder has a "Name (2)" sibling (real folder unknown)
+    is still on the mount: Checking holds it, it doesn't give it up."""
+
+    def _verdict(self, root):
+        import time
+        from queues.checking_queue import CheckingQueue
+        cq = CheckingQueue.__new__(CheckingQueue)
+        items = [{'debrid_folder_name': 'Job', 'filled_by_title': 'Job'}]
+        settings = {('Plex', 'mounted_file_location'): root}
+        with mock.patch('queues.checking_queue.get_setting',
+                        side_effect=lambda s, k=None, d='': settings.get((s, k), d)), \
+                mock.patch.object(mount_debrid, 'folder_for', return_value=None):
+            return CheckingQueue._plex_hold_if_nzb(cq, 'nzb:1', items, time.time(), time.time(), 'Plex is idle')
+
+    def test_ambiguous_folder_holds(self):
+        with tempfile.TemporaryDirectory() as root:
+            os.makedirs(os.path.join(root, 'Job'))
+            os.makedirs(os.path.join(root, 'Job (2)'))
+            self.assertEqual(self._verdict(root)[0], 'hold')
+
+    def test_missing_folder_gives_up(self):
+        with tempfile.TemporaryDirectory() as root:
+            self.assertEqual(self._verdict(root)[0], 'give_up')
+
+
 if __name__ == '__main__':
     unittest.main()

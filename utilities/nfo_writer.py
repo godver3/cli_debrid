@@ -664,11 +664,17 @@ def _carry_snapshot(media_item_id: int, symlink_path: str) -> None:
 
 
 def _drain() -> None:
+    global _worker
     while True:
         if not _pending_event.wait(timeout=60):
             with _pending_lock:
                 if not _pending:
-                    return  # idle: the next hook starts a new worker
+                    # Idle: the next hook starts a new worker. Cleared under the
+                    # lock: a hook between this check and the thread ending would
+                    # otherwise still see it alive and start none.
+                    if _worker is threading.current_thread():
+                        _worker = None
+                    return
             continue
         # Wait until no new file has arrived for DEBOUNCE_SECONDS
         while True:

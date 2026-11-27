@@ -277,6 +277,18 @@ class PlanTests(unittest.TestCase):
 
 
 class SymlinkHookBatchTests(unittest.TestCase):
+    def test_idle_worker_clears_itself(self):
+        """An idle worker drops its own reference under the lock before it
+        ends, so a hook right after starts a new one instead of trusting a
+        thread that is about to exit."""
+        import threading
+        me = threading.current_thread()
+        with mock.patch.object(nw, '_worker', me), \
+                mock.patch.object(nw._pending_event, 'wait', return_value=False), \
+                mock.patch.dict(nw._pending, {}, clear=True):
+            nw._drain()
+            self.assertIsNone(nw._worker)
+
     def test_hook_is_a_no_op_when_off(self):
         with mock.patch.object(nw, 'enabled', return_value=False), \
                 mock.patch('utilities.plex_snapshot.carry_to_symlink') as carry, \

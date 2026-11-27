@@ -1332,8 +1332,11 @@ class CheckingQueue:
                  or get_setting('Usenet Provider', 'mounted_file_location', '').rstrip('/'))
         from usenet.mount_layout import resolve_nzb_job_dir
         from utilities.mount_debrid import guarded_folder
-        folder = guarded_folder(mount, torrent_id, sample.get('debrid_folder_name') or sample.get('filled_by_title') or '',
-                                get_setting)
+        guess = sample.get('debrid_folder_name') or sample.get('filled_by_title') or ''
+        # guarded_folder returns None when "Name" and "Name (2)" both exist and
+        # the engine can't say which is this job's. That only makes the folder
+        # ambiguous, not missing: hold (as before) instead of giving up.
+        folder = guarded_folder(mount, torrent_id, guess, get_setting) or guess
         if not folder or not resolve_nzb_job_dir(mount, folder):
             return 'give_up', f'its folder is not on the mount ({reason})'
         return 'hold', reason
