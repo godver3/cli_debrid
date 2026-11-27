@@ -24,7 +24,7 @@ class FakeSection:
 
 
 class FakePlex:
-    def __init__(self, drop_locations=False):
+    def __init__(self, drop_locations=False, refuse_sections=()):
         self.groups = {1: {'title': 'Plex Movie', 'primary': 'tv.plex.agents.movie', 'builtIn': True, 'items': [[1, 1, 1000.0]]},
                        2: {'title': 'Plex Series', 'primary': 'tv.plex.agents.series', 'builtIn': True, 'items': [[2, 2, 1000.0]]}}
         self.next_item = 10
@@ -34,6 +34,7 @@ class FakePlex:
         self.library = mock.Mock(sections=lambda: self.sections)
         self._session = mock.Mock(get='get', post='post', put='put')
         self.drop_locations = drop_locations
+        self.refuse_sections = set(refuse_sections)
         self.calls = []
 
     def _group_xml(self):
@@ -82,7 +83,7 @@ class FakePlex:
             return root
         if parts[:2] == ['library', 'sections'] and len(parts) == 3:
             s = next(x for x in self.sections if str(x.key) == parts[2])
-            if method == 'put':
+            if method == 'put' and s.key not in self.refuse_sections:
                 s.agent = q['agent']
                 s.group = int(q['metadataAgentProviderGroupId'])
                 if self.drop_locations:
@@ -159,6 +160,44 @@ class PlexNfoAgentTests(unittest.TestCase):
         st = pna.status(plex=plex)
         self.assertTrue(st['configured'])
         self.assertEqual([s['title'] for s in st['sections']], ['TV Shows'])
+
+    def test_failed_switch_leaves_applied_false(self):
+        plex = FakePlex(refuse_sections={2})
+        with self.assertRaisesRegex(RuntimeError, 'did not switch'):
+            pna.apply(refresh=False, plex=plex)
+        self.assertFalse(pna.applied())
+        # Original agent is still remembered for restore
+        self.assertEqual(pna._load_state()['previous']['2']['group_id'], 2)
+
+    def test_partial_failure_still_allows_restore(self):
+        plex = FakePlex(refuse_sections={4})
+        plex.sections.append(FakeSection(plex, 4, 'show', 'Anime', ['/lib/symlinks/Anime']))
+        with self.assertRaisesRegex(RuntimeError, 'did not switch'):
+            pna.apply(refresh=False, plex=plex)
+        # First section switched, second refused
+        self.assertTrue(pna.applied())
+        self.assertNotEqual(plex.sections[1].group, 2)
+        self.assertEqual(plex.sections[3].group, 2)
+        res = pna.restore(refresh=False, plex=plex)
+        self.assertEqual(res['sections'], ['TV Shows'])
+        self.assertEqual(plex.sections[1].group, 2)
+        self.assertFalse(pna.applied())
+
+    def test_restore_works_if_set_section_raised_after_switching(self):
+        plex = FakePlex()
+        orig_set = pna._set_section
+
+        def boom(p, s, agent, gid):
+            orig_set(p, s, agent, gid)
+            raise RuntimeError('connection dropped')
+
+        with mock.patch.object(pna, '_set_section', side_effect=boom):
+            with self.assertRaisesRegex(RuntimeError, 'connection dropped'):
+                pna.apply(refresh=False, plex=plex)
+        self.assertFalse(pna.applied())
+        res = pna.restore(refresh=False, plex=plex)
+        self.assertEqual(res['sections'], ['TV Shows'])
+        self.assertEqual(plex.sections[1].group, 2)
 
 
 if __name__ == '__main__':

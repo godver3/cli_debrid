@@ -202,7 +202,10 @@ def applied() -> bool:
     """Clyde switched at least one TV library to its NFO agent (and hasn't
     put it back). From the saved state: no Plex request."""
     state = _load_state()
-    return bool(state.get('group_id') and state.get('previous'))
+    previous = state.get('previous') or {}
+    return bool(state.get('group_id') and any(
+        isinstance(v, dict) and v.get('switched', True) for v in previous.values()
+    ))
 
 
 def status(plex=None) -> Dict:
@@ -249,12 +252,15 @@ def apply(refresh: bool = True, plex=None) -> Dict:
         agent, sgid = current.get(str(s.key), (s.agent, None))
         locations_before = sorted(_norm(x) for x in s.locations)
         if sgid != gid:
-            previous[str(s.key)] = {'agent': agent, 'group_id': sgid, 'title': s.title}
+            previous[str(s.key)] = {'agent': agent, 'group_id': sgid, 'title': s.title, 'switched': False}
             _save_state(state)
             _set_section(plex, s, SERIES, gid)
         new_agent, new_gid = _section_group(plex, s.key)
         if new_gid != gid:
             raise RuntimeError(f"Plex did not switch '{s.title}' to the NFO agent (still group {new_gid})")
+        if str(s.key) in previous and not previous[str(s.key)].get('switched'):
+            previous[str(s.key)]['switched'] = True
+            _save_state(state)
         s.reload()
         if sorted(_norm(x) for x in s.locations) != locations_before:
             raise RuntimeError(f"Plex changed the folders of '{s.title}' while switching agents; check the library")

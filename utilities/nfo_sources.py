@@ -104,7 +104,8 @@ _tvdb_mem: Optional[Dict] = None
 
 def tvdb_episode(tvdb_episode_id) -> Optional[Dict]:
     """TVDB's record of one episode (English title/overview, image,
-    characters), cached on disk for 60 days."""
+    characters), cached on disk for 60 days. Errors and unconfigured TVDB
+    are not cached so a later run retries once TVDB works."""
     global _tvdb_mem
     if not tvdb_episode_id:
         return None
@@ -116,6 +117,7 @@ def tvdb_episode(tvdb_episode_id) -> Optional[Dict]:
         if hit and time.time() - hit.get('t', 0) < _TVDB_TTL:
             return hit.get('d')
     data = None
+    persist = False
     try:
         from cli_battery.app import tvdb_client
         if tvdb_client.is_available():
@@ -130,17 +132,21 @@ def tvdb_episode(tvdb_episode_id) -> Optional[Dict]:
                                                          'personImgURL', 'sort')}
                                    for c in raw.get('characters') or []],
                 }
+                persist = True
+            elif r is not None and r.status_code == 404:
+                persist = True
     except Exception as e:
         logging.debug(f"{_LOG} TVDB episode {eid}: {e}")
-    with _tvdb_lock:
-        _tvdb_mem[eid] = {'t': time.time(), 'd': data}
-        try:
-            tmp = _tvdb_cache_path() + '.tmp'
-            with open(tmp, 'w', encoding='utf-8') as f:
-                json.dump(_tvdb_mem, f)
-            os.replace(tmp, _tvdb_cache_path())
-        except OSError as e:
-            logging.debug(f"{_LOG} TVDB cache not saved: {e}")
+    if persist:
+        with _tvdb_lock:
+            _tvdb_mem[eid] = {'t': time.time(), 'd': data}
+            try:
+                tmp = _tvdb_cache_path() + '.tmp'
+                with open(tmp, 'w', encoding='utf-8') as f:
+                    json.dump(_tvdb_mem, f)
+                os.replace(tmp, _tvdb_cache_path())
+            except OSError as e:
+                logging.debug(f"{_LOG} TVDB cache not saved: {e}")
     return data
 
 

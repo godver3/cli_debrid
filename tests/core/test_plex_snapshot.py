@@ -222,6 +222,49 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual(ps._remove_all(), 3)
         self.assertTrue(os.path.exists(mine))
 
+    def test_resync_removes_old_snapshot_nfo_and_carries_to_new_path(self):
+        from utilities import local_library_scan as lls
+        orig_root = os.path.join(self.tmp, 'orig')
+        os.makedirs(orig_root)
+        items = []
+        new_show = os.path.join(self.root, 'TV Shows', 'Shetland [2013]')
+        new_paths = {}
+        for row in self.rows:
+            src = os.path.join(orig_root, f'Shetland.S01E0{row["episode_number"]}.mkv')
+            with open(src, 'wb') as f:
+                f.write(b'video')
+            os.unlink(row['location_on_disk'])
+            os.symlink(src, row['location_on_disk'])
+            new_path = os.path.join(new_show, 'Season 01', f'Shetland [2013] - S01E0{row["episode_number"]}.mkv')
+            new_paths[row['id']] = new_path
+            items.append({
+                'id': row['id'], 'title': 'Shetland', 'type': 'episode',
+                'location_on_disk': row['location_on_disk'],
+                'original_path_for_symlink': src,
+                'filled_by_file': os.path.basename(src),
+            })
+        self._take()
+        self.assertTrue(os.path.exists(self.nfo(1)))
+        self.assertTrue(os.path.exists(os.path.join(self.show, 'tvshow.nfo')))
+
+        settings = {
+            ('File Management', 'file_collection_management'): 'Symlinked/Local',
+            ('File Management', 'original_files_path'): orig_root,
+            ('File Management', 'symlinked_files_path'): self.root,
+        }
+        with mock.patch.object(lls, 'get_setting', side_effect=lambda s, k, d=None: settings.get((s, k), d)), \
+                mock.patch.object(lls, 'get_all_media_items',
+                                  side_effect=lambda state=None: [dict(x) for x in items] if state == 'Collected' else []), \
+                mock.patch.object(lls, 'get_symlink_path', side_effect=lambda item, *_a, **_kw: new_paths[item['id']]), \
+                mock.patch.object(lls, 'update_media_item'):
+            res = lls.resync_symlinks_with_new_settings()
+        self.assertEqual(res['symlinks_updated_count'], 2)
+        self.assertFalse(os.path.exists(self.show))  # old NFOs gone, folder pruned
+        new_ep1_nfo = new_paths[1][:-4] + '.nfo'
+        self.assertIn(nw.SNAPSHOT_MARKER, self._read(new_ep1_nfo))
+        self.assertIn('<title>Red Bones (1)</title>', self._read(new_ep1_nfo))
+        self.assertTrue(os.path.exists(os.path.join(new_show, 'tvshow.nfo')))
+
 
 class MatchPathTests(unittest.TestCase):
     def test_longest_folder_suffix_wins(self):

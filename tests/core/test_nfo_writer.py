@@ -304,5 +304,121 @@ class SymlinkHookBatchTests(unittest.TestCase):
         self.assertEqual(len(write.call_args.kwargs['only_paths']), 3)
 
 
+class TvdbEpisodeCacheTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        from utilities import nfo_sources as ns
+        self.ns = ns
+        self._orig_mem = ns._tvdb_mem
+        ns._tvdb_mem = None
+        p = mock.patch.dict(os.environ, {'USER_DB_CONTENT': self.tmp})
+        p.start()
+        self.addCleanup(p.stop)
+        self.addCleanup(self._reset_mem)
+
+    def _reset_mem(self):
+        self.ns._tvdb_mem = self._orig_mem
+
+    def test_error_and_unconfigured_are_not_persisted_and_retried(self):
+        cache_path = os.path.join(self.tmp, 'nfo_tvdb_episodes.json')
+        # TVDB not configured: returns None, nothing persisted
+        with mock.patch('cli_battery.app.tvdb_client.is_available', return_value=False):
+            self.assertIsNone(self.ns.tvdb_episode(42))
+        self.assertFalse(os.path.exists(cache_path))
+        self.assertNotIn('42', self.ns._tvdb_mem)
+
+        # Transient error (_make_request returns None): returns None, nothing persisted
+        with mock.patch('cli_battery.app.tvdb_client.is_available', return_value=True), \
+                mock.patch('cli_battery.app.tvdb_client._make_request', return_value=None):
+            self.assertIsNone(self.ns.tvdb_episode(42))
+        self.assertFalse(os.path.exists(cache_path))
+        self.assertNotIn('42', self.ns._tvdb_mem)
+
+        # Later when TVDB works again: retried, returned, and persisted
+        resp = mock.Mock(status_code=200)
+        resp.json.return_value = {'data': {'name': 'Pilot', 'overview': 'Desc', 'image': 'https://tvdb/1.jpg', 'characters': []}}
+        with mock.patch('cli_battery.app.tvdb_client.is_available', return_value=True), \
+                mock.patch('cli_battery.app.tvdb_client._make_request', return_value=resp) as req:
+            rec = self.ns.tvdb_episode(42)
+            self.assertEqual(rec['name'], 'Pilot')
+            self.assertEqual(rec['image'], 'https://tvdb/1.jpg')
+            self.assertTrue(os.path.exists(cache_path))
+            # Cached on second call
+            self.assertEqual(self.ns.tvdb_episode(42)['name'], 'Pilot')
+            self.assertEqual(req.call_count, 1)
+
+    def test_404_is_cached_on_disk(self):
+        cache_path = os.path.join(self.tmp, 'nfo_tvdb_episodes.json')
+        resp = mock.Mock(status_code=404)
+        with mock.patch('cli_battery.app.tvdb_client.is_available', return_value=True), \
+                mock.patch('cli_battery.app.tvdb_client._make_request', return_value=resp) as req:
+            self.assertIsNone(self.ns.tvdb_episode(99))
+            self.assertTrue(os.path.exists(cache_path))
+            self.assertIsNone(self.ns.tvdb_episode(99))
+            self.assertEqual(req.call_count, 1)
+
+
+class ResyncNfoTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.orig_root = os.path.join(self.tmp, 'orig')
+        self.sym_root = os.path.join(self.tmp, 'symlinks')
+        os.makedirs(self.orig_root)
+        self.src = os.path.join(self.orig_root, 'Shetland.S01E01.mkv')
+        with open(self.src, 'wb') as f:
+            f.write(b'video')
+        self.old_show = os.path.join(self.sym_root, 'TV Shows', 'Shetland')
+        self.old_s1 = os.path.join(self.old_show, 'Season 01')
+        os.makedirs(self.old_s1)
+        self.old_link = os.path.join(self.old_s1, 'Shetland - S01E01.mkv')
+        os.symlink(self.src, self.old_link)
+        self.new_show = os.path.join(self.sym_root, 'TV Shows', 'Shetland (2013)')
+        self.new_link = os.path.join(self.new_show, 'Season 01', 'Shetland (2013) - S01E01.mkv')
+        self.item = {
+            'id': 1, 'title': 'Shetland', 'type': 'episode',
+            'location_on_disk': self.old_link,
+            'original_path_for_symlink': self.src,
+            'filled_by_file': os.path.basename(self.src),
+        }
+
+    def _run_resync(self):
+        from utilities import local_library_scan as lls
+        settings = {
+            ('File Management', 'file_collection_management'): 'Symlinked/Local',
+            ('File Management', 'original_files_path'): self.orig_root,
+            ('File Management', 'symlinked_files_path'): self.sym_root,
+        }
+        with mock.patch.object(lls, 'get_setting', side_effect=lambda s, k, d=None: settings.get((s, k), d)), \
+                mock.patch.object(nw, 'get_setting', side_effect=lambda s, k, d=None: settings.get((s, k), d)), \
+                mock.patch.object(lls, 'get_all_media_items',
+                                  side_effect=lambda state=None: [dict(self.item)] if state == 'Collected' else []), \
+                mock.patch.object(lls, 'get_symlink_path', return_value=self.new_link), \
+                mock.patch.object(lls, 'update_media_item'), \
+                mock.patch.object(nw, 'write_for_symlink'):
+            return lls.resync_symlinks_with_new_settings()
+
+    def test_resync_removes_old_clyde_nfos_and_prunes_old_folder(self):
+        old_ep_nfo = self.old_link[:-4] + '.nfo'
+        old_show_nfo = os.path.join(self.old_show, 'tvshow.nfo')
+        with open(old_ep_nfo, 'w', encoding='utf-8') as f:
+            f.write(f'<?xml version="1.0"?>\n{nw.MARKER}\n<episodedetails/>')
+        with open(old_show_nfo, 'w', encoding='utf-8') as f:
+            f.write(f'<?xml version="1.0"?>\n{nw.MARKER}\n<tvshow/>')
+        res = self._run_resync()
+        self.assertEqual(res['symlinks_updated_count'], 1)
+        self.assertTrue(os.path.islink(self.new_link))
+        self.assertFalse(os.path.exists(old_ep_nfo))
+        self.assertFalse(os.path.exists(old_show_nfo))
+        self.assertFalse(os.path.exists(self.old_show))  # empty folder pruned
+
+    def test_resync_keeps_user_nfo(self):
+        user_nfo = self.old_link[:-4] + '.nfo'
+        with open(user_nfo, 'w', encoding='utf-8') as f:
+            f.write('<episodedetails><title>mine</title></episodedetails>')
+        res = self._run_resync()
+        self.assertEqual(res['symlinks_updated_count'], 1)
+        self.assertTrue(os.path.exists(user_nfo))
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -3053,8 +3053,15 @@ def resync_symlinks_with_new_settings(
                 old_parent = os.path.dirname(db_symlink_location) if db_symlink_location else None
                 new_parent = os.path.dirname(new_symlink_destination)
 
-                if db_symlink_location and os.path.lexists(db_symlink_location):
-                    if os.path.islink(db_symlink_location): os.unlink(db_symlink_location)
+                if db_symlink_location:
+                    if os.path.islink(db_symlink_location):
+                        os.unlink(db_symlink_location)
+                    if not os.path.lexists(db_symlink_location):
+                        try:
+                            from utilities.nfo_writer import remove_for_video
+                            remove_for_video(db_symlink_location)
+                        except Exception as e:
+                            logging.debug(f"[RESYNC] NFO cleanup for {db_symlink_location}: {e}")
 
                 # Move any subtitle sidecar files from old folder to new folder
                 subtitle_extensions = {'.srt', '.ass', '.sub', '.ssa', '.vtt', '.idx', '.sup'}
