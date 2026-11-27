@@ -101,7 +101,7 @@ def get_debrid_providers() -> List[DebridProvider]:
             p = _instantiate_provider(name, api_key=key)
             # Streaming only: the account stays in the chain (mount links,
             # library, repair lookups) but never receives new releases.
-            p.stream_only = bool(fb.get("stream_only"))
+            p.stream_only = bool(fb.get("stream_only")) and _stream_only_allowed()
             providers.append(p)
             logging.info(f"[DEBRID FACTORY] Fallback provider loaded: {name}")
         except Exception as e:
@@ -110,6 +110,16 @@ def get_debrid_providers() -> List[DebridProvider]:
     _provider_list = providers
     logging.info(f"[DEBRID FACTORY] Provider chain: {[p.PROVIDER_NAME for p in providers]}")
     return _provider_list
+
+
+def _stream_only_allowed() -> bool:
+    """Streaming only needs the built-in mount: it mints the links for files
+    Clyde no longer adds to. With cli_mount/Zurg the flag is ignored."""
+    try:
+        from utilities.mount_debrid import engine_holds_debrid
+        return engine_holds_debrid(get_setting)
+    except Exception:
+        return False
 
 
 def get_grab_providers() -> List[DebridProvider]:
