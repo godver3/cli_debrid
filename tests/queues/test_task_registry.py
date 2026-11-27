@@ -36,6 +36,7 @@ class DefaultsTests(unittest.TestCase):
         on = reg.default_enabled(_settings(**PLEX))
         self.assertIn('task_plex_full_scan', on)
         self.assertIn('task_plex_movie_boxsets', on)
+        self.assertIn('task_plex_preset_collections', on)
         self.assertNotIn('task_verify_symlinked_files', on)
         self.assertNotIn('task_check_plex_files', on)
 
@@ -58,6 +59,7 @@ class DefaultsTests(unittest.TestCase):
         on = reg.default_enabled(get)
         self.assertNotIn('task_plex_smart_collection_posters', on)
         self.assertNotIn('task_plex_movie_boxsets', on)
+        self.assertNotIn('task_plex_preset_collections', on)
 
     def test_overlays_follow_setting(self):
         self.assertNotIn('task_overlay_sync', reg.default_enabled(_settings(**PLEX)))

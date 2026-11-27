@@ -310,6 +310,11 @@
       "action": "Sync the movie box set collections in Plex.",
       "runs": "When Plex is the media server. Does nothing unless Plex Movie Box Sets is enabled."
     },
+    "task_plex_preset_collections": {
+      "description": "Builds the preset Plex collections you switched on (Christmas, Box Office Blockbusters, Trending, decades, genres, award winners, studios) from titles already in your library. Nothing is requested or downloaded. Collections it made are removed again when you switch a preset off.",
+      "action": "Sync the preset collections in Plex.",
+      "runs": "When Plex is the media server. Does nothing unless a preset collection is switched on."
+    },
     "task_process_bulk_subtitles": {
       "description": "Downloads subtitles for collected files that don't have any yet, up to 200 per run. Files that were already tried are skipped. Symlinked/Local mode saves .srt files next to the symlinks. Direct Mount adds them through cli_mount.",
       "action": "Download subtitles for the next 200 files.",
