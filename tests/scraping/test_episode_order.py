@@ -305,6 +305,52 @@ class PreviewOrderChangeTests(unittest.TestCase):
         self.assertEqual(self._apply_plex(False, None, ''), [])
         self.assertEqual(self._apply_plex(False, ['tvdbDvd'], "Plex doesn't offer this ordering"), [['tvdbDvd']])
 
+    def _apply_renamed(self, moves):
+        """apply_order_change in symlink mode; returns (result, calls in order)."""
+        preview = {'success': True, 'conflicts': [], 'new_order': 'tvdb:dvd', 'current_order': 'default',
+                   'moves': moves, 'removes': [], 'unmappable': [], 'missing_episodes': 0, 'missing_positions': [],
+                   'plex_ordering': None, 'plex_note': None}
+        rows = [{'id': 7, 'location_on_disk': '/lib/TV Shows/Kai (2009)/Season 02/Kai - S02E01.mkv'},
+                {'id': 8, 'location_on_disk': '/lib/TV Shows/Kai (2009)/Season 03/Kai - S03E01.mkv'},
+                {'id': 9, 'location_on_disk': '/lib/TV Shows/Other (2001)/Season 01/Other - S01E01.mkv'}]
+        calls = mock.MagicMock()
+        calls.scan.return_value = {'paths_scanned': ['/lib/TV Shows/Kai (2009)'], 'scan_finished': True}
+        calls.resync.return_value = {'symlinks_updated_count': 2}
+        calls.nfo.return_value = ''
+        calls.sync.return_value = ''
+        settings = {('File Management', 'file_collection_management'): 'Symlinked/Local',
+                    ('File Management', 'symlinked_files_path'): '/lib'}
+        with mock.patch.object(self.oc, 'preview_order_change', return_value=preview), \
+                mock.patch.object(self.oc, '_apply_rows'), \
+                mock.patch.object(self.oc, '_reset_battery_seasons'), \
+                mock.patch.object(self.oc, '_show_rows', return_value=rows), \
+                mock.patch.object(self.oc, '_nfo_mode', return_value=False), \
+                mock.patch.object(self.oc, 'get_setting', side_effect=lambda s, k, d=None: settings.get((s, k), d)), \
+                mock.patch('utilities.nfo_writer.get_setting', side_effect=lambda s, k, d=None: settings.get((s, k), d)), \
+                mock.patch('database.show_overrides.set_show_override'), \
+                mock.patch('cli_battery.app.direct_api.DirectAPI.force_refresh_metadata', return_value=({}, None)), \
+                mock.patch('utilities.local_library_scan.resync_symlinks_with_new_settings', calls.resync), \
+                mock.patch('utilities.plex_functions.scan_and_empty_plex_trash', calls.scan), \
+                mock.patch('utilities.nfo_writer.refresh_show', calls.nfo), \
+                mock.patch('utilities.plex_order_metadata.sync_show', calls.sync):
+            result = self.oc.apply_order_change('tt1409055', 'tvdb:dvd', sync_plex=True)
+        return result, calls
+
+    def test_renamed_symlinks_scanned_before_plex_rereads_the_show(self):
+        # The media server doesn't scan by itself (Plex's default): without a
+        # scan it kept the old file names and the episodes showed unavailable
+        result, calls = self._apply_renamed([{'id': 7, 'has_file': True}, {'id': 8, 'has_file': True},
+                                             {'id': 3, 'has_file': False}])
+        calls.scan.assert_called_once_with(paths=['/lib/TV Shows/Kai (2009)'], section_type='show',
+                                           empty_trash=False, wait_s=self.oc.SCAN_WAIT_SECONDS)
+        order = [c[0] for c in calls.mock_calls if c[0] in ('resync', 'nfo', 'scan', 'sync')]
+        self.assertEqual(order, ['resync', 'nfo', 'scan', 'sync'])
+        self.assertIn('media server scanned', result['symlink_note'])
+
+    def test_no_scan_without_renamed_files(self):
+        _result, calls = self._apply_renamed([{'id': 3, 'has_file': False}])
+        calls.scan.assert_not_called()
+
     def test_same_order_rejected(self):
         self.assertFalse(self._preview([], order='tvdb:dvd', current='tvdb:dvd')['success'])
         self.assertFalse(self._preview([], order='tvdb:official')['success'])

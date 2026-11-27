@@ -69,6 +69,34 @@ def _plex_ordering_for(order: str) -> Optional[List[str]]:
     return PLEX_SHOW_ORDERING.get(order)
 
 
+SCAN_WAIT_SECONDS = 60
+
+
+def _scan_show_folders(imdb_id: str, item_ids: List[int]) -> str:
+    """Have the media server scan the show folder(s) of the moved items' new
+    symlinks and wait (up to SCAN_WAIT_SECONDS) for it. Returns a note."""
+    from utilities.nfo_writer import show_folder
+    from utilities.plex_functions import scan_and_empty_plex_trash
+    import os
+    wanted = set(item_ids)
+    folders = set()
+    for r in _show_rows(imdb_id):
+        loc = r.get('location_on_disk')
+        if r['id'] in wanted and loc:
+            folders.add(show_folder(loc) or os.path.dirname(loc))
+    if not folders:
+        return ''
+    try:
+        result = scan_and_empty_plex_trash(paths=sorted(folders), section_type='show', empty_trash=False,
+                                           wait_s=SCAN_WAIT_SECONDS)
+    except Exception as e:
+        logging.warning(f"[EpisodeOrder] {imdb_id}: media server scan after renaming failed: {e}")
+        return 'media server not scanned'
+    if not result.get('paths_scanned'):
+        return 'media server not scanned' if result.get('errors') else ''
+    return 'media server scanned' + ('' if result.get('scan_finished', True) else ' (still scanning)')
+
+
 def _nfo_mode(imdb_id: str) -> bool:
     """This show's order is carried by NFO files (Tools -> NFO Files) that
     Plex reads (the library is on Clyde's NFO agent)."""
@@ -370,6 +398,16 @@ def apply_order_change(imdb_id: str, new_order: Optional[str], sync_plex: bool =
     nfo_note = _refresh_nfos(imdb_id)
     if nfo_note:
         symlink_note = f"{symlink_note}; {nfo_note}" if symlink_note else nfo_note
+
+    # The renamed symlinks are new paths to the media server. A library that
+    # isn't scanned automatically (Plex's default) kept pointing at the old
+    # names, so the episodes showed as unavailable until its next scan.
+    # Scanned before Plex re-reads the show below; the trash isn't emptied
+    # (that would also drop items missing for other reasons, e.g. a mount outage).
+    if symlink_note is not None:
+        scan_note = _scan_show_folders(imdb_id, moved_with_files)
+        if scan_note:
+            symlink_note = f"{symlink_note}; {scan_note}"
 
     plex_note = preview['plex_note']
     nfo_show = _nfo_mode(imdb_id)

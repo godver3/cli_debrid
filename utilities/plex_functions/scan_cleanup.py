@@ -262,7 +262,8 @@ def _nearest_existing_scan_paths(paths: list, sections) -> list:
     return [p for p in out if not any(o != p and p.startswith(o.rstrip(os.sep) + os.sep) for o in out)]
 
 
-def scan_and_empty_plex_trash(paths: list = None, section_type: str = None, empty_trash: bool = True) -> dict:
+def scan_and_empty_plex_trash(paths: list = None, section_type: str = None, empty_trash: bool = True,
+                              wait_s: float = 0) -> dict:
     """
     Scan specific Plex paths and then empty trash to clean up unavailable items.
 
@@ -274,6 +275,8 @@ def scan_and_empty_plex_trash(paths: list = None, section_type: str = None, empt
                If provided, only these paths will be scanned instead of entire sections.
         section_type: Optional - 'movie' or 'show' to filter sections for trash empty.
                       If None, empties trash for all sections.
+        wait_s: with empty_trash=False, wait up to this long for the scanned
+                sections to finish scanning (result 'scan_finished').
 
     Returns:
         dict with 'success', 'paths_scanned', 'sections_cleaned', 'errors'
@@ -403,6 +406,9 @@ def scan_and_empty_plex_trash(paths: list = None, section_type: str = None, empt
 
         # Step 3: Empty trash ONLY for sections that were actually scanned
         if not empty_trash:
+            if wait_s and scanned_sections:
+                result['scan_finished'] = _wait_for_scans(
+                    [s for s in sections if s.key in scanned_sections], wait_s)
             return result
 
         # Emptying the trash before the scan has marked the files missing does
