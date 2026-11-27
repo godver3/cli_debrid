@@ -44,6 +44,16 @@ def _item_from_plex_watchlist(item_source_types) -> bool:
 
 SIDECAR_SUBTITLE_EXTS = ('.srt', '.ass', '.ssa', '.sub', '.idx', '.vtt', '.smi')
 
+def _accepts_kwarg(func, name: str) -> bool:
+    """True if `func` takes keyword `name` (or **kwargs)."""
+    import inspect
+    try:
+        params = inspect.signature(func).parameters
+    except (TypeError, ValueError):
+        return False
+    return name in params or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+
+
 # FUSE mount types of debrid/usenet mounts (built-in engine, rclone/zurg,
 # cli_mount/decypharr). A file under one is removed through its provider,
 # never with os.remove.
@@ -2409,8 +2419,14 @@ class DeletionManager:
                         return torrent_id, False, None
                     try:
                         from debrid import provider_for_item
-                        provider_for_item(torrent_provider_names.get(torrent_id), self.debrid).remove_torrent(
-                            torrent_id, removal_reason=f"Library deletion: {first_title}", skip_hash_tracking=True)
+                        _provider = provider_for_item(torrent_provider_names.get(torrent_id), self.debrid)
+                        _remove_kwargs = {'removal_reason': f"Library deletion: {first_title}"}
+                        # Only Real-Debrid takes skip_hash_tracking; passing it to TorBox,
+                        # AllDebrid, Premiumize... raised TypeError, so a library delete
+                        # never removed their torrents.
+                        if _accepts_kwarg(_provider.remove_torrent, 'skip_hash_tracking'):
+                            _remove_kwargs['skip_hash_tracking'] = True
+                        _provider.remove_torrent(torrent_id, **_remove_kwargs)
                         logging.info(f"[DELETE_MULTIPLE] Removed torrent {torrent_id} from debrid")
                     except Exception as e:
                         error_msg = str(e)

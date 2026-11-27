@@ -148,9 +148,12 @@ def test_symlink_500_episodes_5_seasons_batches_plex_sleep_db_and_nfo(tmp_path):
     # Call-count assertions: O(seasons), never O(episodes)
     assert mock_plex_cls.call_count == 1
     assert mock_remove_file.call_count == 0
-    assert tv_section.update.call_count == 5
+    # The 5 season folders are gone after the delete, and a Plex partial scan of
+    # a removed folder does nothing: one scan of their nearest existing folder.
+    from utilities.plex_functions.scan_cleanup import _nearest_existing_scan_paths
+    expected = _nearest_existing_scan_paths(season_dirs, [tv_section])
     scanned = [c.kwargs['path'] for c in tv_section.update.call_args_list]
-    assert scanned == season_dirs
+    assert scanned == expected and 1 <= len(expected) <= 5
     assert tv_section.emptyTrash.call_count == 1
     assert (mock_dm_sleep.call_count + mock_scan_sleep.call_count) <= 1
     assert mock_db_delete.call_count == 1
@@ -317,8 +320,10 @@ def test_direct_mount_500_episodes_batches_media_server_calls(tmp_path, server_k
 
     if server_kind == 'plex':
         assert mock_plex_cls.call_count == 1
-        assert tv_section.update.call_count == 5
-        assert [c.kwargs['path'] for c in tv_section.update.call_args_list] == season_dirs
+        from utilities.plex_functions.scan_cleanup import _nearest_existing_scan_paths
+        expected = _nearest_existing_scan_paths(season_dirs, [tv_section])
+        assert [c.kwargs['path'] for c in tv_section.update.call_args_list] == expected
+        assert 1 <= len(expected) <= 5
         assert tv_section.emptyTrash.call_count == 1
     elif server_kind == 'silo':
         assert mock_silo_scan.call_count == 5
@@ -561,3 +566,25 @@ def test_local_download_on_real_disk_still_removed(monkeypatch, tmp_path):
         {'state': 'Collected', 'original_path_for_symlink': str(f)}, '')
     assert removed == str(f) and err is None
     assert not f.exists()
+
+
+# --- Phase 0 removes torrents on providers without skip_hash_tracking ---
+
+def test_accepts_kwarg_matches_provider_signatures():
+    from utilities.deletion_manager import _accepts_kwarg
+
+    class TorBoxLike:
+        def remove_torrent(self, torrent_id, removal_reason=None):
+            return True
+
+    class RealDebridLike:
+        def remove_torrent(self, torrent_id, removal_reason="Manual removal", skip_hash_tracking=False):
+            return None
+
+    class KwargsLike:
+        def remove_torrent(self, torrent_id, **kw):
+            return True
+
+    assert not _accepts_kwarg(TorBoxLike().remove_torrent, 'skip_hash_tracking')
+    assert _accepts_kwarg(RealDebridLike().remove_torrent, 'skip_hash_tracking')
+    assert _accepts_kwarg(KwargsLike().remove_torrent, 'skip_hash_tracking')
