@@ -427,6 +427,14 @@ def _embedded_tracks(file_path):
 
 
 _EP_RE = re.compile(r'[Ss]\d{1,2}[ ._-]?[Ee]\d{1,3}|\b\d{1,2}x\d{2,3}\b')
+_VIDEO_EXTS = (
+    '.mkv', '.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm',
+    '.m4v', '.mpg', '.mpeg', '.ts', '.m2ts', '.vob', '.ogv',
+)
+
+
+def _has_video_ext(name):
+    return os.path.splitext((name or '').strip().lower())[1] in _VIDEO_EXTS
 
 
 def _looks_obfuscated(name):
@@ -441,12 +449,26 @@ def _looks_obfuscated(name):
 
 def _name_candidates(original_path, real_path, name_hint, item):
     """Names to parse, best first: release names before the templated
-    library name, which has the title but no group/source."""
+    library name, which has the title but no group/source.
+
+    For episodes, a filled_by_title (or name_hint) with a video extension
+    (e.g. a season pack named after one of its files) is demoted behind the
+    item's own video file name so searches aren't steered to another episode.
+    """
     item = item or {}
+    is_episode = item.get('type') == 'episode' or (
+        not item.get('type') and bool(_EP_RE.search(original_path.name))
+    )
+    filled_file = os.path.basename(item['filled_by_file']) if item.get('filled_by_file') else None
+    file_cands = [filled_file, real_path.name if real_path else None, original_path.name]
     raw = [name_hint, item.get('filled_by_title'), item.get('original_scraped_torrent_title'),
            item.get('original_filename'),
-           item.get('filled_by_file'), real_path.name if real_path else None,
-           item.get('debrid_folder_name'), original_path.name]
+           file_cands[0], file_cands[1],
+           item.get('debrid_folder_name'), file_cands[2]]
+    if is_episode and (_has_video_ext(item.get('filled_by_title')) or _has_video_ext(name_hint)):
+        demoted = [n for n in (name_hint, item.get('filled_by_title')) if _has_video_ext(n)]
+        kept = [n for n in raw if n not in demoted]
+        raw = file_cands + kept + demoted
     out = []
     for n in raw:
         n = (n or '').strip()
