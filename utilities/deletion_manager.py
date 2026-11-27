@@ -76,9 +76,8 @@ def remove_sidecar_subtitles(video_path, check_show_nfo: bool = True):
         return removed
     try:
         from database import subtitle_history
-        clyde_paths = subtitle_history.clyde_sidecar_paths()
     except Exception:
-        clyde_paths = set()
+        subtitle_history = None
     # Another video still here whose name starts with this one's
     # ('Movie.2020.1080p.REMUX.mkv' next to 'Movie.2020.1080p.mkv') owns
     # the subtitles named after it.
@@ -90,7 +89,9 @@ def remove_sidecar_subtitles(video_path, check_show_nfo: bool = True):
         if any(f.startswith(s + '.') for s in longer):
             continue
         path = os.path.join(folder, f)
-        if os.path.normpath(path) not in clyde_paths:
+        # Indexed lookup per candidate file (not the whole table per video:
+        # a 1,200-episode delete calls this 1,200 times)
+        if subtitle_history is None or not subtitle_history.is_clyde_path(path):
             continue
         try:
             if os.path.isfile(path) and not os.path.islink(path):
@@ -2579,6 +2580,18 @@ class DeletionManager:
                 else:
                     logging.warning(f"[DELETE_MULTIPLE] Batch cache clearing had errors: {batch_cache_result['errors']}")
                     aggregate_result['errors'].extend(batch_cache_result['errors'])
+                    # The per-item delete used to clear each item's cache itself;
+                    # retry that way so one bad cache file doesn't leave the rest.
+                    _per_item_ok = True
+                    for _it in all_items:
+                        try:
+                            _files = self.check_content_sources(_it).get('cache_files') or []
+                            if _files and not self.clear_content_source_cache(_it, _files):
+                                _per_item_ok = False
+                        except Exception as _ce:
+                            _per_item_ok = False
+                            logging.warning(f"[DELETE_MULTIPLE] Per-item cache clear failed for {_it.get('id')}: {_ce}")
+                    batch_cache_cleared = _per_item_ok
             else:
                 logging.warning(f"[DELETE_MULTIPLE] Could not get items for batch cache clearing")
 
@@ -2706,6 +2719,7 @@ class DeletionManager:
                 item_deleted_files = []
                 item_errors = []
                 item_scan_paths = []
+                plex_removed = False
                 skip_physical = (item.get('state', '') == 'Blacklisted')
 
                 if not skip_physical:
@@ -2713,7 +2727,10 @@ class DeletionManager:
                     # remove non-mount original files if not in limited_env.
                     if self.using_symlinks and delete_files:
                         orig_path = item.get('original_path_for_symlink')
-                        is_on_mount = bool(mount_location and orig_path and orig_path.startswith(mount_location))
+                        # Same debrid-mount check as _remove_original_file_for_batch
+                        # (built-in engine path, FUSE mounts), not just a prefix match
+                        # on a possibly stale mounted_file_location.
+                        is_on_mount = bool(orig_path and self._on_debrid_mount(orig_path, mount_location))
                         if orig_path and not is_on_mount and not self.limited_env:
                             try:
                                 if os.path.exists(orig_path):
@@ -2732,7 +2749,22 @@ class DeletionManager:
                             item_errors.append(file_err)
 
                     media_path = item.get('location_on_disk') or item.get('filled_by_file')
-                    if media_path:
+                    # Direct Mount + Plex with no show/season/movie delete: the file is
+                    # often still on the mount (debrid not removed, or the mount hasn't
+                    # refreshed), and a folder scan keeps anything whose file it still
+                    # sees. Remove the item through the Plex API as dev did; only fall
+                    # back to the batched folder scan when that fails.
+                    if (delete_from_media_server and media_path and not self.using_symlinks
+                            and not plex_content_deleted and self.plex_enabled
+                            and not self.silo_enabled and not self.jellyfin_direct_enabled):
+                        try:
+                            from utilities.plex_functions import remove_file_from_plex
+                            plex_removed = bool(remove_file_from_plex(
+                                item.get('title', 'Unknown'), media_path,
+                                item.get('episode_title') if item.get('type') == 'episode' else None))
+                        except Exception as e:
+                            logging.warning(f"[DELETE_MULTIPLE] Plex removal failed for item {item_id}: {e}")
+                    if media_path and not plex_removed:
                         item_scan_paths.append(media_path)
                         parent_folder = os.path.dirname(media_path)
                         if parent_folder:
@@ -2750,7 +2782,7 @@ class DeletionManager:
                     'deleted_files': item_deleted_files,
                     'deleted_symlinks': [],
                     'paths_for_plex_scan': item_scan_paths,
-                    'media_server_removed': plex_content_deleted,
+                    'media_server_removed': plex_content_deleted or plex_removed,
                     'media_server_type': ('silo' if self.silo_enabled else 'jellyfin' if self.jellyfin_direct_enabled else 'plex' if self.plex_enabled else 'none'),
                     'debrid_removed': bool(item.get('filled_by_torrent_id') in debrid_removed_ids),
                     'cache_cleared': batch_cache_cleared,

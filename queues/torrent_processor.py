@@ -479,8 +479,16 @@ class TorrentProcessor:
                                         (str(tid),)).fetchone()
                 finally:
                     conn.close()
-                if not used:
-                    self.debrid_provider.remove_torrent(tid, removal_reason="Built-in mount hides its video files")
+                if used:
+                    pass
+                elif info.get('_reused'):
+                    logging.info(f"[{item_identifier}] {prefix} Keeping torrent {tid}: it was already on the account")
+                else:
+                    # The provider that holds it (a cache hit may be on a fallback
+                    # provider), not whichever one self.debrid_provider is now
+                    from debrid import provider_for_item
+                    provider = provider_for_item(info.get('_provider'), self.debrid_provider)
+                    provider.remove_torrent(tid, removal_reason="Built-in mount hides its video files")
             except Exception as e:
                 logging.error(f"[{item_identifier}] {prefix} Error removing hidden-extension torrent {tid}: {e}")
         return True
@@ -1848,6 +1856,9 @@ class TorrentProcessor:
                                 # performed against, same reasoning as the cache-hit path above.
                                 if info is not None:
                                     info['_provider'] = self.debrid_provider.PROVIDER_NAME
+                                    # Was on the account before this add: never removed
+                                    # by _skip_hidden_release (it may be the user's own)
+                                    info['_reused'] = True
                         else:
                             logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] PHASE: Addition - Adding to debrid service")
                             info = self.add_to_account(original_link, preferred_provider=winning_provider if is_cached else None)

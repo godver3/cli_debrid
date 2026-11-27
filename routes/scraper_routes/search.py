@@ -368,8 +368,11 @@ def select_episode():
         season = None
         if season_raw is not None:
             _s = str(season_raw).strip()
-            if _s and _s.lower() not in ('null', 'none'):
-                season = int(_s)
+            if _s and _s.lower() not in ('null', 'none', 'undefined'):
+                try:
+                    season = int(_s)
+                except ValueError:
+                    logging.warning(f"select_episode: ignoring non-numeric season {_s!r}")
         title = request.form.get('title')
         year = request.form.get('year')
         # Get allow_specials flag from form data

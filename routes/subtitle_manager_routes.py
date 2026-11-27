@@ -103,12 +103,11 @@ def item_detail(item_id):
     files, plex_streams = [], None
     if plex:
         plex_streams = subtitle_resync.plex_streams(subtitle_resync.item_rk(item))
-    clyde_paths = subtitle_history.clyde_sidecar_paths()
     for lang, paths in status_mod.sidecar_langs(item.get('location_on_disk'), {}).items():
         for p in paths:
             files.append({
                 'language': lang, 'path': p, 'name': os.path.basename(p),
-                'clyde_owned': (not os.path.islink(p)) and os.path.normpath(p) in clyde_paths,
+                'clyde_owned': subtitle_history.is_clyde_path(p),
             })
     return jsonify({
         'id': item_id, 'label': status_mod.label(item), 'type': item.get('type'),

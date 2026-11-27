@@ -1165,7 +1165,6 @@ class AddingQueue:
             logging.error(f"Cannot call _handle_failed_item from _process_results_with_mode directly.")
             return None, None, None # Return None for all three on error
 
-    @logs_for_item
     def _mount_file_name(self, torrent_info: Dict, parsed_files: List[Dict], basename: str, item: Dict,
                          xem_mapping=None) -> str:
         """The name the built-in mount shows a matched file under. Files of
@@ -1186,6 +1185,7 @@ class AddingQueue:
             logging.debug(f"Could not work out the mount name of '{basename}': {exc}")
         return basename
 
+    @logs_for_item
     def _handle_failed_item(self, item: Dict, error: str, queue_manager: Any, *, is_nzb: bool = False):
         """
         Handle a failed item by moving it back to Wanted queue if media matching failed,

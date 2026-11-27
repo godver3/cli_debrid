@@ -249,8 +249,13 @@ def _nearest_existing_scan_paths(paths: list, sections) -> list:
         p = os.path.normpath(path)
         root = next((loc for loc in sorted(locations, key=len, reverse=True)
                      if p == loc or p.startswith(loc.rstrip(os.sep) + os.sep)), None)
-        while root and p != root and not os.path.isdir(p):
-            p = os.path.dirname(p)
+        # Only walk when this filesystem sees Plex's path space (the section
+        # folder exists here). When Plex sees the library under another path
+        # every isdir() is False and the walk would end at the section root,
+        # turning each delete into a whole-section scan.
+        if root and os.path.isdir(root):
+            while p != root and not os.path.isdir(p):
+                p = os.path.dirname(p)
         if p not in out:
             out.append(p)
     # A kept parent already covers its children

@@ -66,13 +66,28 @@ class SkipHiddenReleaseTest(unittest.TestCase):
         p.start()
         self.addCleanup(p.stop)
 
-    def _run(self, files, used):
+    def _run(self, files, used, **extra):
         conn = mock.Mock()
         conn.execute.return_value.fetchone.return_value = (1,) if used else None
+        info = {'id': '42', 'hash': 'ABC', 'files': files, **extra}
         with mock.patch('queues.torrent_processor.add_to_not_wanted') as nw, \
                 mock.patch('database.core.get_db_connection', return_value=conn):
-            skipped = self.proc._skip_hidden_release({'id': '42', 'hash': 'ABC', 'files': files}, 'item', '[1/3]')
+            skipped = self.proc._skip_hidden_release(info, 'item', '[1/3]')
         return skipped, nw
+
+    def test_a_torrent_already_on_the_account_is_kept(self):
+        skipped, _ = self._run(TS_PACK, used=False, _reused=True)
+        self.assertTrue(skipped)
+        self.provider.remove_torrent.assert_not_called()
+
+    def test_removed_through_the_provider_that_added_it(self):
+        torbox = mock.Mock()
+        with mock.patch('debrid.get_provider_by_name', return_value=torbox) as by_name:
+            skipped, _ = self._run(TS_PACK, used=False, _provider='TorBox')
+        self.assertTrue(skipped)
+        by_name.assert_called_once_with('TorBox')
+        torbox.remove_torrent.assert_called_once()
+        self.provider.remove_torrent.assert_not_called()
 
     def test_hidden_release_is_skipped_marked_and_removed(self):
         skipped, nw = self._run(TS_PACK, used=False)

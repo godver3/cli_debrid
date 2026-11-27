@@ -116,7 +116,7 @@ def test_symlink_500_episodes_5_seasons_batches_plex_sleep_db_and_nfo(tmp_path):
 
     clyde_subs = {os.path.normpath(os.path.splitext(it['location_on_disk'])[0] + '.en.srt') for it in items}
     with mock.patch('utilities.deletion_manager.get_setting', side_effect=fake_get_setting), \
-         mock.patch('database.subtitle_history.clyde_sidecar_paths', return_value=clyde_subs), \
+         mock.patch('database.subtitle_history.is_clyde_path', side_effect=lambda p, saved_via='sidecar': os.path.normpath(p) in clyde_subs), \
          mock.patch('utilities.plex_functions.scan_cleanup.get_setting', side_effect=fake_get_setting), \
          mock.patch('utilities.silo_functions.is_silo_selected', return_value=False), \
          mock.patch('utilities.direct_mount.is_direct_mount_jellyfin', return_value=False), \
@@ -242,8 +242,9 @@ def test_nfo_and_subtitle_guards_preserved_in_batch(tmp_path):
 
     with mock.patch('utilities.deletion_manager.get_setting',
                     side_effect=lambda s, k, d=None: str(symlink_root) if k == 'symlinked_files_path' else d), \
-         mock.patch('database.subtitle_history.clyde_sidecar_paths',
-                    return_value={os.path.normpath(str(ep2_sub)), os.path.normpath(str(ep2_remux_sub))}), \
+         mock.patch('database.subtitle_history.is_clyde_path',
+                    side_effect=lambda p, saved_via='sidecar': os.path.normpath(p) in {
+                        os.path.normpath(str(ep2_sub)), os.path.normpath(str(ep2_remux_sub))}), \
          mock.patch.object(nw, 'symlinked_mode', return_value=True), \
          mock.patch.object(nw, 'library_root', return_value=str(symlink_root)), \
          mock.patch('database.database_reading.get_items_by_ids', return_value=items), \
@@ -262,8 +263,15 @@ def test_nfo_and_subtitle_guards_preserved_in_batch(tmp_path):
     assert show_nfo.exists()
 
 
-@pytest.mark.parametrize('server_kind', ['plex', 'silo', 'jellyfin'])
+@pytest.mark.parametrize('server_kind', ['plex', 'plex_api_fails', 'silo', 'jellyfin'])
 def test_direct_mount_500_episodes_batches_media_server_calls(tmp_path, server_kind):
+    # Direct Mount + Plex without a show/season/movie delete: each item goes
+    # through the Plex API (its file may still be on the mount, and a scan keeps
+    # anything it still sees); only items the API couldn't remove fall back to
+    # the one batched folder scan + trash empty.
+    plex_api_ok = server_kind == 'plex'
+    if server_kind == 'plex_api_fails':
+        server_kind = 'plex'
     mount_root, _show_dir, season_dirs, items = _build_500_ep_show(tmp_path, create_files=False)
     dm = _make_manager(
         using_symlinks=False,
@@ -286,7 +294,7 @@ def test_direct_mount_500_episodes_batches_media_server_calls(tmp_path, server_k
 
     clyde_subs = {os.path.normpath(os.path.splitext(it['location_on_disk'])[0] + '.en.srt') for it in items}
     with mock.patch('utilities.deletion_manager.get_setting', side_effect=fake_get_setting), \
-         mock.patch('database.subtitle_history.clyde_sidecar_paths', return_value=clyde_subs), \
+         mock.patch('database.subtitle_history.is_clyde_path', side_effect=lambda p, saved_via='sidecar': os.path.normpath(p) in clyde_subs), \
          mock.patch('utilities.plex_functions.scan_cleanup.get_setting', side_effect=fake_get_setting), \
          mock.patch('utilities.silo_functions.is_silo_selected', return_value=(server_kind == 'silo')), \
          mock.patch('utilities.direct_mount.is_direct_mount_jellyfin', return_value=(server_kind == 'jellyfin')), \
@@ -295,7 +303,8 @@ def test_direct_mount_500_episodes_batches_media_server_calls(tmp_path, server_k
          mock.patch('database.database_writing.delete_items_batch',
                     return_value={'success': True, 'deleted_count': 500, 'error': None}) as mock_db_delete, \
          mock.patch('plexapi.server.PlexServer', return_value=plex_instance) as mock_plex_cls, \
-         mock.patch('utilities.plex_functions.remove_file_from_plex') as mock_remove_plex, \
+         mock.patch('utilities.plex_functions.remove_file_from_plex',
+                    return_value=plex_api_ok) as mock_remove_plex, \
          mock.patch('utilities.silo_functions.remove_file_from_silo') as mock_remove_silo, \
          mock.patch('utilities.silo_functions.scan_path', return_value=True) as mock_silo_scan, \
          mock.patch('utilities.jellyfin_direct.remove_file') as mock_remove_jf, \
@@ -313,12 +322,16 @@ def test_direct_mount_500_episodes_batches_media_server_calls(tmp_path, server_k
     assert result['success'] is True
     assert result['deleted_count'] == 500
     assert mock_db_delete.call_count == 1
-    assert mock_remove_plex.call_count == 0
+    assert mock_remove_plex.call_count == (500 if server_kind == 'plex' else 0)
     assert mock_remove_silo.call_count == 0
     assert mock_remove_jf.call_count == 0
     assert (mock_dm_sleep.call_count + mock_scan_sleep.call_count) <= 1
 
-    if server_kind == 'plex':
+    if server_kind == 'plex' and plex_api_ok:
+        assert all(r['media_server_removed'] for r in result['results'])
+        assert tv_section.update.call_count == 0
+        assert tv_section.emptyTrash.call_count == 0
+    elif server_kind == 'plex':
         assert mock_plex_cls.call_count == 1
         from utilities.plex_functions.scan_cleanup import _nearest_existing_scan_paths
         expected = _nearest_existing_scan_paths(season_dirs, [tv_section])

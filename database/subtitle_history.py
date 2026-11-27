@@ -72,9 +72,13 @@ def record(item_id, title, language, provider, score, max_score, matches,
             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (item_id, title, language, provider, score, max_score, json.dumps(sorted(matches or [])),
              release, fmt, saved_via, norm_path, source, sync, media_key))
+        # Sidecar rows with a path are the only record that Clyde wrote that
+        # file (deletes, resync and orphan cleanup only touch recorded files),
+        # so they are never trimmed; one row per subtitle written.
         conn.execute(
             "DELETE FROM subtitle_history WHERE id <= "
-            "(SELECT MAX(id) FROM subtitle_history) - ?", (_KEEP_ROWS,))
+            "(SELECT MAX(id) FROM subtitle_history) - ? "
+            "AND NOT (saved_via = 'sidecar' AND path IS NOT NULL AND path != '')", (_KEEP_ROWS,))
         conn.commit()
     except Exception as e:
         logging.debug(f"[subs] history write failed: {e}")

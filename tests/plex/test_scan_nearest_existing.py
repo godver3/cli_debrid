@@ -33,6 +33,14 @@ def test_parent_covers_children_and_unknown_path_untouched(tmp_path):
     assert _nearest_existing_scan_paths(paths, _sections(str(tv))) == [str(tv / 'A'), '/elsewhere/x']
 
 
+def test_plex_only_path_space_not_walked(tmp_path):
+    # Plex sees /media/tv, Clyde can't: keep the folder as given instead of
+    # walking every path up to the section root (a whole-section scan).
+    plex_root = str(tmp_path / 'plex-view' / 'tv')  # does not exist here
+    season = plex_root + '/Show/Season 01'
+    assert _nearest_existing_scan_paths([season], _sections(plex_root)) == [season]
+
+
 def test_trash_waits_for_scan_then_empties(monkeypatch):
     from utilities.plex_functions import scan_cleanup as sc
     states = iter([True, True, False])

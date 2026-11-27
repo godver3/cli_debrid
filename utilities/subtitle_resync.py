@@ -331,11 +331,10 @@ def resync_item(item, skip_checked=True):
     changed = checked = 0
     notes = []
     sidecars = sidecar_langs(item.get('location_on_disk'), {})
-    clyde_paths = subtitle_history.clyde_sidecar_paths()
     finder = _HashFinder(item)
     for lang, paths in sidecars.items():
         for p in paths:
-            if os.path.islink(p) or os.path.normpath(p) not in clyde_paths:
+            if not subtitle_history.is_clyde_path(p):
                 continue
             try:
                 with open(p, 'rb') as f:
@@ -392,11 +391,10 @@ def needs_check(item, cache=None):
     for replacement."""
     from database import subtitle_history
     from utilities.subtitle_status import is_plex_mode, sidecar_langs
-    clyde_paths = subtitle_history.clyde_sidecar_paths()
     paths = [p for ps in sidecar_langs(item.get('location_on_disk'), cache if cache is not None else {}).values()
              for p in ps]
     for p in paths:
-        if os.path.islink(p) or os.path.normpath(p) not in clyde_paths:
+        if not subtitle_history.is_clyde_path(p):
             continue
         try:
             with open(p, 'rb') as f:
