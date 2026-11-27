@@ -2788,11 +2788,15 @@ class DeletionManager:
             aggregate_result['deleted_count'] = len(item_ids)
             logging.info(f"[DELETE_MULTIPLE] Database operations skipped (skip_database=True)")
 
-        # PHASE 3: Scan and empty media server trash ONCE across all unique affected folders
-        # Skip if we already did content-level Plex deletion (show/season/movie level)
+        # PHASE 3: Scan and empty media server trash ONCE across all unique affected folders.
+        # Also after a content-level Plex delete: Plex answers it with success but
+        # keeps the items when it can't remove the files itself (symlinks it may
+        # not write), and with "Empty trash automatically after every scan" off
+        # nothing removes them later (seen live: show 122280 kept all 12 episodes).
         if plex_content_deleted:
-            logging.info(f"[DELETE_MULTIPLE] Phase 3: Skipped - content-level Plex deletion already completed")
-        elif delete_from_media_server and scan_folders_seen:
+            logging.info(f"[DELETE_MULTIPLE] Phase 3: content-level Plex deletion reported success; "
+                         f"scanning the folders anyway so Plex drops anything it kept")
+        if delete_from_media_server and scan_folders_seen:
             deleted_paths_for_scan = list(scan_folders_seen.keys())
             item_types = {it.get('type') for it in all_items if it.get('state', '') != 'Blacklisted' and it.get('type')}
             batch_item_type = next(iter(item_types)) if len(item_types) == 1 else None

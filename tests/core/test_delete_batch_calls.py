@@ -588,3 +588,17 @@ def test_accepts_kwarg_matches_provider_signatures():
     assert not _accepts_kwarg(TorBoxLike().remove_torrent, 'skip_hash_tracking')
     assert _accepts_kwarg(RealDebridLike().remove_torrent, 'skip_hash_tracking')
     assert _accepts_kwarg(KwargsLike().remove_torrent, 'skip_hash_tracking')
+
+
+def test_content_level_plex_delete_still_scans_and_empties_trash(tmp_path):
+    # Plex answers a show delete with success but can keep the items when it
+    # can't remove the files itself; Phase 3 must still scan + empty trash.
+    dm = _make_manager(using_symlinks=False)
+    items = _nzb_items(12)
+    with mock.patch('utilities.plex_functions.remove_show_from_plex',
+                    return_value={'success': True}) as show_del:
+        res, _, _, scan = _run_batch(dm, items, tmp_path, plex_deletion_type='show',
+                                     plex_content_title='Show', plex_imdb_id='tt1')
+    assert show_del.call_count == 1
+    assert res.get('plex_deleted') is True
+    assert scan.call_count == 1
