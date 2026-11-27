@@ -38,6 +38,9 @@ def _plex_step(action: str):
             result['released_shows'] = released
         else:
             result = plex_nfo_agent.restore(refresh=True)
+            # Shows Clyde numbered by TMDB for their NFO files get their ordering back
+            from utilities.plex_order_metadata import unpin_all
+            result['ordering_restored'] = unpin_all()
         nfo_writer._set_job(plex=result)
     except Exception as e:
         logging.error(f"[NFO] Plex agent {action} failed: {e}", exc_info=True)
@@ -212,6 +215,8 @@ def api_plex(action):
             result['released_shows'] = released
         else:
             result = plex_nfo_agent.restore(refresh=refresh)
+            from utilities.plex_order_metadata import unpin_all
+            result['ordering_restored'] = unpin_all()
         return jsonify({'success': True, 'result': result})
     except Exception as e:
         logging.error(f"[NFO] Plex agent {action} failed: {e}", exc_info=True)

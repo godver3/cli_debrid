@@ -464,7 +464,10 @@ def _file_episodes(name: str) -> Optional[set]:
 def carry_to_symlink(media_item_id: int, new_path: str) -> bool:
     """A new symlink for an episode in the snapshot (an upgrade): give it the
     episode's snapshot NFO. Only when the item and the new file name still
-    have the snapshot's season/episode; a renumbered file gets nothing."""
+    have the snapshot's season/episode; a renumbered file gets nothing.
+    When Clyde's NFO writer covers the show, only the snapshot's record moves
+    to the new file (the writer's NFO stays); it is written there once the
+    writer drops the show or NFO files are turned off."""
     from utilities import nfo_writer
     sid = in_use()
     if not sid or not new_path or not os.path.exists(_db_path()):
@@ -492,8 +495,10 @@ def carry_to_symlink(media_item_id: int, new_path: str) -> bool:
             if not f:
                 return False
             imdb_id, numbers, data = f[0], json.loads(f[1] or '[]'), json.loads(f[2] or '[]')
-            if imdb_id and nfo_writer.wants_show(imdb_id):
-                return False
+            # Clyde's NFO writer covers the show: its NFO is the one on disk, but
+            # the snapshot still follows the file, so turning NFO files off (or
+            # the writer dropping the show) restores it at the new path
+            writer_covers = bool(imdb_id and nfo_writer.wants_show(imdb_id))
             # Every episode of the old file the new file holds too (a
             # multi-episode file keeps all of them, whichever item came first)
             kept = _kept_episodes(numbers, data, in_file)
@@ -511,9 +516,10 @@ def carry_to_symlink(media_item_id: int, new_path: str) -> bool:
             show_row = conn.execute("SELECT data FROM shows WHERE snapshot_id = ? AND imdb_id = ?", (sid, imdb_id)).fetchone()
             show = json.loads(show_row[0]) if show_row else None
             new_numbers = [list(k) for k, _e in kept]
-            result = nfo_writer._write(nfo_writer.episode_nfo_path(new_path),
-                                       _episode_xml(new_numbers, eps, (show or {}).get('title') or eps[0].get('show_title') or ''),
-                                       replace=(nfo_writer.SNAPSHOT,))
+            result = 'moved' if writer_covers else nfo_writer._write(
+                nfo_writer.episode_nfo_path(new_path),
+                _episode_xml(new_numbers, eps, (show or {}).get('title') or eps[0].get('show_title') or ''),
+                replace=(nfo_writer.SNAPSHOT,))
             if not same_path:
                 conn.execute("INSERT OR REPLACE INTO files (snapshot_id, path, imdb_id, numbers, data) VALUES (?, ?, ?, ?, ?)",
                              (sid, new_path, imdb_id, json.dumps(new_numbers), json.dumps(eps)))
@@ -522,6 +528,10 @@ def carry_to_symlink(media_item_id: int, new_path: str) -> bool:
                 conn.commit()
         finally:
             conn.close()
+    if writer_covers:
+        logging.info(f"{_LOG} {os.path.basename(new_path)}: snapshot entry moved to the new file "
+                     "(Clyde's NFO writer covers the show)")
+        return True
     folder = nfo_writer.show_folder(new_path)
     if folder and not os.path.exists(os.path.join(folder, nfo_writer.SHOW_NFO)):
         _write_show_nfo(folder, imdb_id, show, {'written': 0, 'unchanged': 0, 'foreign': 0, 'error': 0,

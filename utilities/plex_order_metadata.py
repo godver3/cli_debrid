@@ -9,7 +9,10 @@ order change, or when NFO files take a show over) and numbering NFO shows
 by TMDB in Plex. Nothing here runs on a schedule.
 """
 
+import json
 import logging
+import os
+import threading
 from typing import Dict, List, Optional, Tuple
 
 _LOG = '[PlexOrderMetadata]'
@@ -80,16 +83,60 @@ def _nfo_mode(imdb_id: str) -> bool:
 TMDB_AIRING = 'tmdbAiring'
 
 
-def pin_tmdb_ordering(show) -> bool:
+# Shows Clyde switched to TMDB ordering, with the ordering they had before,
+# so turning NFO files off (or a show leaving them) can put it back:
+# {rating key: {'previous': value, 'imdb_id': ..., 'title': ...}}
+_pins_lock = threading.Lock()
+
+
+def _pins_path() -> str:
+    from utilities.settings import get_config_dir
+    return os.path.join(get_config_dir(), 'plex_order_pins.json')
+
+
+def _load_pins() -> Dict[str, Dict]:
+    try:
+        with open(_pins_path(), encoding='utf-8') as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_pins(pins: Dict[str, Dict]) -> None:
+    path = _pins_path()
+    tmp = path + '.tmp'
+    try:
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(pins, f, indent=1)
+        os.replace(tmp, path)
+    except OSError as e:
+        logging.warning(f"{_LOG} could not save {path}: {e}")
+
+
+def _show_ordering_pref(show):
+    return next((p for p in show.preferences() if p.id == 'showOrdering'), None)
+
+
+def pin_tmdb_ordering(show, imdb_id: Optional[str] = None) -> bool:
     """A show whose order the NFO files carry is numbered by TMDB (aired) in
     Plex: the numbering the NFOs are written against, and the only one Plex
     has for every show once it drops TheTVDB (2026-12-03). Before that a
     library or show ordering of TheTVDB would number it differently. True
-    when the ordering was changed."""
+    when the ordering was changed; the previous one is recorded so
+    unpin_show can put it back."""
     try:
-        pref = next((p for p in show.preferences() if p.id == 'showOrdering'), None)
+        pref = _show_ordering_pref(show)
         if pref is None or TMDB_AIRING not in (pref.enumValues or {}) or pref.value == TMDB_AIRING:
             return False
+        key = str(getattr(show, 'ratingKey', '') or '')
+        if key:
+            with _pins_lock:
+                pins = _load_pins()
+                # A show pinned twice keeps the ordering it had before the first pin
+                pins.setdefault(key, {'previous': pref.value or '', 'imdb_id': imdb_id,
+                                      'title': getattr(show, 'title', '')})
+                _save_pins(pins)
         show.editAdvanced(showOrdering=TMDB_AIRING)
         logging.info(f"{_LOG} {show.title}: Plex episode ordering set to {TMDB_AIRING} (NFO files carry the order)")
         return True
@@ -105,7 +152,7 @@ def release_for_nfo(imdb_id: str, plex=None) -> str:
     show, problem = _plex_show(imdb_id, plex)
     if show is None:
         return ''
-    pinned = pin_tmdb_ordering(show)
+    pinned = pin_tmdb_ordering(show, imdb_id)
     n = release_plex_show(show)  # refreshes the show when it unlocked something
     if not n:
         try:
@@ -117,12 +164,19 @@ def release_for_nfo(imdb_id: str, plex=None) -> str:
 
 
 def release_all_for_nfo(plex=None) -> int:
-    """Every show with a chosen order: release the locks (turning NFO files on)."""
+    """Every show with a chosen order whose NFO files Clyde writes: number it
+    by TMDB and release the locks (turning NFO files on, or switching Plex to
+    the NFO agent). Shows without NFO files (NFO mode off, or a per-show
+    "never") are left as they are: TMDB numbering without NFOs would show
+    them in TMDB's order, not the chosen one."""
+    from utilities.nfo_writer import wants_show
     plex = plex or __import__('utilities.episode_order_change', fromlist=['_plex_server'])._plex_server()
     if plex is None:
         return 0
     done = 0
     for imdb_id, _order in shows_with_chosen_order():
+        if not wants_show(imdb_id):
+            continue
         try:
             if release_for_nfo(imdb_id, plex):
                 done += 1
@@ -142,7 +196,7 @@ def pin_new_nfo_shows(imdb_ids) -> Dict[str, str]:
             if not _nfo_mode(imdb_id):
                 continue
             show, _problem = _plex_show(imdb_id)
-            if show is not None and pin_tmdb_ordering(show):
+            if show is not None and pin_tmdb_ordering(show, imdb_id):
                 show.refresh()
                 notes[imdb_id] = 'numbered by TMDB in Plex'
         except Exception as e:
@@ -162,7 +216,83 @@ def sync_show(imdb_id: str, order: Optional[str] = None, plex=None) -> str:
         if show is None:
             return ''
         n = release_plex_show(show)
-        return f"Plex episode titles unlocked for {n} episodes" if n else ''
+        # No longer carried by NFO files: the TMDB numbering Clyde set for them goes
+        unpinned = unpin_show(show)
+        notes = []
+        if n:
+            notes.append(f"Plex episode titles unlocked for {n} episodes")
+        if unpinned:
+            notes.append(f"Plex episode ordering put back to {unpinned}")
+        return '; '.join(notes)
     except Exception as e:
         logging.error(f"{_LOG} {imdb_id}: {e}", exc_info=True)
         return f'Plex episode titles not updated: {e}'
+
+
+def unpin_show(show) -> str:
+    """Put back the ordering a show had before pin_tmdb_ordering, if Clyde
+    pinned it and it is still on TMDB ordering (an ordering set since, by
+    the user or an order change, is kept). Returns the label of the ordering
+    put back, '' when nothing changed."""
+    key = str(getattr(show, 'ratingKey', '') or '')
+    if not key:
+        return ''
+    with _pins_lock:
+        pins = _load_pins()
+        rec = pins.pop(key, None)
+        if rec is None:
+            return ''
+        _save_pins(pins)
+    try:
+        pref = _show_ordering_pref(show)
+        previous = rec.get('previous') or ''
+        enum = (pref.enumValues or {}) if pref is not None else {}
+        if pref is None or pref.value != TMDB_AIRING or previous not in enum:
+            return ''
+        show.editAdvanced(showOrdering=previous)
+        label = enum.get(previous) or previous or 'library default'
+        logging.info(f"{_LOG} {show.title}: Plex episode ordering put back to {label} (no NFO files for it now)")
+        return label
+    except Exception as e:
+        logging.warning(f"{_LOG} {getattr(show, 'title', '?')}: could not put the episode ordering back: {e}")
+        return ''
+
+
+def unpin_imdb(imdb_id: str, plex=None) -> str:
+    """unpin_show for a show Clyde pinned, by its IMDb id (no Plex call when
+    it never was)."""
+    if not imdb_id or not any(r.get('imdb_id') == imdb_id for r in _load_pins().values()):
+        return ''
+    show, _problem = _plex_show(imdb_id, plex)
+    return unpin_show(show) if show is not None else ''
+
+
+def unpin_all(plex=None) -> int:
+    """Every show Clyde switched to TMDB ordering goes back to the ordering it
+    had (NFO files turned off, or Plex's previous agent restored). Returns how
+    many were put back."""
+    pins = _load_pins()
+    if not pins:
+        return 0
+    plex = plex or __import__('utilities.episode_order_change', fromlist=['_plex_server'])._plex_server()
+    if plex is None:
+        return 0
+    done = 0
+    for key in list(pins):
+        from plexapi.exceptions import NotFound
+        try:
+            show = plex.fetchItem(int(key))
+        except Exception as e:
+            if not isinstance(e, (NotFound, ValueError)):
+                # Plex unreachable or timing out: keep the record for next time
+                logging.warning(f"{_LOG} could not look up pinned show {key}: {e}")
+                continue
+            # Gone from Plex: nothing to put back
+            with _pins_lock:
+                current = _load_pins()
+                current.pop(key, None)
+                _save_pins(current)
+            continue
+        if unpin_show(show):
+            done += 1
+    return done
