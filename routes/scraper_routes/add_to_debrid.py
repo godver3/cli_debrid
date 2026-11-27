@@ -118,7 +118,8 @@ def add_torrent_to_debrid():
             except (ValueError, TypeError):
                 return None
 
-        if media_type in ('tv', 'show'):
+        # Only a movie has no season: an empty/missing media_type keeps the numbers as before
+        if media_type != 'movie':
             season_number = _parse_opt_int(season)
             episode_number = _parse_opt_int(episode)
         else:

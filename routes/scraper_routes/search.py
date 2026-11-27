@@ -472,7 +472,8 @@ def select_media():
                 return None
             return int(s)
 
-        if media_type in ('tv', 'show'):
+        # Only a movie has no season: an empty/missing media_type keeps the numbers as before
+        if media_type != 'movie':
             season = _parse_opt_int(season)
             episode = _parse_opt_int(episode)
         else:
