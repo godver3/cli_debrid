@@ -514,3 +514,50 @@ def test_bulk_symlink_mode_removes_original_off_mount_only(tmp_path):
     assert not off.exists()
     assert [c.args[0] for c in rm.call_args_list if str(off) in c.args[0] or on_mount in c.args[0]] == [str(off)]
     assert scan.call_count == 1
+
+
+# --- originals on a debrid mount are never os.remove'd (stale mount setting) ---
+
+def _guard_dm(monkeypatch, mounts_text, settings):
+    import builtins
+    from utilities import deletion_manager as dmod
+    real_open = builtins.open
+
+    def fake_open(path, *a, **k):
+        if path == '/proc/mounts':
+            import io
+            return io.StringIO(mounts_text)
+        return real_open(path, *a, **k)
+
+    monkeypatch.setattr(builtins, 'open', fake_open)
+    monkeypatch.setattr(dmod, 'get_setting', lambda sec, key=None, default=None: settings.get((sec, key), default) if key else settings.get(sec, default))
+    dm = dmod.DeletionManager.__new__(dmod.DeletionManager)
+    dm.using_symlinks = True
+    dm.limited_env = False
+    return dm
+
+
+def test_original_on_fuse_debrid_mount_not_removed_with_stale_setting(monkeypatch, tmp_path):
+    mnt = tmp_path / 'decypharr_root' / 'mnt'
+    f = mnt / '__all__' / 'Pack' / 'S01E01.mkv'
+    f.parent.mkdir(parents=True)
+    f.write_bytes(b'x')
+    dm = _guard_dm(monkeypatch, f"clid {mnt} fuse.clid rw 0 0\n",
+                   {('Plex', 'mounted_file_location'): '/mnt/zurg/__all__'})
+    removed, err = dm._remove_original_file_for_batch(
+        {'state': 'Collected', 'original_path_for_symlink': str(f)}, '/mnt/zurg/__all__')
+    assert (removed, err) == (None, None)
+    assert f.exists()
+
+
+def test_local_download_on_real_disk_still_removed(monkeypatch, tmp_path):
+    disk = tmp_path / 'pool'
+    f = disk / 'downloads' / 'Movie.mkv'
+    f.parent.mkdir(parents=True)
+    f.write_bytes(b'x')
+    # mergerfs / fuseblk are real disks: a Local-mode delete still removes the file
+    dm = _guard_dm(monkeypatch, f"pool {disk} fuse.mergerfs rw 0 0\nsdb1 {disk} fuseblk rw 0 0\n", {})
+    removed, err = dm._remove_original_file_for_batch(
+        {'state': 'Collected', 'original_path_for_symlink': str(f)}, '')
+    assert removed == str(f) and err is None
+    assert not f.exists()

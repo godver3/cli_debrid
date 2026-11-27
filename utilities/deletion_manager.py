@@ -44,6 +44,11 @@ def _item_from_plex_watchlist(item_source_types) -> bool:
 
 SIDECAR_SUBTITLE_EXTS = ('.srt', '.ass', '.ssa', '.sub', '.idx', '.vtt', '.smi')
 
+# FUSE mount types of debrid/usenet mounts (built-in engine, rclone/zurg,
+# cli_mount/decypharr). A file under one is removed through its provider,
+# never with os.remove.
+_DEBRID_FUSE_TYPES = frozenset({'fuse', 'fuse.clid', 'fuse.rclone', 'fuse.decypharr', 'fuse.zurg'})
+
 
 def remove_sidecar_subtitles(video_path, check_show_nfo: bool = True):
     """Delete only the Clyde-written subtitle files that belong to a library
@@ -2086,6 +2091,44 @@ class DeletionManager:
             return result
 
 
+    def _mount_roots(self, mount_location: str) -> List[str]:
+        """Every root a debrid/usenet mount can sit under: the configured mount
+        settings (any of them can be stale) plus every FUSE mount point."""
+        roots = getattr(self, '_mount_roots_cache', None)
+        if roots is not None:
+            return roots
+        # Not File Management.original_files_path: in Local mode that is the
+        # user's own download folder, whose files a delete does remove.
+        roots = [mount_location,
+                 get_setting('Plex', 'mounted_file_location', '')]
+        try:
+            from utilities import builtin_engine
+            roots.append(builtin_engine.mount_path(get_setting('Built-in Mount') or {}))
+        except Exception:
+            pass
+        try:
+            with open('/proc/mounts') as f:
+                for line in f:
+                    parts = line.split()
+                    # Debrid/usenet mounts only: fuseblk (NTFS/exFAT) and mergerfs
+                    # pools are real disks a Local-mode user's downloads live on.
+                    if len(parts) >= 3 and parts[2] in _DEBRID_FUSE_TYPES:
+                        roots.append(parts[1].replace('\\040', ' '))
+        except OSError:
+            pass
+        roots = [os.path.normpath(r) for r in roots if r and str(r).strip()]
+        self._mount_roots_cache = roots
+        return roots
+
+    def _on_debrid_mount(self, path: str, mount_location: str) -> bool:
+        p = os.path.normpath(path)
+        for root in self._mount_roots(mount_location):
+            if root in ('/', '.'):
+                continue
+            if p == root or p.startswith(root.rstrip(os.sep) + os.sep):
+                return True
+        return False
+
     def _remove_original_file_for_batch(self, item: dict, mount_location: str):
         """Cheap local removal of an item's file, as the single-item delete route did.
         Returns (removed_path_or_None, error_or_None). Never touches a media server."""
@@ -2097,7 +2140,7 @@ class DeletionManager:
             path = item.get('location_on_disk') if mount_location else None
         if not path:
             return None, None
-        if self.using_symlinks and mount_location and path.startswith(mount_location):
+        if self.using_symlinks and self._on_debrid_mount(path, mount_location):
             return None, None  # on the debrid mount: removed through the provider
         try:
             if os.path.exists(path):
