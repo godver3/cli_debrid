@@ -1,7 +1,6 @@
 import logging
 import os
-import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
 import sqlite3
 
@@ -45,10 +44,11 @@ def add_symlinked_file_for_verification(media_item_id: int, full_path: str) -> b
                 SET verified = FALSE, 
                     verification_attempts = 0,
                     last_attempt = NULL,
-                    verified_at = NULL
+                    verified_at = NULL,
+                    added_at = ?
                 WHERE id = ?
                 """,
-                (existing[0],)
+                (datetime.now(), existing[0])
             )
             conn.commit()
             logger.info(f"Reset verification status for existing file: {filename}")
@@ -562,8 +562,9 @@ def get_recent_unverified_files(hours: int = 24, limit: int = 100) -> List[Dict[
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
-        # Calculate the timestamp for files added within the specified hours
-        cutoff_time = int(time.time() - (hours * 3600))
+        # added_at is stored as a datetime string; an epoch number here would
+        # match every row (SQLite sorts all text above numbers).
+        cutoff_time = datetime.now() - timedelta(hours=hours)
         
         cursor.execute(
             """
@@ -949,7 +950,6 @@ def cleanup_old_verified_removals(days: int = 7) -> int:
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
-        from datetime import timedelta # Keep import local if only used here
         cutoff_date = datetime.now() - timedelta(days=days)
         cursor.execute(
             """

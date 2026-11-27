@@ -233,7 +233,82 @@
     }
 })();
 </script>
-    
+
+<div class="settings-subheader"><h5>Preset collections</h5></div>
+{% set _ppc = settings.get('Plex Preset Collections', {}) %}
+<div class="settings-form-group">
+    <p class="settings-description" style="margin-bottom:12px;">Ready-made collections like Kometa's: switch on the ones you want and Clyde builds them from titles already in your library. Nothing is requested or downloaded. Lists come from TMDB (needs the TMDB API key) and Wikidata; decades come from your library. They refresh once a day and when you save. Switching one off removes the collection it made. If you already have a collection with the same name, Clyde only adds to it and never removes anything.</p>
+    {% for group in preset_collection_groups %}
+    <div style="width:100%;margin-top:10px;margin-bottom:4px;color:#888;font-size:0.75em;text-transform:uppercase;">{{ group.label }}</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;">
+        {% for p in group.presets %}
+        <label style="display:flex;align-items:center;gap:6px;padding:4px 10px;background:rgba(255,255,255,0.05);border-radius:6px;cursor:pointer;font-size:0.9em;">
+            <input type="checkbox" id="preset-coll-{{ p.key }}"
+                   name="Plex Preset Collections.{{ p.key }}"
+                   data-section="Plex Preset Collections" data-key="{{ p.key }}"
+                   {% if _ppc.get(p.key) %}checked{% endif %}>
+            {{ p.label }}{% if p.types|length == 2 %} <span style="color:#888;font-size:0.85em;">(movies + shows)</span>{% elif p.types[0] == 'show' %} <span style="color:#888;font-size:0.85em;">(shows)</span>{% endif %}
+        </label>
+        {% endfor %}
+    </div>
+    {% endfor %}
+</div>
+
+<div class="settings-form-group">
+    <label class="settings-label" for="preset-coll-min-items">Minimum titles for a collection</label>
+    <div class="settings-description">A preset only becomes a collection when at least this many matching titles are in the library.</div>
+    {% set _pmin = _ppc.get('min_items', 3)|int %}
+    <select id="preset-coll-min-items" name="Plex Preset Collections.min_items"
+            data-section="Plex Preset Collections" data-key="min_items" class="settings-select">
+        {% for n in [1, 2, 3, 5, 10] %}
+        <option value="{{ n }}" {% if _pmin == n %}selected{% endif %}>{{ n }}</option>
+        {% endfor %}
+    </select>
+</div>
+
+<div class="settings-form-group" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+    <button type="button" id="preset-coll-run-btn" class="btn btn-secondary" style="white-space:nowrap;">Run Now</button>
+    <span id="preset-coll-status" style="color:#aaa;font-size:0.85em;"></span>
+</div>
+
+<script>
+(function() {
+    var statusEl = document.getElementById('preset-coll-status');
+    var runBtn = document.getElementById('preset-coll-run-btn');
+    function loadStatus() {
+        if (!statusEl) return;
+        fetch('/settings/api/plex-preset-collections/status')
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (!d.success) return;
+                var parts = [];
+                if (d.last_run) parts.push('Last run: ' + new Date(d.last_run + 'Z').toLocaleString());
+                if (d.collections_managed > 0) parts.push(d.collections_managed + ' collection' + (d.collections_managed !== 1 ? 's' : '') + ' managed');
+                var errs = (d.last_summary && d.last_summary.errors) || [];
+                if (errs.length) parts.push(errs.length + ' skipped: ' + errs.join('; '));
+                statusEl.textContent = parts.join(' · ') || 'Not yet run';
+            })
+            .catch(function() {});
+    }
+    loadStatus();
+    if (runBtn) {
+        runBtn.addEventListener('click', function() {
+            runBtn.disabled = true;
+            fetch('/settings/api/plex-preset-collections/run', {method: 'POST'})
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    runBtn.disabled = false;
+                    if (statusEl) statusEl.textContent = d.success ? 'Sync started. Save first if you changed the presets.' : ('Error: ' + d.error);
+                })
+                .catch(function() {
+                    runBtn.disabled = false;
+                    if (statusEl) statusEl.textContent = 'Request failed';
+                });
+        });
+    }
+})();
+</script>
+
 <div class="settings-subheader"><h5>Movie box sets</h5></div>
 
         <p style="color:#aaa;font-size:0.9em;margin-bottom:15px;">
