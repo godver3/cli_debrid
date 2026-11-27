@@ -42,8 +42,8 @@ class _External:
 
 class _Engine(BuiltinClient):
     """Built-in engine slot: 'queued'/'importing' read as downloading at 0%."""
-    def __init__(self, status='queued', error=None):  # no super(): no engine to reach
-        self.status, self.error = status, error
+    def __init__(self, status='queued', error=None, retryable=False):  # no super(): no engine to reach
+        self.status, self.error, self.retryable = status, error, retryable
         self.deleted = []
 
     def get_job_status(self, job_id):
@@ -51,6 +51,7 @@ class _Engine(BuiltinClient):
         raw = {'id': job_id, 'info_hash': job_id, 'status': self.status}
         if failed:
             raw['error'] = self.error
+            raw['retryable'] = self.retryable
         return {'state': 'failed' if failed else 'downloading', 'progress': 0, 'raw': raw}
 
     def find_job_hash_by_name(self, name):
@@ -89,6 +90,7 @@ class StallNotDeadMarkingTests(unittest.TestCase):
         ProgramRunner._nzb_folder_wait_counts.clear()
         ProgramRunner._nzb_folder_wait_since.clear()
         ProgramRunner._nzb_job_started_at.clear()
+        ProgramRunner._nzb_ghost_repeat_counts.clear()
 
     def tearDown(self):
         (ProgramRunner._nzb_health_last_duration, ProgramRunner._nzb_health_job_cursor,
@@ -96,6 +98,7 @@ class StallNotDeadMarkingTests(unittest.TestCase):
         ProgramRunner._nzb_job_started_at.clear()
         ProgramRunner._nzb_folder_wait_counts.clear()
         ProgramRunner._nzb_folder_wait_since.clear()
+        ProgramRunner._nzb_ghost_repeat_counts.clear()
 
     def _tick(self, runner, client, provider):
         runner._nzb_health_last_duration = 0.0
@@ -144,11 +147,44 @@ class StallNotDeadMarkingTests(unittest.TestCase):
     def test_builtin_failed_job_keeps_existing_failure_handling(self):
         runner, _, _ = _runner()
         runner._nzb_job_started_at['job0'] = datetime.now() - timedelta(hours=3)
-        engine = _Engine('failed', error='missing articles')
+        engine = _Engine('failed', error='missing articles', retryable=False)
         with mock.patch('utilities.nzb_failure_cleanup.blacklist_and_cleanup_nzb_failure') as bl:
             self._tick(runner, engine, 'builtin')
         bl.assert_called_once()
         self.assertEqual(bl.call_args[0][1], 'failed in cli_mount')
+
+    def test_builtin_retryable_failed_moves_on_without_not_wanting(self):
+        runner, adding, item = _runner()
+        sib = {'id': 2, 'filled_by_torrent_id': 'nzb:job0', 'filled_by_magnet': 'http://idx/nzb/AAA'}
+        adding.items.append(sib)
+        engine = _Engine('failed', error='import timed out', retryable=True)
+        with mock.patch('utilities.nzb_failure_cleanup.blacklist_and_cleanup_nzb_failure') as bl:
+            nw, umi = self._tick(runner, engine, 'builtin')
+        bl.assert_not_called()
+        nw.assert_not_called()
+        runner.queue_manager.move_to_blacklisted.assert_not_called()
+        self.assertNotIn(item['id'], ProgramRunner._nzb_ghost_repeat_counts)
+        self.assertNotIn(sib['id'], ProgramRunner._nzb_ghost_repeat_counts)
+        self.assertEqual(engine.deleted, ['job0'])
+        runner.queue_manager.move_to_wanted.assert_any_call(sib, 'Adding')
+        kwargs = umi.call_args.kwargs
+        self.assertIsNone(kwargs['filled_by_torrent_id'])
+        self.assertEqual([r['nzb_url'] for r in json.loads(kwargs['scrape_results'])], ['http://idx/nzb/BBB'])
+        self.assertTrue(any('Stalled job — 1 results remain, retrying in Adding' in l
+                            for l in self.logs), self.logs)
+
+    def test_builtin_retryable_failed_no_more_results_moves_to_wanted_without_fail_counter(self):
+        runner, _, item = _runner()
+        item['scrape_results'] = json.dumps([{'nzb_url': 'http://idx/nzb/AAA'}])
+        engine = _Engine('failed', error='import timed out', retryable=True)
+        with mock.patch('utilities.nzb_failure_cleanup.blacklist_and_cleanup_nzb_failure') as bl:
+            nw, umi = self._tick(runner, engine, 'builtin')
+        bl.assert_not_called()
+        nw.assert_not_called()
+        runner.queue_manager.move_to_blacklisted.assert_not_called()
+        self.assertEqual(engine.deleted, ['job0'])
+        self.assertNotIn(item['id'], ProgramRunner._nzb_ghost_repeat_counts)
+        runner.queue_manager.move_to_wanted.assert_called_once_with(item, 'Adding')
 
     def test_external_stall_moves_on_without_not_wanting(self):
         runner, adding, item = _runner()

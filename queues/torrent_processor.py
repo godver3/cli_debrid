@@ -46,6 +46,9 @@ NZB_COOLDOWN_WAIT_KEY = '_nzb_cooldown_wait_s'
 # Set alongside it: {indexer name: reason}, shown on the Queue page so an item
 # stuck in Adding says which indexer it is waiting for and why.
 NZB_COOLDOWN_NOTES_KEY = '_nzb_cooldown_notes'
+# Set on the item dict when _process_results_inner actually attempted to submit
+# an NZB (as opposed to merely deferring it because its indexer is on cooldown).
+NZB_ATTEMPT_MADE_KEY = '_nzb_attempt_made'
 # Re-check interval when a result is held back by something that has no end time
 # here (the indexer's daily grab quota).
 NZB_QUOTA_RECHECK_SECONDS = 300
@@ -1602,6 +1605,8 @@ class TorrentProcessor:
                             _name, _why = _indexer_cooldown_note(result)
                             item.setdefault(NZB_COOLDOWN_NOTES_KEY, {}).setdefault(_name, _why)
                         continue
+                    if item is not None:
+                        item[NZB_ATTEMPT_MADE_KEY] = True
                     if nzb_result:
                         return nzb_result
                     # NZB rejected — pop this result from scrape_results in DB so the next

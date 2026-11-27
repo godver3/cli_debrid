@@ -7,6 +7,116 @@ import logging
 
 
 class UsenetTasks:
+    def _retry_inconclusive_nzb_job(
+        self,
+        adding_queue,
+        item,
+        job_id,
+        torrent_id,
+        entry_name,
+        nzb_title,
+        nzb_client,
+        is_builtin,
+        warning_msg,
+        moved_as_sibling=None,
+    ):
+        """Move on from an inconclusive NZB job (external stall timeout or
+        built-in engine retryable failure) without marking the release not-wanted,
+        blacklisting, or incrementing fail counters."""
+        item_id = item.get('id')
+        try:
+            from database.nzb_playback_repair import reject_active_candidate
+            if reject_active_candidate(item_id, job_id, 'provider_job_timeout'):
+                logging.warning(
+                    '[NZBPlayback] Provisional candidate %s timed out; original retained and candidate excluded',
+                    job_id,
+                )
+                adding_queue.remove_item(item)
+                return
+        except Exception as _playback_timeout_err:
+            logging.error('[NZBPlayback] Could not persist timed-out candidate %s: %s',
+                          job_id, _playback_timeout_err, exc_info=True)
+            return
+        logging.warning(warning_msg)
+        # Delete the stalled/inconclusive job from the provider
+        try:
+            _search_to = (entry_name or nzb_title or '').strip()
+            _real_hash_to = job_id if is_builtin else nzb_client.find_job_hash_by_name(_search_to)
+            if _real_hash_to:
+                # Safety: never delete if another live item (e.g. a different
+                # version sharing this job id due to a since-fixed dedup bug)
+                # still references it — that would delete its file too.
+                from database import get_db_connection as _gdb_stall
+                _conn_stall = _gdb_stall()
+                try:
+                    _stall_sibs = _conn_stall.execute(
+                        "SELECT COUNT(*) FROM media_items "
+                        "WHERE filled_by_torrent_id = ? AND state IN ('Collected','Upgrading','Checking') AND id != ?",
+                        (torrent_id, item_id)
+                    ).fetchone()[0]
+                finally:
+                    _conn_stall.close()
+                if _stall_sibs:
+                    logging.info(f'[NZB] Skipping provider delete of stalled job {_real_hash_to} — {_stall_sibs} sibling(s) still active')
+                else:
+                    _dr_status_to = nzb_client.delete_queue_job(_real_hash_to)
+                    if _dr_status_to == 200:
+                        logging.info(f'[NZB] Deleted stalled job {_real_hash_to} from cli_mount')
+                    else:
+                        logging.warning(f'[NZB] Could not delete stalled job: HTTP {_dr_status_to}')
+        except Exception as _del_to_err:
+            logging.debug(f'[NZB] Could not delete stalled job from cli_mount: {_del_to_err}')
+        # Handle siblings sharing this job
+        try:
+            _stalled_siblings = [
+                s for s in adding_queue.items[:]
+                if s.get('filled_by_torrent_id') == torrent_id and s.get('id') != item_id
+            ]
+            for _ss in _stalled_siblings:
+                self.queue_manager.move_to_wanted(_ss, 'Adding')
+                if moved_as_sibling is not None and _ss.get('id') is not None:
+                    moved_as_sibling.add(_ss['id'])
+                logging.info(f'[NZB] Moved stalled sibling {_ss["id"]} to Wanted')
+        except Exception:
+            pass
+        # Try next result from scrape_results (same as progress=-1 retry flow,
+        # but without not-wanted / fail counters / blacklisting)
+        _has_more_to = False
+        try:
+            import json as _json_to
+            _sr_to = item.get('scrape_results', [])
+            if isinstance(_sr_to, str):
+                _sr_to = _json_to.loads(_sr_to)
+            _remaining_to = [r for r in (_sr_to or [])
+                             if (r.get('nzb_url') or r.get('magnet', '')) != item.get('filled_by_magnet', '')]
+            if _remaining_to:
+                _has_more_to = True
+                from database.database_writing import update_media_item as _umi_to
+                _umi_to(item_id,
+                    filled_by_torrent_id=None,
+                    filled_by_file=None,
+                    filled_by_title=None,
+                    filled_by_magnet=None,
+                    scrape_results=_json_to.dumps(_remaining_to),
+                )
+                item['filled_by_torrent_id'] = None
+                item['filled_by_magnet'] = None
+                adding_queue._nzb_submitted_ids.discard(item_id)
+                adding_queue._nzb_downloading_job_ids.discard(torrent_id[4:] if torrent_id.startswith('nzb:') else torrent_id)
+                logging.info(f'[NZB] Stalled job — {len(_remaining_to)} results remain, retrying in Adding')
+        except Exception as _retry_to_err:
+            logging.debug(f'[NZB] Could not prepare stall retry: {_retry_to_err}')
+        if not _has_more_to:
+            logging.info(f'[NZB] {torrent_id} stalled, no remaining results — moving to Wanted for fresh scrape')
+            try:
+                from database.database_writing import update_media_item as _umi_st
+                _umi_st(item_id, filled_by_torrent_id=None, filled_by_file=None,
+                        filled_by_title=None, filled_by_magnet=None,
+                        scrape_results=None, fall_back_to_single_scraper=False)
+            except Exception:
+                pass
+            self.queue_manager.move_to_wanted(item, 'Adding')
+
     def task_nzb_health_check(self):
         """Poll NZB items in Adding state, run health checks, move to Checking or back to Wanted.
         Runs as a dedicated scheduled task so it doesn't block the Adding/Scraping queue threads.
@@ -50,6 +160,11 @@ class UsenetTasks:
             from concurrent.futures import ThreadPoolExecutor as _TPE, as_completed as _ac
 
             _nzb_client = get_usenet_client()
+            try:
+                from usenet.builtin_client import BuiltinClient as _BuiltinClient
+                _is_builtin = isinstance(_nzb_client, _BuiltinClient)
+            except Exception:
+                _is_builtin = False
 
             # Group items by job_id
             _job_groups: dict = _dd(list)
@@ -166,7 +281,11 @@ class UsenetTasks:
                     if is_complete or (inner_status == 'downloaded' and state in ('pausedup', 'completed', 'seeding')):
                         progress = 100
                     elif state in ('error', 'failed', 'bad') or raw.get('bad'):
-                        progress = -1
+                        # Built-in engine marks inconclusive failures (e.g. import timeout
+                        # after automatic retries run out) as failed with retryable=True.
+                        # Dead-marking needs proof, so treat it like a stalled download
+                        # rather than a proven-bad release.
+                        progress = -3 if (_is_builtin and raw.get('retryable')) else -1
                     elif status.get('state') == 'completed':
                         progress = 100
                     entry_name = None
@@ -618,6 +737,17 @@ class UsenetTasks:
                                 logging.info(f'[NZB] {torrent_id} no remaining results — moving to Wanted for fresh scrape (failure count {_fail_count}/{self._NZB_GHOST_BLACKLIST_THRESHOLD})')
                                 self.queue_manager.move_to_wanted(item, 'Adding')
                         continue
+                    elif progress == -3:
+                        # Built-in engine import failed with retryable=True (inconclusive,
+                        # e.g. timed out after automatic retries). Move on without dead-marking.
+                        self._retry_inconclusive_nzb_job(
+                            adding_queue, item, job_id, torrent_id, entry_name, nzb_title,
+                            _nzb_client, _is_builtin,
+                            f'[NZB] {torrent_id} built-in engine import inconclusive (retryable) — '
+                            f'trying next result, not marking it not-wanted',
+                            moved_as_sibling=_moved_as_sibling,
+                        )
+                        continue
                     elif progress < 100:
                         # Check if this job has been downloading too long without finishing.
                         # Uses the job's own clock (see _nzb_job_started_at), which row
@@ -641,19 +771,14 @@ class UsenetTasks:
                                 _idle_hours = (datetime.now() - _last_provider_progress).total_seconds() / 3600.0
                                 if _idle_hours <= _download_timeout_hours:
                                     _timed_out_dl = False
-                        if _timed_out_dl:
+                        if _timed_out_dl and _is_builtin:
                             # The built-in engine owns its jobs: it fails them with proof
                             # (status 'failed', non-retryable), retries inconclusive ones and
                             # has an import watchdog. A job still queued/importing is the
                             # engine's to resolve, so keep waiting; a job gone from the engine
                             # never reaches here (404 reads as complete/ghost).
-                            try:
-                                from usenet.builtin_client import BuiltinClient as _BI_to
-                                if isinstance(_nzb_client, _BI_to):
-                                    _timed_out_dl = False
-                                    logging.debug(f'[NZB] {torrent_id} past {_download_timeout_hours:.1f}h but the built-in engine still owns it — waiting')
-                            except Exception:
-                                pass
+                            _timed_out_dl = False
+                            logging.debug(f'[NZB] {torrent_id} past {_download_timeout_hours:.1f}h but the built-in engine still owns it — waiting')
                         if not _timed_out_dl:
                             # Mark job as actively downloading after 1 minute so Adding queue skips it
                             _job_id_dl = torrent_id[4:] if torrent_id.startswith('nzb:') else torrent_id
@@ -670,103 +795,16 @@ class UsenetTasks:
                                 pass
                             logging.debug(f'[NZB] {torrent_id} progress={progress}% — waiting')
                             continue
-                        try:
-                            from database.nzb_playback_repair import reject_active_candidate
-                            if reject_active_candidate(item_id, job_id, 'provider_job_timeout'):
-                                logging.warning(
-                                    '[NZBPlayback] Provisional candidate %s timed out; original retained and candidate excluded',
-                                    job_id,
-                                )
-                                adding_queue.remove_item(item)
-                                continue
-                        except Exception as _playback_timeout_err:
-                            logging.error('[NZBPlayback] Could not persist timed-out candidate %s: %s',
-                                          job_id, _playback_timeout_err, exc_info=True)
-                            continue
                         # Download timed out. A stall is not proof the release is bad (the
                         # provider may simply be backed up), so do NOT mark it not-wanted:
                         # delete the stalled job and move on to the next result.
-                        logging.warning(
+                        self._retry_inconclusive_nzb_job(
+                            adding_queue, item, job_id, torrent_id, entry_name, nzb_title,
+                            _nzb_client, _is_builtin,
                             f'[NZB] {torrent_id} stalled at {progress}% after >{_download_timeout_hours:.1f}h — '
-                            f'timed out (no verdict) — trying next result, not marking it not-wanted'
+                            f'timed out (no verdict) — trying next result, not marking it not-wanted',
+                            moved_as_sibling=_moved_as_sibling,
                         )
-                        # Delete the stalled job from cli_mount
-                        try:
-                            from usenet import get_usenet_client as _guc_to
-                            _client_to = _guc_to()
-                            _search_to = (entry_name or nzb_title or '').strip()
-                            _real_hash_to = _client_to.find_job_hash_by_name(_search_to)
-                            if _real_hash_to:
-                                # Safety: never delete if another live item (e.g. a different
-                                # version sharing this job id due to a since-fixed dedup bug)
-                                # still references it — that would delete its file too.
-                                from database import get_db_connection as _gdb_stall
-                                _conn_stall = _gdb_stall()
-                                try:
-                                    _stall_sibs = _conn_stall.execute(
-                                        "SELECT COUNT(*) FROM media_items "
-                                        "WHERE filled_by_torrent_id = ? AND state IN ('Collected','Upgrading','Checking') AND id != ?",
-                                        (torrent_id, item_id)
-                                    ).fetchone()[0]
-                                finally:
-                                    _conn_stall.close()
-                                if _stall_sibs:
-                                    logging.info(f'[NZB] Skipping provider delete of stalled job {_real_hash_to} — {_stall_sibs} sibling(s) still active')
-                                else:
-                                    _dr_status_to = _client_to.delete_queue_job(_real_hash_to)
-                                    if _dr_status_to == 200:
-                                        logging.info(f'[NZB] Deleted stalled job {_real_hash_to} from cli_mount')
-                                    else:
-                                        logging.warning(f'[NZB] Could not delete stalled job: HTTP {_dr_status_to}')
-                        except Exception as _del_to_err:
-                            logging.debug(f'[NZB] Could not delete stalled job from cli_mount: {_del_to_err}')
-                        # Handle siblings sharing this stalled job
-                        try:
-                            _stalled_siblings = [
-                                s for s in adding_queue.items[:]
-                                if s.get('filled_by_torrent_id') == torrent_id and s.get('id') != item_id
-                            ]
-                            for _ss in _stalled_siblings:
-                                self.queue_manager.move_to_wanted(_ss, 'Adding')
-                                logging.info(f'[NZB] Moved stalled sibling {_ss["id"]} to Wanted')
-                        except Exception:
-                            pass
-                        # Try next result from scrape_results (same as progress=-1 retry flow)
-                        _has_more_to = False
-                        try:
-                            import json as _json_to
-                            _sr_to = item.get('scrape_results', [])
-                            if isinstance(_sr_to, str):
-                                _sr_to = _json_to.loads(_sr_to)
-                            _remaining_to = [r for r in (_sr_to or [])
-                                             if (r.get('nzb_url') or r.get('magnet', '')) != item.get('filled_by_magnet', '')]
-                            if _remaining_to:
-                                _has_more_to = True
-                                from database.database_writing import update_media_item as _umi_to
-                                _umi_to(item_id,
-                                    filled_by_torrent_id=None,
-                                    filled_by_file=None,
-                                    filled_by_title=None,
-                                    filled_by_magnet=None,
-                                    scrape_results=_json_to.dumps(_remaining_to),
-                                )
-                                item['filled_by_torrent_id'] = None
-                                item['filled_by_magnet'] = None
-                                adding_queue._nzb_submitted_ids.discard(item_id)
-                                adding_queue._nzb_downloading_job_ids.discard(torrent_id[4:] if torrent_id.startswith('nzb:') else torrent_id)
-                                logging.info(f'[NZB] Stalled job — {len(_remaining_to)} results remain, retrying in Adding')
-                        except Exception as _retry_to_err:
-                            logging.debug(f'[NZB] Could not prepare stall retry: {_retry_to_err}')
-                        if not _has_more_to:
-                            logging.info(f'[NZB] {torrent_id} stalled, no remaining results — moving to Wanted for fresh scrape')
-                            try:
-                                from database.database_writing import update_media_item as _umi_st
-                                _umi_st(item_id, filled_by_torrent_id=None, filled_by_file=None,
-                                        filled_by_title=None, filled_by_magnet=None,
-                                        scrape_results=None, fall_back_to_single_scraper=False)
-                            except Exception:
-                                pass
-                            self.queue_manager.move_to_wanted(item, 'Adding')
                         continue
 
                     logging.info(f'[NZB] {torrent_id} complete — running health check')

@@ -12,7 +12,12 @@ import time # Add time import
 from debrid import get_debrid_provider
 from utilities.settings import get_setting
 from utilities.log_context import logs_for_item
-from .torrent_processor import TorrentProcessor, NZB_COOLDOWN_WAIT_KEY, NZB_COOLDOWN_NOTES_KEY
+from .torrent_processor import (
+    TorrentProcessor,
+    NZB_COOLDOWN_WAIT_KEY,
+    NZB_COOLDOWN_NOTES_KEY,
+    NZB_ATTEMPT_MADE_KEY,
+)
 from .media_matcher import MediaMatcher
 from database.torrent_tracking import update_adding_error
 from database.scraper_grabs import record_grab, mark_current_grab, queue_grab_trigger
@@ -683,23 +688,28 @@ class AddingQueue:
                 # --- Select Torrent (cached/uncached logic) ---
                 accept_uncached = accepts_uncached_now(item, item_identifier)
 
-                # Mark if this is an NZB item — one attempt per tick to keep queue flowing
-                _first_res = results[0] if results else {}
-                if isinstance(_first_res, dict) and (_first_res.get('protocol') == 'nzb' or _first_res.get('nzb_url')):
-                    _nzb_attempt_made = True
-
                 item.pop(NZB_COOLDOWN_WAIT_KEY, None)
                 item.pop(NZB_COOLDOWN_NOTES_KEY, None)
+                item.pop(NZB_ATTEMPT_MADE_KEY, None)
                 # Now returns torrent_info, magnet, and chosen_result_info
                 torrent_info, magnet, chosen_result_info = self._process_results_with_mode(
                     results, item_identifier, accept_uncached, item=item
                 )
+                # Only a real NZB submission attempt (not a cooldown deferral) counts
+                # for the one-NZB-per-tick cap and skipping Hybrid's uncached pass.
+                _nzb_attempt_made = bool(item.pop(NZB_ATTEMPT_MADE_KEY, False))
 
                 # Hybrid's second pass re-runs the same list with uncached allowed. An NZB
-                # result has no cached/uncached distinction, so after an NZB attempt that
-                # pass would only re-submit (and re-download) the same NZB this tick; the
-                # NZB path already tries one result per tick and the next one on the next.
+                # result has no cached/uncached distinction, so after a real NZB attempt
+                # that pass would only re-submit (and re-download) another NZB this tick;
+                # when NZBs were only deferred for indexer cooldown, still try uncached
+                # torrents in the same candidate list.
+                _has_torrent_candidates = any(
+                    not (r.get('protocol') == 'nzb' or r.get('nzb_url'))
+                    for r in results
+                )
                 if (not torrent_info and not magnet and not _nzb_attempt_made
+                        and _has_torrent_candidates
                         and get_setting('Scraping', 'hybrid_mode', True)): # Check hybrid setting explicitly
                     logging.info(f"No cached results found, trying uncached results (Hybrid Mode)")
                     accept_uncached = True # Now accept uncached
@@ -707,6 +717,7 @@ class AddingQueue:
                     torrent_info, magnet, chosen_result_info = self._process_results_with_mode(
                         results, item_identifier, accept_uncached=True, item=item
                     )
+                    _nzb_attempt_made = bool(item.pop(NZB_ATTEMPT_MADE_KEY, False))
 
                 # Read once, after both passes: the keys are scratch state and must not ride along
                 # on the item into later DB/state updates.
