@@ -192,6 +192,7 @@ MEMBERS = [{'name': 'Show/S01/01.mkv', 'size': 5, 'file_id': '3', 'offset': 10, 
 class ZipReRegisterTest(unittest.TestCase):
     def setUp(self):
         mount_debrid._zip_checked.clear()
+        mount_debrid._not_zip.clear()
         mount_debrid._skipped.clear()
 
     def _run(self, engine, files):
@@ -228,6 +229,21 @@ class ZipReRegisterTest(unittest.TestCase):
         self._run(engine, MEMBERS)
         self.assertEqual(len(engine.calls), n + 1)  # only the job listing
 
+
+    def test_hidden_non_zip_job_is_not_asked_again(self):
+        # A .ts-only release is hidden too, but it's no zip: one look, then
+        # never another provider call (each one costs the pass budget)
+        engine = _Engine({'tb-9'})
+        ts = [{'name': 'Show/Show.S01E01.ts', 'size': 99, 'file_id': '3'}]
+        p = _TorBox(ts)
+        p.mount_files = mock.Mock(return_value=('Show', ts))
+        with mock.patch.object(mount_debrid, 'provider_key', return_value='tb'):
+            mount_debrid.sync_once(engine, [p])
+            mount_debrid._zip_checked.clear()  # as if the hour had passed
+            mount_debrid.sync_once(engine, [p])
+        self.assertEqual(p.mount_files.call_count, 1)
+        self.assertIn('tb-9', mount_debrid._not_zip)
+        self.assertNotIn('DELETE', [c[0] for c in engine.calls])
 
 class AddingNameTest(unittest.TestCase):
     """Adding stores the name the mount shows, so Checking can find S01/01.mkv and S02/01.mkv."""

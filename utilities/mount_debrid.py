@@ -479,6 +479,7 @@ def _register(engine, key: str, t: dict, jid: str, folder: str, files: List[Dict
 
 
 _zip_checked: Dict[str, float] = {}  # job id -> when its zip was last looked at
+_not_zip: set = set()  # hidden jobs whose files are no zip (.ts-only etc.): never asked again
 
 
 def _reregister_zip(engine, p, key: str, t: dict, jid: str) -> str:
@@ -495,6 +496,10 @@ def _reregister_zip(engine, p, key: str, t: dict, jid: str) -> str:
         found = p.mount_files(str(t['id']))
     except Exception as exc:
         logging.debug(f'[mount debrid] {key} {t.get("id")}: {exc}')
+        return 'asked'
+    if found and not any(f.get('source_size') for f in found[1]) and not any(
+            str(f.get('name') or '').lower().endswith('.zip') for f in found[1]):
+        _not_zip.add(jid)  # hidden for another reason (.ts-only): not a zip
         return 'asked'
     if not found or not any(f.get('source_size') for f in found[1]):
         return 'asked'  # the index still can't be read: look again later
@@ -543,7 +548,7 @@ def sync_once(engine, provs: Optional[List] = None, budget: int = ADD_PER_PASS) 
                 # A TorBox zip registered before its member index existed (or
                 # while reading it failed) is one hidden .zip: register the
                 # members now that they can be listed.
-                if (getattr(p, 'mounts_zip_members', False) and budget > 0
+                if (getattr(p, 'mounts_zip_members', False) and budget > 0 and jid not in _not_zip
                         and now - _zip_checked.get(jid, 0) >= SKIP_RETRY_SECONDS):
                     _zip_checked[jid] = now
                     state = _reregister_zip(engine, p, key, t, jid)
