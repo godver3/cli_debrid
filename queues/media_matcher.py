@@ -183,8 +183,16 @@ class MediaMatcher:
             return True
         season = item.get('season') or item.get('season_number')
         episode = item.get('episode') or item.get('episode_number')
-        if xem_mapping and xem_mapping.get('season') is not None:
-            season = xem_mapping['season']
+        if xem_mapping:
+            # Season and episode together: a scene S2E4 for metadata S1E30
+            # must not become S2E30
+            try:
+                if xem_mapping.get('season') is not None:
+                    season = int(xem_mapping['season'])
+                if xem_mapping.get('episode') is not None:
+                    episode = int(xem_mapping['episode'])
+            except (TypeError, ValueError):
+                pass
         if season is None or episode is None:
             return True
         if not season:  # specials item: the usual matching decides
@@ -201,6 +209,12 @@ class MediaMatcher:
         elif counts:
             abs_target = self._absolute_for(item, season, episode, metadata_numbering=not xem_mapping)
             fits = abs_target is not None and abs_target in numbers
+            if not fits and xem_mapping:
+                # The item's own (metadata) numbering names the same episode
+                own_season = item.get('season') or item.get('season_number')
+                own_episode = item.get('episode') or item.get('episode_number')
+                own_abs = self._absolute_for(item, own_season, own_episode) if own_season else None
+                fits = own_abs is not None and own_abs in numbers
         else:
             pack_season = ctx['pack_season']
             fits = pack_season is None or season == pack_season

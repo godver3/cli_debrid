@@ -107,6 +107,19 @@ class RelatedSeasonLessTests(unittest.TestCase):
         self.assertIn(' - 26 - ', by_ep[(2, 14)])
         self.assertIn(' - 36 - ', by_ep[(2, 24)])
 
+    def test_xem_mapping_uses_mapped_season_and_episode(self):
+        # COUNTS S1=80: XEM maps metadata S1E30 to scene S2E4 (absolute 84 by
+        # counts); the file is the item's own absolute 30 or the scene 84,
+        # never "S2 + episode 30" (= 110)
+        title = '[Grp] Show - Complete [BD]'
+        names = [f'[Grp] Show - {n:04d} - Ep [BD].mkv' for n in (30, 84, 110)]
+        parsed = [p for p in (self.m._parse_file_info({'path': f'/{title}/{n}', 'bytes': 1}) for n in names) if p]
+        ctx = self.m._seasonless_context(parsed, self._item(1, 1), title_season=None, pack_season=None)
+        item = self._item(1, 30)
+        xem = {'season': 2, 'episode': 4}
+        fits = [self.m._seasonless_file_fits(pf, item, xem, ctx) for pf in parsed]
+        self.assertEqual(fits, [True, True, False])
+
 
 if __name__ == '__main__':
     unittest.main()
