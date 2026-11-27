@@ -1765,7 +1765,14 @@ class TorrentProcessor:
                 if not accept_uncached and not is_cached:
                     logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] Skipping uncached result (accept_uncached=False)")
                     continue
-                
+
+                if not is_cached and result.get('pack_for_single_episode'):
+                    # A season / multi-season pack kept for one episode is only
+                    # worth it when cached: uncached it downloads the whole pack
+                    # (hundreds of GB for S01-S22) to get one file.
+                    logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] Skipping uncached pack for a single episode")
+                    continue
+
                 if not is_cached:
                     try:
                         active_downloads, download_limit = self.debrid_provider.get_active_downloads()
