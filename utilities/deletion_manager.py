@@ -2230,6 +2230,7 @@ class DeletionManager:
         # This avoids per-episode API calls and removes from Plex before files disappear
         # Works for: Plex mode (debrid mount) AND Symlink mode (local symlinks + debrid)
         plex_content_deleted = False
+        plex_result = {}
         if delete_from_media_server and plex_deletion_type and plex_content_title:
             logging.info(f"[DELETE_MULTIPLE] Content-level Plex deletion: {plex_deletion_type}-level for '{plex_content_title}'")
 
@@ -2793,10 +2794,18 @@ class DeletionManager:
         # keeps the items when it can't remove the files itself (symlinks it may
         # not write), and with "Empty trash automatically after every scan" off
         # nothing removes them later (seen live: show 122280 kept all 12 episodes).
-        if plex_content_deleted:
-            logging.info(f"[DELETE_MULTIPLE] Phase 3: content-level Plex deletion reported success; "
-                         f"scanning the folders anyway so Plex drops anything it kept")
-        if delete_from_media_server and scan_folders_seen:
+        # The content-level delete above runs while the symlinks still exist; Plex
+        # can't remove them (no write access), answers 200 and keeps the item.
+        # Now that the files are gone, re-send the delete if the item is still
+        # there and only fall back to a folder scan (for a removed show folder,
+        # a scan of the whole section) when Plex still keeps it.
+        plex_content_confirmed = False
+        if plex_content_deleted and plex_result.get('rating_key'):
+            from utilities.plex_functions import finish_plex_content_delete
+            plex_content_confirmed = finish_plex_content_delete(plex_result['rating_key'])
+            logging.info(f"[DELETE_MULTIPLE] Phase 3: Plex {plex_deletion_type} "
+                         f"{'removed' if plex_content_confirmed else 'still present, scanning folders'}")
+        if delete_from_media_server and scan_folders_seen and not plex_content_confirmed:
             deleted_paths_for_scan = list(scan_folders_seen.keys())
             item_types = {it.get('type') for it in all_items if it.get('state', '') != 'Blacklisted' and it.get('type')}
             batch_item_type = next(iter(item_types)) if len(item_types) == 1 else None

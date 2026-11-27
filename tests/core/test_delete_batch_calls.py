@@ -592,13 +592,67 @@ def test_accepts_kwarg_matches_provider_signatures():
 
 def test_content_level_plex_delete_still_scans_and_empties_trash(tmp_path):
     # Plex answers a show delete with success but can keep the items when it
-    # can't remove the files itself; Phase 3 must still scan + empty trash.
+    # can't remove the files itself; when it still has the show after the
+    # files are gone, Phase 3 must still scan + empty trash.
     dm = _make_manager(using_symlinks=False)
     items = _nzb_items(12)
     with mock.patch('utilities.plex_functions.remove_show_from_plex',
-                    return_value={'success': True}) as show_del:
+                    return_value={'success': True, 'rating_key': '122280'}) as show_del, \
+         mock.patch('utilities.plex_functions.finish_plex_content_delete',
+                    return_value=False) as finish:
         res, _, _, scan = _run_batch(dm, items, tmp_path, plex_deletion_type='show',
                                      plex_content_title='Show', plex_imdb_id='tt1')
     assert show_del.call_count == 1
+    finish.assert_called_once_with('122280')
     assert res.get('plex_deleted') is True
     assert scan.call_count == 1
+
+
+def test_content_level_plex_delete_confirmed_skips_scan(tmp_path):
+    # Re-sent delete after the files are gone removed the show: no folder
+    # scan (for a removed show folder that would be a whole-section scan).
+    dm = _make_manager(using_symlinks=False)
+    items = _nzb_items(12)
+    with mock.patch('utilities.plex_functions.remove_show_from_plex',
+                    return_value={'success': True, 'rating_key': '122280'}), \
+         mock.patch('utilities.plex_functions.finish_plex_content_delete',
+                    return_value=True) as finish:
+        res, _, _, scan = _run_batch(dm, items, tmp_path, plex_deletion_type='show',
+                                     plex_content_title='Show', plex_imdb_id='tt1')
+    finish.assert_called_once_with('122280')
+    assert res.get('plex_deleted') is True
+    assert scan.call_count == 0
+
+
+def _fake_item(title='Detectorists'):
+    item = mock.Mock()
+    item.title = title
+    return item
+
+
+def test_finish_plex_content_delete_resends_when_kept():
+    from plexapi.exceptions import NotFound
+    from utilities.plex_functions.removal import finish_plex_content_delete
+    item = _fake_item()
+    plex = mock.Mock()
+    plex.fetchItem.side_effect = [item, NotFound('gone')]
+    assert finish_plex_content_delete('122280', plex=plex) is True
+    item.delete.assert_called_once_with()
+
+
+def test_finish_plex_content_delete_already_gone_no_delete():
+    from plexapi.exceptions import NotFound
+    from utilities.plex_functions.removal import finish_plex_content_delete
+    plex = mock.Mock()
+    plex.fetchItem.side_effect = NotFound('gone')
+    assert finish_plex_content_delete('122280', plex=plex) is True
+
+
+def test_finish_plex_content_delete_still_kept_returns_false():
+    from utilities.plex_functions.removal import finish_plex_content_delete
+    item = _fake_item()
+    plex = mock.Mock()
+    plex.fetchItem.return_value = item
+    assert finish_plex_content_delete('122280', plex=plex) is False
+    assert item.delete.call_count == 1
+    assert finish_plex_content_delete(None, plex=plex) is False
