@@ -43,6 +43,25 @@ def _real_mount_folder(item_dict):
     return folder_for(tid, get_setting)
 
 
+def _guard_ambiguous(base_path, paths, filename, item_dict, real):
+    """Drop name-guess paths that sit in one of several same-named folders
+    ("Name", "Name (2)") when the torrent's real folder isn't known: the
+    file there may belong to another torrent. See
+    local_library_scan._unambiguous_source."""
+    if real:
+        return paths
+    from utilities.local_library_scan import _unambiguous_source
+    out = []
+    for p in paths:
+        path = p['path'] if isinstance(p, dict) else p
+        if os.path.exists(path) and not _unambiguous_source(base_path, path, os.path.dirname(path), filename,
+                                                            {'filled_by_torrent_id': item_dict['filled_by_torrent_id']
+                                                             if 'filled_by_torrent_id' in item_dict.keys() else None})[0]:
+            continue
+        out.append(p)
+    return out
+
+
 def _mount_file_candidates(item_dict, base_path):
     """Where an item's file can be under the mount, in task_check_plex_files' order."""
     filename = item_dict['filled_by_file']
@@ -62,7 +81,7 @@ def _mount_file_candidates(item_dict, base_path):
     paths += [path for _name, path in _category_folder_paths(
         base_path, [item_dict[k] or '' for k in ('debrid_folder_name', 'original_scraped_torrent_title',
                                                  'real_debrid_original_title', 'filled_by_title')], filename)]
-    return paths
+    return _guard_ambiguous(base_path, paths, filename, item_dict, real)
 
 
 def _category_folder_paths(base_path, folder_names, filename):
@@ -465,6 +484,9 @@ class PlexTasks:
                     base_path, [debrid_folder_name, original_scraped_torrent_title, real_debrid_original_title, filled_by_title],
                     current_filename)]
 
+                paths_to_check = _guard_ambiguous(base_path, paths_to_check, current_filename, item_dict,
+                                                  _real_mount_folder(item_dict))
+
                 # --- Check paths in order ---
                 file_found_on_disk = False
                 actual_file_path = None
@@ -733,6 +755,8 @@ class PlexTasks:
                         current_filename):
                     paths_to_check_info.append({'name': _cat_name, 'path': _cat_path, 'type': 'category_folder'})
 
+                paths_to_check_info = _guard_ambiguous(base_path, paths_to_check_info, current_filename, item_dict,
+                                                       _real_mount_folder(item_dict))
                 file_found_on_disk = False
                 actual_file_path = None
                 folder_name_for_plex_scan = None 

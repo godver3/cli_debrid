@@ -1330,9 +1330,11 @@ class CheckingQueue:
         sample = items[0] if items else {}
         mount = (get_setting('Plex', 'mounted_file_location', '').rstrip('/')
                  or get_setting('Usenet Provider', 'mounted_file_location', '').rstrip('/'))
-        folder = sample.get('debrid_folder_name') or sample.get('filled_by_title') or ''
         from usenet.mount_layout import resolve_nzb_job_dir
-        if not resolve_nzb_job_dir(mount, folder):
+        from utilities.mount_debrid import guarded_folder
+        folder = guarded_folder(mount, torrent_id, sample.get('debrid_folder_name') or sample.get('filled_by_title') or '',
+                                get_setting)
+        if not folder or not resolve_nzb_job_dir(mount, folder):
             return 'give_up', f'its folder is not on the mount ({reason})'
         return 'hold', reason
 
@@ -1631,7 +1633,10 @@ class CheckingQueue:
                                 # folder matches no library and only costs Plex calls.
                                 if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
                                     _scan_mount = ''
-                                _scan_folder = _sample.get('debrid_folder_name') or _sample.get('filled_by_title') or ''
+                                from utilities.mount_debrid import guarded_folder as _guarded_folder
+                                _scan_folder = _guarded_folder(
+                                    _scan_mount, torrent_id,
+                                    _sample.get('debrid_folder_name') or _sample.get('filled_by_title') or '', get_setting) or ''
                                 _scan_itype = _sample.get('type', 'movie')
                                 if _scan_mount and _scan_folder:
                                     import threading as _threading

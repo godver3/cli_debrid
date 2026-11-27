@@ -257,5 +257,66 @@ class AddingNameTest(unittest.TestCase):
         self.assertEqual(AddingQueue._mount_file_name(mock.Mock(), {'files': []}, parsed, '01.mkv', {}), '01.mkv')
 
 
+class GuardedFolderTest(unittest.TestCase):
+    def test_real_folder_wins(self):
+        with tempfile.TemporaryDirectory() as root, \
+                mock.patch.object(mount_debrid, 'folder_for', return_value='Job (2)'):
+            os.makedirs(os.path.join(root, 'Job'))
+            self.assertEqual(mount_debrid.guarded_folder(root, 'nzb:1', 'Job', None), 'Job (2)')
+
+    def test_sibling_without_real_folder_is_not_guessed(self):
+        with tempfile.TemporaryDirectory() as root, mock.patch.object(mount_debrid, 'folder_for', return_value=None):
+            os.makedirs(os.path.join(root, 'Job'))
+            self.assertEqual(mount_debrid.guarded_folder(root, 'nzb:1', 'Job', None), 'Job')
+            os.makedirs(os.path.join(root, 'Job (2)'))
+            self.assertIsNone(mount_debrid.guarded_folder(root, 'nzb:1', 'Job', None))
+
+
+class PlexGuessGuardTest(unittest.TestCase):
+    def test_guess_in_a_duplicate_name_folder_is_dropped(self):
+        from queues.runner import plex_tasks
+        from utilities import local_library_scan as lls
+        with tempfile.TemporaryDirectory() as root:
+            for d in ('Name', 'Name (2)'):
+                os.makedirs(os.path.join(root, d))
+                open(os.path.join(root, d, 'E.mkv'), 'w').close()
+            lls._root_index_cache.clear()
+            paths = [os.path.join(root, 'Name', 'E.mkv'), os.path.join(root, 'Other', 'E.mkv')]
+            item = {'filled_by_torrent_id': 'T'}
+            with mock.patch('utilities.mount_debrid.engine_holds_debrid', return_value=True):
+                self.assertEqual(plex_tasks._guard_ambiguous(root, paths, 'E.mkv', item, None), paths[1:])
+                self.assertEqual(plex_tasks._guard_ambiguous(root, paths, 'E.mkv', item, 'Name (2)'), paths)
+
+
+class NoDirectNameJoinTest(unittest.TestCase):
+    """New code must not join the mount root with a release/torrent name on its
+    own: go through mount_debrid.folder_for / guarded_folder (or the guarded
+    lookups in local_library_scan and plex_tasks) and add the site here only if
+    the name is a label or key, never the folder that decides which torrent's
+    file is used."""
+
+    PATTERN = r'os\.path\.join\([^)]*(filled_by_title|torrent_title|original_title|debrid_folder_name|_trimmed|folder_name)'
+    # file -> number of existing joins. local_library_scan / plex_tasks: the
+    # guesses are all behind folder_for-first and the sibling guard; the other
+    # two build library or request paths, not mount lookups.
+    ALLOWED = {'queues/runner/plex_tasks.py': 12, 'utilities/local_library_scan.py': 12,
+               'routes/scraper_routes/files.py': 1, 'usenet/nzbdav_client.py': 2}
+
+    def test_no_new_joins(self):
+        import re
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        found = {}
+        for top in ('queues', 'utilities', 'routes', 'usenet', 'database'):
+            for dirpath, _d, files in os.walk(os.path.join(root, top)):
+                for f in files:
+                    if f.endswith('.py'):
+                        path = os.path.join(dirpath, f)
+                        with open(path, encoding='utf-8') as fh:
+                            n = sum(1 for line in fh if re.search(self.PATTERN, line))
+                        if n:
+                            found[os.path.relpath(path, root)] = n
+        self.assertEqual(found, self.ALLOWED)
+
+
 if __name__ == '__main__':
     unittest.main()

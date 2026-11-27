@@ -303,6 +303,26 @@ def folder_family(entries, name: str) -> List[str]:
     return sorted(e for e in entries if pat.match(e))
 
 
+def guarded_folder(mount: str, torrent_id, guess: str, get_setting) -> Optional[str]:
+    """The folder to use for a torrent under a mount root: the engine's real
+    one, else the stored/guessed name, unless sibling "Name (N)" folders make
+    that guess ambiguous (None, logged at info)."""
+    real = folder_for(torrent_id, get_setting)
+    if real:
+        return real
+    if not guess:
+        return None
+    try:
+        family = folder_family(os.listdir(mount), guess) if mount else []
+    except OSError:
+        family = []
+    if len(family) > 1:
+        logging.info(f"[mount debrid] folder of {torrent_id} not known and {family} share one name on the "
+                     f"mount; not guessing")
+        return None
+    return guess
+
+
 def mount_file_name(files: List[Dict], path: str) -> str:
     """The name the built-in mount gives one file of a torrent (members of
     different season folders are flattened to distinct names, see
