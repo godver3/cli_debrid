@@ -130,5 +130,89 @@ class PlexOrderMetadataTests(unittest.TestCase):
         self.assertEqual(notes, {'tt1': 'numbered by TMDB in Plex'})
 
 
+class PinRecordTests(unittest.TestCase):
+    """TMDB numbering Clyde sets for NFO shows is recorded and put back when
+    the show no longer has NFO files, or NFO files / the agent are turned off."""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        p = mock.patch.object(pom, '_pins_path', return_value=os.path.join(self.tmp.name, 'pins.json'))
+        p.start()
+        self.addCleanup(p.stop)
+
+    def _show(self, ordering='tvdbDvd', key=42):
+        show = Show([Ep(1, 1, 'x')], ordering=ordering)
+        show.ratingKey = key
+        return show
+
+    def test_set_up_plex_agent_with_nfo_mode_off_pins_nothing(self):
+        show = self._show()
+        with mock.patch.object(pom, 'shows_with_chosen_order', return_value=[('tt1', 'tvdb:dvd')]), \
+                mock.patch('utilities.nfo_writer.wants_show', return_value=False), \
+                mock.patch.object(pom, '_plex_show', return_value=(show, None)):
+            self.assertEqual(pom.release_all_for_nfo(plex=mock.Mock()), 0)
+        self.assertEqual(show.ordering, 'tvdbDvd')
+        self.assertEqual(pom._load_pins(), {})
+
+    def test_nfo_show_is_pinned_and_put_back_by_unpin_all(self):
+        show = self._show()
+        with mock.patch.object(pom, 'shows_with_chosen_order', return_value=[('tt1', 'tvdb:dvd')]), \
+                mock.patch('utilities.nfo_writer.wants_show', return_value=True), \
+                mock.patch.object(pom, '_plex_show', return_value=(show, None)):
+            self.assertEqual(pom.release_all_for_nfo(plex=mock.Mock()), 1)
+        self.assertEqual(show.ordering, 'tmdbAiring')
+        self.assertEqual(pom._load_pins()['42']['previous'], 'tvdbDvd')
+        plex = mock.Mock(fetchItem=mock.Mock(return_value=show))
+        self.assertEqual(pom.unpin_all(plex=plex), 1)
+        self.assertEqual(show.ordering, 'tvdbDvd')
+        self.assertEqual(pom._load_pins(), {})
+
+    def test_second_pin_keeps_the_first_previous_ordering(self):
+        show = self._show()
+        pom.pin_tmdb_ordering(show, 'tt1')
+        show.ordering = 'aired'   # something else changed it in between
+        pom.pin_tmdb_ordering(show, 'tt1')
+        self.assertEqual(pom._load_pins()['42']['previous'], 'tvdbDvd')
+
+    def test_ordering_changed_since_is_kept(self):
+        show = self._show()
+        pom.pin_tmdb_ordering(show, 'tt1')
+        show.ordering = 'aired'   # the user (or an order change) set another one
+        self.assertEqual(pom.unpin_show(show), '')
+        self.assertEqual(show.ordering, 'aired')
+        self.assertEqual(pom._load_pins(), {})
+
+    def test_show_leaving_nfo_files_on_order_change_gets_its_ordering_back(self):
+        show = self._show()
+        pom.pin_tmdb_ordering(show, 'tt1')
+        with mock.patch.object(pom, '_nfo_mode', return_value=False), \
+                mock.patch.object(pom, '_plex_show', return_value=(show, None)):
+            note = pom.sync_show('tt1', 'default')
+        self.assertEqual(show.ordering, 'tvdbDvd')
+        self.assertIn('put back', note)
+
+    def test_unpin_imdb_needs_no_plex_call_for_unpinned_show(self):
+        with mock.patch.object(pom, '_plex_show') as find:
+            self.assertEqual(pom.unpin_imdb('tt9'), '')
+        find.assert_not_called()
+
+    def test_plex_unreachable_keeps_the_record(self):
+        show = self._show()
+        pom.pin_tmdb_ordering(show, 'tt1')
+        plex = mock.Mock(fetchItem=mock.Mock(side_effect=ConnectionError('down')))
+        self.assertEqual(pom.unpin_all(plex=plex), 0)
+        self.assertIn('42', pom._load_pins())
+
+    def test_show_gone_from_plex_drops_the_record(self):
+        from plexapi.exceptions import NotFound
+        show = self._show()
+        pom.pin_tmdb_ordering(show, 'tt1')
+        plex = mock.Mock(fetchItem=mock.Mock(side_effect=NotFound('gone')))
+        self.assertEqual(pom.unpin_all(plex=plex), 0)
+        self.assertEqual(pom._load_pins(), {})
+
+
 if __name__ == '__main__':
     unittest.main()

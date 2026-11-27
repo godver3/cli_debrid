@@ -6,6 +6,8 @@ import unittest
 import xml.etree.ElementTree as ET
 from unittest import mock
 
+import database  # noqa: F401 - app import order (local_library_scan imports in a cycle otherwise)
+
 from utilities import nfo_writer as nw
 from utilities import plex_snapshot as ps
 
@@ -201,6 +203,34 @@ class SnapshotTests(unittest.TestCase):
                 mock.patch('database.core.get_db_connection', return_value=conn):
             nw._write_batch({1: new})
         self.assertIn('<title>Red Bones (1)</title>', self._read(new[:-4] + '.nfo'))
+
+    def test_upgrade_while_the_writer_covers_the_show_moves_the_snapshot_entry(self):
+        # NFO files on and covering the show: the writer's NFO stays on disk,
+        # but the snapshot follows the new file, so turning NFO files off
+        # puts the snapshot NFO next to the upgraded file, not the old one
+        new = self._upgrade_first_episode('Shetland (2013) - S01E01 - 2160p.mkv')
+        with mock.patch.object(nw, 'wants_show', return_value=True):
+            self.assertTrue(ps.carry_to_symlink(1, new))
+        self.assertFalse(os.path.exists(new[:-4] + '.nfo'))
+        with mock.patch.object(nw, 'wants_show', return_value=False):
+            ps.restore_all()
+        self.assertIn('<title>Red Bones (1)</title>', self._read(new[:-4] + '.nfo'))
+
+    def test_writer_batch_moves_the_snapshot_entry_too(self):
+        new = self._upgrade_first_episode('Shetland (2013) - S01E01 - 2160p.mkv')
+        conn = mock.Mock()
+        conn.execute.return_value.fetchall.return_value = [(1, 'tt2396135', 'episode')]
+        with mock.patch.object(nw, 'wants_show', return_value=True), \
+                mock.patch.object(nw, 'write_show', return_value={'written': 0}), \
+                mock.patch('database.core.get_db_connection', return_value=conn):
+            nw._write_batch({1: new})
+        sid = int(self.settings[('NFO', 'snapshot_id')])
+        c = ps._conn()
+        try:
+            path = c.execute("SELECT path FROM items WHERE snapshot_id = ? AND media_item_id = 1", (sid,)).fetchone()[0]
+        finally:
+            c.close()
+        self.assertEqual(path, new)
 
     def test_upgrade_with_a_name_without_sxxeyy_keeps_the_snapshot_nfo(self):
         new = self._upgrade_first_episode('Shetland 1x01 2160p.mkv')

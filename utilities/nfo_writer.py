@@ -568,6 +568,12 @@ def write_show(imdb_id: str, rows: Optional[List[Dict]] = None, prune: bool = Tr
             if counts['removed']:
                 # NFOs made from a Plex snapshot come back in their place
                 _restore_snapshot(imdb_id)
+                # and Plex's own ordering, if Clyde numbered the show by TMDB for its NFOs
+                try:
+                    from utilities.plex_order_metadata import unpin_imdb
+                    unpin_imdb(imdb_id)
+                except Exception as e:
+                    logging.debug(f"{_LOG} {imdb_id}: ordering not put back: {e}")
         return counts
     root = library_root()
     rows = [r for r in rows if r.get('location_on_disk') and os.path.lexists(r['location_on_disk'])]
@@ -654,8 +660,9 @@ def write_for_symlink(media_item_id: Optional[int], symlink_path: str) -> None:
 
 
 def _carry_snapshot(media_item_id: int, symlink_path: str) -> None:
-    """An upgraded episode of a show the writer doesn't cover keeps the NFO
-    made from Plex's metadata."""
+    """An upgraded episode keeps its snapshot NFO (made from Plex's metadata):
+    written next to the new file when the writer doesn't cover the show, else
+    only the snapshot's record moves there."""
     try:
         from utilities import plex_snapshot
         plex_snapshot.carry_to_symlink(media_item_id, symlink_path)
@@ -710,6 +717,10 @@ def _write_batch(batch: Dict[int, str]) -> None:
                 for i in item_ids:
                     _carry_snapshot(i, batch[i])
                 continue
+            # The writer's NFO goes on disk; the snapshot's record still moves to
+            # the new file, so it comes back there if NFO files are turned off
+            for i in item_ids:
+                _carry_snapshot(i, batch[i])
             paths = {os.path.normpath(batch[i]) for i in item_ids}
             show_rows = _episode_rows(imdb_id)
             rows_here = [r for r in show_rows if os.path.normpath(r['location_on_disk']) in paths]
