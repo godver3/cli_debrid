@@ -2838,6 +2838,15 @@ class DeletionManager:
             plex_content_confirmed = finish_plex_content_delete(plex_result['rating_key'])
             logging.info(f"[DELETE_MULTIPLE] Phase 3: Plex {plex_deletion_type} "
                          f"{'removed' if plex_content_confirmed else 'still present, scanning folders'}")
+            if plex_content_confirmed:
+                # The delete summary reads these: a first attempt that Plex
+                # refused (400) but the re-send removed still counts as removed
+                aggregate_result['plex_deleted'] = True
+                for r in aggregate_result['results']:
+                    if r.get('item_id') in items_by_id:
+                        r['media_server_removed'] = True
+                        if r.get('media_server_type', 'none') == 'none':
+                            r['media_server_type'] = 'plex'
         if delete_from_media_server and scan_folders_seen and not plex_content_confirmed:
             deleted_paths_for_scan = list(scan_folders_seen.keys())
             item_types = {it.get('type') for it in all_items if it.get('state', '') != 'Blacklisted' and it.get('type')}

@@ -652,6 +652,9 @@ def test_content_level_400_resent_after_files_gone_skips_scan(tmp_path):
     finish.assert_called_once_with('113099')
     assert scan.call_count == 0
     assert not any('400' in e for e in res['errors'])
+    # The delete summary reads these (it said "No items found on server")
+    assert res['plex_deleted'] is True
+    assert res['results'] and all(r['media_server_removed'] for r in res['results'])
 
 
 def _fake_item(title='Detectorists'):
