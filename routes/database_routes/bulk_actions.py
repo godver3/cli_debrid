@@ -93,6 +93,8 @@ def bulk_queue_action():
                     delete_symlinks=True,
                     clear_cache=False,
                     remove_from_content_source=False,
+                    remove_original_files=True,
+                    remove_climount_entries=True,
                 )
                 if result.get('database_locked'):
                     logging.error("Database is locked during bulk delete.")

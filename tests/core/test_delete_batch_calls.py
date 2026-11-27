@@ -360,3 +360,151 @@ def test_bulk_queue_action_delete_routes_through_delete_multiple_items():
     assert fake_dm.delete_multiple_items.call_count == 1
     assert fake_dm.delete_multiple_items.call_args.kwargs['item_ids'] == list(range(1, 501))
     assert fake_dm.delete_multiple_items.call_args.kwargs['blacklist'] is False
+    # restores what the single-item route did: cli_mount entry + file removal
+    assert fake_dm.delete_multiple_items.call_args.kwargs['remove_climount_entries'] is True
+    assert fake_dm.delete_multiple_items.call_args.kwargs['remove_original_files'] is True
+
+
+def _batch_settings(mount_root):
+    table = {
+        ('Plex', 'mounted_file_location'): str(mount_root),
+        ('Debug', 'emby_jellyfin_url'): '',
+        ('Debug', 'emby_jellyfin_token'): '',
+    }
+    return lambda section, key, default=None: table.get((section, key), default)
+
+
+def _run_batch(dm, items, mount_root, sibling_rows=(), **kwargs):
+    """Run delete_multiple_items with all server/DB edges mocked; returns (result, climount, db, scan)."""
+    conn = mock.MagicMock()
+    conn.execute.return_value.fetchall.side_effect = lambda: [(i,) for i in sibling_rows]
+    climount = mock.MagicMock()
+    climount.is_enabled.return_value = True
+    with mock.patch('utilities.deletion_manager.get_setting', side_effect=_batch_settings(mount_root)), \
+         mock.patch('database.database_reading.get_items_by_ids', return_value=items), \
+         mock.patch('database.get_db_connection', return_value=conn), \
+         mock.patch('usenet.get_usenet_client', return_value=climount), \
+         mock.patch('usenet.reset_usenet_client'), \
+         mock.patch('database.database_writing.delete_items_batch',
+                    return_value={'success': True, 'deleted_count': len(items), 'error': None}) as db, \
+         mock.patch.object(dm, 'scan_and_empty_media_server_trash',
+                           return_value={'success': True}) as scan, \
+         mock.patch('utilities.deletion_manager.time.sleep') as sleep:
+        res = dm.delete_multiple_items([i['id'] for i in items], clear_cache=False, **kwargs)
+    assert sleep.call_count == 0
+    return res, climount, db, scan
+
+
+def _nzb_items(n, tid='nzb:abc123'):
+    return [{'id': i, 'type': 'episode', 'title': 'Show', 'state': 'Collected',
+             'filled_by_torrent_id': tid, 'location_on_disk': f'/mnt/debrid/shows/S/e{i}.mkv',
+             'filled_by_file': f'e{i}.mkv'} for i in range(1, n + 1)]
+
+
+def test_bulk_removes_climount_entry_once_per_job(tmp_path):
+    dm = _make_manager(using_symlinks=False)
+    items = _nzb_items(50)
+    res, climount, db, scan = _run_batch(dm, items, tmp_path, remove_climount_entries=True)
+    assert res['success'] is True
+    assert climount.remove_nzb.call_count == 1
+    assert climount.remove_nzb.call_args.args[0] == 'abc123'
+    assert db.call_count == 1 and scan.call_count == 1
+
+
+def test_bulk_climount_removal_uses_btih_for_torrents(tmp_path):
+    dm = _make_manager(using_symlinks=False)
+    h = 'a' * 40
+    items = _nzb_items(3, tid='RD123')
+    for it in items:
+        it['filled_by_magnet'] = f'magnet:?xt=urn:btih:{h.upper()}'
+    _, climount, _, _ = _run_batch(dm, items, tmp_path, remove_climount_entries=True)
+    assert [c.args[0] for c in climount.remove_nzb.call_args_list] == [h]
+
+
+def test_bulk_climount_removal_skipped_when_sibling_outside_batch(tmp_path):
+    dm = _make_manager(using_symlinks=False)
+    items = _nzb_items(5)
+    # id 99 is not in the batch and still references the job; batch ids alone don't count
+    res, climount, _, _ = _run_batch(dm, items, tmp_path, sibling_rows=(1, 2, 99),
+                                     remove_climount_entries=True)
+    assert climount.remove_nzb.call_count == 0
+    res, climount, _, _ = _run_batch(dm, items, tmp_path, sibling_rows=(1, 2, 3),
+                                     remove_climount_entries=True)
+    assert climount.remove_nzb.call_count == 1
+
+
+def test_bulk_climount_removal_off_by_default(tmp_path):
+    dm = _make_manager(using_symlinks=False)
+    _, climount, _, _ = _run_batch(dm, _nzb_items(3), tmp_path)
+    assert climount.remove_nzb.call_count == 0
+
+
+def test_bulk_direct_mount_removes_files_but_not_blacklisted_or_limited(tmp_path):
+    dm = _make_manager(using_symlinks=False)
+    items = _nzb_items(3)
+    for it in items:
+        f = tmp_path / f"{it['id']}.mkv"
+        f.write_text('x')
+        it['location_on_disk'] = str(f)
+    items[2]['state'] = 'Blacklisted'
+    res, _, db, scan = _run_batch(dm, items, tmp_path, remove_original_files=True)
+    assert res['success'] is True
+    assert not (tmp_path / '1.mkv').exists() and not (tmp_path / '2.mkv').exists()
+    assert (tmp_path / '3.mkv').exists()  # already blacklisted: no physical ops
+    assert db.call_count == 1 and scan.call_count == 1
+    assert scan.call_args.kwargs['deleted_paths'] == [str(tmp_path)]
+
+    dm.limited_env = True
+    (tmp_path / '4.mkv').write_text('x')
+    items = _nzb_items(1)
+    items[0]['location_on_disk'] = str(tmp_path / '4.mkv')
+    _run_batch(dm, items, tmp_path, remove_original_files=True)
+    assert (tmp_path / '4.mkv').exists()
+
+
+def test_bulk_direct_mount_file_removal_off_by_default(tmp_path):
+    dm = _make_manager(using_symlinks=False)
+    items = _nzb_items(1)
+    f = tmp_path / 'keep.mkv'
+    f.write_text('x')
+    items[0]['location_on_disk'] = str(f)
+    _run_batch(dm, items, tmp_path)
+    assert f.exists()
+
+
+def test_bulk_blacklist_updates_state_instead_of_deleting_rows(tmp_path):
+    dm = _make_manager(using_symlinks=False)
+    _, _, db, _ = _run_batch(dm, _nzb_items(4), tmp_path, blacklist=True)
+    assert db.call_args.kwargs['blacklist'] is True and db.call_count == 1
+
+
+def test_bulk_symlink_mode_removes_original_off_mount_only(tmp_path):
+    symlink_root = tmp_path / 'symlinks'
+    folder = symlink_root / 'TV Shows' / 'Show' / 'Season 01'
+    folder.mkdir(parents=True)
+    on_mount = '/mnt/debrid/x.mkv'
+    off = tmp_path / 'orig.mkv'
+    off.write_text('x')
+    items = []
+    for i, orig in enumerate([str(off), on_mount], start=1):
+        link = folder / f'e{i}.mkv'
+        os.symlink('/nonexistent', link)
+        items.append({'id': i, 'type': 'episode', 'title': 'Show', 'state': 'Collected',
+                      'location_on_disk': str(link), 'original_path_for_symlink': orig})
+    dm = _make_manager(using_symlinks=True, symlink_dir=str(symlink_root))
+
+    def gs(section, key, default=None):
+        return {('File Management', 'symlinked_files_path'): str(symlink_root),
+                ('Plex', 'mounted_file_location'): '/mnt/debrid'}.get((section, key), default)
+
+    with mock.patch('utilities.deletion_manager.get_setting', side_effect=gs), \
+         mock.patch('database.database_reading.get_items_by_ids', return_value=items), \
+         mock.patch('database.database_writing.delete_items_batch',
+                    return_value={'success': True, 'deleted_count': 2, 'error': None}), \
+         mock.patch.object(dm, 'scan_and_empty_media_server_trash', return_value={}) as scan, \
+         mock.patch('os.remove', wraps=os.remove) as rm:
+        res = dm.delete_multiple_items([1, 2], clear_cache=False, remove_original_files=True)
+    assert res['success'] is True
+    assert not off.exists()
+    assert [c.args[0] for c in rm.call_args_list if str(off) in c.args[0] or on_mount in c.args[0]] == [str(off)]
+    assert scan.call_count == 1

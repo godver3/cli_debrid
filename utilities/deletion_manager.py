@@ -2072,6 +2072,28 @@ class DeletionManager:
             return result
 
 
+    def _remove_original_file_for_batch(self, item: dict, mount_location: str):
+        """Cheap local removal of an item's file, as the single-item delete route did.
+        Returns (removed_path_or_None, error_or_None). Never touches a media server."""
+        if item.get('state') not in ('Collected', 'Upgrading') or self.limited_env:
+            return None, None
+        if self.using_symlinks:
+            path = item.get('original_path_for_symlink')
+        else:
+            path = item.get('location_on_disk') if mount_location else None
+        if not path:
+            return None, None
+        if self.using_symlinks and mount_location and path.startswith(mount_location):
+            return None, None  # on the debrid mount: removed through the provider
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+                return path, None
+        except Exception as e:
+            logging.error(f"[DELETE_MULTIPLE] Error deleting file {path}: {e}")
+            return None, f"File deletion failed: {str(e)}"
+        return None, None
+
     def delete_multiple_items(self, item_ids: List[int], blacklist: bool = False,
                              blacklist_sources: bool = False,
                              delete_from_media_server: bool = True,
@@ -2086,7 +2108,9 @@ class DeletionManager:
                              plex_content_title: str = None,
                              plex_imdb_id: str = None,
                              plex_tmdb_id: str = None,
-                             plex_season_number: int = None) -> dict:
+                             plex_season_number: int = None,
+                             remove_original_files: bool = False,
+                             remove_climount_entries: bool = False) -> dict:
         """
         Delete multiple items at once
 
@@ -2107,6 +2131,11 @@ class DeletionManager:
             plex_imdb_id: IMDB ID for accurate Plex matching
             plex_tmdb_id: TMDB ID for accurate Plex matching
             plex_season_number: Season number (required when plex_deletion_type='season')
+            remove_original_files: If True (and delete_files), remove each Collected/Upgrading item's
+                file from disk like the single-item route (Direct Mount: location_on_disk; Symlinked:
+                original_path_for_symlink), skipping files on the debrid mount and limited environments
+            remove_climount_entries: If True, remove each unique cli_mount entry (NZB hash / btih) once,
+                unless an item outside this batch still references it
 
         Returns:
         {
@@ -2227,6 +2256,35 @@ class DeletionManager:
         all_items = get_items_by_ids(item_ids) if item_ids else []
         items_by_id = {it['id']: it for it in all_items if it and 'id' in it}
 
+        # Sibling guard: never remove a torrent/NZB from the provider while a
+        # media_items row OUTSIDE this delete batch (e.g. a different version
+        # sharing the same job id due to a since-fixed dedup bug) still references
+        # it — that would delete the file out from under the surviving row,
+        # leaving it with a broken symlink. Mirrors the guard already used for
+        # single-item deletion in routes/database_routes.py.
+        _batch_id_set = set(item_ids)
+
+        def _has_external_sibling(_torrent_or_nzb_id):
+            # Select rows by torrent id (one small query, no per-batch-item
+            # placeholder) and compare returned ids against the batch in
+            # Python — avoids SQLite's bound-parameter limit on large batches
+            # (e.g. deleting an entire show with thousands of episodes).
+            try:
+                from database import get_db_connection as _gdb_dm
+                _conn_dm = _gdb_dm()
+                try:
+                    _rows = _conn_dm.execute(
+                        "SELECT id FROM media_items "
+                        "WHERE filled_by_torrent_id = ? AND state IN ('Collected','Upgrading','Checking')",
+                        (_torrent_or_nzb_id,)
+                    ).fetchall()
+                    return any(r[0] not in _batch_id_set for r in _rows)
+                finally:
+                    _conn_dm.close()
+            except Exception as _sib_err:
+                logging.warning(f"[DELETE_MULTIPLE] Sibling check failed for {_torrent_or_nzb_id!r}, skipping removal to be safe: {_sib_err}")
+                return True
+
         # PHASE 0: Deduplicated debrid/usenet removal - collect unique IDs and remove each ONCE
         # This prevents removing the same torrent/NZB 10+ times when episodes share a pack
         debrid_removed_ids = set()
@@ -2257,35 +2315,6 @@ class DeletionManager:
                             torrent_provider_names[tid] = item.get('debrid_provider')
                 except Exception as e:
                     logging.warning(f"[DELETE_MULTIPLE] Could not process item {item.get('id') if item else None} for dedup: {e}")
-
-            # Sibling guard: never remove a torrent/NZB from the provider while a
-            # media_items row OUTSIDE this delete batch (e.g. a different version
-            # sharing the same job id due to a since-fixed dedup bug) still references
-            # it — that would delete the file out from under the surviving row,
-            # leaving it with a broken symlink. Mirrors the guard already used for
-            # single-item deletion in routes/database_routes.py.
-            _batch_id_set = set(item_ids)
-
-            def _has_external_sibling(_torrent_or_nzb_id):
-                # Select rows by torrent id (one small query, no per-batch-item
-                # placeholder) and compare returned ids against the batch in
-                # Python — avoids SQLite's bound-parameter limit on large batches
-                # (e.g. deleting an entire show with thousands of episodes).
-                try:
-                    from database import get_db_connection as _gdb_dm
-                    _conn_dm = _gdb_dm()
-                    try:
-                        _rows = _conn_dm.execute(
-                            "SELECT id FROM media_items "
-                            "WHERE filled_by_torrent_id = ? AND state IN ('Collected','Upgrading','Checking')",
-                            (_torrent_or_nzb_id,)
-                        ).fetchall()
-                        return any(r[0] not in _batch_id_set for r in _rows)
-                    finally:
-                        _conn_dm.close()
-                except Exception as _sib_err:
-                    logging.warning(f"[DELETE_MULTIPLE] Sibling check failed for {_torrent_or_nzb_id!r}, skipping removal to be safe: {_sib_err}")
-                    return True
 
             # Remove NZB items from usenet provider (cli_mount or NzbDAV)
             if unique_nzb_ids:
@@ -2363,6 +2392,39 @@ class DeletionManager:
                 aggregate_result['debrid_nzb_removed'] = sum(1 for tid in debrid_removed_ids if str(tid).startswith('nzb:'))
             else:
                 logging.info(f"[DELETE_MULTIPLE] Phase 0: No torrent/NZB IDs found for removal")
+
+        # PHASE 0.1: cli_mount entry removal (what the single-item delete route did per item):
+        # one remove_nzb per unique NZB hash / btih, only when no row outside this batch uses it.
+        if remove_climount_entries and not delete_from_debrid:
+            import re as _re_cm
+            unique_cm = {}
+            for item in all_items:
+                tid = item.get('filled_by_torrent_id') or ''
+                if not tid or item.get('state') not in ('Collected', 'Upgrading', 'Checking'):
+                    continue
+                if str(tid).startswith('nzb:'):
+                    key = tid[4:]
+                else:
+                    _m = _re_cm.search(r'urn:btih:([0-9a-fA-F]{40})', item.get('filled_by_magnet') or '', _re_cm.IGNORECASE)
+                    key = _m.group(1).lower() if _m else ''
+                if key and tid not in unique_cm:
+                    unique_cm[tid] = key
+            if unique_cm:
+                try:
+                    from usenet import get_usenet_client
+                    cm_client = get_usenet_client()
+                    if cm_client and cm_client.is_enabled():
+                        for tid, key in unique_cm.items():
+                            if _has_external_sibling(tid):
+                                logging.info(f"[DELETE_MULTIPLE] Skipping cli_mount removal for {tid!r} - still referenced outside this batch")
+                                continue
+                            try:
+                                cm_client.remove_nzb(key)
+                                logging.info(f"[DELETE_MULTIPLE] Removed {key!r} from cli_mount")
+                            except Exception as cm_err:
+                                logging.warning(f"[DELETE_MULTIPLE] cli_mount removal failed for {key!r}: {cm_err}")
+                except Exception as cm_err:
+                    logging.warning(f"[DELETE_MULTIPLE] cli_mount removal skipped: {cm_err}")
 
         # PHASE 0.3: Content source removal (Trakt/Overseerr/etc.) - grouped, not per-item.
         # For TV, a request/media record in a content source is tracked per SHOW, not per
@@ -2490,6 +2552,7 @@ class DeletionManager:
 
             # Record per-item results without calling delete_single_item (avoids per-episode Plex calls & DB reads)
             deleted_symlink_set = set(batch_result['deleted_symlinks'])
+            sym_mount_location = self.mounted_location or get_setting('Plex', 'mounted_file_location', '')
             for item_id in item_ids:
                 item = items_by_id.get(item_id)
                 if not item:
@@ -2515,11 +2578,20 @@ class DeletionManager:
                 item_plex_path = item.get('location_on_disk')
                 item_local_path = self._translate_plex_path_to_local(item_plex_path) if item_plex_path else None
                 item_deleted_symlinks = [item_local_path] if item_local_path in deleted_symlink_set else []
+                item_deleted_files, item_errors = [], []
+                if remove_original_files and delete_files:
+                    removed, file_err = self._remove_original_file_for_batch(item, sym_mount_location)
+                    if removed:
+                        item_deleted_files.append(removed)
+                    if file_err:
+                        item_errors.append(file_err)
+                        aggregate_result['failed_count'] += 1
+                        aggregate_result['errors'].append(file_err)
                 aggregate_result['results'].append({
-                    'success': True,
+                    'success': not item_errors,
                     'item_id': item_id,
                     'title': item.get('title', 'Unknown'),
-                    'deleted_files': [],
+                    'deleted_files': item_deleted_files,
                     'deleted_symlinks': item_deleted_symlinks,
                     'media_server_removed': plex_content_deleted,
                     'media_server_type': ('silo' if self.silo_enabled else 'jellyfin' if self.jellyfin_direct_enabled else 'plex' if self.plex_enabled else 'none'),
@@ -2527,7 +2599,7 @@ class DeletionManager:
                     'cache_cleared': batch_cache_cleared,
                     'blacklisted': blacklist,
                     'content_source_removal': None,
-                    'errors': []
+                    'errors': item_errors
                 })
         else:
             # Direct Mount mode (Plex / Jellyfin / Silo) or symlink deletion disabled:
@@ -2577,6 +2649,13 @@ class DeletionManager:
                                 err = f"Original file deletion failed: {str(e)}"
                                 logging.error(f"[DELETE_MULTIPLE] Error deleting original file {orig_path}: {e}")
                                 item_errors.append(err)
+
+                    if not self.using_symlinks and remove_original_files and delete_files:
+                        removed, file_err = self._remove_original_file_for_batch(item, mount_location)
+                        if removed:
+                            item_deleted_files.append(removed)
+                        if file_err:
+                            item_errors.append(file_err)
 
                     media_path = item.get('location_on_disk') or item.get('filled_by_file')
                     if media_path:
