@@ -12,6 +12,11 @@
         return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     }
 
+    // Keep 0 (Specials) intact while normalizing null/undefined/'' to null.
+    function _amOptNum(v) {
+        return (v == null || v === '') ? null : v;
+    }
+
     function buildClassicSeasonResults(data, mediaData, allowSpecials) {
         mediaData.title = data.title || mediaData.title;
         mediaData.year = data.year || mediaData.year;
@@ -431,7 +436,7 @@
             const rating = ep.vote_average || 0;
 
             // Map API field names: episode_num, episode_title (not episode_number, name)
-            const episodeNumber = ep.episode_num || ep.episode_number || 0;
+            const episodeNumber = ep.episode_num ?? ep.episode_number ?? 0;
             const episodeTitle = ep.episode_title || ep.name || 'Untitled';
 
             episodeDiv.innerHTML = `
@@ -766,8 +771,8 @@
         formData.append('title', title);
         formData.append('year', year);
         formData.append('media_type', mediaType);
-        if (season != null) formData.append('season', season);
-        if (episode != null) formData.append('episode', episode);
+        if (season != null && season !== '') formData.append('season', season);
+        if (episode != null && episode !== '') formData.append('episode', episode);
         formData.append('multi', multi);
         formData.append('version', version);
         formData.append('skip_cache_check', 'true');
@@ -1001,7 +1006,7 @@
                     torResDiv.onclick = function() {
                         const torrentData = {
                             title: title, year: year, version: version, media_type: mediaType,
-                            season: season || null, episode: episode || null, tmdb_id: mediaId,
+                            season: _amOptNum(season), episode: _amOptNum(episode), tmdb_id: mediaId,
                             genres: genre_ids, original_title: torrent.original_title
                         };
 
@@ -1082,7 +1087,7 @@
                 torResDiv.onclick = function() {
                     const torrentData = {
                         title: title, year: year, version: version, media_type: mediaType,
-                        season: season || null, episode: episode || null, tmdb_id: mediaId,
+                        season: _amOptNum(season), episode: _amOptNum(episode), tmdb_id: mediaId,
                         genres: genre_ids, original_title: torrent.original_title
                     };
 
@@ -1163,7 +1168,7 @@
                     torResDiv.onclick = function() {
                         const torrentData = {
                             title: title, year: year, version: version, media_type: mediaType,
-                            season: season || null, episode: episode || null, tmdb_id: mediaId,
+                            season: _amOptNum(season), episode: _amOptNum(episode), tmdb_id: mediaId,
                             genres: genre_ids, original_title: torrent.original_title
                         };
 
@@ -1246,8 +1251,8 @@
         formData.append('title', torrentData.title || '');
         formData.append('year', torrentData.year || '');
         formData.append('media_type', torrentData.media_type || '');
-        formData.append('season', torrentData.season || '');
-        formData.append('episode', torrentData.episode || '');
+        formData.append('season', torrentData.season ?? '');
+        formData.append('episode', torrentData.episode ?? '');
         formData.append('version', torrentData.version || '');
         formData.append('tmdb_id', torrentData.tmdb_id || '');
         formData.append('genres', torrentData.genres || '');

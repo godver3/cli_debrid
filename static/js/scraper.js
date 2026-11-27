@@ -7,6 +7,11 @@ function scrEsc(v) {
     return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+// Keep 0 (Specials) intact while normalizing null/undefined/'' to null.
+function scrOptNum(v) {
+    return (v == null || v === '') ? null : v;
+}
+
 // A result's clean title as HTML: the show title escaped, the season/episode
 // tags as markup. Escaping the whole string showed the tags as text
 // ("<span class="season-info">S02</span>"). Season 0 (Specials) shows S00;
@@ -65,8 +70,8 @@ function addToRealDebrid(magnetLink, torrent) {
             formData.append('title', torrent.title);
             formData.append('year', torrent.year);
             formData.append('media_type', torrent.media_type);
-            formData.append('season', torrent.season || '');
-            formData.append('episode', torrent.episode || '');
+            formData.append('season', torrent.season ?? '');
+            formData.append('episode', torrent.episode ?? '');
             formData.append('version', torrent.version || '');
             formData.append('tmdb_id', torrent.tmdb_id || '');
             formData.append('genres', torrent.genres || '');
@@ -925,9 +930,9 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                             assignUrlParams.set('prefill_magnet', prefillLink);
                         }
                         // Set selection type based on whether this is an episode or season pack
-                        if (season) {
+                        if (season != null && season !== '') {
                             assignUrlParams.set('prefill_seasons', season);
-                            if (episode) {
+                            if (episode != null && episode !== '') {
                                 // Individual episode
                                 assignUrlParams.set('prefill_selection', 'episode');
                                 assignUrlParams.set('prefill_episode', episode);
@@ -946,7 +951,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 torResDiv.onclick = function() {
                     const torrentData = {
                         title: title, year: year, version: version, media_type: mediaType,
-                        season: season || null, episode: episode || null, tmdb_id: mediaId,
+                        season: scrOptNum(season), episode: scrOptNum(episode), tmdb_id: mediaId,
                         genres: genre_ids, original_title: torrent.original_title // Pass original_title
                     };
                     
@@ -983,7 +988,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                     closeOverlay();
 
                     // Trigger new search with new version
-                    const multi = mediaType === 'tv' && !episode ? true : false;
+                    const multi = mediaType === 'tv' && scrOptNum(episode) === null ? true : false;
                     await selectMedia(mediaId, title, year, mediaType, season, episode, multi, genre_ids, newVersion);
                 });
             }
@@ -1221,7 +1226,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
 
                     // Trigger new search with new version
                     // Note: multi value defaults to true for TV shows
-                    const multi = mediaType === 'tv' && !episode ? true : false;
+                    const multi = mediaType === 'tv' && scrOptNum(episode) === null ? true : false;
                     await selectMedia(mediaId, title, year, mediaType, season, episode, multi, genre_ids, newVersion);
                 });
             }
@@ -1257,9 +1262,9 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                     prefill_year: year, prefill_magnet: torrent.magnet || torrent.nzb_url || '', prefill_version: version
                 });
 
-                if (season) {
+                if (season != null && season !== '') {
                     assignUrlParams.set('prefill_seasons', season);
-                    if (episode) {
+                    if (episode != null && episode !== '') {
                         assignUrlParams.set('prefill_selection', 'episode');
                         assignUrlParams.set('prefill_episode', episode);
                     } else {
@@ -1350,7 +1355,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                             onConfirm: () => {
                                 addToRealDebrid(torrent.magnet, {
                                     ...torrent, year, version: torrent.version || version, title,
-                                    media_type: mediaType, season: season || null, episode: episode || null,
+                                    media_type: mediaType, season: scrOptNum(season), episode: scrOptNum(episode),
                                     tmdb_id: torrent.tmdb_id || mediaId, genres: genre_ids, original_title: torrent.original_title
                                 });
                             }
@@ -1360,7 +1365,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                     addButton.onclick = function() {
                         addToRealDebrid(torrent.magnet, {
                             ...torrent, year, version: torrent.version || version, title,
-                            media_type: mediaType, season: season || null, episode: episode || null,
+                            media_type: mediaType, season: scrOptNum(season), episode: scrOptNum(episode),
                             tmdb_id: torrent.tmdb_id || mediaId, genres: genre_ids, original_title: torrent.original_title
                         });
                     };
@@ -1584,7 +1589,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 if (versionSelectEl) {
                     versionSelectEl.addEventListener('change', async function(e) {
                         closeOverlay();
-                        const multi = mediaType === 'tv' && !episode ? true : false;
+                        const multi = mediaType === 'tv' && scrOptNum(episode) === null ? true : false;
                         await selectMedia(mediaId, title, year, mediaType, season, episode, multi, genre_ids, e.target.value);
                     });
                 }
@@ -1617,9 +1622,9 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                         prefill_id: mediaId, prefill_type: mediaType, prefill_title: title,
                         prefill_year: year, prefill_magnet: torrent.magnet || torrent.nzb_url || '', prefill_version: version
                     });
-                    if (season) {
+                    if (season != null && season !== '') {
                         assignUrlParams.set('prefill_seasons', season);
-                        if (episode) {
+                        if (episode != null && episode !== '') {
                             assignUrlParams.set('prefill_selection', 'episode');
                             assignUrlParams.set('prefill_episode', episode);
                         } else {
@@ -1723,7 +1728,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                                 onConfirm: () => {
                                     addToRealDebrid(torrent.magnet, {
                                         ...torrent, year, version: torrent.version || version, title,
-                                        media_type: mediaType, season: season || null, episode: episode || null,
+                                        media_type: mediaType, season: scrOptNum(season), episode: scrOptNum(episode),
                                         tmdb_id: torrent.tmdb_id || mediaId, genres: genre_ids, original_title: torrent.original_title
                                     });
                                 }
@@ -1733,7 +1738,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                         addButton.onclick = function() {
                             addToRealDebrid(torrent.magnet, {
                                 ...torrent, year, version: torrent.version || version, title,
-                                media_type: mediaType, season: season || null, episode: episode || null,
+                                media_type: mediaType, season: scrOptNum(season), episode: scrOptNum(episode),
                                 tmdb_id: torrent.tmdb_id || mediaId, genres: genre_ids, original_title: torrent.original_title
                             });
                         };
@@ -2439,7 +2444,7 @@ document.addEventListener('DOMContentLoaded', async function() {
                 if (window.DEBUG) console.log('⚡ Pre-fetched episodes available - will display instantly after UI setup');
                 if (window.DEBUG) console.log('MediaData genres:', mediaData.genre_ids);
                 preFetchedEpisodes = mediaData.preFetchedEpisodes;
-                preFetchedSeason = mediaData.preFetchedSeason || 1;
+                preFetchedSeason = scrOptNum(mediaData.preFetchedSeason) ?? 1;
 
                 // Cache the pre-fetched episodes
                 const versionSelect = document.getElementById('version-select');
@@ -4207,7 +4212,7 @@ async function selectMedia(mediaId, title, year, mediaType, season, episode, mul
     }
 
     // Create cache key from search parameters
-    const cacheKey = `${mediaId}_${mediaType}_${version}_${season || 'null'}_${episode || 'null'}`;
+    const cacheKey = `${mediaId}_${mediaType}_${version}_${scrOptNum(season) ?? 'null'}_${scrOptNum(episode) ?? 'null'}`;
     
     // Check cache first
     const cachedData = getCachedTorrentResults(cacheKey);
@@ -4225,8 +4230,8 @@ async function selectMedia(mediaId, title, year, mediaType, season, episode, mul
     formData.append('title', title);
     formData.append('year', year);
     formData.append('media_type', mediaType);
-    if (season != null) formData.append('season', season);
-    if (episode != null) formData.append('episode', episode);
+    if (season != null && season !== '') formData.append('season', season);
+    if (episode != null && episode !== '') formData.append('episode', episode);
     formData.append('multi', multi);
     formData.append('version', version);
     formData.append('skip_cache_check', 'true'); // Always use background checking
@@ -4537,8 +4542,8 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi, g
     formData.append('title', title);
     formData.append('year', year);
     formData.append('media_type', mediaType);
-    if (season !== null) formData.append('season', season);
-    if (episode !== null) formData.append('episode', episode);
+    if (season != null && season !== '') formData.append('season', season);
+    if (episode != null && episode !== '') formData.append('episode', episode);
     formData.append('multi', multi);
     formData.append('version', version);
     formData.append('allow_specials', localStorage.getItem('allowSpecials') === 'true'); // Add allow_specials flag
@@ -4796,7 +4801,7 @@ function selectEpisode(mediaId, title, year, mediaType, season, episode, multi, 
     formData.append('year', year);
     formData.append('media_type', mediaType);
     formData.append('season', season);
-    if (episode !== null) formData.append('episode', episode);
+    if (episode != null && episode !== '') formData.append('episode', episode);
     formData.append('multi', multi);
     formData.append('version', version);
     formData.append('allow_specials', allowSpecials); // Add allow_specials flag

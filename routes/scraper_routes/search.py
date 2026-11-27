@@ -364,7 +364,12 @@ def select_episode():
     
     if request.method == 'POST':
         media_id = request.form.get('media_id')
-        season = request.form.get('season')
+        season_raw = request.form.get('season')
+        season = None
+        if season_raw is not None:
+            _s = str(season_raw).strip()
+            if _s and _s.lower() not in ('null', 'none'):
+                season = int(_s)
         title = request.form.get('title')
         year = request.form.get('year')
         # Get allow_specials flag from form data
@@ -429,7 +434,11 @@ def select_media():
         skip_cache_check = request.form.get('skip_cache_check', 'false').lower() == 'true'
         background_check = request.form.get('background_check', 'true').lower() == 'true'
         
-        logging.info(f"Select media: {media_id}, {title}, {year}, {media_type}, S{season or 'None'}E{episode or 'None'}, multi={multi}, version={version}")
+        logging.info(
+            f"Select media: {media_id}, {title}, {year}, {media_type}, "
+            f"S{season if season not in (None, '') else 'None'}E{episode if episode not in (None, '') else 'None'}, "
+            f"multi={multi}, version={version}"
+        )
         
         # Store imdb_id in session
         if media_id:
@@ -455,10 +464,20 @@ def select_media():
         if not media_id or not title or not year or not media_type:
             return jsonify({'error': 'Missing required parameters'}), 400
             
-        if season:
-            season = int(season)
-        if episode:
-            episode = int(episode)
+        def _parse_opt_int(val):
+            if val is None:
+                return None
+            s = str(val).strip()
+            if not s or s.lower() in ('null', 'none'):
+                return None
+            return int(s)
+
+        if media_type in ('tv', 'show'):
+            season = _parse_opt_int(season)
+            episode = _parse_opt_int(episode)
+        else:
+            season = None
+            episode = None
             
         genres = []
         if genre_ids:
@@ -519,7 +538,7 @@ def select_media():
         # --- END DEBUGGING LOGS ---
 
         # NZB season aggregate — run per-episode searches, filter+score, prepend virtual packs
-        if multi and season and not episode and media_type in ('tv', 'show'):
+        if multi and season is not None and episode is None and media_type in ('tv', 'show'):
             try:
                 from scraper.newznab import scrape_newznab_season_aggregate
                 from metadata.metadata import get_episode_count_for_seasons
