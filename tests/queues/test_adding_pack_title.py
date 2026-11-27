@@ -1,22 +1,12 @@
-"""Tests for resolve_torrent_title in queues.adding_queue."""
-import os
+"""Tests for resolve_torrent_title in debrid/common/utils.py."""
+import importlib.util
+from pathlib import Path
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-
-def _load_resolve_torrent_title():
-    """Load resolve_torrent_title without triggering the routes/debrid import cycle."""
-    path = os.path.join(ROOT, 'queues/adding_queue.py')
-    source = open(path, encoding='utf-8').read()
-    start = source.index('_PACK_FILE_EXTENSIONS = (')
-    end = source.index('\ndef accepts_uncached_now(')
-    ns = {}
-    header = "import os\nfrom typing import Dict, List, Optional, Any\n"
-    exec(header + source[start:end], ns)
-    return ns['resolve_torrent_title']
-
-
-resolve_torrent_title = _load_resolve_torrent_title()
+_UTILS_PATH = Path(__file__).resolve().parents[2] / 'debrid' / 'common' / 'utils.py'
+_spec = importlib.util.spec_from_file_location('debrid_common_utils_pack_title', _UTILS_PATH)
+_utils = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_utils)
+resolve_torrent_title = _utils.resolve_torrent_title
 
 
 def test_pack_named_after_one_file_uses_common_folder():
@@ -78,3 +68,15 @@ def test_single_file_torrent_keeps_provider_name():
     }
     chosen = {'title': 'Detectorists S01E04'}
     assert resolve_torrent_title(torrent_info, chosen) == provider_name
+
+
+def test_accepts_filename_key_when_title_absent():
+    folder = 'Pokemon.S01.1080p.WEBRip'
+    torrent_info = {
+        'filename': 'Pokemon.S01E75.1080p.WEBRip.mkv',
+        'files': [
+            {'path': f'{folder}/Pokemon.S01E01.mkv'},
+            {'path': f'{folder}/Pokemon.S01E75.mkv'},
+        ],
+    }
+    assert resolve_torrent_title(torrent_info) == folder

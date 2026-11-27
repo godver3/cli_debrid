@@ -22,55 +22,7 @@ from .torrent_processor import (
 from .media_matcher import MediaMatcher
 from database.torrent_tracking import update_adding_error
 from database.scraper_grabs import record_grab, mark_current_grab, queue_grab_trigger
-
-
-_PACK_FILE_EXTENSIONS = (
-    '.mkv', '.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm',
-    '.m4v', '.mpg', '.mpeg', '.ts', '.m2ts', '.vob', '.ogv',
-    '.zip', '.rar',
-)
-
-
-def _common_top_level_folder(files: List[Dict[str, Any]]) -> str:
-    """Return the shared top-level folder of all torrent file paths, or ''."""
-    roots = set()
-    for f in files:
-        path = f.get('path') if isinstance(f, dict) else str(f or '')
-        parts = [p for p in (path or '').replace('\\', '/').split('/') if p]
-        if len(parts) < 2:
-            return ''
-        roots.add(parts[0])
-    return roots.pop() if len(roots) == 1 else ''
-
-
-def resolve_torrent_title(
-    torrent_info: Optional[Dict[str, Any]],
-    chosen_result_info: Optional[Dict[str, Any]] = None,
-) -> str:
-    """Resolve the release title for a torrent (used for filled_by_title and record_grab).
-
-    When a magnet has no dn=, providers such as TorBox name a multi-file pack
-    after one of its files (e.g. '...S01E04....mkv'). If the provider name ends
-    with a video or archive extension and the torrent contains more than one
-    file, prefer the common top-level folder of the file paths if all files
-    share one, else the scraped release title, else the provider name.
-    Single-file torrents keep their provider name unchanged.
-    """
-    torrent_info = torrent_info or {}
-    provider_name = (torrent_info.get('title') or '').strip()
-    scraped_title = ((chosen_result_info or {}).get('title') or '').strip()
-    if not provider_name:
-        return scraped_title or "Unknown Torrent Title"
-
-    files = torrent_info.get('files') or []
-    _, ext = os.path.splitext(provider_name.lower())
-    if len(files) > 1 and ext in _PACK_FILE_EXTENSIONS:
-        common_folder = _common_top_level_folder(files)
-        if common_folder:
-            return common_folder
-        if scraped_title:
-            return scraped_title
-    return provider_name
+from debrid.common import resolve_torrent_title
 
 
 def accepts_uncached_now(item: Dict[str, Any], item_identifier: str) -> bool:

@@ -153,6 +153,7 @@ def confirm_manual_assignment():
         # torrent ID (which the checking queue would then report as missing/404 and reset
         # to Wanted).
         final_torrent_id = initial_torrent_id
+        debrid_provider = None
         # Nothing picked (all ignored, or only "add the rest to Wanted"): no item will
         # point at the torrent, so don't add it for real and leave an orphan behind
         any_file_picked = any(v and v[0] and v[0] != '--ignore--' for v in assignments.values())
@@ -173,6 +174,32 @@ def confirm_manual_assignment():
         # else: torrent-file uploads have no magnet to re-add; the file was already
         # added for real (not a disposable preview) in prepare_manual_assignment,
         # so initial_torrent_id is already permanent for that path.
+
+        # Resolve pack title if provider named a multi-file pack after one of its files
+        # (e.g. TorBox naming a pack "Pokemon.S01E75...mkv").
+        selected_files = [
+            v[0] for v in assignments.values()
+            if v and v[0] and v[0] != '--ignore--'
+        ]
+        if len(selected_files) > 1:
+            from debrid.common.utils import _looks_like_pack_file_name, resolve_torrent_title
+            if _looks_like_pack_file_name(torrent_filename):
+                resolved = resolve_torrent_title({
+                    'title': torrent_filename,
+                    'files': [{'path': p} for p in selected_files],
+                })
+                if resolved == torrent_filename and final_torrent_id:
+                    try:
+                        _provider = debrid_provider or get_debrid_provider()
+                        _tinfo = _provider.get_torrent_info(final_torrent_id) if _provider else None
+                        if _tinfo and _tinfo.get('files'):
+                            resolved = resolve_torrent_title({
+                                'title': torrent_filename,
+                                'files': _tinfo['files'],
+                            })
+                    except Exception as _title_err:
+                        logging.debug(f"Could not inspect torrent files for pack title resolution: {_title_err}")
+                torrent_filename = resolved
 
         added_items_count = 0
         replaced_items_count = 0

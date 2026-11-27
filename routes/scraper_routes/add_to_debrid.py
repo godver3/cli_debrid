@@ -487,8 +487,13 @@ def add_torrent_to_debrid():
                 largest_file = max(video_files, key=lambda x: x.get('bytes', 0))
                 filled_by_file = os.path.basename(largest_file['path'])
                 # Get the torrent title from torrent_info's filename
-                filled_by_title = torrent_info.get('filename', '') or os.path.basename(os.path.dirname(largest_file['path']))
-                debrid_folder_name = torrent_info.get('debrid_folder_name') or filled_by_title
+                raw_torrent_title = torrent_info.get('filename', '') or os.path.basename(os.path.dirname(largest_file['path']))
+                from debrid.common.utils import resolve_torrent_title
+                filled_by_title = resolve_torrent_title(
+                    {'title': raw_torrent_title, 'files': files},
+                    {'title': original_scraped_torrent_title} if original_scraped_torrent_title else None,
+                )
+                debrid_folder_name = torrent_info.get('debrid_folder_name') or raw_torrent_title
 
                 # Extract resolution from torrent title
                 resolution = extract_resolution_from_filename(original_scraped_torrent_title) if original_scraped_torrent_title else None
