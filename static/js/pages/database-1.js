@@ -116,7 +116,13 @@ async function fetchColumnValues(columnName) {
     return await columnValuesCache[columnName];
 }
 
+// displayContent must already be HTML-escaped (see dbDisplayValue).
 function renderCell(column, displayContent) {
+    if (column === 'source') {
+        if (!displayContent || displayContent === 'None') return '<td></td>';
+        const cls = displayContent === 'Usenet' ? 'db-src-usenet' : 'db-src-debrid';
+        return `<td><span class="db-src ${cls}">${displayContent}</span></td>`;
+    }
     const isTangerine = document.body.classList.contains('tangerine-theme');
     if (!isTangerine) return `<td class="truncate" data-full-content="${displayContent}">${displayContent}</td>`;
     if (column === 'title') return `<td class="truncate db-col-title" data-full-content="${displayContent}">${displayContent}</td>`;
@@ -145,6 +151,57 @@ function renderCell(column, displayContent) {
         return `<td class="truncate" data-full-content="${displayContent}"><span class="db-pill-version">${displayContent}</span></td>`;
     }
     return `<td class="truncate" data-full-content="${displayContent}">${displayContent}</td>`;
+}
+
+function dbEscape(value) {
+    return String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+const DB_STATE_LABELS = {
+    'Final_Check': 'Final Scrape',
+    'ghostlisted': 'Ghostlisted',
+    'all_blacklisted': 'All Versions Blacklisted',
+};
+
+// One cell's text, escaped. Titles and file names come from indexers.
+function dbDisplayValue(item, column) {
+    if (column === 'size') {
+        const size = item.size_gb;
+        return (size === null || size === undefined || isNaN(parseFloat(size))) ? 'N/A' : parseFloat(size).toFixed(2);
+    }
+    const raw = item[column];
+    if (raw === null || raw === undefined || String(raw).trim() === '') return 'None';
+    const text = column === 'state' ? (DB_STATE_LABELS[raw] || String(raw)) : String(raw);
+    return dbEscape(text);
+}
+
+// Ids picked in the bulk-action checkboxes. Kept outside the DOM so a pick
+// survives the row being scrolled out, and "select all matching" can hold
+// ids that were never rendered.
+window.dbSelection = new Set();
+
+// The cells of one table row. Every row the script builds (filter results,
+// infinite scroll) goes through here so they match the server-rendered rows.
+function dbRowCells(item, rowNumber, selectedColumns) {
+    const isTangerine = document.body.classList.contains('tangerine-theme');
+    const id = dbEscape(item.id);
+    const checked = window.dbSelection.has(String(item.id)) ? ' checked' : '';
+    let html = `<td><input type="checkbox" class="item-select" data-item-id="${id}"${checked}></td>`;
+    html += `<td class="db-row-num">${rowNumber}</td>`;
+    if (isTangerine) {
+        const deleteSVG = `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>`;
+        const refreshSVG = `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>`;
+        html += `<td><span style="display:flex;gap:4px;align-items:center">` +
+            `<button class="db-action-btn db-action-btn-delete delete-item" data-item-id="${id}" title="Delete">${deleteSVG}</button>` +
+            `<button class="db-action-btn db-action-btn-refresh rescrape-item" data-item-id="${id}" title="Rescrape">${refreshSVG}</button>` +
+            window.dbQuickSlot(item) +
+            `</span></td>`;
+    } else {
+        html += `<td><button class="delete-item" data-item-id="${id}">X</button></td>`;
+        html += `<td><button class="rescrape-item" data-item-id="${id}">↻</button></td>`;
+    }
+    selectedColumns.forEach(column => { html += renderCell(column, dbDisplayValue(item, column)); });
+    return html;
 }
 
 document.addEventListener('DOMContentLoaded', function() {
@@ -1172,54 +1229,8 @@ document.addEventListener('DOMContentLoaded', function() {
         });
         tableHTML += '</tr></thead><tbody>';
 
-        const deleteSVG = `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>`;
-        const refreshSVG = `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>`;
-
         items.forEach((item, index) => {
-            const rowNumber = index + 1;
-            tableHTML += `<tr data-page="1">`;
-            tableHTML += `<td><input type="checkbox" class="item-select" data-item-id="${item['id']}"></td>`;
-            tableHTML += `<td class="db-row-num">${rowNumber}</td>`;
-            if (isTangerineTable) {
-                tableHTML += `<td><span style="display:flex;gap:4px;align-items:center">` +
-                    `<button class="db-action-btn db-action-btn-delete delete-item" data-item-id="${item['id']}" title="Delete">${deleteSVG}</button>` +
-                    `<button class="db-action-btn db-action-btn-refresh rescrape-item" data-item-id="${item['id']}" title="Rescrape">${refreshSVG}</button>` +
-                    window.dbQuickSlot(item) +
-                    `</span></td>`;
-            } else {
-                tableHTML += `<td><button class="delete-item" data-item-id="${item['id']}">X</button></td>`;
-                tableHTML += `<td><button class="rescrape-item" data-item-id="${item['id']}">↻</button></td>`;
-            }
-            selectedColumns.forEach(column => {
-                let cellContentKey = column;
-                let displayContent;
-
-                if (column === 'size') {
-                    cellContentKey = 'size_gb';
-                    const rawSize = item[cellContentKey];
-                    if (rawSize === null || rawSize === undefined || typeof rawSize !== 'number') {
-                        displayContent = 'N/A';
-                    } else {
-                        displayContent = rawSize.toFixed(2);
-                    }
-                } else {
-                    const rawCellContent = item[cellContentKey];
-                    displayContent = (rawCellContent === null || rawCellContent === undefined || String(rawCellContent).trim() === '')
-                        ? 'None'
-                        // Titles and file names come from indexers: escape fully, not just quotes.
-                        : String(rawCellContent).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-
-                    if (column === 'state' && displayContent === 'Final_Check') {
-                        displayContent = 'Final Scrape';
-                    } else if (column === 'state' && displayContent === 'ghostlisted') {
-                        displayContent = 'Ghostlisted';
-                    } else if (column === 'state' && displayContent === 'all_blacklisted') {
-                        displayContent = 'All Versions Blacklisted';
-                    }
-                }
-                tableHTML += renderCell(column, displayContent);
-            });
-            tableHTML += '</tr>';
+            tableHTML += `<tr data-page="1">${dbRowCells(item, index + 1, selectedColumns)}</tr>`;
         });
 
         tableHTML += '</tbody></table>';
@@ -1281,6 +1292,16 @@ document.addEventListener('DOMContentLoaded', function() {
                     throw new Error(data.error);
                 }
 
+                // Keep the address bar on the view being shown: infinite scroll
+                // and reloads read their query from it.
+                const viewParams = new URLSearchParams(params);
+                viewParams.delete('ajax');
+                viewParams.delete('page');
+                history.replaceState(null, '', `${TPL_DATABASE.url_for_database_index}?${viewParams.toString()}`);
+
+                // A new view can hide rows that were picked; never act on them unseen.
+                window.dbClearSelection();
+
                 const tableContainer = document.querySelector('.table-container');
                 if (tableContainer) {
                     tableContainer.innerHTML = data.items.length > 0
@@ -1313,6 +1334,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 currentContentType = data.content_type;
                 currentLetter = data.current_letter;
                 templateData.selectedColumns = data.selected_columns;
+                TPL_DATABASE.selected_columns = data.selected_columns;
+                TPL_DATABASE.sort_column = data.sort_column;
+                TPL_DATABASE.sort_order = data.sort_order;
+                TPL_DATABASE.total_count = data.total_count;
+                TPL_DATABASE.total_pages = data.total_pages;
                 templateData.all_columns = data.all_columns;  // Track all available columns for change detection
 
                 // Sync the #selected-columns panel select with what the server returned.
@@ -1754,10 +1780,11 @@ document.addEventListener('DOMContentLoaded', function() {
         })
         .then(data => {
             if (data.success) {
-                const row = document.querySelector(`button[data-item-id="${itemId}"]`).closest('tr');
-                if (row) { // Check if row exists
-                    row.remove();
-                }
+                const btn = document.querySelector(`button[data-item-id="${itemId}"]`);
+                const row = btn && btn.closest('tr');
+                if (row) row.remove();
+                window.dbSelection.delete(String(itemId));
+                updateBulkActionButtons();
                 showPopup({
                     type: POPUP_TYPES.SUCCESS,
                     title: 'Success',
@@ -1860,10 +1887,11 @@ document.addEventListener('DOMContentLoaded', function() {
         .then(data => {
             // This block is now only processed if response.ok was true and JSON parsing succeeded
             if (data.success) {
-                const row = document.querySelector(`button[data-item-id="${itemId}"]`).closest('tr');
-                if (row) { // Check if row exists before trying to remove
-                    row.remove();
-                }
+                const btn = document.querySelector(`button[data-item-id="${itemId}"]`);
+                const row = btn && btn.closest('tr');
+                if (row) row.remove();
+                window.dbSelection.delete(String(itemId));
+                updateBulkActionButtons();
                 showPopup({
                     type: POPUP_TYPES.SUCCESS,
                     title: 'Success',
@@ -1977,106 +2005,96 @@ document.addEventListener('DOMContentLoaded', function() {
             console.error('Error fetching tags:', error);
         });
 
-    // Handle bulk version change
-    bulkChangeVersion.addEventListener('change', function() {
-        const selectedVersion = this.value;
-        if (!selectedVersion) return;
+    const selectInfo = document.getElementById('db-select-info');
 
-        const selectedItems = Array.from(document.querySelectorAll('.item-select:checked'))
-            .map(checkbox => checkbox.dataset.itemId);
-        
-        if (selectedItems.length === 0) return;
-
-        showPopup({
-            type: POPUP_TYPES.CONFIRM,
-            message: `Are you sure you want to change the version of ${selectedItems.length} item(s) to ${selectedVersion}?`,
-            title: 'Confirm Version Change',
-            onConfirm: async () => {
-                if (Loading && typeof Loading.show === 'function') {
-                    Loading.show('Changing versions...', null, false, false);
-                }
-                try {
-                    const result = await processBatchedItems(selectedItems, 'change_version', selectedVersion);
-                    showPopup({
-                        type: result.warning ? POPUP_TYPES.WARNING : POPUP_TYPES.SUCCESS,
-                        message: result.message,
-                        title: result.warning ? 'Partial Success' : 'Success',
-                    });
-                    setTimeout(() => {
-                        window.location.reload();
-                    }, 2000);
-                } catch (error) {
-                    console.error('Error:', error);
-                    showPopup({
-                        type: POPUP_TYPES.ERROR,
-                        message: error.message,
-                        title: 'Error',
-                    });
-                } finally {
-                    if (Loading && typeof Loading.hide === 'function') {
-                        Loading.hide();
-                    }
-                }
-            },
+    function syncCheckboxes() {
+        document.querySelectorAll('.item-select').forEach(cb => {
+            cb.checked = window.dbSelection.has(String(cb.dataset.itemId));
         });
-        
-        // Reset the select element
-        this.value = '';
-    });
+    }
 
-    // Select all functionality
+    window.dbClearSelection = function() {
+        window.dbSelection.clear();
+        allSelected = false;
+        syncCheckboxes();
+        updateBulkActionButtons();
+    };
+
+    // Select all: the rows on screen, then offer every row the filter matches.
     selectAllBtn.addEventListener('click', function() {
-        allSelected = !allSelected;
-        const checkboxes = document.querySelectorAll('.item-select');
-        checkboxes.forEach(checkbox => {
-            checkbox.checked = allSelected;
-        });
-        this.textContent = allSelected ? 'Unselect All' : 'Select All';
+        if (window.dbSelection.size > 0) {
+            window.dbClearSelection();
+            return;
+        }
+        document.querySelectorAll('.item-select').forEach(cb => window.dbSelection.add(String(cb.dataset.itemId)));
+        allSelected = true;
+        syncCheckboxes();
         updateBulkActionButtons();
     });
 
-    // Handle individual checkbox changes
-    document.addEventListener('change', function(e) {
-        if (e.target.classList.contains('item-select')) {
+    if (selectInfo) {
+        selectInfo.addEventListener('click', async function(e) {
+            const link = e.target.closest('[data-select-matching]');
+            if (!link) return;
+            e.preventDefault();
+            link.textContent = 'Loading…';
+            try {
+                const url = new URL(window.location.href);
+                url.searchParams.set('ids_only', '1');
+                url.searchParams.delete('page');
+                const resp = await fetch(url.toString());
+                const data = await resp.json();
+                if (!resp.ok || !Array.isArray(data.ids)) throw new Error(data.error || `HTTP ${resp.status}`);
+                data.ids.forEach(id => window.dbSelection.add(String(id)));
+                syncCheckboxes();
+            } catch (err) {
+                showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: 'Could not select all matching items: ' + err.message });
+            }
             updateBulkActionButtons();
-            // Update select all button text based on checkbox state
-            const checkboxes = Array.from(document.querySelectorAll('.item-select'));
-            const allChecked = checkboxes.every(cb => cb.checked);
-            const noneChecked = checkboxes.every(cb => !cb.checked);
-            selectAllBtn.textContent = allChecked ? 'Unselect All' : 'Select All';
-            allSelected = allChecked;
-        }
-    });
+        });
+    }
 
-    // Handle shift+click for range selection
+    // Individual checkbox changes, with shift+click range selection
     document.addEventListener('click', function(e) {
-        if (e.target.classList.contains('item-select')) {
-            if (!lastChecked) {
-                lastChecked = e.target;
-                return;
-            }
-
-            if (e.shiftKey) {
-                const checkboxes = Array.from(document.querySelectorAll('.item-select'));
-                const start = checkboxes.indexOf(e.target);
-                const end = checkboxes.indexOf(lastChecked);
-                
-                checkboxes.slice(
-                    Math.min(start, end),
-                    Math.max(start, end) + 1
-                ).forEach(checkbox => {
-                    checkbox.checked = lastChecked.checked;
-                });
-            }
-
-            lastChecked = e.target;
-            updateBulkActionButtons();
+        if (!e.target.classList.contains('item-select')) return;
+        const checkboxes = Array.from(document.querySelectorAll('.item-select'));
+        let affected = [e.target];
+        if (e.shiftKey && lastChecked && checkboxes.includes(lastChecked)) {
+            const start = checkboxes.indexOf(e.target);
+            const end = checkboxes.indexOf(lastChecked);
+            affected = checkboxes.slice(Math.min(start, end), Math.max(start, end) + 1);
         }
+        const checked = e.target.checked;
+        affected.forEach(cb => {
+            cb.checked = checked;
+            if (checked) window.dbSelection.add(String(cb.dataset.itemId));
+            else window.dbSelection.delete(String(cb.dataset.itemId));
+        });
+        lastChecked = e.target;
+        updateBulkActionButtons();
     });
+
+    function getSelectedIds() {
+        return Array.from(window.dbSelection);
+    }
 
     // Update bulk action button states
     function updateBulkActionButtons() {
-        const selectedCount = document.querySelectorAll('.item-select:checked').length;
+        const selectedCount = window.dbSelection.size;
+        selectAllBtn.textContent = selectedCount > 0 ? 'Unselect All' : 'Select All';
+        if (selectInfo) {
+            const total = Number(TPL_DATABASE.total_count) || 0;
+            if (selectedCount === 0) {
+                selectInfo.hidden = true;
+                selectInfo.innerHTML = '';
+            } else {
+                selectInfo.hidden = false;
+                const more = selectedCount < total
+                    ? ` · <a href="#" data-select-matching>Select all ${total} matching</a>`
+                    : '';
+                selectInfo.innerHTML = `${selectedCount} selected${more}`;
+            }
+        }
         bulkDeleteBtn.disabled = selectedCount === 0;
         bulkMoveQueue.disabled = selectedCount === 0;
         bulkChangeVersion.disabled = selectedCount === 0;
@@ -2274,8 +2292,7 @@ document.addEventListener('DOMContentLoaded', function() {
         // Prevent multiple rapid clicks
         if (this.disabled) return;
         
-        const selectedItems = Array.from(document.querySelectorAll('.item-select:checked'))
-            .map(checkbox => checkbox.dataset.itemId);
+        const selectedItems = getSelectedIds();
         
         if (selectedItems.length === 0) return;
 
@@ -2315,8 +2332,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const selectedQueue = this.value;
         if (!selectedQueue) return;
 
-        const selectedItems = Array.from(document.querySelectorAll('.item-select:checked'))
-            .map(checkbox => checkbox.dataset.itemId);
+        const selectedItems = getSelectedIds();
         
         if (selectedItems.length === 0) { this.value = ''; return; }
 
@@ -2348,8 +2364,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const selectedVersion = this.value;
         if (!selectedVersion) return;
 
-        const selectedItems = Array.from(document.querySelectorAll('.item-select:checked'))
-            .map(checkbox => checkbox.dataset.itemId);
+        const selectedItems = getSelectedIds();
         
         if (selectedItems.length === 0) {this.value = ''; return;}
 
@@ -2369,8 +2384,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const selectedTag = this.value;
         if (!selectedTag) return;
 
-        const selectedItems = Array.from(document.querySelectorAll('.item-select:checked'))
-            .map(checkbox => checkbox.dataset.itemId);
+        const selectedItems = getSelectedIds();
 
         if (selectedItems.length === 0) {this.value = ''; return;}
 
@@ -2398,8 +2412,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Handle bulk early release
     bulkEarlyReleaseBtn.addEventListener('click', function() {
-        const selectedItems = Array.from(document.querySelectorAll('.item-select:checked'))
-            .map(checkbox => checkbox.dataset.itemId);
+        const selectedItems = getSelectedIds();
         
         if (selectedItems.length === 0) return;
 
@@ -2419,8 +2432,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Handle bulk rescrape
     bulkRescrapeBtn.addEventListener('click', function() {
-        const selectedItems = Array.from(document.querySelectorAll('.item-select:checked'))
-            .map(checkbox => checkbox.dataset.itemId);
+        const selectedItems = getSelectedIds();
         
         if (selectedItems.length === 0) return;
 
@@ -2438,8 +2450,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Handle bulk force priority
     bulkForcePriorityBtn.addEventListener('click', function() {
-        const selectedItems = Array.from(document.querySelectorAll('.item-select:checked'))
-            .map(checkbox => checkbox.dataset.itemId);
+        const selectedItems = getSelectedIds();
         
         if (selectedItems.length === 0) return;
 
@@ -2457,8 +2468,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // NEW: Bulk resync handler
     bulkResyncBtn.addEventListener('click', function() {
-        const selectedItems = Array.from(document.querySelectorAll('.item-select:checked'))
-            .map(cb => cb.dataset.itemId);
+        const selectedItems = getSelectedIds();
         if (selectedItems.length === 0) return;
         showPopup({
             type: POPUP_TYPES.CONFIRM,
@@ -2474,8 +2484,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // NEW: Bulk verify symlinks handler
     bulkVerifySymlinksBtn.addEventListener('click', function() {
-        const selectedItems = Array.from(document.querySelectorAll('.item-select:checked'))
-            .map(cb => cb.dataset.itemId);
+        const selectedItems = getSelectedIds();
         if (selectedItems.length === 0) return;
         showPopup({
             type: POPUP_TYPES.CONFIRM,

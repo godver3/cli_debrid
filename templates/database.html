@@ -31,7 +31,7 @@
         </div>
         <div class="db-stat-box">
             <span class="db-stat-val">{{ unique_result_count | default(0) }}</span>
-            <span class="db-stat-label">Unique Titles</span>
+            <span class="db-stat-label" title="Versions of the same movie or episode count once">Unique Items</span>
         </div>
         <div class="db-stat-box">
             <span class="db-stat-val">{{ total_pages | default(1) }}</span>
@@ -87,6 +87,7 @@
     <div id="bulk-actions" class="bulk-actions">
         <div class="select-all-container">
             <button id="select-all" class="select-all-btn">Select All</button>
+            <span id="db-select-info" class="db-select-info" hidden></span>
             <button id="bulk-delete" class="bulk-action-btn" disabled>Delete Selected</button>
             <button id="bulk-rescrape" class="bulk-action-btn" disabled>Rescrape Selected</button>
             <label for="bulk-move-queue" class="sr-only">Move Selected to Queue</label>
@@ -262,11 +263,6 @@
             <p>No pagination data available</p>
         {% endif %}
     </div>
-    {# --- START Numerical Pagination --- #}
-    <div class="numerical-pagination" id="numerical-pagination">
-        {# Pagination controls will be rendered here by JavaScript #}
-    </div>
-    {# --- END Numerical Pagination --- #}
 </div>
 <div class="db-table-hint tangerine-only">
     <span>↔ Drag column borders to resize &nbsp;·&nbsp; "Reset Cols" restores defaults &nbsp;·&nbsp; Click column headers to sort</span>
@@ -292,7 +288,7 @@
                 {% for item in items %}
                     <tr data-page="{{ current_page | default(1) }}">
                         <td><input type="checkbox" id="item-select-{{ item['id'] }}" name="item_select" class="item-select" data-item-id="{{ item['id'] }}" aria-label="Select item {{ item['id'] }}"></td>
-                        <td class="db-row-num">{{ loop.index }}</td>
+                        <td class="db-row-num">{{ ((current_page | default(1)) - 1) * (per_page | default(250)) + loop.index }}</td>
                         {# Classic: separate Delete / Rescrape columns #}
                         <td class="classic-only">
                             <button class="delete-item" data-item-id="{{ item['id'] }}">X</button>
@@ -502,6 +498,7 @@ window.TPL_DATABASE = {
     selected_columns: {{ selected_columns | tojson }},
     total_pages: {{ total_pages | default(1) }},
     current_page: {{ current_page | default(1) }},
+    total_count: {{ total_count | default(0) }},
 };
 </script>
 <script src="{{ url_for('static', filename='js/pages/database-1.js') }}"></script>
@@ -513,6 +510,8 @@ window.TPL_DATABASE = {
 .db-src-debrid{background:#3b2a12;color:#fdba74}
 .db-quick{display:inline-flex;gap:4px}
 .db-quick .db-action-btn{font-size:11px}
+.db-select-info{font-size:12px;color:#aaa;align-self:center;margin:0 6px}
+.db-select-info a{color:#e8601c}
 </style>
 <script>
 (function () {
@@ -536,17 +535,6 @@ window.TPL_DATABASE = {
     };
     function fillSlots(root) {
         root.querySelectorAll('.db-quick-slot:empty').forEach(slot => { slot.innerHTML = buttons(slot.dataset.itemId); });
-        // Source column: badge the plain-text cells the script-built rows produce.
-        const ths = Array.from(document.querySelectorAll('thead th'));
-        const idx = ths.findIndex(th => th.dataset.col === 'source');
-        if (idx < 0) return;
-        root.querySelectorAll('tbody tr').forEach(tr => {
-            const td = tr.children[idx];
-            if (!td || td.querySelector('.db-src')) return;
-            const t = td.textContent.trim();
-            if (!t || t === 'None') { if (td.childNodes.length) td.textContent = ''; return; }
-            td.innerHTML = `<span class="db-src ${t === 'Usenet' ? 'db-src-usenet' : 'db-src-debrid'}">${esc(t)}</span>`;
-        });
     }
     async function move(id, queue) {
         const fd = new FormData();

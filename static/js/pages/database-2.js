@@ -223,7 +223,8 @@ document.addEventListener('DOMContentLoaded', function() {
         maxLoadedPage = 1;
     };
 
-    if (totalPages > 1) {
+    // Always listen: a filter applied later can turn a one-page view into many.
+    {
         window.addEventListener('scroll', function() {
             const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
             const scrollHeight = document.documentElement.scrollHeight;
@@ -243,36 +244,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function buildRowHTML(item, pageToLoad, index) {
         const rowNumber = (pageToLoad - 1) * CONFIG.ITEMS_PER_PAGE + index + 1;
-        const isTangerine = document.body.classList.contains('tangerine-theme');
-        const deleteSVG = `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>`;
-        const refreshSVG = `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>`;
-        // Column order matches Jinja thead: checkbox | # | (classic: delete+rescrape) | (tangerine: actions)
-        let html = '';
-        html += `<td><input type="checkbox" class="item-select" data-item-id="${item.id}"></td>`;
-        html += `<td class="db-row-num">${rowNumber}</td>`;
-        if (isTangerine) {
-            html += `<td><span style="display:flex;gap:4px;align-items:center">` +
-                `<button class="db-action-btn db-action-btn-delete delete-item" data-item-id="${item.id}" title="Delete">${deleteSVG}</button>` +
-                `<button class="db-action-btn db-action-btn-refresh rescrape-item" data-item-id="${item.id}" title="Rescrape">${refreshSVG}</button>` +
-                window.dbQuickSlot(item) +
-                `</span></td>`;
-        } else {
-            html += `<td><button class="delete-item" data-item-id="${item.id}">X</button></td>`;
-            html += `<td><button class="rescrape-item" data-item-id="${item.id}">↻</button></td>`;
-        }
-
-        const selectedColumns = TPL_DATABASE.selected_columns;
-        selectedColumns.forEach(column => {
-            let displayContent;
-            if (column === 'size') {
-                displayContent = item.size_gb !== undefined && item.size_gb !== null ? parseFloat(item.size_gb).toFixed(2) : 'N/A';
-            } else {
-                displayContent = item[column] !== undefined && item[column] !== null ? String(item[column]) : '';
-            }
-            html += renderCell(column, displayContent);
-        });
-
-        return html;
+        // The columns of the current view: they change on "Update View" without a reload.
+        return dbRowCells(item, rowNumber, window.templateData.selectedColumns);
     }
 
     async function fetchPageData(pageToLoad) {
@@ -668,7 +641,7 @@ if (dbPerPageSel) {
             const item = document.createElement('div');
             item.className = 'db-preset-item';
             item.innerHTML = `
-                <span class="db-preset-name" title="${preset.name}">${preset.name}</span>
+                <span class="db-preset-name" title="${dbEscape(preset.name)}">${dbEscape(preset.name)}</span>
                 <div class="db-preset-actions">
                     <button class="db-preset-load" data-idx="${idx}">Load</button>
                     <button class="db-preset-del" data-idx="${idx}">✕</button>

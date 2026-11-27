@@ -10,6 +10,22 @@ import time
 from queues.config_manager import get_content_source_display_names
 from ._common import PER_PAGE, STATS_CACHE_DURATION_SECONDS, database_bp, get_basic_collection_counts, item_source_label, source_filter_clause
 
+def unique_key_count_sql(columns):
+    """SQL for the number of distinct items, matching consolidate_items' key.
+
+    Versions of one movie (title + year) or one episode (title + year + SxE)
+    count once, as on the Queues page.
+    """
+    def col(name):
+        return f"COALESCE(CAST(\"{name}\" AS TEXT), '')" if name in columns else "''"
+    movie_key = f"{col('title')} || '_' || {col('year')}"
+    if 'type' not in columns:
+        return f"COUNT(DISTINCT {movie_key})"
+    episode_key = f"{movie_key} || '_S' || {col('season_number')} || 'E' || {col('episode_number')}"
+    return (f"COUNT(DISTINCT CASE WHEN \"type\" = 'episode' THEN 'e:' || {episode_key} "
+            f"ELSE 'm:' || {movie_key} END)")
+
+
 # Module-level cache for statistics
 cached_stats_data = None
 
@@ -47,7 +63,9 @@ def index():
             {'value': 'is_null', 'label': 'Is Null'},
             {'value': 'is_not_null', 'label': 'Is Not Null'}
         ],
-        'content_source_display_map': {}
+        'content_source_display_map': {},
+        'current_page': 1,
+        'per_page': PER_PAGE,
     }
 
     # Get collection counts (with caching)
@@ -392,8 +410,15 @@ def index():
         # Paginate in SQL: this page used to fetch and convert every matching
         # row on each infinite-scroll request, then slice one page out.
         timings['filter_processing_done'] = time.perf_counter()
-        cursor.execute(f"SELECT COUNT(*) FROM media_items {final_where_clause}", final_params)
-        total_count = cursor.fetchone()[0]
+
+        if request.args.get('ids_only') == '1':
+            # "Select all N matching": every id the current view matches, in view order.
+            cursor.execute(f"SELECT id FROM media_items {final_where_clause} {order_clause}", final_params)
+            return jsonify({'ids': [str(row[0]) for row in cursor.fetchall()]})
+
+        cursor.execute(f"SELECT COUNT(*), {unique_key_count_sql(db_actual_columns)} "
+                       f"FROM media_items {final_where_clause}", final_params)
+        total_count, unique_total_count = cursor.fetchone()
         try:
             page = int(request.args.get('page', 1))
         except (ValueError, TypeError):
@@ -448,10 +473,6 @@ def index():
 
         logging.info(f"Pagination: page {page}/{total_pages}, items {start_idx+1}-{end_idx} of {total_count}")
 
-        from routes.queues_routes import consolidate_items
-        unique_items, _ = consolidate_items(paginated_items)
-        timings['items_consolidated'] = time.perf_counter()
-
         data.update({
             'items': paginated_items,
             'result_count': len(paginated_items),
@@ -464,7 +485,8 @@ def index():
             'content_type': content_type_for_template,
             'filter_logic': filter_logic,
             'column_values': column_values,
-            'unique_result_count': len(unique_items),
+            # Over the whole filter, not just this page (versions of one item count once).
+            'unique_result_count': unique_total_count,
         })
 
         timings['data_updated_for_template'] = time.perf_counter()
