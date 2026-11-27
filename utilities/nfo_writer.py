@@ -356,9 +356,11 @@ def _has_video(folder: str) -> bool:
     return False
 
 
-def remove_for_video(video_path: str) -> List[str]:
+def remove_for_video(video_path: str, check_show_nfo: bool = True) -> List[str]:
     """A library file is being removed: drop its episode NFO, and the show's
-    tvshow.nfo once no video is left in the show folder. Only our files."""
+    tvshow.nfo once no video is left in the show folder. Only our files.
+    Batch callers pass check_show_nfo=False and call remove_show_nfo_if_empty
+    once per show folder after unlinking all videos."""
     removed = []
     # Also with NFO files off: snapshot NFOs (made from Plex's metadata) stay
     # then. Without any NFO of ours this is two file checks, so deletions
@@ -372,15 +374,29 @@ def remove_for_video(video_path: str) -> List[str]:
     # the other one is still here
     if not _same_stem_video_left(video_path) and _remove_ours(nfo, kinds):
         removed.append(nfo)
-    folder = show_folder(video_path)
-    show_nfo = os.path.join(folder, SHOW_NFO) if folder else None
-    if show_nfo and nfo_kind(show_nfo) in kinds:
-        others = [f for f in _videos_in(folder) if os.path.normpath(f) != os.path.normpath(video_path)]
-        if not others and _remove_ours(show_nfo, kinds):
-            removed.append(show_nfo)
+    if check_show_nfo:
+        folder = show_folder(video_path)
+        show_nfo = os.path.join(folder, SHOW_NFO) if folder else None
+        if show_nfo and nfo_kind(show_nfo) in kinds:
+            others = [f for f in _videos_in(folder) if os.path.normpath(f) != os.path.normpath(video_path)]
+            if not others and _remove_ours(show_nfo, kinds):
+                removed.append(show_nfo)
     if removed:
         logging.info(f"{_LOG} removed {len(removed)} NFO file(s) of {os.path.basename(video_path)}")
     return removed
+
+
+def remove_show_nfo_if_empty(folder: str) -> Optional[str]:
+    """Drop our tvshow.nfo in `folder` once no video is left anywhere under it.
+    Intended for batch deletions after all videos in the batch have been unlinked."""
+    if not folder or not symlinked_mode():
+        return None
+    kinds = (WRITER, SNAPSHOT)
+    show_nfo = os.path.join(folder, SHOW_NFO)
+    if nfo_kind(show_nfo) in kinds and not _has_video(folder) and _remove_ours(show_nfo, kinds):
+        logging.info(f"{_LOG} removed {SHOW_NFO} from {folder}")
+        return show_nfo
+    return None
 
 
 def _same_stem_video_left(video_path: str) -> bool:
