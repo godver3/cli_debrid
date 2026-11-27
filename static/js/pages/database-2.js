@@ -71,6 +71,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             columnResizeState.resizingColumn.classList.remove('is-resizing');
             columnResizeState.resizingColumn = null;
+            if (window.dbSyncFloatHeader) window.dbSyncFloatHeader();
             document.body.style.userSelect = '';
             document.body.style.cursor = '';
             if (columnResizeState.didResize) {
@@ -223,10 +224,10 @@ document.addEventListener('DOMContentLoaded', function() {
         maxLoadedPage = 1;
     };
 
-    // Always listen: a filter applied later can turn a one-page view into many.
-    {
-        window.addEventListener('scroll', function() {
-            const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+    // Called from the page's one scroll handler (below). Always active: a
+    // filter applied later can turn a one-page view into many.
+    function checkInfiniteScroll(scrollTop) {
+        {
             const scrollHeight = document.documentElement.scrollHeight;
             const clientHeight = document.documentElement.clientHeight;
 
@@ -239,7 +240,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (scrollTop < CONFIG.SCROLL_TRIGGER_PX && !isLoadingPrevious && minLoadedPage > 1) {
                 loadPreviousItems();
             }
-        });
+        }
     }
 
     function buildRowHTML(item, pageToLoad, index) {
@@ -252,6 +253,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const url = new URL(window.location.href);
         url.searchParams.set('page', pageToLoad);
         url.searchParams.set('ajax', '1');
+        url.searchParams.set('scroll', '1');  // rows only: no counts
 
         const response = await fetch(url.toString());
         return await response.json();
@@ -285,6 +287,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 tbody.appendChild(fragment);
                 loadedPages.push(pageToLoad);
                 maxLoadedPage = pageToLoad;
+                if (window.dbSyncFloatHeader) window.dbSyncFloatHeader();
 
                 // Remove top pages if we exceed max pages in DOM
                 if (loadedPages.length > CONFIG.MAX_PAGES_IN_DOM) {
@@ -359,6 +362,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 th.style.width = '';
                 th.style.minWidth = '';
             });
+            if (window.dbSyncFloatHeader) window.dbSyncFloatHeader();
         });
     }
 
@@ -402,6 +406,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 tbody.insertBefore(fragment, tbody.firstChild);
                 loadedPages.unshift(pageToLoad);
                 minLoadedPage = pageToLoad;
+                if (window.dbSyncFloatHeader) window.dbSyncFloatHeader();
 
                 // Adjust scroll position to maintain user's view
                 const heightAfter = document.documentElement.scrollHeight;
@@ -424,7 +429,8 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // ── Floating sticky header ──
-    if (document.body.classList.contains('tangerine-theme')) {
+    let updateFloatHeader = function() {};
+    {
         const NAV_HEIGHT = 50;
         let fh = null;
         let fhRAF = null;
@@ -449,9 +455,11 @@ document.addEventListener('DOMContentLoaded', function() {
             dbSyncFloatHeader();
 
             // Mirror horizontal scroll
+            // The container outlives table rebuilds: listen once.
             const container = document.querySelector('.table-container');
-            if (container) {
-                container.addEventListener('scroll', function() { if (fh) fh.scrollLeft = container.scrollLeft; });
+            if (container && !container.dataset.fhScroll) {
+                container.dataset.fhScroll = '1';
+                container.addEventListener('scroll', function() { if (fh) fh.scrollLeft = container.scrollLeft; }, { passive: true });
             }
         }
 
@@ -475,38 +483,38 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         }
 
-        window.addEventListener('scroll', function() {
+        // Scroll only toggles the copy; the widths are measured when they can
+        // change (build, rows added, window or column resize).
+        updateFloatHeader = function() {
             if (!fh) return;
-            const container = document.querySelector('.table-container');
             const table = document.querySelector('.table-container table');
-            if (!container || !table) return;
-            const cr = container.getBoundingClientRect();
+            if (!table) return;
             const tr = table.getBoundingClientRect();
-            const theadH = table.querySelector('thead') ? table.querySelector('thead').offsetHeight : 40;
-            const show = cr.top < NAV_HEIGHT && tr.bottom > NAV_HEIGHT + theadH;
-            fh.style.display = show ? 'block' : 'none';
-            if (show) {
-                if (fhRAF) cancelAnimationFrame(fhRAF);
-                fhRAF = requestAnimationFrame(dbSyncFloatHeader);
+            const theadH = table.tHead ? table.tHead.offsetHeight : 40;
+            const show = tr.top < NAV_HEIGHT && tr.bottom > NAV_HEIGHT + theadH;
+            if (show && fh.style.display !== 'block') {
+                fh.style.display = 'block';
+                dbSyncFloatHeader();
+            } else if (!show && fh.style.display !== 'none') {
+                fh.style.display = 'none';
             }
+        };
+
+        window.addEventListener('resize', function() {
+            if (fhRAF) cancelAnimationFrame(fhRAF);
+            fhRAF = requestAnimationFrame(dbSyncFloatHeader);
         }, { passive: true });
 
-        window.addEventListener('resize', function() { dbSyncFloatHeader(); }, { passive: true });
-
         window.reinitFloatHeader = function() { dbBuildFloatHeader(); };
+        window.dbSyncFloatHeader = dbSyncFloatHeader;
 
         dbBuildFloatHeader();
     }
 
-    // Back to row 1 button (tangerine only)
-    if (document.body.classList.contains('tangerine-theme')) {
-        const dbBackTop = document.getElementById('db-back-top');
+    // Back to row 1 button
+    const dbBackTop = document.getElementById('db-back-top');
+    {
         if (dbBackTop) {
-            // Show/hide based on scroll position
-            window.addEventListener('scroll', function() {
-                const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
-                dbBackTop.classList.toggle('db-back-top-visible', scrollTop > 300);
-            }, { passive: true });
 
             dbBackTop.addEventListener('click', async function() {
                 if (minLoadedPage === 1) {
@@ -543,6 +551,20 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         }
     }
+
+// One scroll handler for the page, at most once per frame.
+let dbScrollQueued = false;
+window.addEventListener('scroll', function() {
+    if (dbScrollQueued) return;
+    dbScrollQueued = true;
+    requestAnimationFrame(function() {
+        dbScrollQueued = false;
+        const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+        checkInfiniteScroll(scrollTop);
+        updateFloatHeader();
+        if (dbBackTop) dbBackTop.classList.toggle('db-back-top-visible', scrollTop > 300);
+    });
+}, { passive: true });
 
 // Per-page selector
 const dbPerPageSel = document.getElementById('db-per-page-select');

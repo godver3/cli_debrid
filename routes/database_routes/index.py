@@ -26,6 +26,9 @@ def unique_key_count_sql(columns):
             f"ELSE 'm:' || {movie_key} END)")
 
 
+VALID_PER_PAGE = (100, 250, 500, 1000)
+MAX_PER_PAGE = max(VALID_PER_PAGE)
+
 # Module-level cache for statistics
 cached_stats_data = None
 
@@ -38,6 +41,15 @@ def index():
     timings = {'overall_start': request_start_time}
     logging.info(f"Database index route started. Request method: {request.method}, Args: {request.args}")
     global cached_stats_data, stats_cache_timestamp # Allow modification of module-level cache variables
+
+    # A bare visit (the nav link) is always redirected by the page script to
+    # the view saved in the browser. Send only that script instead of building
+    # a table that is thrown away.
+    if request.method == 'GET' and not request.args:
+        return render_template('database.html', shell=True)
+
+    # Infinite-scroll page loads only need the rows.
+    scroll_load = request.args.get('scroll') == '1' and request.args.get('ajax') == '1'
     
     data = {
         'items': [],
@@ -88,7 +100,7 @@ def index():
     }
 
     try:
-        content_source_display_map = get_content_source_display_names()
+        content_source_display_map = {} if scroll_load else get_content_source_display_names()
         data['content_source_display_map'] = content_source_display_map
     except Exception as e:
         logging.error(f"Error fetching content source display names: {e}")
@@ -416,23 +428,31 @@ def index():
             cursor.execute(f"SELECT id FROM media_items {final_where_clause} {order_clause}", final_params)
             return jsonify({'ids': [str(row[0]) for row in cursor.fetchall()]})
 
-        cursor.execute(f"SELECT COUNT(*), {unique_key_count_sql(db_actual_columns)} "
-                       f"FROM media_items {final_where_clause}", final_params)
-        total_count, unique_total_count = cursor.fetchone()
         try:
             page = int(request.args.get('page', 1))
         except (ValueError, TypeError):
             page = 1
 
-        _VALID_PER_PAGE = {100, 250, 500, 1000, 2000, 5000}
         try:
             per_page = int(request.args.get('per_page', PER_PAGE))
-            if per_page not in _VALID_PER_PAGE:
-                per_page = PER_PAGE
         except (ValueError, TypeError):
             per_page = PER_PAGE
-        total_pages = max(1, (total_count + per_page - 1) // per_page)
-        page = max(1, min(page, total_pages))  # Clamp to valid range
+        if per_page > MAX_PER_PAGE:
+            per_page = MAX_PER_PAGE  # 2000/5000 were options once; 10k rows froze the tab
+        elif per_page not in VALID_PER_PAGE:
+            per_page = PER_PAGE
+
+        if scroll_load:
+            # The page already has the totals; a page past the end comes back empty.
+            total_count = unique_total_count = None
+            total_pages = None
+            page = max(1, page)
+        else:
+            cursor.execute(f"SELECT COUNT(*), {unique_key_count_sql(db_actual_columns)} "
+                           f"FROM media_items {final_where_clause}", final_params)
+            total_count, unique_total_count = cursor.fetchone()
+            total_pages = max(1, (total_count + per_page - 1) // per_page)
+            page = max(1, min(page, total_pages))  # Clamp to valid range
         start_idx = (page - 1) * per_page
 
         query = f"{base_query} {final_where_clause} {order_clause} LIMIT ? OFFSET ?"
@@ -471,7 +491,7 @@ def index():
         end_idx = start_idx + len(items_dict_list)
         paginated_items = items_dict_list
 
-        logging.info(f"Pagination: page {page}/{total_pages}, items {start_idx+1}-{end_idx} of {total_count}")
+        logging.info(f"Pagination: page {page}/{total_pages or '?'}, items {start_idx+1}-{end_idx} of {total_count if total_count is not None else '?'}")
 
         data.update({
             'items': paginated_items,

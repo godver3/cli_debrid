@@ -85,3 +85,26 @@ def test_ids_only_returns_every_match_in_view_order(db):
 def test_ids_only_respects_content_type(db):
     data = _get(db, ids_only='1', content_type='movie')
     assert data == {'ids': ['1', '2', '3']}
+
+
+def test_per_page_above_cap_uses_biggest_offered(db):
+    assert _get(db, ajax='1', per_page='5000')['per_page'] == 1000
+    assert _get(db, ajax='1', per_page='7')['per_page'] == 250
+
+
+def test_scroll_load_skips_counts(db):
+    data = _get(db, ajax='1', scroll='1', per_page='100', page='1')
+    assert data['result_count'] == 7
+    assert data['total_count'] is None and data['unique_result_count'] is None
+    assert _get(db, ajax='1', scroll='1', per_page='100', page='9')['items'] == []
+
+
+def test_bare_visit_renders_shell_without_querying(db):
+    from flask import Flask
+    app = Flask(__name__)
+    with mock.patch('database.get_db_connection') as conn, \
+            mock.patch.object(index_mod, 'render_template', return_value='shell') as render, \
+            app.test_request_context('/database/'):
+        assert index_mod.index.__wrapped__() == 'shell'
+    render.assert_called_once_with('database.html', shell=True)
+    conn.assert_not_called()

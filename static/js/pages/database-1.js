@@ -123,8 +123,6 @@ function renderCell(column, displayContent) {
         const cls = displayContent === 'Usenet' ? 'db-src-usenet' : 'db-src-debrid';
         return `<td><span class="db-src ${cls}">${displayContent}</span></td>`;
     }
-    const isTangerine = document.body.classList.contains('tangerine-theme');
-    if (!isTangerine) return `<td class="truncate" data-full-content="${displayContent}">${displayContent}</td>`;
     if (column === 'title') return `<td class="truncate db-col-title" data-full-content="${displayContent}">${displayContent}</td>`;
     if (column === 'imdb_id' && displayContent !== 'None') {
         return `<td class="truncate" data-full-content="${displayContent}"><span class="db-imdb-link">${displayContent}</span></td>`;
@@ -182,24 +180,19 @@ window.dbSelection = new Set();
 
 // The cells of one table row. Every row the script builds (filter results,
 // infinite scroll) goes through here so they match the server-rendered rows.
+const DB_DELETE_SVG = `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><use href="#dbi-trash"/></svg>`;
+const DB_REFRESH_SVG = `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><use href="#dbi-refresh"/></svg>`;
+
 function dbRowCells(item, rowNumber, selectedColumns) {
-    const isTangerine = document.body.classList.contains('tangerine-theme');
     const id = dbEscape(item.id);
     const checked = window.dbSelection.has(String(item.id)) ? ' checked' : '';
     let html = `<td><input type="checkbox" class="item-select" data-item-id="${id}"${checked}></td>`;
     html += `<td class="db-row-num">${rowNumber}</td>`;
-    if (isTangerine) {
-        const deleteSVG = `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>`;
-        const refreshSVG = `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>`;
-        html += `<td><span style="display:flex;gap:4px;align-items:center">` +
-            `<button class="db-action-btn db-action-btn-delete delete-item" data-item-id="${id}" title="Delete">${deleteSVG}</button>` +
-            `<button class="db-action-btn db-action-btn-refresh rescrape-item" data-item-id="${id}" title="Rescrape">${refreshSVG}</button>` +
-            window.dbQuickSlot(item) +
-            `</span></td>`;
-    } else {
-        html += `<td><button class="delete-item" data-item-id="${id}">X</button></td>`;
-        html += `<td><button class="rescrape-item" data-item-id="${id}">↻</button></td>`;
-    }
+    html += `<td><span style="display:flex;gap:4px;align-items:center">` +
+        `<button class="db-action-btn db-action-btn-delete delete-item" data-item-id="${id}" title="Delete">${DB_DELETE_SVG}</button>` +
+        `<button class="db-action-btn db-action-btn-refresh rescrape-item" data-item-id="${id}" title="Rescrape">${DB_REFRESH_SVG}</button>` +
+        window.dbQuickSlot(item) +
+        `</span></td>`;
     selectedColumns.forEach(column => { html += renderCell(column, dbDisplayValue(item, column)); });
     return html;
 }
@@ -641,8 +634,8 @@ document.addEventListener('DOMContentLoaded', function() {
     if (sortColumnSelect) sortColumnSelect.addEventListener('change', handleSortChange);
     if (sortOrderSelect) sortOrderSelect.addEventListener('change', handleSortChange);
 
-    // Column header sort click (tangerine only)
-    if (document.body.classList.contains('tangerine-theme')) {
+    // Column header sort click
+    {
         document.addEventListener('click', function(e) {
             const th = e.target.closest('.table-container th[data-col]');
             if (!th) return;
@@ -1192,7 +1185,6 @@ document.addEventListener('DOMContentLoaded', function() {
         let tableHTML = '<table><thead><tr>';
         let columnIndex = 0;
 
-        const isTangerineTable = document.body.classList.contains('tangerine-theme');
         const activeSortCol = document.getElementById('sort-column')?.value || '';
         const activeSortOrder = document.getElementById('sort-order')?.value || 'asc';
 
@@ -1200,7 +1192,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const createHeader = (text, index, colKey = null) => {
             const width = savedWidths[index];
             const style = width ? ` style="width: ${width}px; min-width: ${width}px;"` : '';
-            if (isTangerineTable && colKey) {
+            if (colKey) {
                 const isActive = colKey === activeSortCol;
                 const activeClass = isActive ? ' class="db-sort-active"' : '';
                 const icon = isActive ? (activeSortOrder === 'desc' ? '▼' : '▲') : '⇅';
@@ -1213,12 +1205,7 @@ document.addEventListener('DOMContentLoaded', function() {
         tableHTML += createHeader('Select', columnIndex++);
         tableHTML += `<th class="db-col-rownum">#</th>`;
         columnIndex++;
-        if (isTangerineTable) {
-            tableHTML += createHeader('Actions', columnIndex++);
-        } else {
-            tableHTML += createHeader('Delete', columnIndex++);
-            tableHTML += createHeader('Rescrape', columnIndex++);
-        }
+        tableHTML += createHeader('Actions', columnIndex++);
 
         selectedColumns.forEach(column => {
             let displayName = column;

@@ -1,6 +1,129 @@
 {% extends "base.html" %}
 
 {% block head %}
+<script>
+// Early redirect script to load page with localStorage settings
+(function() {
+    const STORAGE_KEYS = {
+        FILTERS: 'db_filters',
+        SORT_COLUMN: 'db_sort_column',
+        SORT_ORDER: 'db_sort_order',
+        SELECTED_COLUMNS: 'db_selected_columns',
+        CONTENT_TYPE: 'db_content_type',
+        FILTER_LOGIC: 'db_filter_logic',
+        LETTER: 'db_current_letter',
+        PER_PAGE: 'db_per_page'
+    };
+    const VALID_PER_PAGE = [100, 250, 500, 1000];
+    // A bare visit gets an empty shell from the server: it must always redirect.
+    const SHELL = {{ 'true' if shell else 'false' }};
+    const DEFAULTS = {
+        SORT_COLUMN: 'id',
+        SORT_ORDER: 'asc',
+        CONTENT_TYPE: 'all',
+        FILTER_LOGIC: 'AND',
+        LETTER: '',
+        PER_PAGE: 250
+    };
+
+    function getQueryParam(param) {
+        const urlParams = new URLSearchParams(window.location.search);
+        return urlParams.get(param);
+    }
+
+    const savedFiltersJSON = localStorage.getItem(STORAGE_KEYS.FILTERS);
+    const savedSortColumn = localStorage.getItem(STORAGE_KEYS.SORT_COLUMN);
+    const savedSortOrder = localStorage.getItem(STORAGE_KEYS.SORT_ORDER);
+    const savedColumnsJSON = localStorage.getItem(STORAGE_KEYS.SELECTED_COLUMNS);
+    const savedContentType = localStorage.getItem(STORAGE_KEYS.CONTENT_TYPE);
+    const savedFilterLogic = localStorage.getItem(STORAGE_KEYS.FILTER_LOGIC);
+    const savedLetter = localStorage.getItem(STORAGE_KEYS.LETTER);
+    const savedPerPage = localStorage.getItem(STORAGE_KEYS.PER_PAGE);
+
+    const queryParams = new URLSearchParams();
+    let needsRedirect = false;
+
+    // Selected Columns
+    let columnsToUse = null;
+    if (savedColumnsJSON) {
+        try {
+            const parsed = JSON.parse(savedColumnsJSON);
+            if (Array.isArray(parsed) && parsed.length > 0) columnsToUse = parsed;
+        } catch (e) { /* ignore */ }
+    }
+    if (columnsToUse) {
+        const columnsToUseJSON = JSON.stringify(columnsToUse);
+        if (getQueryParam('selected_columns') !== columnsToUseJSON) needsRedirect = true;
+        queryParams.set('selected_columns', columnsToUseJSON);
+    } else if (getQueryParam('selected_columns')) {
+        // If LS is empty but param exists, it implies manual URL or shared link.
+        // To strictly enforce LS (i.e. clear columns if not in LS), set needsRedirect = true
+        // and DON'T set the queryParam. For now, we'll let existing params pass if LS is empty.
+    }
+
+    // Filters
+    if (savedFiltersJSON) {
+        try {
+            JSON.parse(savedFiltersJSON); // Validate JSON
+            if (getQueryParam('filters') !== savedFiltersJSON) needsRedirect = true;
+            queryParams.set('filters', savedFiltersJSON);
+        } catch(e) { /* ignore */ }
+    } else if (getQueryParam('filters')) {
+        // similar to columns: let existing param pass if LS is empty for filters.
+    }
+
+    // Sort Column
+    const sortColumn = savedSortColumn || DEFAULTS.SORT_COLUMN;
+    if (getQueryParam('sort_column') !== sortColumn) needsRedirect = true;
+    queryParams.set('sort_column', sortColumn);
+
+    // Sort Order
+    const sortOrder = savedSortOrder || DEFAULTS.SORT_ORDER;
+    if (getQueryParam('sort_order') !== sortOrder) needsRedirect = true;
+    queryParams.set('sort_order', sortOrder);
+
+    // Content Type
+    const contentType = (savedContentType === 'movie' || savedContentType === 'episode' || savedContentType === 'all') ? savedContentType : DEFAULTS.CONTENT_TYPE;
+    if (getQueryParam('content_type') !== contentType) needsRedirect = true;
+    queryParams.set('content_type', contentType);
+
+    // Filter Logic
+    const filterLogic = (savedFilterLogic === 'AND' || savedFilterLogic === 'OR') ? savedFilterLogic : DEFAULTS.FILTER_LOGIC;
+    if (getQueryParam('filter_logic') !== filterLogic) needsRedirect = true;
+    queryParams.set('filter_logic', filterLogic);
+
+    // Letter (use !== null check to allow empty string)
+    const letter = (savedLetter !== null) ? savedLetter : DEFAULTS.LETTER;
+    if (getQueryParam('letter') !== letter) needsRedirect = true;
+    queryParams.set('letter', letter);
+
+    // Per Page
+    const perPageRaw = parseInt(savedPerPage, 10);
+    // 2000 and 5000 were options once: keep the biggest page that is still offered.
+    const perPage = perPageRaw > 1000 ? 1000 : (VALID_PER_PAGE.includes(perPageRaw) ? perPageRaw : DEFAULTS.PER_PAGE);
+    if (getQueryParam('per_page') !== String(perPage)) needsRedirect = true;
+    queryParams.set('per_page', perPage);
+
+    const redirectFlag = 'database_redirect_marker';
+    const flagIsSet = sessionStorage.getItem(redirectFlag) === 'true';
+
+    if (getQueryParam('ajax') === '1' || flagIsSet) {
+        needsRedirect = false;
+    }
+    if (SHELL) needsRedirect = true;
+
+    if (needsRedirect) {
+        sessionStorage.setItem(redirectFlag, 'true');
+        const baseUrl = "{{ url_for('database.index') }}";
+        const newUrl = queryParams.toString() ? `${baseUrl}?${queryParams.toString()}` : baseUrl;
+        window.location.replace(newUrl);
+    } else {
+        if (flagIsSet) {
+            sessionStorage.removeItem(redirectFlag);
+        }
+    }
+})();
+</script>
 <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_database.css') }}">
 <style>
 /* Prevent blue flash on filter buttons before tangerine CSS loads */
@@ -20,8 +143,17 @@
 </style>
 {% endblock %}
 {% block title %}Database{% endblock %}
+{% macro quick_buttons(id) -%}
+<span class="db-quick"><button class="db-action-btn" data-qa="open" data-item-id="{{ id }}" title="Open in Library"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><use href="#dbi-open"/></svg></button><button class="db-action-btn" data-qa="wanted" data-item-id="{{ id }}" title="Move to Wanted"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><use href="#dbi-wanted"/></svg></button><button class="db-action-btn db-action-btn-delete" data-qa="blacklist" data-item-id="{{ id }}" title="Blacklist"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><use href="#dbi-blacklist"/></svg></button></span>
+{%- endmacro %}
 {% block content %}
+{% if shell %}
+<div class="db-page-wrapper"><p class="db-shell-loading">Loading…</p></div>
+{% else %}
 <div class="db-page-wrapper">
+{# Row icons, defined once: every row references them with <use>. #}
+<svg class="db-icon-sprite" width="0" height="0" style="position:absolute" aria-hidden="true"><symbol id="dbi-trash" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></symbol><symbol id="dbi-refresh" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></symbol><symbol id="dbi-open" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></symbol><symbol id="dbi-wanted" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></symbol><symbol id="dbi-blacklist" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/></symbol></svg>
+
 <!-- Tangerine theme: top bar — stat boxes left, view buttons right -->
 <div class="db-topbar tangerine-only">
     <div class="db-stat-boxes">
@@ -39,7 +171,7 @@
         </div>
         <div class="db-stat-box">
             <select id="db-per-page-select" class="db-per-page-select" title="Items per page">
-                {% for n in [100, 250, 500, 1000, 2000, 5000] %}
+                {% for n in [100, 250, 500, 1000] %}
                 <option value="{{ n }}" {% if per_page == n %}selected{% endif %}>{{ n }}</option>
                 {% endfor %}
             </select>
@@ -216,7 +348,7 @@
             <div class="button-section">
                 <div class="filter-buttons">
                     <button type="submit">Apply</button>
-                    <button type="button" id="clear-filter-sort"><span class="tangerine-only">Clear all</span><span class="classic-only">Clear Filter &amp; Sort</span></button>
+                    <button type="button" id="clear-filter-sort">Clear all</button>
                     <button type="button" class="db-save-preset-btn tangerine-only">Save Preset</button>
                 </div>
             </div>
@@ -247,22 +379,6 @@
             {% endif %}
         </div>
     </div>
-    <div class="content-type-filter classic-only">
-        <a href="#" data-content-type="all" class="content-type-link {% if content_type == 'all' %}active{% endif %}">All</a>
-        <a href="#" data-content-type="movie" class="content-type-link {% if content_type == 'movie' %}active{% endif %}">Movies</a>
-        <a href="#" data-content-type="episode" class="content-type-link {% if content_type == 'episode' %}active{% endif %}">Episodes</a>
-    </div>
-    <div class="pagination classic-only">
-        {% if alphabet %}
-            <a href="#" data-letter="" class="pagination-link {% if current_letter == '' %}active{% endif %}">All</a>
-            <a href="#" data-letter="#" class="pagination-link {% if current_letter == '#' %}active{% endif %}">#</a>
-            {% for letter in alphabet %}
-            <a href="#" data-letter="{{ letter }}" class="pagination-link {% if letter == current_letter %}active{% endif %}">{{ letter }}</a>
-            {% endfor %}
-        {% else %}
-            <p>No pagination data available</p>
-        {% endif %}
-    </div>
 </div>
 <div class="db-table-hint tangerine-only">
     <span>↔ Drag column borders to resize &nbsp;·&nbsp; "Reset Cols" restores defaults &nbsp;·&nbsp; Click column headers to sort</span>
@@ -275,73 +391,45 @@
                 <tr>
                     <th>Select</th>
                     <th class="db-col-rownum">#</th>
-                    <th class="classic-only">Delete</th>
-                    <th class="classic-only">Rescrape</th>
-                    <th class="tangerine-only">Actions</th>
+                    <th>Actions</th>
                     {% for column in selected_columns %}
                         {% set label = 'S#' if column == 'season_number' else 'E#' if column == 'episode_number' else 'Size (GB)' if column == 'size' else column %}
                         <th data-col="{{ column }}"{% if column == sort_column %} class="db-sort-active"{% endif %}>{{ label }}<span class="db-sort-icon">{% if column == sort_column %}{% if sort_order == 'desc' %}▼{% else %}▲{% endif %}{% else %}⇅{% endif %}</span></th>
                     {% endfor %}
                 </tr>
             </thead>
+            {#- Whitespace-trimmed: indentation here used to be most of each row's bytes. -#}
+            {%- set state_labels = {'Final_Check': 'Final Scrape', 'ghostlisted': 'Ghostlisted', 'all_blacklisted': 'All Versions Blacklisted'} -%}
+            {%- set state_cls = {'Collected': 'db-pill-collected', 'Wanted': 'db-pill-wanted', 'Scraping': 'db-pill-scraping', 'Upgrading': 'db-pill-upgrading', 'Blacklisted': 'db-pill-blacklisted', 'Checking': 'db-pill-checking', 'Sleeping': 'db-pill-sleeping', 'Unreleased': 'db-pill-unreleased'} -%}
+            {%- set row_offset = ((current_page | default(1)) - 1) * (per_page | default(250)) -%}
             <tbody>
-                {% for item in items %}
-                    <tr data-page="{{ current_page | default(1) }}">
-                        <td><input type="checkbox" id="item-select-{{ item['id'] }}" name="item_select" class="item-select" data-item-id="{{ item['id'] }}" aria-label="Select item {{ item['id'] }}"></td>
-                        <td class="db-row-num">{{ ((current_page | default(1)) - 1) * (per_page | default(250)) + loop.index }}</td>
-                        {# Classic: separate Delete / Rescrape columns #}
-                        <td class="classic-only">
-                            <button class="delete-item" data-item-id="{{ item['id'] }}">X</button>
-                        </td>
-                        <td class="classic-only">
-                            <button class="rescrape-item" data-item-id="{{ item['id'] }}">↻</button>
-                        </td>
-                        {# Tangerine: single Actions column with icon buttons #}
-                        <td class="tangerine-only">
-                            <span style="display:flex;gap:4px;align-items:center">
-                                <button class="db-action-btn db-action-btn-delete delete-item" data-item-id="{{ item['id'] }}" title="Delete">
-                                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                                </button>
-                                <button class="db-action-btn db-action-btn-refresh rescrape-item" data-item-id="{{ item['id'] }}" title="Rescrape">
-                                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
-                                </button>
-                                <span class="db-quick-slot" data-item-id="{{ item['id'] }}" data-type="{{ item['type'] or '' }}" data-tmdb="{{ item['tmdb_id'] or '' }}" data-imdb="{{ item['imdb_id'] or '' }}"></span>
-                            </span>
-                        </td>
-                        {% for column in selected_columns %}
-                            {% if column == 'size' %}
-                                <td class="truncate" data-full-content="{{ '%.2f'|format(item['size_gb']) if item['size_gb'] is defined and item['size_gb'] is not none else 'N/A' }}">{{ '%.2f'|format(item['size_gb']) if item['size_gb'] is defined and item['size_gb'] is not none else 'N/A' }}</td>
-                            {% elif column == 'source' %}
-                                <td>{% if item['source'] %}<span class="db-src {{ 'db-src-usenet' if item['source'] == 'Usenet' else 'db-src-debrid' }}">{{ item['source'] }}</span>{% endif %}</td>
-                            {% elif column == 'imdb_id' %}
-                                <td class="truncate" data-full-content="{{ item[column] }}"><span class="db-imdb-link classic-plain">{{ item[column] }}</span></td>
-                            {% elif column == 'state' %}
-                                {% set state_val = item[column] | string %}
-                                {% set state_val = 'Final Scrape' if state_val == 'Final_Check' else state_val %}
-                                {% set state_val = 'Ghostlisted' if state_val == 'ghostlisted' else state_val %}
-                                {% set state_val = 'All Versions Blacklisted' if state_val == 'all_blacklisted' else state_val %}
-                                {% set state_cls = {
-                                    'Collected': 'db-pill db-pill-collected',
-                                    'Wanted': 'db-pill db-pill-wanted',
-                                    'Scraping': 'db-pill db-pill-scraping',
-                                    'Upgrading': 'db-pill db-pill-upgrading',
-                                    'Blacklisted': 'db-pill db-pill-blacklisted',
-                                    'Checking': 'db-pill db-pill-checking',
-                                    'Sleeping': 'db-pill db-pill-sleeping',
-                                    'Unreleased': 'db-pill db-pill-unreleased'
-                                } %}
-                                <td class="truncate" data-full-content="{{ state_val }}"><span class="tangerine-only {{ state_cls.get(state_val, 'db-pill db-pill-other') }}">{{ state_val }}</span><span class="classic-only">{{ state_val }}</span></td>
-                            {% elif column == 'type' %}
-                                {% set type_cls = 'db-pill db-pill-movie' if item[column] == 'movie' else 'db-pill db-pill-episode' %}
-                                <td class="truncate" data-full-content="{{ item[column] }}"><span class="tangerine-only {{ type_cls }}">{{ item[column] }}</span><span class="classic-only">{{ item[column] }}</span></td>
-                            {% elif column == 'version' %}
-                                <td class="truncate" data-full-content="{{ item[column] }}"><span class="tangerine-only db-pill-version">{{ item[column] }}</span><span class="classic-only">{{ item[column] }}</span></td>
-                            {% else %}
-                                <td class="truncate{% if column == 'title' %} db-col-title{% endif %}" data-full-content="{{ item[column] }}">{{ item[column] }}</td>
-                            {% endif %}
-                        {% endfor %}
-                    </tr>
-                {% endfor %}
+            {%- for item in items %}
+<tr data-page="{{ current_page | default(1) }}">
+<td><input type="checkbox" class="item-select" data-item-id="{{ item['id'] }}" aria-label="Select item {{ item['id'] }}"></td>
+<td class="db-row-num">{{ row_offset + loop.index }}</td>
+<td><span style="display:flex;gap:4px;align-items:center"><button class="db-action-btn db-action-btn-delete delete-item" data-item-id="{{ item['id'] }}" title="Delete"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><use href="#dbi-trash"/></svg></button><button class="db-action-btn db-action-btn-refresh rescrape-item" data-item-id="{{ item['id'] }}" title="Rescrape"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><use href="#dbi-refresh"/></svg></button><span class="db-quick-slot" data-item-id="{{ item['id'] }}" data-type="{{ item['type'] or '' }}" data-tmdb="{{ item['tmdb_id'] or '' }}" data-imdb="{{ item['imdb_id'] or '' }}">{{ quick_buttons(item['id']) }}</span></span></td>
+            {%- for column in selected_columns %}
+            {%- if column == 'size' %}
+            {%- set size_txt = '%.2f'|format(item['size_gb']) if item['size_gb'] is defined and item['size_gb'] is not none else 'N/A' %}
+<td class="truncate" data-full-content="{{ size_txt }}">{{ size_txt }}</td>
+            {%- elif column == 'source' %}
+<td>{% if item['source'] %}<span class="db-src {{ 'db-src-usenet' if item['source'] == 'Usenet' else 'db-src-debrid' }}">{{ item['source'] }}</span>{% endif %}</td>
+            {%- elif column == 'imdb_id' %}
+<td class="truncate" data-full-content="{{ item[column] }}"><span class="db-imdb-link">{{ item[column] }}</span></td>
+            {%- elif column == 'state' %}
+            {%- set state_val = item[column] | string %}
+            {%- set state_val = state_labels.get(state_val, state_val) %}
+<td class="truncate" data-full-content="{{ state_val }}"><span class="db-pill {{ state_cls.get(state_val, 'db-pill-other') }}">{{ state_val }}</span></td>
+            {%- elif column == 'type' %}
+<td class="truncate" data-full-content="{{ item[column] }}"><span class="db-pill {{ 'db-pill-movie' if item[column] == 'movie' else 'db-pill-episode' }}">{{ item[column] }}</span></td>
+            {%- elif column == 'version' %}
+<td class="truncate" data-full-content="{{ item[column] }}"><span class="db-pill-version">{{ item[column] }}</span></td>
+            {%- else %}
+<td class="truncate{% if column == 'title' %} db-col-title{% endif %}" data-full-content="{{ item[column] }}">{{ item[column] }}</td>
+            {%- endif %}
+            {%- endfor %}
+</tr>
+            {%- endfor %}
             </tbody>
         </table>
     {% else %}
@@ -351,125 +439,6 @@
 
 <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
 
-<script>
-// Early redirect script to load page with localStorage settings
-(function() {
-    const STORAGE_KEYS = {
-        FILTERS: 'db_filters',
-        SORT_COLUMN: 'db_sort_column',
-        SORT_ORDER: 'db_sort_order',
-        SELECTED_COLUMNS: 'db_selected_columns',
-        CONTENT_TYPE: 'db_content_type',
-        FILTER_LOGIC: 'db_filter_logic',
-        LETTER: 'db_current_letter',
-        PER_PAGE: 'db_per_page'
-    };
-    const VALID_PER_PAGE = [100, 250, 500, 1000, 2000, 5000];
-    const DEFAULTS = {
-        SORT_COLUMN: 'id',
-        SORT_ORDER: 'asc',
-        CONTENT_TYPE: 'all',
-        FILTER_LOGIC: 'AND',
-        LETTER: '',
-        PER_PAGE: 250
-    };
-
-    function getQueryParam(param) {
-        const urlParams = new URLSearchParams(window.location.search);
-        return urlParams.get(param);
-    }
-
-    const savedFiltersJSON = localStorage.getItem(STORAGE_KEYS.FILTERS);
-    const savedSortColumn = localStorage.getItem(STORAGE_KEYS.SORT_COLUMN);
-    const savedSortOrder = localStorage.getItem(STORAGE_KEYS.SORT_ORDER);
-    const savedColumnsJSON = localStorage.getItem(STORAGE_KEYS.SELECTED_COLUMNS);
-    const savedContentType = localStorage.getItem(STORAGE_KEYS.CONTENT_TYPE);
-    const savedFilterLogic = localStorage.getItem(STORAGE_KEYS.FILTER_LOGIC);
-    const savedLetter = localStorage.getItem(STORAGE_KEYS.LETTER);
-    const savedPerPage = localStorage.getItem(STORAGE_KEYS.PER_PAGE);
-
-    const queryParams = new URLSearchParams();
-    let needsRedirect = false;
-
-    // Selected Columns
-    let columnsToUse = null;
-    if (savedColumnsJSON) {
-        try {
-            const parsed = JSON.parse(savedColumnsJSON);
-            if (Array.isArray(parsed) && parsed.length > 0) columnsToUse = parsed;
-        } catch (e) { /* ignore */ }
-    }
-    if (columnsToUse) {
-        const columnsToUseJSON = JSON.stringify(columnsToUse);
-        if (getQueryParam('selected_columns') !== columnsToUseJSON) needsRedirect = true;
-        queryParams.set('selected_columns', columnsToUseJSON);
-    } else if (getQueryParam('selected_columns')) {
-        // If LS is empty but param exists, it implies manual URL or shared link.
-        // To strictly enforce LS (i.e. clear columns if not in LS), set needsRedirect = true
-        // and DON'T set the queryParam. For now, we'll let existing params pass if LS is empty.
-    }
-
-    // Filters
-    if (savedFiltersJSON) {
-        try {
-            JSON.parse(savedFiltersJSON); // Validate JSON
-            if (getQueryParam('filters') !== savedFiltersJSON) needsRedirect = true;
-            queryParams.set('filters', savedFiltersJSON);
-        } catch(e) { /* ignore */ }
-    } else if (getQueryParam('filters')) {
-        // similar to columns: let existing param pass if LS is empty for filters.
-    }
-
-    // Sort Column
-    const sortColumn = savedSortColumn || DEFAULTS.SORT_COLUMN;
-    if (getQueryParam('sort_column') !== sortColumn) needsRedirect = true;
-    queryParams.set('sort_column', sortColumn);
-
-    // Sort Order
-    const sortOrder = savedSortOrder || DEFAULTS.SORT_ORDER;
-    if (getQueryParam('sort_order') !== sortOrder) needsRedirect = true;
-    queryParams.set('sort_order', sortOrder);
-
-    // Content Type
-    const contentType = (savedContentType === 'movie' || savedContentType === 'episode' || savedContentType === 'all') ? savedContentType : DEFAULTS.CONTENT_TYPE;
-    if (getQueryParam('content_type') !== contentType) needsRedirect = true;
-    queryParams.set('content_type', contentType);
-
-    // Filter Logic
-    const filterLogic = (savedFilterLogic === 'AND' || savedFilterLogic === 'OR') ? savedFilterLogic : DEFAULTS.FILTER_LOGIC;
-    if (getQueryParam('filter_logic') !== filterLogic) needsRedirect = true;
-    queryParams.set('filter_logic', filterLogic);
-
-    // Letter (use !== null check to allow empty string)
-    const letter = (savedLetter !== null) ? savedLetter : DEFAULTS.LETTER;
-    if (getQueryParam('letter') !== letter) needsRedirect = true;
-    queryParams.set('letter', letter);
-
-    // Per Page
-    const perPageRaw = parseInt(savedPerPage, 10);
-    const perPage = VALID_PER_PAGE.includes(perPageRaw) ? perPageRaw : DEFAULTS.PER_PAGE;
-    if (getQueryParam('per_page') !== String(perPage)) needsRedirect = true;
-    queryParams.set('per_page', perPage);
-
-    const redirectFlag = 'database_redirect_marker';
-    const flagIsSet = sessionStorage.getItem(redirectFlag) === 'true';
-
-    if (getQueryParam('ajax') === '1' || flagIsSet) {
-        needsRedirect = false;
-    }
-
-    if (needsRedirect) {
-        sessionStorage.setItem(redirectFlag, 'true');
-        const baseUrl = "{{ url_for('database.index') }}";
-        const newUrl = queryParams.toString() ? `${baseUrl}?${queryParams.toString()}` : baseUrl;
-        window.location.replace(newUrl);
-    } else {
-        if (flagIsSet) {
-            sessionStorage.removeItem(redirectFlag);
-        }
-    }
-})();
-</script>
 
 <script>
     window.templateData = {
@@ -517,9 +486,9 @@ window.TPL_DATABASE = {
 (function () {
     // Row quick actions: open the item, move it to Wanted, or blacklist it.
     const ICONS = {
-        open: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>',
-        wanted: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>',
-        blacklist: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/></svg>',
+        open: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><use href="#dbi-open"/></svg>',
+        wanted: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><use href="#dbi-wanted"/></svg>',
+        blacklist: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><use href="#dbi-blacklist"/></svg>',
     };
     function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
     function buttons(id) {
@@ -533,9 +502,6 @@ window.TPL_DATABASE = {
     window.dbQuickSlot = function (item) {
         return `<span class="db-quick-slot" data-item-id="${esc(item.id)}" data-type="${esc(item.type)}" data-tmdb="${esc(item.tmdb_id)}" data-imdb="${esc(item.imdb_id)}">${buttons(item.id)}</span>`;
     };
-    function fillSlots(root) {
-        root.querySelectorAll('.db-quick-slot:empty').forEach(slot => { slot.innerHTML = buttons(slot.dataset.itemId); });
-    }
     async function move(id, queue) {
         const fd = new FormData();
         fd.append('action', 'move'); fd.append('target_queue', queue); fd.append('selected_items', id);
@@ -569,19 +535,6 @@ window.TPL_DATABASE = {
             btn.disabled = false;
         }
     });
-    document.addEventListener('DOMContentLoaded', function () {
-        fillSlots(document);
-        // Rows arrive from infinite scroll / filter reloads. Coalesce bursts into
-        // one pass per frame, and ignore the observer's own slot/badge writes.
-        let pending = false;
-        new MutationObserver(muts => {
-            if (pending) return;
-            const relevant = muts.some(m => !(m.target.closest && m.target.closest('.db-quick-slot, td')));
-            if (!relevant) return;
-            pending = true;
-            requestAnimationFrame(() => { pending = false; fillSlots(document); });
-        }).observe(document.body, { childList: true, subtree: true });
-    });
 })();
 </script>
 <button id="db-back-top" class="tangerine-only" title="Back to top / Row 1" aria-label="Back to top">
@@ -592,4 +545,5 @@ window.TPL_DATABASE = {
     </svg>
 </button>
 </div><!-- /.db-page-wrapper -->
+{% endif %}
 {% endblock %}
