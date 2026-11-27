@@ -6,6 +6,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from urllib3.util import Timeout
 
 from ..base import ProviderUnavailableError, RateLimitError
 from .exceptions import TorboxAPIError, TorboxAuthError
@@ -50,20 +51,52 @@ def _pause_creates(response=None) -> float:
         return _create_limit['paused_until']
 
 
-def _wait_for_rate_limit() -> None:
-    with _api_rate_limiter['lock']:
-        current_time = time.time()
-        time_since_last = current_time - _api_rate_limiter['last_request_time']
-        min_interval = _api_rate_limiter['min_interval']
-        if time_since_last < min_interval:
-            time.sleep(min_interval - time_since_last)
+def _acquire_rate_limit_lock(deadline: Optional[float]) -> bool:
+    lock = _api_rate_limiter['lock']
+    if deadline is None:
+        return lock.acquire()
+    return lock.acquire(timeout=max(0, deadline - time.monotonic()))
+
+
+def _wait_for_rate_limit(deadline: Optional[float] = None) -> None:
+    if not _acquire_rate_limit_lock(deadline):
+        raise ProviderUnavailableError("Torbox request timed out waiting for rate limit")
+    try:
+        delay = _api_rate_limiter['min_interval'] - (time.time() - _api_rate_limiter['last_request_time'])
+        if deadline is not None and max(0, delay) >= deadline - time.monotonic():
+            raise ProviderUnavailableError("Torbox request timed out waiting for rate limit")
+        if delay > 0:
+            time.sleep(delay)
         _api_rate_limiter['last_request_time'] = time.time()
+    finally:
+        _api_rate_limiter['lock'].release()
 
 
-def _decrease_rate_limit_on_success() -> None:
-    with _api_rate_limiter['lock']:
-        if _api_rate_limiter['min_interval'] > 0.25:
-            _api_rate_limiter['min_interval'] = max(0.25, _api_rate_limiter['min_interval'] * 0.95)
+def _decrease_rate_limit_on_success(deadline: Optional[float]) -> None:
+    if _acquire_rate_limit_lock(deadline):
+        try:
+            if _api_rate_limiter['min_interval'] > 0.25:
+                _api_rate_limiter['min_interval'] = max(0.25, _api_rate_limiter['min_interval'] * 0.95)
+        finally:
+            _api_rate_limiter['lock'].release()
+
+
+def _raise_rate_limit(response, deadline: Optional[float], honor_retry_after: bool) -> None:
+    if _acquire_rate_limit_lock(deadline):
+        try:
+            _api_rate_limiter['min_interval'] = min(5.0, _api_rate_limiter['min_interval'] * 2)
+        finally:
+            _api_rate_limiter['lock'].release()
+    if honor_retry_after:
+        try:
+            delay = max(0, int(response.headers.get('Retry-After') or 0))
+        except (TypeError, ValueError):
+            delay = 0
+        if deadline is not None and delay >= deadline - time.monotonic():
+            raise ProviderUnavailableError("Torbox Retry-After exceeds the request budget")
+        if delay:
+            time.sleep(delay)
+    raise RateLimitError("Torbox rate limit exceeded")
 
 
 def get_api_key() -> str:
@@ -79,19 +112,16 @@ def should_retry_error(exception: Exception) -> bool:
     return isinstance(exception, (api.exceptions.Timeout, api.exceptions.ConnectionError))
 
 
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=2, max=10),
-    retry=retry_if_exception_type((api.exceptions.RequestException, TorboxAPIError, RateLimitError, api.exceptions.HTTPError)),
-    retry_error_callback=lambda rs: rs.outcome.result(),
-)
-def make_request(
+def make_request_once(
     method: str,
     endpoint: str,
     api_key: str,
     data: Optional[Dict] = None,
     files: Optional[Dict] = None,
     json_data: Optional[Dict] = None,
+    *,
+    deadline: Optional[float] = None,
+    honor_retry_after: bool = True,
     **kwargs,
 ) -> Any:
     url = f"https://api.torbox.app/v1/api{endpoint}"
@@ -114,7 +144,14 @@ def make_request(
     if 'timeout' not in kwargs:
         kwargs['timeout'] = 30
 
-    _wait_for_rate_limit()
+    if deadline is None:
+        _wait_for_rate_limit()
+    else:
+        _wait_for_rate_limit(deadline)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ProviderUnavailableError("Torbox request timed out")
+        kwargs['timeout'] = Timeout(total=remaining)
 
     try:
         if method.upper() == 'GET':
@@ -136,15 +173,7 @@ def make_request(
                     until = _pause_creates(response)
                     raise ProviderUnavailableError(
                         f"Torbox torrent add limit reached; adds paused until {time.ctime(until)}")
-                retry_after = response.headers.get('Retry-After')
-                if retry_after:
-                    try:
-                        time.sleep(int(retry_after))
-                    except (TypeError, ValueError):
-                        pass
-                with _api_rate_limiter['lock']:
-                    _api_rate_limiter['min_interval'] = min(5.0, _api_rate_limiter['min_interval'] * 2)
-                raise RateLimitError("Torbox rate limit exceeded")
+                _raise_rate_limit(response, deadline, honor_retry_after)
             if response.status_code in [500, 502, 503, 504]:
                 if is_create:
                     # A create may have reached TorBox even when its response
@@ -171,13 +200,13 @@ def make_request(
             raise ProviderUnavailableError(f"Torbox request failed: {response.status_code} - {err_body}")
 
         if response.status_code == 204:
-            _decrease_rate_limit_on_success()
+            _decrease_rate_limit_on_success(deadline)
             return {"success": True, "status_code": 204}
 
         try:
             result = response.json()
         except ValueError:
-            _decrease_rate_limit_on_success()
+            _decrease_rate_limit_on_success(deadline)
             return response.content
 
         if isinstance(result, dict) and result.get('success') is False:
@@ -191,14 +220,36 @@ def make_request(
                     f"Torbox torrent add limit reached; adds paused until {time.ctime(until)}")
             raise TorboxAPIError(f"Torbox API error {error_code}: {detail}")
 
-        _decrease_rate_limit_on_success()
+        _decrease_rate_limit_on_success(deadline)
         return result
     except api.exceptions.Timeout:
         raise ProviderUnavailableError("Torbox request timed out")
     except api.exceptions.RequestException as e:
+        # APITracker raises on HTTP errors before returning a response.
+        if (deadline is not None and isinstance(e, api.exceptions.HTTPError)
+                and e.response is not None and e.response.status_code == 429):
+            _raise_rate_limit(e.response, deadline, honor_retry_after)
         if should_retry_error(e):
             raise TorboxAPIError(f"Temporary Torbox service error: {str(e)}")
         raise ProviderUnavailableError(f"Torbox request failed: {str(e)}")
+
+
+_stop_after_three_attempts = stop_after_attempt(3)
+
+
+def _stop_request_retry(state) -> bool:
+    deadline = state.kwargs.get('deadline')
+    return _stop_after_three_attempts(state) or (
+        deadline is not None and time.monotonic() + state.upcoming_sleep >= deadline
+    )
+
+
+make_request = retry(
+    stop=_stop_request_retry,
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception_type((api.exceptions.RequestException, TorboxAPIError, RateLimitError, api.exceptions.HTTPError)),
+    retry_error_callback=lambda rs: rs.outcome.result(),
+)(make_request_once)
 
 
 def get_data_payload(result: Any) -> Any:

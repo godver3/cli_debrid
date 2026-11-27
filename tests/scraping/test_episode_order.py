@@ -278,13 +278,96 @@ class PreviewOrderChangeTests(unittest.TestCase):
 
 
 
+    def _apply_plex(self, nfo, plex_ordering, sync_note):
+        preview = {'success': True, 'conflicts': [], 'new_order': 'tvdb:alternate', 'current_order': 'tvdb:dvd',
+                   'moves': [], 'removes': [], 'unmappable': [], 'missing_episodes': 0, 'missing_positions': [],
+                   'plex_ordering': plex_ordering, 'plex_note': None if plex_ordering else 'Plex has no matching episode ordering'}
+        with mock.patch.object(self.oc, 'preview_order_change', return_value=preview), \
+                mock.patch.object(self.oc, '_apply_rows'), \
+                mock.patch.object(self.oc, '_reset_battery_seasons'), \
+                mock.patch.object(self.oc, '_show_rows', return_value=[]), \
+                mock.patch.object(self.oc, '_nfo_mode', return_value=nfo), \
+                mock.patch('database.show_overrides.set_show_override'), \
+                mock.patch('cli_battery.app.direct_api.DirectAPI.force_refresh_metadata', return_value=({}, None)), \
+                mock.patch('utilities.nfo_writer.refresh_show', return_value=''), \
+                mock.patch('utilities.plex_order_metadata.sync_show', return_value=''), \
+                mock.patch.object(self.oc, 'sync_plex_ordering', return_value=sync_note) as sync:
+            self.oc.apply_order_change('tt1', 'tvdb:alternate', sync_plex=True)
+        return [c.args[1] for c in sync.call_args_list]
+
+    def test_nfo_shows_leave_plex_ordering_to_the_nfo_hand_over(self):
+        # sync_show (plex_order_metadata.release_for_nfo) numbers an NFO show
+        # by TMDB; no TheTVDB ordering is set on it here
+        self.assertEqual(self._apply_plex(True, None, ''), [])
+        self.assertEqual(self._apply_plex(True, ['tvdbDvd'], "Plex episode ordering set to 'tvdbDvd'"), [])
+
+    def test_without_nfo_plex_ordering_is_left_as_before(self):
+        self.assertEqual(self._apply_plex(False, None, ''), [])
+        self.assertEqual(self._apply_plex(False, ['tvdbDvd'], "Plex doesn't offer this ordering"), [['tvdbDvd']])
+
+    def _apply_renamed(self, moves):
+        """apply_order_change in symlink mode; returns (result, calls in order)."""
+        preview = {'success': True, 'conflicts': [], 'new_order': 'tvdb:dvd', 'current_order': 'default',
+                   'moves': moves, 'removes': [], 'unmappable': [], 'missing_episodes': 0, 'missing_positions': [],
+                   'plex_ordering': None, 'plex_note': None}
+        rows = [{'id': 7, 'location_on_disk': '/lib/TV Shows/Kai (2009)/Season 02/Kai - S02E01.mkv'},
+                {'id': 8, 'location_on_disk': '/lib/TV Shows/Kai (2009)/Season 03/Kai - S03E01.mkv'},
+                {'id': 9, 'location_on_disk': '/lib/TV Shows/Other (2001)/Season 01/Other - S01E01.mkv'}]
+        calls = mock.MagicMock()
+        calls.scan.return_value = {'paths_scanned': ['/lib/TV Shows/Kai (2009)'], 'scan_finished': True}
+        calls.resync.return_value = {'symlinks_updated_count': 2}
+        calls.nfo.return_value = ''
+        calls.sync.return_value = ''
+        settings = {('File Management', 'file_collection_management'): 'Symlinked/Local',
+                    ('File Management', 'symlinked_files_path'): '/lib'}
+        with mock.patch.object(self.oc, 'preview_order_change', return_value=preview), \
+                mock.patch.object(self.oc, '_apply_rows'), \
+                mock.patch.object(self.oc, '_reset_battery_seasons'), \
+                mock.patch.object(self.oc, '_show_rows', return_value=rows), \
+                mock.patch.object(self.oc, '_nfo_mode', return_value=False), \
+                mock.patch.object(self.oc, 'get_setting', side_effect=lambda s, k, d=None: settings.get((s, k), d)), \
+                mock.patch('utilities.nfo_writer.get_setting', side_effect=lambda s, k, d=None: settings.get((s, k), d)), \
+                mock.patch('database.show_overrides.set_show_override'), \
+                mock.patch('cli_battery.app.direct_api.DirectAPI.force_refresh_metadata', return_value=({}, None)), \
+                mock.patch('utilities.local_library_scan.resync_symlinks_with_new_settings', calls.resync), \
+                mock.patch('utilities.plex_functions.scan_and_empty_plex_trash', calls.scan), \
+                mock.patch('utilities.nfo_writer.refresh_show', calls.nfo), \
+                mock.patch('utilities.plex_order_metadata.sync_show', calls.sync):
+            result = self.oc.apply_order_change('tt1409055', 'tvdb:dvd', sync_plex=True)
+        return result, calls
+
+    def test_renamed_symlinks_scanned_before_plex_rereads_the_show(self):
+        # The media server doesn't scan by itself (Plex's default): without a
+        # scan it kept the old file names and the episodes showed unavailable
+        result, calls = self._apply_renamed([{'id': 7, 'has_file': True}, {'id': 8, 'has_file': True},
+                                             {'id': 3, 'has_file': False}])
+        calls.scan.assert_called_once_with(paths=['/lib/TV Shows/Kai (2009)'], section_type='show',
+                                           empty_trash=False, wait_s=self.oc.SCAN_WAIT_SECONDS)
+        order = [c[0] for c in calls.mock_calls if c[0] in ('resync', 'nfo', 'scan', 'sync')]
+        self.assertEqual(order, ['resync', 'nfo', 'scan', 'sync'])
+        self.assertIn('media server scanned', result['symlink_note'])
+
+    def test_no_scan_without_renamed_files(self):
+        _result, calls = self._apply_renamed([{'id': 3, 'has_file': False}])
+        calls.scan.assert_not_called()
+
     def test_same_order_rejected(self):
         self.assertFalse(self._preview([], order='tvdb:dvd', current='tvdb:dvd')['success'])
         self.assertFalse(self._preview([], order='tvdb:official')['success'])
 
-    def test_order_without_plex_equivalent(self):
-        self.assertIsNone(self.oc._plex_ordering_for('tmdb_group:abc'))
+    def test_plex_ordering_candidates(self):
+        # Plex lists a show's TMDB episode groups as orderings ("tmdbGroup-<id>")
+        self.assertEqual(self.oc._plex_ordering_for('tmdb_group:abc'), ['tmdbGroup-abc'])
         self.assertEqual(self.oc._plex_ordering_for('tvdb:absolute'), ['tvdbAbsolute', 'absolute'])
+        self.assertIsNone(self.oc._plex_ordering_for('tvdb:alternate'))
+        # Default order: TheTVDB aired while Plex offers it, then TMDB aired (after 2026-12-03)
+        with mock.patch('cli_battery.app.tvdb_client.is_available', return_value=True):
+            self.assertEqual(self.oc._plex_ordering_for('default'), ['tvdbAiring', 'aired', 'tmdbAiring'])
+
+    def test_tvdb_gone_from_plex_falls_back_to_tmdb_aired(self):
+        after_switch = mock.Mock(preferences=mock.Mock(return_value=[
+            mock.Mock(id='showOrdering', enumValues={'': 'Library default', 'tmdbAiring': 'TMDB'})]))
+        self.assertEqual(self.oc.plex_ordering_value(after_switch, ['tvdbAiring', 'aired', 'tmdbAiring']), 'tmdbAiring')
 
     def test_plex_value_follows_the_agent(self):
         def show(enum):

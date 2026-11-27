@@ -194,7 +194,7 @@ func (r *File) segment(ctx context.Context, prio nntp.Priority, idx int) ([]byte
 		offOK := meta.Offset == wantOff || (meta.Offset == 0 && meta.PartSize == 0)
 		return offOK && int64(len(data)) == wantLen
 	}
-	return r.cache.DoCtx(ctx, seg.ID, prio, func(ctx context.Context) ([]byte, error) {
+	fetch := func(ctx context.Context) ([]byte, error) {
 		// A server whose copy doesn't fit is skipped for the next one.
 		data, meta, err := fetchBody(nntp.WithMissHint(ctx, &r.miss), r.fetch, prio, seg.ID, fits)
 		if errors.Is(err, nntp.ErrMismatch) {
@@ -210,7 +210,14 @@ func (r *File) segment(ctx context.Context, prio nntp.Priority, idx int) ([]byte
 					ErrLayout, meta.Offset, len(data), wantOff, wantLen)}
 		}
 		return data, nil
-	})
+	}
+	data, err := r.cache.DoCtx(ctx, seg.ID, prio, fetch)
+	// A cache hit or joined fetch can come from a different layout. Check
+	// providers for a fitting copy before treating the segment as bad.
+	if err == nil && int64(len(data)) != wantLen {
+		return fetch(ctx)
+	}
+	return data, err
 }
 
 // startReadAhead prefetches the next n segments in the background, until

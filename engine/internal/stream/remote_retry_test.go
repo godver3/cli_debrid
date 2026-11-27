@@ -77,6 +77,7 @@ func TestRemoteStalledResponseIsRetried(t *testing.T) {
 	release := make(chan struct{})
 	cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if reqs.Add(1) == 1 {
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes 0-%d/%d", len(file)-1, len(file)))
 			w.Header().Set("Content-Length", fmt.Sprint(len(file)))
 			w.WriteHeader(http.StatusPartialContent)
 			w.(http.Flusher).Flush()

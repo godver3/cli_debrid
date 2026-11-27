@@ -38,6 +38,7 @@
 
 {% block scripts %}
 <script>
+    function _tsEsc(v) { return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 const INITIAL_SHOW_COUNT = 10;
 let isExpanded = false;
 let allCompletedDownloads = [];
@@ -81,8 +82,8 @@ function updateTorrentStatus() {
                             const item = document.createElement('div');
                             item.className = 'download-item';
                             item.innerHTML = `
-                                <div class="download-name">${filename.replace('- ', '')}</div>
-                                <div class="download-progress">${progressInfo.trim()}</div>
+                                <div class="download-name">${_tsEsc(filename.replace('- ', ''))}</div>
+                                <div class="download-progress">${_tsEsc(progressInfo.trim())}</div>
                             `;
                             activeContent.appendChild(item);
                         }
@@ -116,7 +117,7 @@ function updateTorrentStatus() {
                         const item = document.createElement('div');
                         item.className = `download-item ${index >= displayCount ? 'hidden-item' : ''}`;
                         item.innerHTML = `
-                            <div class="download-name">${download.name}</div>
+                            <div class="download-name">${_tsEsc(download.name)}</div>
                         `;
                         completedContent.appendChild(item);
                     });

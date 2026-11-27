@@ -117,6 +117,15 @@ func dial(ctx context.Context, p Provider) (*conn, error) {
 
 func (c *conn) close() { _ = c.nc.Close() }
 
+// abort closes the transport immediately, without a TLS close notification.
+func (c *conn) abort() {
+	if nc, ok := c.nc.(*tls.Conn); ok {
+		_ = nc.NetConn().Close()
+		return
+	}
+	c.close()
+}
+
 func (c *conn) deadline() { _ = c.nc.SetDeadline(time.Now().Add(c.provider.timeout())) }
 
 func (c *conn) send(cmd string) error {

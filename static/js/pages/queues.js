@@ -115,59 +115,6 @@ function updateFilenameVisibility() {
     });
 }
 
-// Optimized consolidation with better performance
-function generateConsolidatedItems(items, queueName) {
-    const consolidatedMap = new Map();
-    
-    // Use for loop for better performance with large arrays
-    for (let i = 0; i < items.length; i++) {
-        const item = items[i];
-        const key = `${item.title}_${item.year}`;
-        
-        if (!consolidatedMap.has(key)) {
-            consolidatedMap.set(key, {
-                title: item.title,
-                year: item.year,
-                versions: new Set([item.version]),
-                seasons: new Set(),
-                release_date: item.release_date,
-                physical_release_date: item.physical_release_date,
-                scraping_versions: item.scraping_versions,
-                version: item.version
-            });
-        } else {
-            consolidatedMap.get(key).versions.add(item.version);
-        }
-        
-        if (item.type === 'episode') {
-            consolidatedMap.get(key).seasons.add(item.season_number);
-        }
-    }
-
-    // Build HTML in chunks for better performance
-    const htmlChunks = [];
-    consolidatedMap.forEach(item => {
-        let releaseInfo = item.release_date;
-        
-        // Check if version requires physical release using the new backend flag
-        const require_physical = item.require_physical_release || false;
-        
-        if (require_physical) {
-            releaseInfo += ` <span class="physical-release">(Physical: ${item.physical_release_date || 'Unknown'})</span>`;
-        }
-        
-        htmlChunks.push(`
-            <div class="item">
-                ${item.title} (${item.year}) - Version(s): ${Array.from(item.versions).join(', ')}
-                ${item.seasons.size > 0 ? ` - Season(s): ${Array.from(item.seasons).join(', ')}` : ''}
-                ${queueName === 'Unreleased' ? ` - Release Date: ${releaseInfo}` : ''}
-            </div>
-        `);
-    });
-    
-    return htmlChunks.join('');
-}
-
 function generateQueueContent(queueName, items) {
     // For count-only queues, return empty content since we only show the count
     if (queueName === 'Blacklisted' || queueName === 'Unreleased' || queueName === 'Collected') {
@@ -295,11 +242,11 @@ function generateSingleItem(item, queueName) {
 
     let itemContent = `
         <div class="item ${processingClass} ${forcePriorityClass}" onclick="copyItemToClipboard(this, event)">
-            <span class="item-title">${item.title || 'Unknown Title'} (${item.year || 'Unknown Year'})${seasonEpisode}</span><span class="item-separator"> - </span><span class="item-version"><span class="item-label">Version:</span> ${item.version || 'Unknown'}</span>${formattedReleaseInfo}
+            <span class="item-title">${escapeHtml(item.title || 'Unknown Title')} (${item.year || 'Unknown Year'})${seasonEpisode}</span><span class="item-separator"> - </span><span class="item-version"><span class="item-label">Version:</span> ${item.version || 'Unknown'}</span>${formattedReleaseInfo}
     `;
 
     if (queueName === 'Checking' && item.filled_by_file) {
-        itemContent += ` <span class="filename-content" style="display: ${filenameToggleState ? 'inline' : 'none'}">- Checking: ${item.filled_by_file}</span>`;
+        itemContent += ` <span class="filename-content" style="display: ${filenameToggleState ? 'inline' : 'none'}">- Checking: ${escapeHtml(item.filled_by_file)}</span>`;
     }
 
     if (queueName === 'Upgrading') {
@@ -315,7 +262,7 @@ function generateSingleItem(item, queueName) {
         if (item.time_added) {
             formattedTime = formatDateTimeToYMD_HMS(item.time_added);
         }
-        itemContent += `<span class="item-separator"> - </span><span class="item-time"><span class="item-label">Time Added:</span> ${formattedTime}</span><span class="item-separator"> - </span><span class="item-magnet"><span class="item-label">Magnet Link:</span> ${item.filled_by_magnet || 'Unknown'}</span>`;
+        itemContent += `<span class="item-separator"> - </span><span class="item-time"><span class="item-label">Time Added:</span> ${formattedTime}</span><span class="item-separator"> - </span><span class="item-magnet"><span class="item-label">Magnet Link:</span> ${escapeHtml(item.filled_by_magnet || 'Unknown')}</span>`;
     }
 
     if (queueName === 'Sleeping') {
@@ -353,12 +300,16 @@ function generateSingleItem(item, queueName) {
     
     // Add Content Source inline for Wanted, Scraping, Adding, Pre-Release, Checking
     if (['Wanted', 'Scraping', 'Adding', 'Pre_release', 'Checking'].includes(queueName) && item.content_source && item.content_source !== 'Unknown') {
-        itemContent += `<span class="item-separator"> - </span><span class="item-source" style="font-size: smaller; font-style: italic;"><span class="item-label">Content Source:</span> ${item.content_source_display || item.content_source}</span>`;
+        itemContent += `<span class="item-separator"> - </span><span class="item-source" style="font-size: smaller; font-style: italic;"><span class="item-label">Content Source:</span> ${escapeHtml(item.content_source_display || item.content_source)}</span>`;
     }
     // Add Provider for Adding queue
     if (queueName === 'Adding' && item.provider_display) {
         const providerLabel = (item.filled_by_torrent_id && item.filled_by_torrent_id.startsWith('nzb:')) ? 'Indexer:' : 'Provider:';
-        itemContent += `<span class="item-separator"> - </span><span class="item-source" style="font-size: smaller; font-style: italic;"><span class="item-label">${providerLabel}</span> ${item.provider_display}</span>`;
+        itemContent += `<span class="item-separator"> - </span><span class="item-source" style="font-size: smaller; font-style: italic;"><span class="item-label">${providerLabel}</span> ${escapeHtml(item.provider_display)}</span>`;
+    }
+    // Adding item parked because its NZB indexer is refusing downloads
+    if (queueName === 'Adding' && item.waiting_note) {
+        itemContent += `<span class="item-separator"> - </span><span class="item-waiting"><i class="fas fa-hourglass-half"></i> <span class="item-label">Waiting:</span> ${escapeHtml(item.waiting_note)}</span>`;
     }
 
     itemContent += processingIndicator;
@@ -448,21 +399,21 @@ function generateCheckingItem(item, showProgress = true) {
 
     let itemContent = `
         <div class="item ${processingClass} ${forcePriorityClass}" onclick="copyItemToClipboard(this, event)">
-            <span class="item-title">${item.title || 'Unknown Title'} (${item.year || 'Unknown Year'})${seasonEpisode}</span><span class="item-separator"> - </span><span class="item-version"><span class="item-label">Version:</span> ${item.version || 'Unknown'}</span>
+            <span class="item-title">${escapeHtml(item.title || 'Unknown Title')} (${item.year || 'Unknown Year'})${seasonEpisode}</span><span class="item-separator"> - </span><span class="item-version"><span class="item-label">Version:</span> ${item.version || 'Unknown'}</span>
     `;
 
     if (item.filled_by_file) {
-        itemContent += `<span class="filename-content" style="display: ${filenameToggleState ? 'inline' : 'none'}"><span class="item-separator"> - </span><span class="item-label">File:</span> <span class="item-checking-file">${item.filled_by_file}</span></span>`;
+        itemContent += `<span class="filename-content" style="display: ${filenameToggleState ? 'inline' : 'none'}"><span class="item-separator"> - </span><span class="item-label">File:</span> <span class="item-checking-file">${escapeHtml(item.filled_by_file)}</span></span>`;
     }
 
     // Add Content Source inline for Checking queue items
     if (item.content_source && item.content_source !== 'Unknown') {
-        itemContent += `<span class="item-separator"> - </span><span class="item-source" style="font-size: smaller; font-style: italic;"><span class="item-label">Content Source:</span> ${item.content_source_display || item.content_source}</span>`;
+        itemContent += `<span class="item-separator"> - </span><span class="item-source" style="font-size: smaller; font-style: italic;"><span class="item-label">Content Source:</span> ${escapeHtml(item.content_source_display || item.content_source)}</span>`;
     }
     // Add Provider for Checking queue
     if (item.provider_display) {
         const providerLabel = (item.filled_by_torrent_id && item.filled_by_torrent_id.startsWith('nzb:')) ? 'Indexer:' : 'Provider:';
-        itemContent += `<span class="item-separator"> - </span><span class="item-source" style="font-size: smaller; font-style: italic;"><span class="item-label">${providerLabel}</span> ${item.provider_display}</span>`;
+        itemContent += `<span class="item-separator"> - </span><span class="item-source" style="font-size: smaller; font-style: italic;"><span class="item-label">${providerLabel}</span> ${escapeHtml(item.provider_display)}</span>`;
     }
 
     // Time in queue
@@ -962,13 +913,6 @@ function showConnectionStatus(message, type = 'reconnecting', duration = 3000) {
     }
 }
 
-function hideConnectionStatus() {
-    const statusEl = document.getElementById('connection-status');
-    if (statusEl) {
-        statusEl.classList.remove('show');
-    }
-}
-
 function showError(message) {
     const errorDiv = document.createElement('div');
     errorDiv.className = 'alert alert-danger';
@@ -993,20 +937,6 @@ function escapeHtml(unsafe) {
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#039;");
-}
-
-function increasePageSize() {
-    // Increase page size and reload the stream for the current session
-    currentPageSize += 50; // Increase by 50
-    
-    // Add a loading indicator to the button
-    const showMoreButton = document.querySelector('.show-more-container button');
-    if (showMoreButton) {
-        showMoreButton.disabled = true;
-        showMoreButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading...';
-    }
-    
-    setupQueueStream();
 }
 
 function copyItemToClipboard(element, event) {

@@ -30,6 +30,8 @@ _RETRY_AFTER_MIN = 60
 _RETRY_AFTER_MAX = 60 * 60
 
 _until: dict = {}
+# Indexer key -> short reason for the Queue page ("out of downloads").
+_why: dict = {}
 _lock = Lock()
 
 # Newznab reports errors as <error code="..." description="..."/>, often with HTTP 200.
@@ -117,7 +119,15 @@ def classify_refusal(status_code: int, headers: Optional[Mapping], body: str) ->
     return None
 
 
-def record_indexer_limit(url: str, seconds: int = COOLDOWN_SECONDS) -> None:
+def refusal_why(status_code: int, body: str) -> str:
+    """Short reason for a refusal classify_refusal() put on cooldown."""
+    body = (body or '')[:2000]
+    if status_code == 503 and not _newznab_error_is_limit(body) and not _LIMIT_PHRASE_RE.search(body):
+        return 'unavailable (HTTP 503)'
+    return 'out of downloads'
+
+
+def record_indexer_limit(url: str, seconds: int = COOLDOWN_SECONDS, why: str = 'out of downloads') -> None:
     """Put the indexer serving this NZB URL on cooldown for `seconds`."""
     key = _indexer_key(url)
     if key:
@@ -126,6 +136,7 @@ def record_indexer_limit(url: str, seconds: int = COOLDOWN_SECONDS) -> None:
             # A longer cooldown already in place (e.g. a limit) is never shortened.
             if until > _until.get(key, 0):
                 _until[key] = until
+                _why[key] = why
 
 
 def cooldown_reason(url: str) -> Optional[str]:
@@ -142,6 +153,24 @@ def cooldown_reason(url: str) -> Optional[str]:
             del _until[key]
             return None
     return f'indexer {key} is refusing downloads (cooling down, {max(1, int(remaining // 60))} min left)'
+
+
+def cooldown_remaining(url: str) -> float:
+    """Seconds until this URL's indexer cooldown ends; 0 when it is not cooling down."""
+    key = _indexer_key(url)
+    with _lock:
+        until = _until.get(key)
+    return max(0.0, until - time.monotonic()) if until is not None else 0.0
+
+
+def cooldown_why(url: str) -> Optional[str]:
+    """The recorded reason while this URL's indexer is cooling down, else None."""
+    key = _indexer_key(url)
+    with _lock:
+        until = _until.get(key)
+        if until is None or until <= time.monotonic():
+            return None
+        return _why.get(key, 'refusing downloads')
 
 
 _skip_logged: dict = {}
@@ -170,4 +199,5 @@ def reset_fetch_cooldowns() -> None:
     """Test/debug helper: clear all cooldowns."""
     with _lock:
         _until.clear()
+        _why.clear()
         _skip_logged.clear()

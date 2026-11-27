@@ -277,16 +277,6 @@ async function resetFailedStats(e) {
     } catch (_) {}
 }
 
-// Load movies
-function _posterSrc(item) {
-    // Applied items with a Plex key use the proxy route (disk-cached server-side).
-    // Non-applied items fall back to TMDB poster path or placeholder.
-    if (item.overlay_status === 'applied' && item.ms_item_id) {
-        return `/api/overlays/poster_applied/${encodeURIComponent(item.ms_item_id)}`;
-    }
-    return item.poster_path ? `/scraper/tmdb_image/w185${item.poster_path}` : '/static/images/placeholder.png';
-}
-
 function _posterAttrs(item, mediaType) {
     // Applied poster: lazy-load via IntersectionObserver to avoid firing hundreds
     // of simultaneous requests when the grid first renders.
@@ -384,18 +374,18 @@ function _observePlexPosters(grid) {
 
 function _renderMovieCard(item) {
     const failReason = item.overlay_status === 'failed' && item.overlay_reason
-        ? `<div class="overlay-fail-reason">${item.overlay_reason}</div>` : '';
+        ? `<div class="overlay-fail-reason">${_escHtml(item.overlay_reason)}</div>` : '';
     const pickerBtn = item.ms_item_id
         ? `<button class="card-poster-btn" title="Choose poster" onclick="event.stopPropagation(); openPosterPicker(${item.id})">&#9998;</button>` : '';
     return `<div class="media-card" data-item-id="${item.id}" data-status="${item.overlay_status}" onclick="toggleSelect(this)">
-        <img class="media-poster" ${_posterAttrs(item, 'movie')} alt="${item.title}">
+        <img class="media-poster" ${_posterAttrs(item, 'movie')} alt="${_escHtml(item.title)}">
         <div class="overlay-status status-${item.overlay_status}">${item.overlay_status.replace('_', ' ')}</div>
         ${failReason}
         <button class="card-regen-btn" title="Regenerate overlay using current library poster" onclick="event.stopPropagation(); regenerateSingleOverlay(${item.id}, this)">↻</button>
         ${pickerBtn}
         ${item.version_count > 1 ? `<div class="card-version-badge" title="${item.version_count} versions in library">${item.version_count} versions</div>` : ''}
         <div class="media-info">
-            <div class="media-title">${item.title}</div>
+            <div class="media-title">${_escHtml(item.title)}</div>
             <div class="media-year">${item.year || 'Unknown'}</div>
         </div>
     </div>`;
@@ -404,28 +394,26 @@ function _renderMovieCard(item) {
 function _seasonsBadge(item) {
     const nums = item.seasons_unprocessed;
     if (!nums || !nums.length) return '';
-    const safeKey = (item.ms_item_id || '').replace(/'/g, "\\'");
-    const safeTitle = (item.title || '').replace(/'/g, "\\'");
     const labels = nums.map(n => n === 0 ? 'S0' : `S${n}`);
     const text = labels.length <= 4 ? labels.join(' · ') : labels.slice(0, 3).join(' · ') + ` +${labels.length - 3}`;
     const tooltip = `Unprocessed seasons: ${labels.join(', ')} — click to manage`;
-    return `<div class="card-seasons-unprocessed" title="${tooltip}" onclick="event.stopPropagation(); openSeasonsModal('${safeKey}', '${safeTitle}')">${text} unprocessed</div>`;
+    return `<div class="card-seasons-unprocessed" title="${tooltip}" onclick="event.stopPropagation(); openSeasonsModal(${_escHtml(JSON.stringify(item.ms_item_id || ''))}, ${_escHtml(JSON.stringify(item.title || ''))})">${text} unprocessed</div>`;
 }
 
 function _renderShowCard(item) {
     const failReason = item.overlay_status === 'failed' && item.overlay_reason
-        ? `<div class="overlay-fail-reason">${item.overlay_reason}</div>` : '';
+        ? `<div class="overlay-fail-reason">${_escHtml(item.overlay_reason)}</div>` : '';
     const pickerBtn = item.ms_item_id
         ? `<button class="card-poster-btn" title="Choose poster" onclick="event.stopPropagation(); openPosterPicker(${item.id})">&#9998;</button>` : '';
     return `<div class="media-card" data-item-id="${item.id}" data-status="${item.overlay_status}" onclick="toggleSelect(this)">
-        <img class="media-poster" ${_posterAttrs(item, 'show')} alt="${item.title}">
+        <img class="media-poster" ${_posterAttrs(item, 'show')} alt="${_escHtml(item.title)}">
         <div class="overlay-status status-${item.overlay_status}">${item.overlay_status.replace('_', ' ')}</div>
         ${failReason}
         <button class="card-regen-btn" title="Regenerate overlay using current library poster" onclick="event.stopPropagation(); regenerateSingleOverlay(${item.id}, this)">↻</button>
         ${pickerBtn}
-        ${item.ms_item_id ? `<button class="card-seasons-btn" title="Manage season poster overlays" onclick="event.stopPropagation(); openSeasonsModal('${item.ms_item_id}', '${(item.title||'').replace(/'/g,"\\'")}')">Seasons</button>` : ''}
+        ${item.ms_item_id ? `<button class="card-seasons-btn" title="Manage season poster overlays" onclick="event.stopPropagation(); openSeasonsModal(${_escHtml(JSON.stringify(item.ms_item_id || ''))}, ${_escHtml(JSON.stringify(item.title || ''))})">Seasons</button>` : ''}
         <div class="media-info">
-            <div class="media-title">${item.title}</div>
+            <div class="media-title">${_escHtml(item.title)}</div>
             <div class="media-year">${item.year || 'Unknown'}${item.collected_episodes != null ? ` · ${item.collected_episodes}/${item.total_episodes} eps` : ''}</div>
             ${_seasonsBadge(item)}
         </div>
@@ -524,7 +512,7 @@ async function loadTemplates() {
 
         if (data.success) {
             const options = data.layouts.map(t =>
-                `<option value="${t.id}">${t.name} (${t.media_type})</option>`
+                `<option value="${t.id}">${_escHtml(t.name)} (${t.media_type})</option>`
             ).join('');
 
             movieSelector.innerHTML = '<option value="">Select Layout...</option>' + options;
@@ -535,7 +523,7 @@ async function loadTemplates() {
             list.innerHTML = data.layouts.map(t => `
                 <div class="layout-card${t.is_default ? ' active-layout' : ''}">
                     <div class="layout-card-hdr">
-                        <span class="layout-name">${t.name}</span>
+                        <span class="layout-name">${_escHtml(t.name)}</span>
                         ${t.is_system ? '<span class="layout-badge badge-default">Default</span>' : ''}
                         ${t.is_default ? '<span class="layout-badge badge-active">Active</span>' : '<span class="layout-badge badge-inactive">Inactive</span>'}
                     </div>
@@ -1287,49 +1275,6 @@ async function regenerateLibrary(scope) {
     });
 }
 
-async function regenerateAll(mediaType) {
-    const templateSelector = document.getElementById(`${mediaType === 'movie' ? 'movies' : 'shows'}-layout-selector`);
-    const layoutId = templateSelector.value ? parseInt(templateSelector.value) : null;
-
-    showPopup({
-        type: 'confirm',
-        title: 'Regenerate All Overlays',
-        message: `Regenerate ALL overlays for ${mediaType === 'movie' ? 'movies' : 'TV shows'}? This will overwrite existing overlays.`,
-        confirmText: 'Regenerate',
-        cancelText: 'Cancel',
-        onConfirm: async function() {
-            _showProgress(`Regenerating ${mediaType === 'movie' ? 'movies' : 'TV shows'}…`, 'Starting job…');
-            try {
-                const response = await fetch('/api/overlays/generate/regenerate-all', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({media_type: mediaType, layout_id: layoutId, force: true})
-                });
-                const data = await response.json();
-                if (!data.success) {
-                    _hideProgress();
-                    showPopup({ type: 'error', title: 'Error', message: 'Failed to start: ' + (data.error || 'Unknown error'), autoClose: 5000 });
-                    return;
-                }
-                document.getElementById('task-progress-title').textContent = data.label || `Regenerating ${mediaType === 'movie' ? 'movies' : 'TV shows'}…`;
-                _pollUntilDone(
-                    '/api/overlays/generate/status',
-                    s => _updateProgressCounter(s.done, s.total, [s.failed > 0 ? `${s.failed} failed` : '', (s.current || '').substring(0, 40)].filter(Boolean).join(' · ')),
-                    s => {
-                        _hideProgress();
-                        showPopup({ type: 'success', title: 'Success', message: `Regenerated ${s.applied} overlay${s.applied !== 1 ? 's' : ''}${s.failed > 0 ? `, ${s.failed} failed` : ''}`, autoClose: 4000 });
-                        _refreshGrids(mediaType);
-                    }
-                );
-            } catch (error) {
-                _hideProgress();
-                console.error('Regenerate all failed:', error);
-                showPopup({ type: 'error', title: 'Error', message: 'Failed to start regeneration', autoClose: 5000 });
-            }
-        }
-    });
-}
-
 // Load badge stats for the Badges tab preview
 async function loadBadgeStats() {
     try {
@@ -1420,7 +1365,7 @@ function _formatActivityFailures(stats) {
 }
 
 function _escHtml(s) {
-    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
 function _formatActivityDate(ts) {
@@ -1524,7 +1469,7 @@ async function loadActivity(reset) {
             pagination.style.display = 'none';
         }
     } catch (err) {
-        container.innerHTML = `<p style="color:#dc3545;">Failed to load activity: ${err.message}</p>`;
+        container.innerHTML = `<p style="color:#dc3545;">Failed to load activity: ${_escHtml(err.message)}</p>`;
         console.error('Activity load error:', err);
     }
 }
@@ -1674,7 +1619,7 @@ async function _loadSeasonsIntoModal() {
         const data = await resp.json();
 
         if (!data.success) {
-            body.innerHTML = `<p style="color:#dc3545">Error: ${data.error || 'Unknown error'}</p>`;
+            body.innerHTML = `<p style="color:#dc3545">Error: ${_escHtml(data.error || 'Unknown error')}</p>`;
             return;
         }
         if (!data.seasons || data.seasons.length === 0) {
@@ -1704,9 +1649,9 @@ function _renderSeasonsModal() {
             <img class="season-thumb"
                  src="${thumbUrl}"
                  onerror="this.src='/static/images/placeholder.png'"
-                 alt="${s.title}">
+                 alt="${_escHtml(s.title)}">
             <div class="season-info">
-                <div class="season-title">${s.title}</div>
+                <div class="season-title">${_escHtml(s.title)}</div>
                 <span class="season-status-badge overlay-status ${statusClass}">${displayStatus}</span>
             </div>
             <div class="season-actions">
@@ -1826,7 +1771,7 @@ async function generateAllSeasons() {
     showPopup({
         type: 'confirm',
         title: 'Generate Season Overlays',
-        message: `Generate season poster overlays for all seasons of "${_seasonsShowTitle}"?`,
+        message: `Generate season poster overlays for all seasons of "${_escHtml(_seasonsShowTitle)}"?`,
         confirmText: 'Generate',
         cancelText: 'Cancel',
         onConfirm: async function() {
@@ -1838,40 +1783,6 @@ async function generateAllSeasons() {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({layout_id: layoutId, force: false})
-                });
-                const data = await resp.json();
-                if (data.success) {
-                    showPopup({ type: 'success', title: 'Success', message: `Applied: ${data.applied}, Skipped: ${data.skipped}, Failed: ${data.failed}`, autoClose: 4000 });
-                    await _loadSeasonsIntoModal();
-                } else {
-                    showPopup({ type: 'error', title: 'Error', message: 'Failed: ' + (data.error || 'Unknown error'), autoClose: 5000 });
-                }
-            } catch (e) {
-                showPopup({ type: 'error', title: 'Error', message: 'Request failed: ' + e, autoClose: 5000 });
-            } finally {
-                btn.textContent = orig; btn.disabled = false;
-            }
-        }
-    });
-}
-
-async function regenerateAllSeasons() {
-    if (!_seasonsShowKey) return;
-    showPopup({
-        type: 'confirm',
-        title: 'Regenerate All Season Overlays',
-        message: `Regenerate ALL season poster overlays for "${_seasonsShowTitle}"? This will overwrite existing season overlays.`,
-        confirmText: 'Regenerate',
-        cancelText: 'Cancel',
-        onConfirm: async function() {
-            const layoutId = _getSeasonsLayoutId();
-            const btn = document.querySelector('#seasons-modal-controls .btn-warning');
-            const orig = btn.textContent; btn.disabled = true; btn.textContent = '…';
-            try {
-                const resp = await fetch(`/api/overlays/seasons/${_seasonsShowKey}/generate`, {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({layout_id: layoutId, force: true})
                 });
                 const data = await resp.json();
                 if (data.success) {

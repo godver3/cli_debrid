@@ -4,6 +4,7 @@ Orchestrates the process of adding content and managing queue state.
 """
 
 import logging
+import os
 import json
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timedelta
@@ -12,10 +13,16 @@ import time # Add time import
 from debrid import get_debrid_provider
 from utilities.settings import get_setting
 from utilities.log_context import logs_for_item
-from .torrent_processor import TorrentProcessor
+from .torrent_processor import (
+    TorrentProcessor,
+    NZB_COOLDOWN_WAIT_KEY,
+    NZB_COOLDOWN_NOTES_KEY,
+    NZB_ATTEMPT_MADE_KEY,
+)
 from .media_matcher import MediaMatcher
 from database.torrent_tracking import update_adding_error
 from database.scraper_grabs import record_grab, mark_current_grab, queue_grab_trigger
+from debrid.common import resolve_torrent_title
 
 
 def accepts_uncached_now(item: Dict[str, Any], item_identifier: str) -> bool:
@@ -259,15 +266,71 @@ def partition_adding_items(items, downloading_job_ids=None, upgrade_locks=None, 
             else:
                 nzb_awaiting += 1
             continue
+        if item_parked_for_cooldown(item_id):
+            continue
         actionable.append(item)
     return actionable, nzb_awaiting, nzb_downloading, upgrade_locked
+
+
+# item id -> time.monotonic() when an item whose only usable results are NZBs from
+# a cooling-down indexer is worth processing again. In memory only: after a restart
+# the item is simply tried once and parks itself again.
+_cooldown_wake: Dict[Any, float] = {}
+# item id -> {indexer name: reason} for the Queue page.
+_cooldown_notes: Dict[Any, Dict[str, str]] = {}
+
+
+def park_for_indexer_cooldown(item_id, wait_seconds: float, notes: Optional[Dict[str, str]] = None) -> None:
+    _cooldown_notes[item_id] = dict(notes or {})
+    _cooldown_wake[item_id] = time.monotonic() + max(1.0, float(wait_seconds))
+
+
+def unpark_item(item_id) -> None:
+    _cooldown_wake.pop(item_id, None)
+    _cooldown_notes.pop(item_id, None)
+
+
+def cooldown_note(item_id) -> Optional[str]:
+    """'NinjaCentral out of downloads, retrying in 23 min' while the item is parked, else None.
+
+    Read-only: the Queue page calls it from the web thread.
+    """
+    wake = _cooldown_wake.get(item_id)
+    if wake is None:
+        return None
+    remaining = wake - time.monotonic()
+    if remaining <= 0:
+        return None
+    notes = _cooldown_notes.get(item_id) or {}
+    if notes:
+        what = '; '.join(f'{name} {why}' for name, why in sorted(notes.items()))
+    else:
+        what = 'NZB indexer refusing downloads'
+    return f'{what}, retrying in {max(1, int(remaining // 60) + (1 if remaining % 60 else 0))} min'
+
+
+def item_parked_for_cooldown(item_id) -> bool:
+    """True while the item waits for its NZB indexer's cooldown to end."""
+    wake = _cooldown_wake.get(item_id)
+    if wake is None:
+        return False
+    if time.monotonic() >= wake:
+        # Scraping and Adding both ask; pop so neither trips on the other's delete.
+        _cooldown_wake.pop(item_id, None)
+        _cooldown_notes.pop(item_id, None)
+        return False
+    return True
 
 
 def adding_item_blocks_scraping(adding_item: Dict) -> bool:
     """True when an Adding row should defer Scraping for the same IMDb show.
 
     NZB-awaiting rows are owned by health check and must not freeze Scraping.
+    Rows waiting out an indexer cooldown aren't working on anything either: one
+    cooling-down indexer froze 43 episodes of Survivor for up to an hour.
     """
+    if item_parked_for_cooldown(adding_item.get('id')):
+        return False
     return not str(adding_item.get('filled_by_torrent_id', '')).startswith('nzb:')
 
 
@@ -354,6 +417,7 @@ class AddingQueue:
             self._nzb_submitted_ids -= removed
             for _rid in removed:
                 self._adding_ticks.pop(_rid, None)
+                unpark_item(_rid)
             # Clean up downloading set: remove job IDs no longer referenced by any remaining item
             _active_job_ids = {
                 str(item.get('filled_by_torrent_id', ''))[4:]
@@ -378,6 +442,7 @@ class AddingQueue:
             else:
                 logging.info(f"Adding item {item_id} to queue")
                 self.items.append(item)
+                unpark_item(item_id)
         else:
             logging.error("Attempted to add item without ID to queue")
         
@@ -387,6 +452,7 @@ class AddingQueue:
         if item_id:
             old_len = len(self.items)
             self.items = [i for i in self.items if i['id'] != item_id]
+            unpark_item(item_id)
             if len(self.items) < old_len:
                 logging.info(f"Removed item {item_id} from queue")
                 self._nzb_submitted_ids.discard(item_id)
@@ -572,6 +638,11 @@ class AddingQueue:
                     logging.debug(f"Skipping item {item_id} — in submitted set, awaiting health check")
                     silent_skips += 1
                     continue
+            if item_parked_for_cooldown(item_id):
+                # Only NZBs from a cooling-down indexer are left; nothing to retry
+                # (and no cache checks to repeat) until the cooldown ends.
+                silent_skips += 1
+                continue
             reached_handler += 1
             logging.info(f"Processing item {item_id}: {item_identifier}")
             processed_this_item = False # Flag for applying delay
@@ -623,21 +694,28 @@ class AddingQueue:
                 # --- Select Torrent (cached/uncached logic) ---
                 accept_uncached = accepts_uncached_now(item, item_identifier)
 
-                # Mark if this is an NZB item — one attempt per tick to keep queue flowing
-                _first_res = results[0] if results else {}
-                if isinstance(_first_res, dict) and (_first_res.get('protocol') == 'nzb' or _first_res.get('nzb_url')):
-                    _nzb_attempt_made = True
-
+                item.pop(NZB_COOLDOWN_WAIT_KEY, None)
+                item.pop(NZB_COOLDOWN_NOTES_KEY, None)
+                item.pop(NZB_ATTEMPT_MADE_KEY, None)
                 # Now returns torrent_info, magnet, and chosen_result_info
                 torrent_info, magnet, chosen_result_info = self._process_results_with_mode(
                     results, item_identifier, accept_uncached, item=item
                 )
+                # Only a real NZB submission attempt (not a cooldown deferral) counts
+                # for the one-NZB-per-tick cap and skipping Hybrid's uncached pass.
+                _nzb_attempt_made = bool(item.pop(NZB_ATTEMPT_MADE_KEY, False))
 
                 # Hybrid's second pass re-runs the same list with uncached allowed. An NZB
-                # result has no cached/uncached distinction, so after an NZB attempt that
-                # pass would only re-submit (and re-download) the same NZB this tick; the
-                # NZB path already tries one result per tick and the next one on the next.
+                # result has no cached/uncached distinction, so after a real NZB attempt
+                # that pass would only re-submit (and re-download) another NZB this tick;
+                # when NZBs were only deferred for indexer cooldown, still try uncached
+                # torrents in the same candidate list.
+                _has_torrent_candidates = any(
+                    not (r.get('protocol') == 'nzb' or r.get('nzb_url'))
+                    for r in results
+                )
                 if (not torrent_info and not magnet and not _nzb_attempt_made
+                        and _has_torrent_candidates
                         and get_setting('Scraping', 'hybrid_mode', True)): # Check hybrid setting explicitly
                     logging.info(f"No cached results found, trying uncached results (Hybrid Mode)")
                     accept_uncached = True # Now accept uncached
@@ -645,6 +723,12 @@ class AddingQueue:
                     torrent_info, magnet, chosen_result_info = self._process_results_with_mode(
                         results, item_identifier, accept_uncached=True, item=item
                     )
+                    _nzb_attempt_made = bool(item.pop(NZB_ATTEMPT_MADE_KEY, False))
+
+                # Read once, after both passes: the keys are scratch state and must not ride along
+                # on the item into later DB/state updates.
+                _cooldown_wait = item.pop(NZB_COOLDOWN_WAIT_KEY, None)
+                _cooldown_notes_found = item.pop(NZB_COOLDOWN_NOTES_KEY, None)
 
                 updated_item = get_media_item_by_id(item['id']) # Check state after processing
                 if updated_item and updated_item.get('state') == 'Pending Uncached':
@@ -681,6 +765,14 @@ class AddingQueue:
                         (r.get('protocol') == 'nzb' or r.get('nzb_url'))
                         for r in _remaining_sr
                     ) if _remaining_sr else False
+                    if _is_nzb_item and _cooldown_wait is not None:
+                        # Nothing failed: the NZB(s) are only held back by their indexer's
+                        # cooldown. Keep every result, don't touch state, and skip the item
+                        # (and let its siblings scrape) until the cooldown ends.
+                        park_for_indexer_cooldown(item_id, _cooldown_wait, _cooldown_notes_found)
+                        logging.info(f"[AddingQueue] {item_identifier}: {len(_remaining_sr)} NZB result(s) kept, "
+                                     f"indexer cooling down — next attempt in {int(_cooldown_wait // 60) + 1} min")
+                        continue
                     if _is_nzb_item:
                         logging.info(f"[AddingQueue] NZB attempt failed for {item_identifier}, {len(_remaining_sr)} result(s) remaining — retrying next tick")
                         # Rotate to end so other items aren't starved by one slow NZB
@@ -920,11 +1012,8 @@ class AddingQueue:
 
                 # --- Determine Torrent Title ---
                 # This will now use the parts (torrent_info.get('title'), chosen_result_info.get('title')) that have implicitly passed the filter
-                torrent_title = torrent_info.get('title') 
-                if not torrent_title and chosen_result_info: 
-                    torrent_title = chosen_result_info.get('title')
-                if not torrent_title: 
-                    torrent_title = "Unknown Torrent Title"
+                raw_torrent_title = torrent_info.get('title')
+                torrent_title = resolve_torrent_title(torrent_info, chosen_result_info)
 
 
                 # --- Apply XEM Mapping (Simplified - needs review for robustness) ---
@@ -947,7 +1036,7 @@ class AddingQueue:
                     continue
 
                 matched_file_basename = match_result[0] # Now contains basename
-                debrid_folder_name = torrent_info.get('debrid_folder_name') or torrent_title
+                debrid_folder_name = torrent_info.get('debrid_folder_name') or raw_torrent_title or torrent_title
                 logging.info(f"Best matching file (basename) for {item_identifier}: {matched_file_basename}")
 
 
@@ -958,7 +1047,8 @@ class AddingQueue:
                     from_queue="Adding",
                     title=torrent_title, # This title has now been effectively filtered
                     link=magnet,
-                    filled_by_file=matched_file_basename,
+                    filled_by_file=self._mount_file_name(torrent_info, parsed_torrent_files, matched_file_basename,
+                                                         item, xem_mapping),
                     torrent_id=torrent_info.get('id'),
                     debrid_folder_name=debrid_folder_name,
                     debrid_provider=torrent_info.get('_provider'),
@@ -1007,7 +1097,8 @@ class AddingQueue:
                                 from_queue=related_item_state,
                                 title=torrent_title,
                                 link=magnet,
-                                filled_by_file=related_file_basename, # Pass the basename
+                                filled_by_file=self._mount_file_name(torrent_info, parsed_torrent_files,
+                                                                     related_file_basename, related_item, xem_mapping),
                                 torrent_id=torrent_info.get('id'),
                                 debrid_folder_name=debrid_folder_name,
                                 # Same torrent as the primary item, so the same provider
@@ -1073,6 +1164,26 @@ class AddingQueue:
             # Cannot call _handle_failed_item reliably without queue_manager instance here
             logging.error(f"Cannot call _handle_failed_item from _process_results_with_mode directly.")
             return None, None, None # Return None for all three on error
+
+    def _mount_file_name(self, torrent_info: Dict, parsed_files: List[Dict], basename: str, item: Dict,
+                         xem_mapping=None) -> str:
+        """The name the built-in mount shows a matched file under. Files of
+        one torrent that share a base name (S01/01.mkv, S02/01.mkv) get
+        distinct flattened names there, so Checking must look for that one,
+        not the base name. Anything else keeps the base name."""
+        try:
+            same = [pf for pf in parsed_files if os.path.basename(pf['path']) == basename]
+            if len(same) < 2:
+                return basename
+            from utilities import mount_debrid
+            if not mount_debrid.engine_holds_debrid(get_setting):
+                return basename
+            for pf in same:
+                if self.media_matcher.find_best_match_from_parsed([pf], item, xem_mapping=xem_mapping):
+                    return mount_debrid.mount_file_name(torrent_info.get('files') or [], pf['path'])
+        except Exception as exc:
+            logging.debug(f"Could not work out the mount name of '{basename}': {exc}")
+        return basename
 
     @logs_for_item
     def _handle_failed_item(self, item: Dict, error: str, queue_manager: Any, *, is_nzb: bool = False):

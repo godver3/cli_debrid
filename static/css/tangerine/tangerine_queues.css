@@ -189,6 +189,12 @@ body.tangerine-theme .item-source {
     font-style: italic;
 }
 
+body.tangerine-theme .item-waiting {
+    color: #f87171;
+    font-size: 0.9em;
+    font-weight: 600;
+}
+
 body.tangerine-theme .item-release {
     color: #f59e0b;
     font-size: 0.9em;
@@ -555,7 +561,8 @@ body.tangerine-theme .queue-container > p::before {
     body.tangerine-theme .queue-items .item .item-time,
     body.tangerine-theme .queue-items .item .item-magnet,
     body.tangerine-theme .queue-items .item .item-scrape-time,
-    body.tangerine-theme .queue-items .item .item-source {
+    body.tangerine-theme .queue-items .item .item-source,
+    body.tangerine-theme .queue-items .item .item-waiting {
         display: block;
     }
 }

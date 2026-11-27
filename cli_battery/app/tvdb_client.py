@@ -7,6 +7,7 @@ Auth: POST /login with {"apikey": "..."} → bearer token (valid ~28 days).
 Rate limiting: No preemptive tracking; 429s handled with exponential backoff.
 """
 
+import re
 import time
 import threading
 from collections import defaultdict
@@ -15,6 +16,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlencode
 
 import requests
+
+from utilities.text_utils import has_non_latin_letter
 
 from .logger_config import logger
 from .database import (
@@ -397,6 +400,37 @@ def _aired_order_seasons(raw: dict) -> Dict[int, dict]:
     return seasons
 
 
+def _usable_english_season_title(title: Any) -> bool:
+    return (isinstance(title, str) and any(char.isalpha() for char in title)
+            and not has_non_latin_letter(title)
+            and not re.fullmatch(r'(?:season|series)(?:[ ._-]*[0-9]+)?', title.strip(), re.IGNORECASE))
+
+
+def _add_aired_season_titles(seasons: Optional[dict], raw: dict, only_season: Optional[int] = None) -> None:
+    if not seasons:
+        return
+    for number, season in _aired_order_seasons(raw).items():
+        if number not in seasons or (only_season is not None and number != only_season):
+            continue
+        if seasons[number].get('title'):
+            continue  # The English episode list already supplied a usable seasonName.
+        title = season.get('name')
+        languages = season.get('nameTranslations') or []
+        season_id = season.get('id')
+        if season_id and ('eng' in languages or (not languages and has_non_latin_letter(title))):
+            url = f"{TVDB_BASE_URL}/seasons/{season_id}/translations/eng"
+            resp = _make_request(url, max_retries=1)
+            if resp is not None and resp.status_code == 200:
+                try:
+                    translated_title = (resp.json().get('data') or {}).get('name')
+                except (ValueError, AttributeError):
+                    translated_title = None
+                if _usable_english_season_title(translated_title):
+                    title = translated_title
+        if title:
+            seasons[number]['title'] = title
+
+
 def _season_year(raw: dict, season_number: int) -> Optional[int]:
     """The season's own year, else the year its first episode aired."""
     season = _aired_order_seasons(raw).get(season_number) or {}
@@ -567,6 +601,7 @@ def _get_season_slice_show_data(imdb_id: str, series_id: int, season_number: int
     # season numbers, which aren't the series' ones.
     seasons = _fetch_episodes_paginated(series_id, airs_time, airs_timezone) \
         or _extract_seasons_from_extended(raw)
+    _add_aired_season_titles(seasons, raw, only_season=season_number)
     seasons = _single_season(seasons, season_number)
     if not seasons:
         return None
@@ -591,6 +626,7 @@ def _season_slice_seasons(imdb_id: str) -> Optional[dict]:
     airs_time, airs_timezone = _airs_info(raw)
     seasons = _fetch_episodes_paginated(series_id, airs_time, airs_timezone) \
         or _extract_seasons_from_extended(raw)
+    _add_aired_season_titles(seasons, raw, only_season=season_number)
     return _single_season(seasons, season_number)
 
 
@@ -1078,6 +1114,7 @@ def get_show_data(imdb_id: str) -> Optional[dict]:
         # Fallback to extended response (may have non-English titles)
         seasons = _extract_seasons_from_extended(raw, imdb_id)
     keep = narrowed_season(imdb_id, tvdb_id, raw)
+    _add_aired_season_titles(seasons, raw, only_season=keep)
     scoped = _single_season(seasons, keep) if keep else None
     if scoped:
         seasons = scoped
@@ -1167,7 +1204,6 @@ def _resolve_display_title(title: str, raw: dict, imdb_id: str, media_type: str)
     own independent ID-based fallback for that case, so this never risks a
     folder collision either way, only display/scraping accuracy.
     """
-    from utilities.text_utils import has_non_latin_letter
     if not title or not has_non_latin_letter(title):
         return title
 
@@ -1391,12 +1427,17 @@ def get_show_seasons_and_episodes(imdb_id: str, include_specials: bool = False) 
         if not tmdb_id:
             return result
         details = _tmdb_show_details(tmdb_id, tmdb_api_key) or {}
-        numbers = [s['season_number'] for s in details.get('seasons') or []
-                   if s.get('season_number') is not None and (include_specials or s['season_number'] >= 1)]
-        episodes = _fetch_tmdb_season_episodes(tmdb_id, numbers, tmdb_api_key)
+        season_titles = {s['season_number']: s.get('name') for s in details.get('seasons') or []
+                         if s.get('season_number') is not None and (include_specials or s['season_number'] >= 1)}
+        episodes = _fetch_tmdb_season_episodes(tmdb_id, list(season_titles), tmdb_api_key)
         if not episodes:
             return result
-        return {n: {'episode_count': len(eps), 'episodes': eps} for n, eps in episodes.items()}, 'tmdb'
+        seasons = {}
+        for number, eps in episodes.items():
+            seasons[number] = {'episode_count': len(eps), 'episodes': eps}
+            if season_titles.get(number):
+                seasons[number]['title'] = season_titles[number]
+        return seasons, 'tmdb'
 
     # Try extended endpoint first
     url = f"{TVDB_BASE_URL}/series/{tvdb_id}/extended?meta=episodes"
@@ -1430,8 +1471,8 @@ def get_show_seasons_and_episodes(imdb_id: str, include_specials: bool = False) 
     if not seasons:
         # Fallback to extended response (may have non-English titles)
         seasons = _extract_seasons_from_extended(raw, imdb_id)
-
     keep = narrowed_season(imdb_id, tvdb_id, raw)
+    _add_aired_season_titles(seasons, raw, only_season=keep)
     scoped = _single_season(seasons, keep) if keep else None
     if scoped:
         return scoped, 'tvdb'
@@ -1513,6 +1554,11 @@ def _fetch_episodes_paginated(tvdb_id: int, airs_time: str | None = None,
             'episode_count': len(ep_dict),
             'episodes': ep_dict,
         }
+        for ep in episodes:
+            title = ep.get('seasonName')
+            if _usable_english_season_title(title):
+                processed[sn]['title'] = title
+                break
 
     return processed if processed else None
 
@@ -2031,6 +2077,8 @@ def _fetch_tmdb_show_data(imdb_id: str, api_key: str) -> Optional[dict]:
                     'episode_count': s.get('episode_count', 0),
                     'episodes': {},
                 }
+                if s.get('name'):
+                    seasons[str(sn)]['title'] = s['name']
         episodes = _fetch_tmdb_season_episodes(tmdb_id, [s['number'] for s in seasons.values()], api_key)
         for sn, season_episodes in episodes.items():
             seasons[str(sn)]['episodes'] = season_episodes

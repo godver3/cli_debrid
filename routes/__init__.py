@@ -18,6 +18,7 @@ from .trakt_friends_routes import trakt_friends_bp
 from .debug_routes import debug_bp
 from .tool_pages_routes import tool_pages_bp
 from .subtitle_manager_routes import subtitle_manager_bp
+from .nfo_routes import nfo_bp
 from .trakt_routes import trakt_bp
 from .log_viewer_routes import logs_bp
 from .settings_routes import settings_bp
@@ -123,6 +124,7 @@ def register_blueprints(app):
         (debug_bp, '/debug'),
         (tool_pages_bp, ''),
         (subtitle_manager_bp, ''),
+        (nfo_bp, '/nfo'),
         (trakt_bp, '/trakt'),
         (logs_bp, '/logs'),
         (settings_bp, '/settings'),

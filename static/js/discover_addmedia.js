@@ -7,6 +7,16 @@
 (function() {
     'use strict';
 
+    // TMDB text and indexer release names: escape before innerHTML.
+    function _amEsc(v) {
+        return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    // Keep 0 (Specials) intact while normalizing null/undefined/'' to null.
+    function _amOptNum(v) {
+        return (v == null || v === '') ? null : v;
+    }
+
     function buildClassicSeasonResults(data, mediaData, allowSpecials) {
         mediaData.title = data.title || mediaData.title;
         mediaData.year = data.year || mediaData.year;
@@ -104,7 +114,7 @@
             if (data.error) {
                 console.error('Error loading season data:', data.error);
                 if (seasonResults) {
-                    seasonResults.innerHTML = `<div class="error">Error: ${data.error}</div>`;
+                    seasonResults.innerHTML = `<div class="error">Error: ${_amEsc(data.error)}</div>`;
                 }
                 return;
             }
@@ -182,7 +192,7 @@
         .catch(error => {
             console.error('Error loading media:', error);
             if (seasonResults) {
-                seasonResults.innerHTML = `<div class="error">Error: ${error.message || 'Failed to load media data'}</div>`;
+                seasonResults.innerHTML = `<div class="error">Error: ${_amEsc(error.message || 'Failed to load media data')}</div>`;
             }
         });
     });
@@ -315,13 +325,13 @@
 
         seasonInfo.innerHTML = `
             <div class="season-info-container">
-                <img src="/scraper/tmdb_image/w300${poster_path}" alt="${title} ${seasonLabel}" class="season-poster">
+                <img src="/scraper/tmdb_image/w300${poster_path}" alt="${_amEsc(title)} ${seasonLabel}" class="season-poster">
                 <div class="season-details">
                     <span class="show-rating">${(vote_average || 0).toFixed(1)}</span>
-                    <h2>${title} - ${seasonLabel}</h2>
+                    <h2>${_amEsc(title)} - ${seasonLabel}</h2>
                     <p>${genreString}</p>
                     <div class="season-overview">
-                        <p>${season_overview || show_overview}</p>
+                        <p>${_amEsc(season_overview || show_overview)}</p>
                     </div>
                 </div>
             </div>
@@ -337,7 +347,7 @@
         const seasonLabel = season_num === 0 ? 'Specials' : `Season ${season_num}`;
         seasonInfo.innerHTML = `
             <div class="season-info-text-only">
-                <h2>${title} - ${seasonLabel}</h2>
+                <h2>${_amEsc(title)} - ${seasonLabel}</h2>
             </div>
         `;
     }
@@ -361,7 +371,7 @@
             if (data.error) {
                 console.error('Error loading episodes:', data.error);
                 if (episodeResults) {
-                    episodeResults.innerHTML = `<div class="error">Error: ${data.error}</div>`;
+                    episodeResults.innerHTML = `<div class="error">Error: ${_amEsc(data.error)}</div>`;
                 }
                 return;
             }
@@ -378,7 +388,7 @@
         .catch(error => {
             console.error('Error fetching episodes:', error);
             if (episodeResults) {
-                episodeResults.innerHTML = `<div class="error">Error: ${error.message || 'Failed to load episodes'}</div>`;
+                episodeResults.innerHTML = `<div class="error">Error: ${_amEsc(error.message || 'Failed to load episodes')}</div>`;
             }
         });
     }
@@ -426,18 +436,18 @@
             const rating = ep.vote_average || 0;
 
             // Map API field names: episode_num, episode_title (not episode_number, name)
-            const episodeNumber = ep.episode_num || ep.episode_number || 0;
+            const episodeNumber = ep.episode_num ?? ep.episode_number ?? 0;
             const episodeTitle = ep.episode_title || ep.name || 'Untitled';
 
             episodeDiv.innerHTML = `
                 <button>
                     <span class="episode-rating">${rating.toFixed(1)}</span>
                     <img src="${imageSrc}"
-                        alt="${episodeTitle}"
+                        alt="${_amEsc(episodeTitle)}"
                         loading="${loadingAttr}"
                         class="${imageClass}">
                     <div class="episode-info">
-                        <h2 class="episode-title">${episodeNumber}. ${episodeTitle}</h2>
+                        <h2 class="episode-title">${episodeNumber}. ${_amEsc(episodeTitle)}</h2>
                         <p class="episode-sub">${date ? date.toLocaleDateString("en-US", options) : 'Air date unknown'}</p>
                     </div>
                 </button>
@@ -515,7 +525,7 @@
         const subEl = document.createElement('div');
         subEl.className = 'dialog-sub';
         const isTV = content.mediaType === 'tv';
-        subEl.innerHTML = `<i class="fa-solid fa-${isTV ? 'tv' : 'film'}"></i> ${content.title}${content.year ? ` (${content.year})` : ''}`;
+        subEl.innerHTML = `<i class="fa-solid fa-${isTV ? 'tv' : 'film'}"></i> ${_amEsc(content.title)}${content.year ? ` (${content.year})` : ''}`;
         versionRadios.appendChild(subEl);
 
         // Section label
@@ -580,7 +590,7 @@
         const subEl = document.createElement('div');
         subEl.className = 'dialog-sub';
         const isTV = content.mediaType === 'tv';
-        subEl.innerHTML = `<i class="fa-solid fa-${isTV ? 'tv' : 'film'}"></i> Requesting: ${content.title}${content.year ? ` (${content.year})` : ''}`;
+        subEl.innerHTML = `<i class="fa-solid fa-${isTV ? 'tv' : 'film'}"></i> Requesting: ${_amEsc(content.title)}${content.year ? ` (${content.year})` : ''}`;
         versionCheckboxes.appendChild(subEl);
 
         // Section label
@@ -761,8 +771,8 @@
         formData.append('title', title);
         formData.append('year', year);
         formData.append('media_type', mediaType);
-        if (season != null) formData.append('season', season);
-        if (episode != null) formData.append('episode', episode);
+        if (season != null && season !== '') formData.append('season', season);
+        if (episode != null && episode !== '') formData.append('episode', episode);
         formData.append('multi', multi);
         formData.append('version', version);
         formData.append('skip_cache_check', 'true');
@@ -977,14 +987,14 @@
                     torResDiv.className = 'torresult' + (isFilteredOut ? ' filtered-out-item' : '');
 
                     const bitrateDisplay = torrent.bitrate ? ` | ${(torrent.bitrate / 1000).toFixed(1)} Mbps` : '';
-                    const scoreDisplay = isFilteredOut ? (torrent.filter_reason || 'Filtered') : (torrent.score_breakdown?.total_score || 'N/A');
+                    const scoreDisplay = isFilteredOut ? _amEsc(torrent.filter_reason || 'Filtered') : (torrent.score_breakdown?.total_score || 'N/A');
 
                     torResDiv.innerHTML = `
                         <button ${isFilteredOut ? 'style="cursor:pointer; opacity:0.7;"' : ''}>
                             <div class="torresult-info">
-                                <p class="torresult-title">${torrent.title || torrent.original_title || 'N/A'}</p>
+                                <p class="torresult-title">${_amEsc(torrent.title || torrent.original_title || 'N/A')}</p>
                                 <p class="torresult-item">${(torrent.size || 0).toFixed(1)} GB${bitrateDisplay} | Score: ${scoreDisplay}</p>
-                                <p class="torresult-item">${torrent.source || 'N/A'}</p>
+                                <p class="torresult-item">${_amEsc(torrent.source || 'N/A')}</p>
                                 <span class="cache-status ${torrent.cached === 'Yes' ? 'cached' :
                                               torrent.cached === 'No' ? 'not-cached' :
                                               torrent.cached === 'Not Checked' ? 'not-checked' :
@@ -996,12 +1006,12 @@
                     torResDiv.onclick = function() {
                         const torrentData = {
                             title: title, year: year, version: version, media_type: mediaType,
-                            season: season || null, episode: episode || null, tmdb_id: mediaId,
+                            season: _amOptNum(season), episode: _amOptNum(episode), tmdb_id: mediaId,
                             genres: genre_ids, original_title: torrent.original_title
                         };
 
                         if (isFilteredOut) {
-                            const confirmationMessage = `This item was filtered for the following reason:\n\n'${torrent.filter_reason || 'No specific reason provided'}'.\n\nDo you want to add it anyway?`;
+                            const confirmationMessage = `This item was filtered for the following reason:\n\n'${_amEsc(torrent.filter_reason || 'No specific reason provided')}'.\n\nDo you want to add it anyway?`;
                             if (typeof showPopup === 'function') {
                                 showPopup({
                                     type: POPUP_TYPES.CONFIRM,
@@ -1058,14 +1068,14 @@
                 const torResDiv = document.createElement('div');
                 torResDiv.className = 'torresult' + (isFilteredOut ? ' filtered-out-item' : '');
 
-                const scoreDisplay = isFilteredOut ? (torrent.filter_reason || 'Filtered') : (torrent.score_breakdown?.total_score || 'N/A');
+                const scoreDisplay = isFilteredOut ? _amEsc(torrent.filter_reason || 'Filtered') : (torrent.score_breakdown?.total_score || 'N/A');
 
                 torResDiv.innerHTML = `
                     <button ${isFilteredOut ? 'style="cursor:pointer; opacity:0.7;"' : ''}>
                         <div class="torresult-info">
-                            <p class="torresult-title">${torrent.title || torrent.original_title || 'N/A'}</p>
+                            <p class="torresult-title">${_amEsc(torrent.title || torrent.original_title || 'N/A')}</p>
                             <p class="torresult-item">${(torrent.size || 0).toFixed(1)} GB | Score: ${scoreDisplay}</p>
-                            <p class="torresult-item">${torrent.source || 'N/A'}</p>
+                            <p class="torresult-item">${_amEsc(torrent.source || 'N/A')}</p>
                             <span class="cache-status ${torrent.cached === 'Yes' ? 'cached' :
                                           torrent.cached === 'No' ? 'not-cached' :
                                           torrent.cached === 'Not Checked' ? 'not-checked' :
@@ -1077,12 +1087,12 @@
                 torResDiv.onclick = function() {
                     const torrentData = {
                         title: title, year: year, version: version, media_type: mediaType,
-                        season: season || null, episode: episode || null, tmdb_id: mediaId,
+                        season: _amOptNum(season), episode: _amOptNum(episode), tmdb_id: mediaId,
                         genres: genre_ids, original_title: torrent.original_title
                     };
 
                     if (isFilteredOut) {
-                        const confirmationMessage = `This item was filtered for the following reason:\n\n'${torrent.filter_reason || 'No specific reason provided'}'.\n\nDo you want to add it anyway?`;
+                        const confirmationMessage = `This item was filtered for the following reason:\n\n'${_amEsc(torrent.filter_reason || 'No specific reason provided')}'.\n\nDo you want to add it anyway?`;
                         if (typeof showPopup === 'function') {
                             showPopup({
                                 type: POPUP_TYPES.CONFIRM,
@@ -1139,14 +1149,14 @@
                     torResDiv.className = 'torresult' + (isFilteredOut ? ' filtered-out-item' : '');
 
                     const bitrateDisplay = torrent.bitrate ? ` | ${(torrent.bitrate / 1000).toFixed(1)} Mbps` : '';
-                    const scoreDisplay = isFilteredOut ? (torrent.filter_reason || 'Filtered') : (torrent.score_breakdown?.total_score || 'N/A');
+                    const scoreDisplay = isFilteredOut ? _amEsc(torrent.filter_reason || 'Filtered') : (torrent.score_breakdown?.total_score || 'N/A');
 
                     torResDiv.innerHTML = `
                         <button ${isFilteredOut ? 'style="cursor:pointer; opacity:0.7;"' : ''}>
                             <div class="torresult-info">
-                                <p class="torresult-title">${torrent.title || torrent.original_title || 'N/A'}</p>
+                                <p class="torresult-title">${_amEsc(torrent.title || torrent.original_title || 'N/A')}</p>
                                 <p class="torresult-item">${(torrent.size || 0).toFixed(1)} GB${bitrateDisplay} | Score: ${scoreDisplay}</p>
-                                <p class="torresult-item">${torrent.source || 'N/A'}</p>
+                                <p class="torresult-item">${_amEsc(torrent.source || 'N/A')}</p>
                                 <span class="cache-status ${torrent.cached === 'Yes' ? 'cached' :
                                               torrent.cached === 'No' ? 'not-cached' :
                                               torrent.cached === 'Not Checked' ? 'not-checked' :
@@ -1158,12 +1168,12 @@
                     torResDiv.onclick = function() {
                         const torrentData = {
                             title: title, year: year, version: version, media_type: mediaType,
-                            season: season || null, episode: episode || null, tmdb_id: mediaId,
+                            season: _amOptNum(season), episode: _amOptNum(episode), tmdb_id: mediaId,
                             genres: genre_ids, original_title: torrent.original_title
                         };
 
                         if (isFilteredOut) {
-                            const confirmationMessage = `This item was filtered for the following reason:\n\n'${torrent.filter_reason || 'No specific reason provided'}'.\n\nDo you want to add it anyway?`;
+                            const confirmationMessage = `This item was filtered for the following reason:\n\n'${_amEsc(torrent.filter_reason || 'No specific reason provided')}'.\n\nDo you want to add it anyway?`;
                             if (typeof showPopup === 'function') {
                                 showPopup({
                                     type: POPUP_TYPES.CONFIRM,
@@ -1241,8 +1251,8 @@
         formData.append('title', torrentData.title || '');
         formData.append('year', torrentData.year || '');
         formData.append('media_type', torrentData.media_type || '');
-        formData.append('season', torrentData.season || '');
-        formData.append('episode', torrentData.episode || '');
+        formData.append('season', torrentData.season ?? '');
+        formData.append('episode', torrentData.episode ?? '');
         formData.append('version', torrentData.version || '');
         formData.append('tmdb_id', torrentData.tmdb_id || '');
         formData.append('genres', torrentData.genres || '');

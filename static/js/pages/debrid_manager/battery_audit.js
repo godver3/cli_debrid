@@ -700,7 +700,7 @@ _battEl('batt-reid-commit-btn')?.addEventListener('click', async function() {
                     _btn.textContent = 'Commit Re-identify';
                 }
             } catch(e) {
-                if (result) { result.innerHTML = `<span style="color:#ef4444">Error: ${e.message}</span>`; result.style.display = ''; }
+                if (result) { result.innerHTML = `<span style="color:#ef4444">Error: ${escHtml(e.message)}</span>`; result.style.display = ''; }
                 _btn.disabled = false;
                 _btn.textContent = 'Commit Re-identify';
             }

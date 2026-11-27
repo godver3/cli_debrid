@@ -169,7 +169,7 @@ function _slRenderBroken(items) {
             <td>${_slTypeBadge(type)}</td>
             <td class="dm-rc-col-file" title="${_esc(p)}">${_esc(basename)}</td>
             <td class="dm-col-actions">
-                <button class="dm-btn dm-btn-danger dm-btn-sm" onclick="_slDeleteOne('broken', ${JSON.stringify(p)}, this)">Delete</button>
+                <button class="dm-btn dm-btn-danger dm-btn-sm" onclick="_slDeleteOne('broken', ${_jsArg(p)}, this)">Delete</button>
             </td>
         </tr>`;
     }).join('');
@@ -184,7 +184,7 @@ function _slRenderUnlinked(items) {
             <td class="dm-rc-col-file" title="${_esc(f.path)}">${_esc(f.path)}</td>
             <td style="white-space:nowrap">${_esc(f.size_str)}</td>
             <td class="dm-col-actions">
-                <button class="dm-btn dm-btn-danger dm-btn-sm" onclick="_slDeleteOne('unlinked', ${JSON.stringify(f.path)}, this)">Delete</button>
+                <button class="dm-btn dm-btn-danger dm-btn-sm" onclick="_slDeleteOne('unlinked', ${_jsArg(f.path)}, this)">Delete</button>
             </td>
         </tr>`).join('');
 }
@@ -212,7 +212,7 @@ function _slRenderIncorrect(items) {
     tbody.innerHTML = items.map(d => {
         const { title, type, basename } = _slParsePath(d.target);
         const linksHtml = d.links.map(l => `<div class="sl-link-path" title="${_esc(l)}">${_esc(l.split('/').pop())}</div>`).join('');
-        const allLinkPaths = JSON.stringify(d.links);
+        const allLinkPaths = escHtml(JSON.stringify(d.links));
         return `<tr>
             <td>${_esc(title)}</td>
             <td>${_slTypeBadge(type)}</td>
@@ -231,7 +231,7 @@ async function _slDeleteOne(kind, path, btnEl) {
     showPopup({
         type: 'confirm',
         title: 'Delete File',
-        message: `Delete this file?\n${path}`,
+        message: `Delete this file?\n${escHtml(path)}`,
         confirmText: 'Delete',
         cancelText: 'Cancel',
         onConfirm: async function() {

@@ -11,7 +11,8 @@ import bencodepy
 from ..base import DebridProvider, ProviderUnavailableError, TooManyDownloadsError, TorrentAdditionError
 from ..common import extract_hash_from_magnet, timed_lru_cache
 from ..status import TorrentFetchStatus, TorrentInfoStatus, TorrentStatus
-from .api import get_all_torrents, get_api_key, get_data_payload, make_request
+from .api import get_all_torrents, get_api_key, get_data_payload, make_request, make_request_once
+from . import cdn_fallback, zip_index
 from .exceptions import TorboxAPIError, TorboxAuthError
 from database.not_wanted_magnets import add_to_not_wanted
 from utilities.phalanx_db_cache_manager import PhalanxDBClassManager
@@ -74,7 +75,7 @@ class TorboxProvider(DebridProvider):
                 hash_value = magnet_or_hash.lower()
         return hash_value.lower() if hash_value else None
 
-    def _normalize_files(self, info: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _normalize_files(self, info: Dict[str, Any], build_zip_index: bool = False) -> List[Dict[str, Any]]:
         files = []
         for file_info in info.get('files', []) or []:
             name = file_info.get('name') or file_info.get('short_name') or ''
@@ -85,7 +86,22 @@ class TorboxProvider(DebridProvider):
                 'bytes': file_info.get('size', 0),
                 'selected': True,
             })
-        return files
+        return self._unzipped(info, files, build_zip_index)
+
+    def _unzipped(self, info: Dict[str, Any], files: List[Dict[str, Any]], build: bool) -> List[Dict[str, Any]]:
+        """A torrent TorBox stores as one stored .zip, as the files inside
+        it (see zip_index). build=False only uses an index already read:
+        account-wide listings must not make range requests per torrent."""
+        zf = zip_index.zip_only(files)
+        if not zf or self._map_status(info) != TorrentStatus.CACHED:
+            return files
+        hash_value, tid = (info.get('hash') or '').lower(), str(info.get('id', ''))
+        if build and tid:
+            members = zip_index.index(hash_value, zf.get('id'), int(zf.get('bytes') or 0),
+                                      lambda: self.mount_link(tid, str(zf.get('id')))[0])
+        else:
+            members = zip_index.cached(hash_value, zf.get('id'), int(zf.get('bytes') or 0))
+        return zip_index.expand(zf, members) if members else files
 
     @staticmethod
     def _common_root_folder(files: List[Dict[str, Any]]) -> str:
@@ -115,7 +131,7 @@ class TorboxProvider(DebridProvider):
             return TorrentStatus.ERROR
         return TorrentStatus.UNKNOWN
 
-    def _normalize_torrent_info(self, info: Dict[str, Any]) -> Dict[str, Any]:
+    def _normalize_torrent_info(self, info: Dict[str, Any], build_zip_index: bool = False) -> Dict[str, Any]:
         status = self._map_status(info)
         progress_fraction = info.get('progress', 0) or 0
         if progress_fraction <= 1:
@@ -127,7 +143,7 @@ class TorboxProvider(DebridProvider):
         normalized['id'] = str(info.get('id', ''))
         normalized['hash'] = (info.get('hash') or '').lower()
         normalized['filename'] = info.get('name', '')
-        normalized['files'] = self._normalize_files(info)
+        normalized['files'] = self._normalize_files(info, build_zip_index)
         normalized['debrid_folder_name'] = (
             self._common_root_folder(normalized['files'])
             or info.get('name', '') or info.get('download_path', '')
@@ -419,7 +435,7 @@ class TorboxProvider(DebridProvider):
             else:
                 return None
 
-            normalized = self._normalize_torrent_info(info)
+            normalized = self._normalize_torrent_info(info, build_zip_index=True)
             hash_value = normalized.get('hash', '')
             status = self._map_status(info)
             self.update_status(torrent_id, status)
@@ -443,17 +459,26 @@ class TorboxProvider(DebridProvider):
 
     supports_mount_links = True
 
+    #: mount_debrid may re-register a job whose zip was added as one file.
+    mounts_zip_members = True
+
     def mount_files(self, torrent_id: str) -> Optional[Tuple[str, List[Dict]]]:
         result = make_request('GET', '/torrents/mylist', self.api_key, params={'bypass_cache': 'true', 'id': torrent_id})
         info = get_data_payload(result)
         info = (info[0] if info else None) if isinstance(info, list) else info
         if not isinstance(info, dict) or self._map_status(info) != TorrentStatus.CACHED or not info.get('download_present', True):
             return None
-        files = self._normalize_files(info)
+        files = self._normalize_files(info, build_zip_index=True)
         if not files:
             return None
         folder = self._common_root_folder(files) or info.get('name') or str(torrent_id)
-        return folder, [{'name': f['path'], 'size': int(f.get('bytes') or 0), 'file_id': str(f.get('id'))} for f in files]
+        out = []
+        for f in files:
+            row = {'name': f['path'], 'size': int(f.get('bytes') or 0), 'file_id': str(f.get('id'))}
+            if f.get('zip_size'):  # a member of a stored zip: its byte range of the zip's file
+                row.update(offset=int(f['zip_offset']), source_size=int(f['zip_size']))
+            out.append(row)
+        return folder, out
 
     def mount_check(self, torrent_id: str, file_id: str) -> Tuple[str, str]:
         """cli_mount's TorBox CheckFile: the torrent's download no longer
@@ -473,13 +498,54 @@ class TorboxProvider(DebridProvider):
             return BROKEN, MISSING_PROVIDER_LINK
         return HEALTHY, ''
 
-    def mount_link(self, torrent_id: str, file_id: str) -> Tuple[str, int]:
-        result = make_request('GET', '/torrents/requestdl', self.api_key,
-                              params={'token': self.api_key, 'torrent_id': torrent_id, 'file_id': file_id})
-        url = get_data_payload(result)
+    def _requestdl(self, torrent_id: str, file_id: str, *, user_ip: Optional[str], deadline: float) -> str:
+        api_key = self.api_key
+        params = {'token': api_key, 'torrent_id': torrent_id, 'file_id': file_id}
+        if user_ip:
+            params['user_ip'] = user_ip
+        request = make_request_once if user_ip else make_request
+        url = get_data_payload(request(
+            'GET', '/torrents/requestdl', api_key, params=params,
+            deadline=deadline, honor_retry_after=not user_ip, allow_redirects=False,
+        ))
         if not isinstance(url, str) or not url.startswith('http'):
             raise ValueError(f'TorBox gave no download link for {torrent_id}/{file_id}')
-        return url, 2 * 3600
+        return url
+
+    def mount_link(self, torrent_id: str, file_id: str) -> Tuple[str, int]:
+        first_url = None
+        first_error = None
+        # Stay below the engine's 30s callback. Allow local API retries and
+        # a CDN probe while reserving two full regional attempts.
+        deadline = time.monotonic() + 25
+        region_timeout = 3
+        probe_timeout = cdn_fallback.PROBE_TIMEOUT
+        local_deadline = deadline - 2 * (region_timeout + probe_timeout)
+        for region, ip in ((None, None), *cdn_fallback.REGION_IPS):
+            now = time.monotonic()
+            if now >= deadline:
+                break
+            api_deadline = min(deadline, now + region_timeout) if ip else local_deadline - probe_timeout
+            try:
+                url = self._requestdl(torrent_id, file_id, user_ip=ip, deadline=api_deadline)
+            except Exception as exc:
+                if first_error is None:
+                    first_error = exc
+                logging.debug(f'[Torbox] {region or "local"} link for {torrent_id}/{file_id} failed: {exc}')
+                continue
+            if first_url is None:
+                first_url = url
+            remaining = (deadline if ip else local_deadline) - time.monotonic()
+            if remaining > 0 and cdn_fallback.reachable(url, timeout=min(probe_timeout, remaining)):
+                if region:
+                    logging.warning(f'[Torbox] Using CDN server {cdn_fallback.host(url)} '
+                                    f'({region}) for {torrent_id}/{file_id}')
+                return url, 2 * 3600
+        if first_url is not None:
+            return first_url, 2 * 3600  # the reader's own retries take over
+        if first_error is not None:
+            raise first_error
+        raise ProviderUnavailableError("Torbox mount link budget exhausted")
 
     def get_torrent_info_with_status(self, torrent_id: str) -> TorrentInfoStatus:
         try:
@@ -584,6 +650,35 @@ class TorboxProvider(DebridProvider):
     def get_torrent_file_list(self, magnet_link: str) -> Optional[Tuple[List[Dict], str, str]]:
         torrent_id = None
         info = None
+        # A torrent already on the account (add_torrent hands back its id) is
+        # listed, never removed: this preview add used to delete the user's own
+        # copy (and the mount's folder for it) on every Magnet Assign.
+        # Only delete when we KNOW the torrent was not on the account before:
+        #   True  -> verified absent before add_torrent (safe to delete)
+        #   False -> already on the account (keep)
+        #   None  -> lookup failed / inconclusive (keep; never delete when unsure)
+        is_new_torrent: Optional[bool] = None
+        preexisting_ids: Optional[set] = None
+        hash_value = extract_hash_from_magnet(magnet_link) if magnet_link.startswith('magnet:') else None
+        if hash_value:
+            for attempt in range(2):
+                try:
+                    is_new_torrent = not bool(self._find_existing_torrent(hash_value))
+                    break
+                except Exception as e:
+                    logging.debug(
+                        f"[Torbox] Could not check for an existing torrent before listing "
+                        f"(attempt {attempt + 1}/2): {e}"
+                    )
+        else:
+            try:
+                preexisting_ids = {
+                    str(t.get('id'))
+                    for t in get_all_torrents(self.api_key)
+                    if t.get('id') is not None
+                }
+            except Exception as e:
+                logging.debug(f"[Torbox] Could not list existing torrents before preview add: {e}")
         try:
             torrent_id = self.add_torrent(magnet_link)
             if not torrent_id:
@@ -591,8 +686,6 @@ class TorboxProvider(DebridProvider):
 
             # If queued, resolve to real torrent_id by polling via hash
             if str(torrent_id).startswith('queued:'):
-                from ..common import extract_hash_from_magnet
-                hash_value = extract_hash_from_magnet(magnet_link) if magnet_link.startswith('magnet:') else None
                 resolved_id = None
                 for _ in range(20):
                     time.sleep(3)
@@ -621,11 +714,23 @@ class TorboxProvider(DebridProvider):
             return None
         finally:
             if torrent_id:
-                try:
-                    self.remove_torrent(torrent_id, "Temporary add for file listing")
-                except Exception as e:
-                    logging.error(f"Error removing temporary Torbox torrent {torrent_id}: {str(e)}")
-                    self.update_status(torrent_id, TorrentStatus.UNKNOWN)
+                if (
+                    is_new_torrent is None
+                    and preexisting_ids is not None
+                    and not str(torrent_id).startswith('queued:')
+                ):
+                    is_new_torrent = str(torrent_id) not in preexisting_ids
+                if is_new_torrent is True:
+                    try:
+                        self.remove_torrent(torrent_id, "Temporary add for file listing")
+                    except Exception as e:
+                        logging.error(f"Error removing temporary Torbox torrent {torrent_id}: {str(e)}")
+                        self.update_status(torrent_id, TorrentStatus.UNKNOWN)
+                elif is_new_torrent is None:
+                    logging.info(
+                        f"[Torbox] Keeping torrent {torrent_id} after file listing: "
+                        f"could not verify whether it already existed on the account"
+                    )
 
     def is_cached_sync(
         self,

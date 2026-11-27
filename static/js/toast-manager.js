@@ -146,12 +146,77 @@ class ToastManager {
                 <button class="toast-close" onclick="toastManager.hide('${id}')">&times;</button>
             </div>
             <div class="toast-body">
-                ${this.escapeHtml(message)}
+                ${this.formatBody(message)}
                 <div class="toast-time">${time}</div>
             </div>
         `;
 
+        // Hovering keeps a toast open; leaving restarts the usual countdown
+        toast.addEventListener('mouseenter', () => {
+            if (this.removalTimers.has(id)) {
+                clearTimeout(this.removalTimers.get(id));
+                this.removalTimers.delete(id);
+            }
+        });
+        toast.addEventListener('mouseleave', () => {
+            if (this.toasts.has(id)) this.scheduleRemoval(id);
+        });
+
         return toast;
+    }
+
+    // Message lines (state notifications send "Successfully collected X\n
+    // Source: ...\nFile: ...") each get their own row: the first line is the
+    // headline, "Key: value" lines are small meta rows, and a "File:" line
+    // shows the release's scene tags as chips above the wrapped file name.
+    formatBody(message) {
+        const lines = String(message ?? '').split('\n').map(l => l.trim()).filter(Boolean);
+        if (lines.length <= 1) return this.escapeHtml(lines[0] || '');
+        const out = [`<div class="toast-main">${this.escapeHtml(lines[0])}</div>`];
+        const meta = [];
+        for (const line of lines.slice(1)) {
+            const m = line.match(/^([A-Za-z][A-Za-z ]{0,24}):\s*(.*)$/);
+            if (m && m[1].toLowerCase() === 'file') {
+                const tags = this.sceneTags(m[2]);
+                if (tags.length) {
+                    out.push(`<div class="toast-tags">${tags.map(t => `<span class="toast-tag">${this.escapeHtml(t)}</span>`).join('')}</div>`);
+                }
+                out.push(`<div class="toast-file">${this.escapeHtml(m[2])}</div>`);
+            } else if (m) {
+                meta.push(`<span class="toast-meta-key">${this.escapeHtml(m[1])}:</span> ${this.escapeHtml(m[2])}`);
+            } else {
+                out.push(`<div class="toast-line">${this.escapeHtml(line)}</div>`);
+            }
+        }
+        if (meta.length) out.push(`<div class="toast-meta">${meta.join('<br>')}</div>`);
+        return out.join('');
+    }
+
+    // The common scene tags of a release name, in a fixed order:
+    // resolution, source, HDR, video codec, audio, group.
+    sceneTags(name) {
+        const n = String(name || '').replace(/\.(mkv|mp4|avi|m4v|ts|m2ts|mov|wmv|webm|mpe?g|iso)$/i, '');
+        const s = n.replace(/[._-]/g, ' ');
+        const pick = (re, fmt) => { const m = s.match(re); return m ? (fmt ? fmt(m) : m[0]) : null; };
+        const tags = [
+            pick(/\b(2160p|1080p|1080i|720p|576p|480p|4K)\b/i, m => m[1].toUpperCase() === '4K' ? '4K' : m[1].toLowerCase()),
+            pick(/\b(REMUX|BluRay|Blu Ray|BDRip|BRRip|WEB DL|WEBDL|WEBRip|WEB|HDTV|DVDRip|DVD)\b/i, m => {
+                const v = m[1].toUpperCase().replace(' ', '-');
+                return ({'BLURAY': 'BluRay', 'BLU-RAY': 'BluRay', 'WEB-DL': 'WEB-DL', 'WEBDL': 'WEB-DL', 'WEBRIP': 'WEBRip',
+                         'BDRIP': 'BDRip', 'BRRIP': 'BRRip', 'DVDRIP': 'DVDRip', 'REMUX': 'REMUX'})[v] || v;
+            }),
+            pick(/\b(DV|DoVi|Dolby Vision|HDR10\+|HDR10Plus|HDR10|HDR)\b/i, m => /^(dv|dovi|dolby vision)$/i.test(m[1]) ? 'DV' : m[1].toUpperCase().replace('PLUS', '+')),
+            pick(/\b(x264|x265|H 264|H 265|H264|H265|HEVC|AVC|AV1|XviD)\b/i, m => m[1].replace(' ', '.').replace(/^h/, 'H').replace(/^X/, 'x')),
+            (() => {
+                const m = s.match(/\b(TrueHD|DTS HD MA|DTS HD|DTS X|DTS|DDP|DD\+|EAC3|E AC3|AC3|DD|FLAC|AAC|Opus|MP3)(?: ?(\d) ?(\d))?(?![A-Za-z])/i);
+                const atmos = /\bAtmos\b/i.test(s);
+                if (!m) return atmos ? 'Atmos' : null;
+                const codec = m[1].toUpperCase() === 'E AC3' ? 'EAC3' : m[1].replace(/ /g, '-');
+                return [codec, m[2] ? `${m[2]}.${m[3] || 0}` : '', atmos ? 'Atmos' : ''].filter(Boolean).join(' ');
+            })(),
+            (n.match(/-([A-Za-z0-9]+)$/) || [])[1] || null,
+        ];
+        return tags.filter(Boolean);
     }
 
     hide(toastId) {

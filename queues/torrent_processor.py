@@ -38,10 +38,49 @@ class TorrentAdditionError(TorrentProcessingError):
 # refusing downloads: the result is kept (not dropped from scrape_results) and
 # the next one is tried.
 NZB_DEFERRED_INDEXER_COOLDOWN = object()
+# Set on the item dict (seconds until the earliest cooling-down NZB is usable
+# again) when results were kept only because of a cooldown. The Adding queue
+# reads it to stop re-processing the item every tick and to stop it holding up
+# Scraping for the rest of the show.
+NZB_COOLDOWN_WAIT_KEY = '_nzb_cooldown_wait_s'
+# Set alongside it: {indexer name: reason}, shown on the Queue page so an item
+# stuck in Adding says which indexer it is waiting for and why.
+NZB_COOLDOWN_NOTES_KEY = '_nzb_cooldown_notes'
+# Set on the item dict when _process_results_inner actually attempted to submit
+# an NZB (as opposed to merely deferring it because its indexer is on cooldown).
+NZB_ATTEMPT_MADE_KEY = '_nzb_attempt_made'
+# Re-check interval when a result is held back by something that has no end time
+# here (the indexer's daily grab quota).
+NZB_QUOTA_RECHECK_SECONDS = 300
 
 # Per process_results call, for providers whose cache check adds the magnet to the
 # account (AllDebrid, which suspends accounts that generate links without downloading).
 MAX_ACCOUNT_ADDING_CACHE_CHECKS_PER_ITEM = 10
+
+def _indexer_cooldown_note(result: Dict) -> Tuple[str, str]:
+    """(indexer name, why) for an NZB result held back by its indexer's cooldown."""
+    import re as _re
+    from urllib.parse import urlparse as _urlparse
+    from usenet import indexer_quota
+    from usenet.nzb_fetch_cooldown import cooldown_why
+    url = result.get('nzb_url') or ''
+    name = ''
+    try:
+        name = indexer_quota.instance_for_url(url) or ''
+    except Exception:
+        name = ''
+    if not name:
+        source = str(result.get('source') or '')
+        name = source if source and not source.isdigit() else ''
+    if not name:
+        try:
+            name = _urlparse(url).netloc
+        except Exception:
+            name = ''
+    name = _re.sub(r'_\d+$', '', name) or 'NZB indexer'
+    why = cooldown_why(url) or 'daily grab limit used up'
+    return name, why
+
 
 class TorrentProcessor:
     """Handles torrent file/magnet processing and caching checks"""
@@ -415,6 +454,45 @@ class TorrentProcessor:
             logging.error(f"Error checking cache: {str(e)}", exc_info=True)
             return None
         
+    def _skip_hidden_release(self, info: Dict, item_identifier: str, prefix: str) -> bool:
+        """True when the built-in mount would hide every video file of the
+        torrent just added (a .ts-only release under the default allowed
+        extensions): it is marked not wanted and the next result is tried,
+        instead of being taken and failing in Checking because its folder
+        never appears. Removed from the account unless an item uses it."""
+        from utilities.mount_debrid import videos_all_hidden
+        exts = videos_all_hidden(info.get('files') or [], get_setting)
+        if not exts:
+            return False
+        logging.warning(f"[{item_identifier}] {prefix} Skipping: its video files are "
+                        f"{', '.join('.' + e for e in exts)}, which the built-in mount doesn't list "
+                        "(Built-in Mount > Allowed file extensions)")
+        h, tid = (info.get('hash') or '').lower(), info.get('id')
+        if h:
+            add_to_not_wanted(h)
+        if tid:
+            try:
+                from database.core import get_db_connection
+                conn = get_db_connection()
+                try:
+                    used = conn.execute("SELECT 1 FROM media_items WHERE filled_by_torrent_id = ? LIMIT 1",
+                                        (str(tid),)).fetchone()
+                finally:
+                    conn.close()
+                if used:
+                    pass
+                elif info.get('_reused'):
+                    logging.info(f"[{item_identifier}] {prefix} Keeping torrent {tid}: it was already on the account")
+                else:
+                    # The provider that holds it (a cache hit may be on a fallback
+                    # provider), not whichever one self.debrid_provider is now
+                    from debrid import provider_for_item
+                    provider = provider_for_item(info.get('_provider'), self.debrid_provider)
+                    provider.remove_torrent(tid, removal_reason="Built-in mount hides its video files")
+            except Exception as e:
+                logging.error(f"[{item_identifier}] {prefix} Error removing hidden-extension torrent {tid}: {e}")
+        return True
+
     def add_to_account(self, magnet_or_url: str, preferred_provider: Optional[DebridProvider] = None) -> Optional[Dict]:
         """Add a magnet/torrent to the debrid account, trying each provider in order.
 
@@ -1289,7 +1367,23 @@ class TorrentProcessor:
         # Only a fresh submission (below) is blocked.
         from usenet.nzb_fetch_cooldown import (
             classify_refusal, cooldown_reason, first_skip_this_window, record_indexer_limit,
+            refusal_why,
         )
+
+        def _check_refusal_response(resp) -> Optional[str]:
+            if resp is None:
+                return None
+            try:
+                body = (getattr(resp, 'text', '') or '')[:2000]
+                cooldown_s = classify_refusal(resp.status_code, getattr(resp, 'headers', None), body)
+            except Exception:
+                return None
+            if not cooldown_s:
+                return None
+            record_indexer_limit(nzb_url, cooldown_s, refusal_why(resp.status_code, body))
+            return (f'indexer refused the download (HTTP {resp.status_code}); '
+                    f'skipping its NZBs for {max(1, cooldown_s // 60)} min')
+
         _indexer_refusal = cooldown_reason(nzb_url)
         if not _indexer_refusal:
             from usenet import indexer_quota as _iq
@@ -1306,32 +1400,16 @@ class TorrentProcessor:
                         logging.info(f'[{item_identifier}] Skipping NZB {title!r} — segment ID in not-wanted list')
                         return None
                 else:
-                    _cooldown_s = classify_refusal(_nr_early.status_code, getattr(_nr_early, 'headers', None),
-                                                   _nr_early.text[:2000])
-                    if _cooldown_s:
-                        # cli_mount's URL fetch and the direct-upload fallback would hit
-                        # the same refusal, so don't send either.
-                        record_indexer_limit(nzb_url, _cooldown_s)
-                        _indexer_refusal = (f'indexer refused the download (HTTP {_nr_early.status_code}); '
-                                            f'skipping its NZBs for {max(1, _cooldown_s // 60)} min')
+                    # cli_mount's URL fetch and the direct-upload fallback would hit
+                    # the same refusal, so don't send either.
+                    _indexer_refusal = _check_refusal_response(_nr_early)
             except Exception as _nzb_early_err:
                 # api.get raises on 4xx/5xx, so a 429/503 refusal lands here, not
                 # in the status-code branch above: classify it the same way so the
                 # cooldown starts and cli_mount's URL fetch + the direct-upload
                 # fallback don't hit the refusing indexer again.
-                _err_resp = getattr(_nzb_early_err, 'response', None)
-                _cooldown_s = 0
-                if _err_resp is not None:
-                    try:
-                        _cooldown_s = classify_refusal(_err_resp.status_code, getattr(_err_resp, 'headers', None),
-                                                       (getattr(_err_resp, 'text', '') or '')[:2000])
-                    except Exception:
-                        _cooldown_s = 0
-                if _cooldown_s:
-                    record_indexer_limit(nzb_url, _cooldown_s)
-                    _indexer_refusal = (f'indexer refused the download (HTTP {_err_resp.status_code}); '
-                                        f'skipping its NZBs for {max(1, _cooldown_s // 60)} min')
-                else:
+                _indexer_refusal = _check_refusal_response(getattr(_nzb_early_err, 'response', None))
+                if not _indexer_refusal:
                     logging.debug(f'[{item_identifier}] Could not pre-check NZB segment: {_nzb_early_err}')
 
         _item = item or {}
@@ -1394,6 +1472,7 @@ class TorrentProcessor:
         if not job_id:
             # Fallback: download NZB and upload directly
             logging.info(f'[{item_identifier}] URL submission failed, trying direct upload: {job_title}')
+            _fallback_refusal = None
             try:
                 from routes.api_tracker import api as _nzb_api
                 _r = _nzb_api.get(nzb_url, timeout=15, allow_redirects=True)
@@ -1410,8 +1489,17 @@ class TorrentProcessor:
                         return None
                     if job_id:
                         logging.info(f'[{item_identifier}] Direct upload succeeded: {job_title}')
+                else:
+                    _fallback_refusal = _check_refusal_response(_r)
             except Exception as _fe:
-                logging.warning(f'[{item_identifier}] Direct upload fallback failed: {_fe}')
+                _fallback_refusal = _check_refusal_response(getattr(_fe, 'response', None))
+                if not _fallback_refusal:
+                    logging.warning(f'[{item_identifier}] Direct upload fallback failed: {_fe}')
+            if _fallback_refusal:
+                if first_skip_this_window((item or {}).get('id'), nzb_url):
+                    logging.warning(f'[{item_identifier}] Not submitting NZB {title!r} — {_fallback_refusal}; '
+                                    f'keeping it for later and trying the next result')
+                return NZB_DEFERRED_INDEXER_COOLDOWN
 
         if not job_id:
             logging.warning(f'[{item_identifier}] cli_mount rejected NZB: {title}')
@@ -1521,7 +1609,18 @@ class TorrentProcessor:
                         # Its indexer is refusing downloads for now. Keep the result for
                         # a later tick and try the next one; if every remaining result is
                         # cooling down, the item just stays in Adding with them intact.
+                        # Note when the earliest one is usable again: the Adding queue
+                        # then leaves the item alone until then (see item_cooldown_wait).
+                        if item is not None:
+                            from usenet.nzb_fetch_cooldown import cooldown_remaining
+                            _wait = cooldown_remaining(result.get('nzb_url') or '') or NZB_QUOTA_RECHECK_SECONDS
+                            _prev = item.get(NZB_COOLDOWN_WAIT_KEY)
+                            item[NZB_COOLDOWN_WAIT_KEY] = _wait if _prev is None else min(_prev, _wait)
+                            _name, _why = _indexer_cooldown_note(result)
+                            item.setdefault(NZB_COOLDOWN_NOTES_KEY, {}).setdefault(_name, _why)
                         continue
+                    if item is not None:
+                        item[NZB_ATTEMPT_MADE_KEY] = True
                     if nzb_result:
                         return nzb_result
                     # NZB rejected — pop this result from scrape_results in DB so the next
@@ -1529,6 +1628,11 @@ class TorrentProcessor:
                     # move on to other items immediately (one attempt per item per tick).
                     # Pop the attempted result itself: earlier ones may have been kept
                     # above because their indexer is cooling down.
+                    # A result that was really attempted and rejected means the item
+                    # has work to retry next tick: it isn't just waiting on a cooldown.
+                    if item is not None:
+                        item.pop(NZB_COOLDOWN_WAIT_KEY, None)
+                        item.pop(NZB_COOLDOWN_NOTES_KEY, None)
                     if item:
                         try:
                             import json as _json_tp
@@ -1661,7 +1765,14 @@ class TorrentProcessor:
                 if not accept_uncached and not is_cached:
                     logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] Skipping uncached result (accept_uncached=False)")
                     continue
-                
+
+                if not is_cached and result.get('pack_for_single_episode'):
+                    # A season / multi-season pack kept for one episode is only
+                    # worth it when cached: uncached it downloads the whole pack
+                    # (hundreds of GB for S01-S22) to get one file.
+                    logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] Skipping uncached pack for a single episode")
+                    continue
+
                 if not is_cached:
                     try:
                         active_downloads, download_limit = self.debrid_provider.get_active_downloads()
@@ -1752,6 +1863,9 @@ class TorrentProcessor:
                                 # performed against, same reasoning as the cache-hit path above.
                                 if info is not None:
                                     info['_provider'] = self.debrid_provider.PROVIDER_NAME
+                                    # Was on the account before this add: never removed
+                                    # by _skip_hidden_release (it may be the user's own)
+                                    info['_reused'] = True
                         else:
                             logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] PHASE: Addition - Adding to debrid service")
                             info = self.add_to_account(original_link, preferred_provider=winning_provider if is_cached else None)
@@ -1831,6 +1945,8 @@ class TorrentProcessor:
                     info['original_scraped_torrent_title'] = result.get('original_title')
                     info['downloading'] = not is_cached
                     logging.debug(f"[{item_identifier}] [Result {idx}/{len(results)}] Full torrent info response: {info}")
+                    if self._skip_hidden_release(info, item_identifier, f"[Result {idx}/{len(results)}]"):
+                        continue
                     if len(info.get('files', [])) > 0:
                         definitive_hash = info.get('hash')
 

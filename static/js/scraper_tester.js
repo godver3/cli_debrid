@@ -1085,8 +1085,10 @@ document.addEventListener('DOMContentLoaded', function() {
             const multiCheckbox = document.getElementById('multi-checkbox');
             
             if (seasonSelect && episodeSelect) {
-                scrapeData.season = parseInt(seasonSelect.value) || 1;
-                scrapeData.episode = parseInt(episodeSelect.value) || 1;
+                const parsedSeason = parseInt(seasonSelect.value, 10);
+                const parsedEpisode = parseInt(episodeSelect.value, 10);
+                scrapeData.season = Number.isNaN(parsedSeason) ? 1 : parsedSeason;
+                scrapeData.episode = Number.isNaN(parsedEpisode) ? 1 : parsedEpisode;
                 scrapeData.multi = multiCheckbox ? multiCheckbox.checked : false;
             }
         }

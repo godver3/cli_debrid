@@ -181,3 +181,43 @@ def test_pack_zip_needs_a_file_naming_the_episode():
     with zipfile.ZipFile(single, 'w') as z:
         z.writestr('subtitle.srt', 'only')
     assert sp.pick_from_zip(single.getvalue(), 1, 132) == b'only'   # a lone file is the subtitle
+
+
+def test_opensubtitles_org_terminate_closes_locally_not_as_remote_call():
+    from subliminal.providers.opensubtitles import OpenSubtitlesProvider
+    from utilities.subtitle_providers import _patch_opensubtitles_org_terminate
+
+    _patch_opensubtitles_org_terminate()
+    calls = []
+
+    class FakeServer:
+        def LogOut(self, token):
+            calls.append(('LogOut', token))
+            return {'status': '200 OK'}
+
+        def __getattr__(self, name):  # any other remote method, e.g. 'close'
+            raise AssertionError(f'remote call {name}')
+
+        def __call__(self, attr):
+            assert attr == 'close'
+            return lambda: calls.append(('local close',))
+
+    prov = OpenSubtitlesProvider.__new__(OpenSubtitlesProvider)
+    prov.server, prov.token = FakeServer(), 'tok'
+    prov.terminate()
+    assert calls == [('LogOut', 'tok'), ('local close',)]
+    assert prov.token is None
+
+
+def test_gestdown_show_not_found_logs_as_info(caplog):
+    import logging
+    from utilities.subtitle_providers import _quiet_gestdown_misses
+
+    _quiet_gestdown_misses()
+    log = logging.getLogger('subliminal.providers.gestdown')
+    with caplog.at_level(logging.INFO, logger='subliminal.providers.gestdown'):
+        log.error('No show id found for %r', 'Pokemon')
+        log.error('Something else broke')
+    levels = {r.getMessage(): r.levelname for r in caplog.records}
+    assert levels["No show id found for 'Pokemon'"] == 'INFO'
+    assert levels['Something else broke'] == 'ERROR'

@@ -677,7 +677,10 @@
     const r = await fetch('/mount/api/migrate/compare', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({sample: 10})});
     const d = await r.json();
     b.disabled = false; b.textContent = 'Compare 10 files';
-    $('#mgCmp tbody').innerHTML = d.success ? '<tr><td colspan="3"><strong>' + d.identical + ' of ' + d.checked + ' identical</strong></td></tr>' +
+    const hidden = Object.entries((d.success && d.hidden_extensions) || {});
+    const hiddenRow = hidden.length ? '<tr><td colspan="3"><span class="no">' + hidden.map(([e, n]) => n + ' .' + esc(e)).join(', ') +
+      ' collected file(s) use extensions the built-in mount doesn\'t list (Allowed file extensions). Switching adds them, so their symlinks keep working.</span></td></tr>' : '';
+    $('#mgCmp tbody').innerHTML = d.success ? hiddenRow + '<tr><td colspan="3"><strong>' + d.identical + ' of ' + d.checked + ' identical</strong></td></tr>' +
       d.rows.map(x => '<tr><td>' + (x.ok ? '<span class="ok">✔</span>' : '<span class="no">✘</span>') + '</td><td class="nm">' + esc(x.folder) + '<div style="color:#888;font-size:12px">' + esc(x.file) + '</div></td><td>' + esc(x.detail) + (x.seconds != null ? ' (' + x.seconds + ' s)' : '') + '</td></tr>').join('')
       : '<tr><td class="no">' + esc(d.error) + '</td></tr>';
   };
@@ -685,7 +688,10 @@
     if (!confirm("Switch to the built-in mount? Make sure the cli_mount container is stopped first. You can switch back here at any time.")) return;
     const r = await fetch('/mount/api/migrate/switch', {method: 'POST'});
     const d = await r.json();
-    $('#mgSwitchMsg').innerHTML = d.success ? '<span class="ok">Switched: the built-in mount now serves ' + esc(d.mount_path) + '.</span>' : '<span class="no">' + esc(d.error) + '</span>';
+    const added = Object.keys((d.success && d.added_extensions) || {});
+    $('#mgSwitchMsg').innerHTML = d.success ? '<span class="ok">Switched: the built-in mount now serves ' + esc(d.mount_path) + '.' +
+      (added.length ? ' Added ' + added.map(e => '.' + esc(e)).join(', ') + ' to Allowed file extensions: your library has files of those types.' : '') +
+      '</span>' : '<span class="no">' + esc(d.error) + '</span>';
     setTimeout(loadMigrate, 3000);
   };
   $('#mgBack').onclick = async () => {

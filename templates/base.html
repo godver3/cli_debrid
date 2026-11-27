@@ -253,6 +253,7 @@
                         <a class="st-nav-dd-item" href="{{ url_for('debug.manual_blacklist') }}"><i class="fa-solid fa-ban"></i> Manual Blacklist</a>
                         <a class="st-nav-dd-item" href="{{ url_for('overlay_page.overlays_page') }}"><i class="fa-solid fa-layer-group"></i> Overlays</a>
                         <a class="st-nav-dd-item" href="{{ url_for('subtitle_manager.page') }}"><i class="fa-solid fa-closed-captioning"></i> Subtitle Manager</a>
+                        <a class="st-nav-dd-item" href="{{ url_for('nfo.page') }}"><i class="fa-solid fa-file-code"></i> NFO Files</a>
                         {% if not is_limited_environment() %}
                         <a class="st-nav-dd-item" href="{{ url_for('upgrade_hub.index') }}"><i class="fa-solid fa-arrow-up"></i> Upgrade Hub</a>
                         {% endif %}
@@ -437,6 +438,7 @@
                             <a class="st-nav-mob-item" href="{{ url_for('debug.manual_blacklist') }}"><i class="fa-solid fa-ban"></i> Manual Blacklist</a>
                             <a class="st-nav-mob-item" href="{{ url_for('overlay_page.overlays_page') }}"><i class="fa-solid fa-layer-group"></i> Overlays</a>
                             <a class="st-nav-mob-item" href="{{ url_for('subtitle_manager.page') }}"><i class="fa-solid fa-closed-captioning"></i> Subtitle Manager</a>
+                            <a class="st-nav-mob-item" href="{{ url_for('nfo.page') }}"><i class="fa-solid fa-file-code"></i> NFO Files</a>
                             {% if not is_limited_environment() %}
                             <a class="st-nav-mob-item" href="{{ url_for('upgrade_hub.index') }}"><i class="fa-solid fa-arrow-up"></i> Upgrade Hub</a>
                             {% endif %}
@@ -586,7 +588,7 @@
                         ('scraper.scraper_tester', 'Tester'),
                         ('magnet.assign_magnet', 'M. Assign'),
                         ('debug.manual_blacklist', 'M. Blacklist'),
-                    ] + ([('overlay_page.overlays_page', 'Overlays'), ('subtitle_manager.page', 'Subtitle Manager')] if not is_user_system_enabled() or (current_user.is_authenticated and current_user.role == 'admin') else [])
+                    ] + ([('overlay_page.overlays_page', 'Overlays'), ('subtitle_manager.page', 'Subtitle Manager'), ('nfo.page', 'NFO Files')] if not is_user_system_enabled() or (current_user.is_authenticated and current_user.role == 'admin') else [])
                       + ([] if is_limited_environment() or (is_user_system_enabled() and not (current_user.is_authenticated and current_user.role == 'admin')) else [('upgrade_hub.index', 'Upgrade Hub')])
                 } %}
 

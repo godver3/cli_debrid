@@ -44,6 +44,20 @@ def test_season_pack_name_fills_group_for_episode_file():
     assert video.episode == 3
 
 
+def test_episode_prefers_own_file_over_wrong_episode_filled_by_title():
+    # A multi-file pack named after S01E04.mkv must not steer S01E01's subtitle
+    # search hint to E04.
+    video, parse = downsub._build_video(
+        Path('/lib/Detectorists/Season 01/Detectorists - S01E01.mkv'),
+        None, None,
+        _ep_item(title='Detectorists', season_number=1, episode_number=1,
+                 filled_by_title='Detectorists.S01E04.1080p.WEBRip.Rus.Eng.Ozz.mkv',
+                 filled_by_file='Detectorists.S01E01.1080p.WEBRip.Rus.Eng.Ozz.mkv'))
+    assert isinstance(video, Episode)
+    assert parse == 'Detectorists.S01E01.1080p.WEBRip.Rus.Eng.Ozz.mkv'
+    assert (video.season, video.episode) == (1, 1)
+
+
 def test_db_episode_number_wins_over_parsed():
     video, _ = downsub._build_video(
         Path('/x/Show.S01E01.mkv'), None, 'Show.S01E01.720p.WEB-GRP',

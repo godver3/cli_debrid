@@ -275,6 +275,7 @@
 {% endif %}
 
 <script>
+    function _ttEsc(v) { return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function showModal(modalId) {
     const modal = document.getElementById(modalId);
     const overlay = document.getElementById('overlay' + modalId.replace('detailsModal', ''));
@@ -396,14 +397,14 @@ document.addEventListener('DOMContentLoaded', function() {
                     // Create the badge HTML
                     let badge;
                     if (data.error) {
-                        badge = `<span class="status-badge error" title="Error: ${data.error}">Error</span>`;
+                        badge = `<span class="status-badge error" title="Error: ${_ttEsc(data.error)}">Error</span>`;
                     } else if (data.is_present === true) {
                         const status = data.status ? data.status.charAt(0).toUpperCase() + data.status.slice(1) : 'Present';
                         const badgeClass = status.toLowerCase() === 'downloading' ? 'downloading' : 'present';
                         badge = `<span class="status-badge ${badgeClass}" title="${status}">${status}</span>`;
                     } else if (data.is_present === false) {
                         const reason = data.removal_reason ? data.removal_reason : '';
-                        badge = `<span class="status-badge removed" title="Removed: ${reason}">Removed</span>`;
+                        badge = `<span class="status-badge removed" title="Removed: ${_ttEsc(reason)}">Removed</span>`;
                     } else {
                         badge = '<span class="status-badge error">Unknown</span>';
                     }
@@ -423,7 +424,7 @@ document.addEventListener('DOMContentLoaded', function() {
             })
             .catch(error => {
                 console.error('Error checking torrent status:', error);
-                const errorBadge = `<span class="status-badge error" title="${error.message}">Error</span>`;
+                const errorBadge = `<span class="status-badge error" title="${_ttEsc(error.message)}">Error</span>`;
                 statusCells.forEach(cell => {
                     cell.innerHTML = errorBadge;
                 });

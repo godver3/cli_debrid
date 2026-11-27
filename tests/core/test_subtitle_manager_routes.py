@@ -90,12 +90,18 @@ def test_item_detail_lists_sidecars(env):
 
 
 def test_delete_only_this_items_sidecars(env):
+    from database import subtitle_history
     c = env['client']
     outside = os.path.join(env['tmp'], 'outside.srt')
     assert c.post('/api/subtitles/item/1/delete', json={'path': outside}).status_code == 400
     assert c.post('/api/subtitles/item/1/delete', json={'path': env['ep1']}).status_code == 400
     assert os.path.exists(outside) and os.path.exists(env['ep1'])
     target = os.path.join(env['lib'], 'Show - S01E01.en.srt')
+    # Unrecorded (release) sidecar is refused
+    assert c.post('/api/subtitles/item/1/delete', json={'path': target}).status_code == 400
+    assert os.path.exists(target)
+    # Recorded Clyde sidecar can be deleted
+    subtitle_history.record(1, 'Show S01E01', 'en', 'subdl', 900, 971, [], '', 'srt', 'sidecar', target, 'auto')
     assert c.post('/api/subtitles/item/1/delete', json={'path': target}).get_json()['success']
     assert not os.path.exists(target)
 
@@ -130,7 +136,12 @@ _META = {'MediaContainer': {'Metadata': [{'Media': [{'Part': [{'Stream': [
 
 
 def test_plex_delete_only_external_streams(env):
+    from database import subtitle_history
     _plex_item(env)
+    # Remove the local en sidecar so stream 11 represents a Plex upload, and record it
+    os.remove(os.path.join(env['lib'], 'Show - S01E01.en.srt'))
+    subtitle_history.record(1, 'Show S01E01', 'en', 'subdl', 900, 971, [], '', 'srt',
+                            'plex', None, 'auto', media_key='Show - S01E01.mkv')
     calls = []
     with mock.patch('requests.get', return_value=_R(200, _META)), \
             mock.patch('utilities.subtitle_resync.item_rk', return_value='777'), \
@@ -164,9 +175,10 @@ def test_auto_says_what_happened(env):
 
 
 def test_orphan_tool_scans_then_deletes_only_with_confirmation(env):
-    """Opt-in 'Remove orphaned subtitles': subtitles named after a video no
-    longer in the folder go; the current video's subtitles (any source),
-    symlinked ones and folders without a video stay."""
+    """Opt-in 'Remove orphaned subtitles': Clyde-written subtitles named after
+    a video no longer in the folder go; the current video's subtitles,
+    release/unrecorded subtitles, symlinked ones and folders without a video stay."""
+    from database import subtitle_history
     lib = env['lib']                     # .../lib/Show (2020)/Season 01 with S01E01/E02 videos
     root = os.path.dirname(os.path.dirname(lib))
     orphan = os.path.join(lib, 'Show - S01E01.old-release.en.srt.bak.srt')
@@ -175,6 +187,7 @@ def test_orphan_tool_scans_then_deletes_only_with_confirmation(env):
     os.symlink('/nonexistent/x.srt', linked)
     open(stale, 'w').close()
     open(orphan, 'w').close()
+    subtitle_history.record(1, 'Show S01E01', 'en', 'subdl', 900, 971, [], '', 'srt', 'sidecar', stale, 'auto')
     c = env['client']
     with mock.patch('utilities.settings.get_setting',
                     side_effect=lambda s, k, d=None: {('File Management', 'file_collection_management'): 'Symlinked/Local',

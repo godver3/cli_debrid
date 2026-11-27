@@ -1660,6 +1660,11 @@ class ScrapingQueue:
                         parsed_episodes == [target_episode] or
                         (len(parsed_episodes) > 1 and target_episode in parsed_episodes)
                     )
+                    if r.get('pack_for_single_episode') and not parsed_episodes:
+                        # A torrent season/multi-season pack filter_results kept for this
+                        # episode: it covers the season, and the matcher picks the file.
+                        season_match = not parsed_seasons or target_season in parsed_seasons
+                        episode_match = True
                 
                 # Define original_filename for use in fallback logic
                 original_filename = parsed_info.get('original_filename', '')
@@ -1913,6 +1918,11 @@ class ScrapingQueue:
                         parsed_episodes == [target_episode] or
                         (len(parsed_episodes) > 1 and target_episode in parsed_episodes)
                     )
+                    if r.get('pack_for_single_episode') and not parsed_episodes:
+                        # A torrent season/multi-season pack filter_results kept for this
+                        # episode: it covers the season, and the matcher picks the file.
+                        season_match = not parsed_seasons or target_season in parsed_seasons
+                        episode_match = True
                     logging.debug(f"{log_prefix} Non-F1/XEM S_match:{season_match} (PTT_S:{parsed_seasons} vs TargetS:{target_season}), E_match:{episode_match} (PTT_E:{parsed_episodes} vs TargetE:{target_episode}).")
 
                 if season_match and episode_match:

@@ -7,6 +7,36 @@ function scrEsc(v) {
     return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+// Keep 0 (Specials) intact while normalizing null/undefined/'' to null.
+function scrOptNum(v) {
+    return (v == null || v === '') ? null : v;
+}
+
+// A result's clean title as HTML: the show title escaped, the season/episode
+// tags as markup. Escaping the whole string showed the tags as text
+// ("<span class="season-info">S02</span>"). Season 0 (Specials) shows S00;
+// multi-season packs show their range (S03-S04), not the season count.
+function scrCleanTitleHtml(title, year, season, episode, seasons) {
+    const t = String(title ?? '');
+    const withYear = year && !t.trim().endsWith(`(${year})`) ? `${t} (${year})` : t;
+    const pad = n => n.toString().padStart(2, '0');
+    const tags = [];
+    if (season != null && season !== '') {
+        let seasonLabel = `S${pad(season)}`;
+        const list = Array.isArray(seasons)
+            ? seasons.map(Number).filter(n => !Number.isNaN(n))
+            : [];
+        if (list.length > 1) {
+            const lo = Math.min(...list);
+            const hi = Math.max(...list);
+            if (lo !== hi) seasonLabel = `S${pad(lo)}-S${pad(hi)}`;
+        }
+        tags.push(`<span class="season-info">${seasonLabel}</span>`);
+    }
+    if (episode != null && episode !== '') tags.push(`<span class="ds-episode-info"> E${pad(episode)}</span>`);
+    return scrEsc(withYear) + (tags.length ? ' ' + tags.join(' ') : '');
+}
+
 function addToRealDebrid(magnetLink, torrent) {
     // Check if user is a requester before making the request
     const isRequesterEl = document.getElementById('is_requester');
@@ -40,8 +70,8 @@ function addToRealDebrid(magnetLink, torrent) {
             formData.append('title', torrent.title);
             formData.append('year', torrent.year);
             formData.append('media_type', torrent.media_type);
-            formData.append('season', torrent.season || '');
-            formData.append('episode', torrent.episode || '');
+            formData.append('season', torrent.season ?? '');
+            formData.append('episode', torrent.episode ?? '');
             formData.append('version', torrent.version || '');
             formData.append('tmdb_id', torrent.tmdb_id || '');
             formData.append('genres', torrent.genres || '');
@@ -504,11 +534,11 @@ function renderEpisodeBatch() {
         episodeDiv.innerHTML = `
             <button ${metadata.isRequester ? 'disabled' : ''}><span class="episode-rating">${(item.vote_average || 0).toFixed(1)}</span>
             <img src="${item.still_path ? `/scraper/tmdb_image/w300${item.still_path}` : '/static/image/placeholder-horizontal.png'}"
-                alt="${item.episode_title || ''}"
+                alt="${scrEsc(item.episode_title || '')}"
                 loading="${loadingAttr}"
                 class="${item.still_path ? '' : 'placeholder-episode'}">
             <div class="episode-info">
-                <h2 class="episode-title">${item.episode_num}. ${item.episode_title || ''}</h2>
+                <h2 class="episode-title">${item.episode_num}. ${scrEsc(item.episode_title || '')}</h2>
                 <p class="episode-sub">${date ? date.toLocaleDateString("en-US", options) : 'Air date unknown'}</p>
             </div></button>
         `;
@@ -654,16 +684,6 @@ function toggleResultsVisibility(section) {
     }
 }
 
-// Helper function to format bitrate information
-function formatBitrate(bitrate) {
-    if (!bitrate || bitrate === 0) {
-        return 'Bitrate: N/A';
-    }
-    const bitrateKbps = parseFloat(bitrate);
-    const bitrateMbps = (bitrateKbps / 1000).toFixed(2);
-    return `Bitrate: ~${bitrateMbps} Mbps`;
-}
-
 // Helper function to format bitrate for inline display (mobile)
 function formatBitrateInline(bitrate) {
     if (!bitrate || bitrate === 0) {
@@ -689,14 +709,14 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
     const mediaQuery = window.matchMedia('(max-width: 1024px)');
     async function handleScreenChange(e) {
         if (e.matches) { // Mobile view
-            const subText = season
-                ? `${title} · S${String(season).padStart(2,'0')}${episode ? 'E'+String(episode).padStart(2,'0') : ''} (${year})`
+            const subText = (season != null && season !== '')
+                ? `${title} · S${String(season).padStart(2,'0')}${(episode != null && episode !== '') ? 'E'+String(episode).padStart(2,'0') : ''} (${year})`
                 : `${title} (${year})`;
             overlayContent.innerHTML = `
                 <div class="tr-dlg-hdr">
                     <div class="tr-dlg-title">
                         <div class="tr-dlg-h">Torrent Results</div>
-                        <div class="tr-dlg-sub">${subText}</div>
+                        <div class="tr-dlg-sub">${scrEsc(subText)}</div>
                     </div>
                     <button class="tr-close-btn" onclick="closeOverlay()">✕</button>
                 </div>`;
@@ -910,9 +930,9 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                             assignUrlParams.set('prefill_magnet', prefillLink);
                         }
                         // Set selection type based on whether this is an episode or season pack
-                        if (season) {
+                        if (season != null && season !== '') {
                             assignUrlParams.set('prefill_seasons', season);
-                            if (episode) {
+                            if (episode != null && episode !== '') {
                                 // Individual episode
                                 assignUrlParams.set('prefill_selection', 'episode');
                                 assignUrlParams.set('prefill_episode', episode);
@@ -931,13 +951,13 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 torResDiv.onclick = function() {
                     const torrentData = {
                         title: title, year: year, version: version, media_type: mediaType,
-                        season: season || null, episode: episode || null, tmdb_id: mediaId,
+                        season: scrOptNum(season), episode: scrOptNum(episode), tmdb_id: mediaId,
                         genres: genre_ids, original_title: torrent.original_title // Pass original_title
                     };
                     
                     if (isFilteredOut) {
                         // Show confirmation dialog for filtered items
-                        const confirmationMessage = `This item was filtered for the following reason:\n\n'${torrent.filter_reason || 'No specific reason provided'}'.\n\nDo you want to add it anyway?`;
+                        const confirmationMessage = `This item was filtered for the following reason:\n\n'${scrEsc(torrent.filter_reason || 'No specific reason provided')}'.\n\nDo you want to add it anyway?`;
                         showPopup({
                             type: POPUP_TYPES.CONFIRM,
                             title: 'Add Filtered Item?',
@@ -968,7 +988,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                     closeOverlay();
 
                     // Trigger new search with new version
-                    const multi = mediaType === 'tv' && !episode ? true : false;
+                    const multi = mediaType === 'tv' && scrOptNum(episode) === null ? true : false;
                     await selectMedia(mediaId, title, year, mediaType, season, episode, multi, genre_ids, newVersion);
                 });
             }
@@ -992,7 +1012,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
             
             modalHeader.innerHTML = `
                 <div class="torrent-modal-title-section">
-                    <h3>Torrent Results for ${title}${year && !title.trim().endsWith(`(${year})`) ? ` (${year})` : ''}</h3>
+                    <h3>Torrent Results for ${scrEsc(title)}${year && !title.trim().endsWith(`(${year})`) ? ` (${year})` : ''}</h3>
                     <div class="torrent-stats">
                         <span>${allDisplayItems.length} results</span>
                         <span>Search: ${searchDuration}ms</span>
@@ -1159,11 +1179,11 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 const globalTags = (cfgData['Tags'] || {})['tags_list'] || [];
                 const fileMode = (cfgData['File Management'] || {})['file_collection_management'] || '';
                 if (fileMode === 'Plex' && globalTags.length > 0) {
-                    const opts = globalTags.map(t => `<option value="${t}">${t}</option>`).join('');
+                    const opts = globalTags.map(t => `<option value="${scrEsc(t)}">${scrEsc(t)}</option>`).join('');
                     tagsDropdownHTML = `
                         <div class="torrent-tags-dropdown-wrapper" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">
                             <span style="font-size:12px;color:#aaa;margin-right:4px;">Tags:</span>
-                            ${globalTags.map(t => `<span class="torrent-tag-pill" data-tag="${t}" onclick="this.classList.toggle('active');this.style.background=this.classList.contains('active')?'#e8651a':'#333';this.style.color='#fff';" style="padding:3px 10px;border-radius:12px;background:#333;color:#ddd;font-size:11px;cursor:pointer;user-select:none;">${t}</span>`).join('')}
+                            ${globalTags.map(t => `<span class="torrent-tag-pill" data-tag="${scrEsc(t)}" onclick="this.classList.toggle('active');this.style.background=this.classList.contains('active')?'#e8651a':'#333';this.style.color='#fff';" style="padding:3px 10px;border-radius:12px;background:#333;color:#ddd;font-size:11px;cursor:pointer;user-select:none;">${scrEsc(t)}</span>`).join('')}
                         </div>`;
                 }
             } catch(e) {}
@@ -1206,7 +1226,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
 
                     // Trigger new search with new version
                     // Note: multi value defaults to true for TV shows
-                    const multi = mediaType === 'tv' && !episode ? true : false;
+                    const multi = mediaType === 'tv' && scrOptNum(episode) === null ? true : false;
                     await selectMedia(mediaId, title, year, mediaType, season, episode, multi, genre_ids, newVersion);
                 });
             }
@@ -1242,9 +1262,9 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                     prefill_year: year, prefill_magnet: torrent.magnet || torrent.nzb_url || '', prefill_version: version
                 });
 
-                if (season) {
+                if (season != null && season !== '') {
                     assignUrlParams.set('prefill_seasons', season);
-                    if (episode) {
+                    if (episode != null && episode !== '') {
                         assignUrlParams.set('prefill_selection', 'episode');
                         assignUrlParams.set('prefill_episode', episode);
                     } else {
@@ -1258,15 +1278,13 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 const qualityBadgesHtml = qualityTags.map(tag => createQualityBadge(tag)).join('');
                 
                 // Use clean title from header, store filename for toggle
-                const ShowInfo = `${season ? `<span class="season-info">S${season.toString().padStart(2, '0')}` : ''}${(torrent.parsed_info?.seasons?.length || 0) > 1 ? ` - ${torrent.parsed_info.seasons.length}</span>` : `</span>`} ${episode ? `<span class="ds-episode-info"> E${episode.toString().padStart(2, '0')}</span>`: ''}`;
-                const titleHasYear = year && title.trim().endsWith(`(${year})`);
-                const cleanTitle = `${title}${year && !titleHasYear ? ` (${year})` : ''}${ShowInfo ? ` ${ShowInfo}` : ''}`;
+                const cleanTitle = scrCleanTitleHtml(title, year, season, episode, torrent.parsed_info?.seasons);
                 const filename = torrent.title || torrent.original_title || 'N/A';
                 
                 // Get score and color class
                 const score = torrent.score_breakdown?.total_score || 0;
                 const scoreClass = getScoreColorClass(score);
-                const scoreDisplay = isFilteredOut ? (torrent.filter_reason || 'Filtered') : (score || 'N/A');
+                const scoreDisplay = isFilteredOut ? scrEsc(torrent.filter_reason || 'Filtered') : (score || 'N/A');
                 
                 // NZB results show a usenet badge instead of cache status
                 const isNzbResult = (torrent.protocol === 'nzb') || !!torrent.nzb_url;
@@ -1282,7 +1300,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 row.innerHTML = `
                     <td>
                         <div class="release-title-wrapper">
-                            <div class="release-title" data-clean-title="${scrEsc(cleanTitle)}" data-filename="${scrEsc(filename)}">${scrEsc(cleanTitle)}</div>
+                            <div class="release-title" data-clean-title="${scrEsc(cleanTitle)}" data-filename="${scrEsc(filename)}">${cleanTitle}</div>
                             <div class="release-tags">${qualityBadgesHtml}</div>
                         </div>
                     </td>
@@ -1328,7 +1346,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
 
                 if (isFilteredOut) {
                     addButton.onclick = function() {
-                        const confirmationMessage = `This item was filtered for the following reason:\n\n'${torrent.filter_reason || 'No specific reason provided'}'.\n\nDo you want to add it anyway?`;
+                        const confirmationMessage = `This item was filtered for the following reason:\n\n'${scrEsc(torrent.filter_reason || 'No specific reason provided')}'.\n\nDo you want to add it anyway?`;
                         showPopup({
                             type: POPUP_TYPES.CONFIRM,
                             title: 'Add Filtered Item?',
@@ -1337,7 +1355,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                             onConfirm: () => {
                                 addToRealDebrid(torrent.magnet, {
                                     ...torrent, year, version: torrent.version || version, title,
-                                    media_type: mediaType, season: season || null, episode: episode || null,
+                                    media_type: mediaType, season: scrOptNum(season), episode: scrOptNum(episode),
                                     tmdb_id: torrent.tmdb_id || mediaId, genres: genre_ids, original_title: torrent.original_title
                                 });
                             }
@@ -1347,7 +1365,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                     addButton.onclick = function() {
                         addToRealDebrid(torrent.magnet, {
                             ...torrent, year, version: torrent.version || version, title,
-                            media_type: mediaType, season: season || null, episode: episode || null,
+                            media_type: mediaType, season: scrOptNum(season), episode: scrOptNum(episode),
                             tmdb_id: torrent.tmdb_id || mediaId, genres: genre_ids, original_title: torrent.original_title
                         });
                     };
@@ -1418,7 +1436,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                             if (this.checked) {
                                 titleDiv.textContent = filename;
                             } else {
-                                titleDiv.textContent = cleanTitle;
+                                titleDiv.innerHTML = cleanTitle;  // built by scrCleanTitleHtml (title escaped)
                             }
                         }
                     });
@@ -1462,7 +1480,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 const scraperCount = scrapers.size;
                 modalHeader.innerHTML = `
                     <div class="torrent-modal-title-section">
-                        <h3>Torrent Results for ${title}${year && !title.trim().endsWith(`(${year})`) ? ` (${year})` : ''}</h3>
+                        <h3>Torrent Results for ${scrEsc(title)}${year && !title.trim().endsWith(`(${year})`) ? ` (${year})` : ''}</h3>
                         <div class="torrent-stats">
                             <span>${allDisplayItems.length} results</span>
                             <span>Search: ${searchDuration}ms</span>
@@ -1571,7 +1589,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 if (versionSelectEl) {
                     versionSelectEl.addEventListener('change', async function(e) {
                         closeOverlay();
-                        const multi = mediaType === 'tv' && !episode ? true : false;
+                        const multi = mediaType === 'tv' && scrOptNum(episode) === null ? true : false;
                         await selectMedia(mediaId, title, year, mediaType, season, episode, multi, genre_ids, e.target.value);
                     });
                 }
@@ -1604,9 +1622,9 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                         prefill_id: mediaId, prefill_type: mediaType, prefill_title: title,
                         prefill_year: year, prefill_magnet: torrent.magnet || torrent.nzb_url || '', prefill_version: version
                     });
-                    if (season) {
+                    if (season != null && season !== '') {
                         assignUrlParams.set('prefill_seasons', season);
-                        if (episode) {
+                        if (episode != null && episode !== '') {
                             assignUrlParams.set('prefill_selection', 'episode');
                             assignUrlParams.set('prefill_episode', episode);
                         } else {
@@ -1618,14 +1636,12 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                     const qualityTags = extractQualityTags(torrent.title || torrent.original_title || '');
                     const qualityBadgesHtml = qualityTags.map(tag => createQualityBadge(tag)).join('');
 
-                    const ShowInfo = `${season ? `<span class="season-info">S${season.toString().padStart(2, '0')}` : ''}${(torrent.parsed_info?.seasons?.length || 0) > 1 ? ` - ${torrent.parsed_info.seasons.length}</span>` : `</span>`} ${episode ? `<span class="ds-episode-info"> E${episode.toString().padStart(2, '0')}</span>` : ''}`;
-                    const titleHasYear = year && title.trim().endsWith(`(${year})`);
-                    const cleanTitle = `${title}${year && !titleHasYear ? ` (${year})` : ''}${ShowInfo ? ` ${ShowInfo}` : ''}`;
+                    const cleanTitle = scrCleanTitleHtml(title, year, season, episode, torrent.parsed_info?.seasons);
                     const filename = torrent.title || torrent.original_title || 'N/A';
 
                     const score = torrent.score_breakdown?.total_score || 0;
                     const scoreClass = getScoreColorClass(score);
-                    const scoreDisplay = isFilteredOut ? (torrent.filter_reason || 'Filtered') : (score || 'N/A');
+                    const scoreDisplay = isFilteredOut ? scrEsc(torrent.filter_reason || 'Filtered') : (score || 'N/A');
 
                     const isNzbResult2 = (torrent.protocol === 'nzb') || !!torrent.nzb_url;
                     const cacheIconHtml = isNzbResult2
@@ -1640,7 +1656,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                     row.innerHTML = `
                         <td>
                             <div class="release-title-wrapper">
-                                <div class="release-title" data-clean-title="${scrEsc(cleanTitle)}" data-filename="${scrEsc(filename)}">${scrEsc(cleanTitle)}</div>
+                                <div class="release-title" data-clean-title="${scrEsc(cleanTitle)}" data-filename="${scrEsc(filename)}">${cleanTitle}</div>
                                 <div class="release-tags">${qualityBadgesHtml}</div>
                             </div>
                         </td>
@@ -1703,7 +1719,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
 
                     if (isFilteredOut) {
                         addButton.onclick = function() {
-                            const confirmationMessage = `This item was filtered for the following reason:\n\n'${torrent.filter_reason || 'No specific reason provided'}'.\n\nDo you want to add it anyway?`;
+                            const confirmationMessage = `This item was filtered for the following reason:\n\n'${scrEsc(torrent.filter_reason || 'No specific reason provided')}'.\n\nDo you want to add it anyway?`;
                             showPopup({
                                 type: POPUP_TYPES.CONFIRM,
                                 title: 'Add Filtered Item?',
@@ -1712,7 +1728,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                                 onConfirm: () => {
                                     addToRealDebrid(torrent.magnet, {
                                         ...torrent, year, version: torrent.version || version, title,
-                                        media_type: mediaType, season: season || null, episode: episode || null,
+                                        media_type: mediaType, season: scrOptNum(season), episode: scrOptNum(episode),
                                         tmdb_id: torrent.tmdb_id || mediaId, genres: genre_ids, original_title: torrent.original_title
                                     });
                                 }
@@ -1722,7 +1738,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                         addButton.onclick = function() {
                             addToRealDebrid(torrent.magnet, {
                                 ...torrent, year, version: torrent.version || version, title,
-                                media_type: mediaType, season: season || null, episode: episode || null,
+                                media_type: mediaType, season: scrOptNum(season), episode: scrOptNum(episode),
                                 tmdb_id: torrent.tmdb_id || mediaId, genres: genre_ids, original_title: torrent.original_title
                             });
                         };
@@ -1753,9 +1769,11 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                         tbody.querySelectorAll('tr').forEach(row => {
                             const titleDiv = row.querySelector('.release-title');
                             if (titleDiv) {
-                                titleDiv.textContent = this.checked
-                                    ? titleDiv.getAttribute('data-filename')
-                                    : titleDiv.getAttribute('data-clean-title');
+                                if (this.checked) {
+                                    titleDiv.textContent = titleDiv.getAttribute('data-filename');
+                                } else {
+                                    titleDiv.innerHTML = titleDiv.getAttribute('data-clean-title');  // scrCleanTitleHtml (title escaped)
+                                }
                             }
                         });
                     });
@@ -2426,7 +2444,7 @@ document.addEventListener('DOMContentLoaded', async function() {
                 if (window.DEBUG) console.log('⚡ Pre-fetched episodes available - will display instantly after UI setup');
                 if (window.DEBUG) console.log('MediaData genres:', mediaData.genre_ids);
                 preFetchedEpisodes = mediaData.preFetchedEpisodes;
-                preFetchedSeason = mediaData.preFetchedSeason || 1;
+                preFetchedSeason = scrOptNum(mediaData.preFetchedSeason) ?? 1;
 
                 // Cache the pre-fetched episodes
                 const versionSelect = document.getElementById('version-select');
@@ -2759,7 +2777,7 @@ function showVersionModal(content) {
     const subEl = document.createElement('div');
     subEl.className = 'dialog-sub';
     const isTV = content.mediaType === 'tv';
-    subEl.innerHTML = `<i class="fa-solid fa-${isTV ? 'tv' : 'film'}"></i> Requesting: ${content.title}${content.year ? ` (${content.year})` : ''}`;
+    subEl.innerHTML = `<i class="fa-solid fa-${isTV ? 'tv' : 'film'}"></i> Requesting: ${scrEsc(content.title)}${content.year ? ` (${content.year})` : ''}`;
     versionCheckboxes.appendChild(subEl);
 
     // TV show: request type radio rows
@@ -2864,7 +2882,7 @@ function showScrapeVersionModal(content) {
     const subEl = document.createElement('div');
     subEl.className = 'dialog-sub';
     const isTV = content.mediaType === 'tv';
-    subEl.innerHTML = `<i class="fa-solid fa-${isTV ? 'tv' : 'film'}"></i> ${content.title}${content.year ? ` (${content.year})` : ''}`;
+    subEl.innerHTML = `<i class="fa-solid fa-${isTV ? 'tv' : 'film'}"></i> ${scrEsc(content.title)}${content.year ? ` (${content.year})` : ''}`;
     versionRadios.appendChild(subEl);
 
     // Section label
@@ -2922,7 +2940,7 @@ function showVersionModalForSeason(content) {
     // Subtitle pill
     const subEl = document.createElement('div');
     subEl.className = 'dialog-sub';
-    subEl.innerHTML = `<i class="fa-solid fa-tv"></i> Requesting: ${content.title} — Season ${content.seasons[0]}`;
+    subEl.innerHTML = `<i class="fa-solid fa-tv"></i> Requesting: ${scrEsc(content.title)} — Season ${content.seasons[0]}`;
     versionCheckboxes.appendChild(subEl);
 
     const divider = document.createElement('div');
@@ -2987,7 +3005,7 @@ async function fetchShowSeasons(tmdbId) {
                 if (window.DEBUG) console.error('API error message:', data.error);
                 errorMessage = `Error: ${data.error}`;
             }
-            document.getElementById('season-selection-container').innerHTML = `<p>${errorMessage}</p>`;
+            document.getElementById('season-selection-container').innerHTML = `<p>${scrEsc(errorMessage)}</p>`;
         }
     } catch (error) {
         if (window.DEBUG) console.error('Error fetching show seasons:', error);
@@ -3113,11 +3131,11 @@ function createMovieElement(data, index = 999) {
             <span id="trending-watchers">👁 ${data.watcher_count}</span>
             <div class="poster-container">
                 <img src="${data.poster_path.startsWith('static/') ? '/' + data.poster_path : '/scraper/tmdb_image/w300' + data.poster_path}"
-                    alt="${data.title}"
+                    alt="${scrEsc(data.title)}"
                     loading="${index < 8 ? 'eager' : 'lazy'}"
                     class="media-poster-img ${data.poster_path.startsWith('static/') ? 'placeholder-poster' : ''}">
                 <div class="poster-overlay">
-                    <h3>${data.title}</h3>
+                    <h3>${scrEsc(data.title)}</h3>
                     <p>${data.year}</p>
                 </div>
                 ${requestIconHTML}
@@ -3125,7 +3143,7 @@ function createMovieElement(data, index = 999) {
                 ${dbStatusPipHTML} // <!-- Add DB Status Pip Here -->
             </div>
             <div class="media-title" style="display: ${document.getElementById('tmdb_api_key_set').value === 'True' ? 'none' : 'block'}">
-                <h2>${data.title}</h2>
+                <h2>${scrEsc(data.title)}</h2>
                 <p>${data.year}</p>
             </div>
         </div>
@@ -3259,11 +3277,11 @@ function createShowElement(data, index = 999) {
             <span id="trending-watchers">👁 ${data.watcher_count}</span>
             <div class="poster-container">
                 <img src="${data.poster_path.startsWith('static/') ? '/' + data.poster_path : '/scraper/tmdb_image/w300' + data.poster_path}"
-                    alt="${data.title}"
+                    alt="${scrEsc(data.title)}"
                     loading="${index < 8 ? 'eager' : 'lazy'}"
                     class="media-poster-img ${data.poster_path.startsWith('static/') ? 'placeholder-poster' : ''}">
                 <div class="poster-overlay">
-                    <h3>${data.title}</h3>
+                    <h3>${scrEsc(data.title)}</h3>
                     <p>${data.year}</p>
                 </div>
                 ${requestIconHTML}
@@ -3271,7 +3289,7 @@ function createShowElement(data, index = 999) {
                 ${dbStatusPipHTML} // <!-- Add DB Status Pip Here -->
             </div>
             <div class="media-title" style="display: ${document.getElementById('tmdb_api_key_set').value === 'True' ? 'none' : 'block'}">
-                <h2>${data.title}</h2>
+                <h2>${scrEsc(data.title)}</h2>
                 <p>${data.year}</p>
             </div>
         </div>
@@ -3609,11 +3627,11 @@ function createAnimeElement(data, index = 999) {
             <span id="trending-watchers">👁 ${data.watcher_count}</span>
             <div class="poster-container">
                 <img src="${data.poster_path.startsWith('static/') ? '/' + data.poster_path : '/scraper/tmdb_image/w300' + data.poster_path}"
-                    alt="${data.title}"
+                    alt="${scrEsc(data.title)}"
                     loading="${index < 8 ? 'eager' : 'lazy'}"
                     class="media-poster-img ${data.poster_path.startsWith('static/') ? 'placeholder-poster' : ''}">
                 <div class="poster-overlay">
-                    <h3>${data.title}</h3>
+                    <h3>${scrEsc(data.title)}</h3>
                     <p>${data.year}</p>
                 </div>
                 ${requestIconHTML}
@@ -3621,7 +3639,7 @@ function createAnimeElement(data, index = 999) {
                 ${dbStatusPipHTML}
             </div>
             <div class="media-title" style="display: ${document.getElementById('tmdb_api_key_set').value === 'True' ? 'none' : 'block'}">
-                <h2>${data.title}</h2>
+                <h2>${scrEsc(data.title)}</h2>
                 <p>${data.year}</p>
             </div>
         </div>
@@ -3895,229 +3913,6 @@ function displaySearchResults(results, version) {
     setupSearchScrollListener();
 }
 
-// OLD RENDERING CODE BELOW - DEPRECATED BY VIRTUAL SCROLLING (Phase 3.2)
-// This is kept as a fallback but should not be called anymore
-function displaySearchResults_OLD(results, version) {
-    // Deprecated - kept for reference only
-    const resultsList = document.getElementById('resultsList');
-    if (!resultsList) return;
-
-    const tmdb_api_key_set = document.getElementById('tmdb_api_key_set')?.value === 'True';
-    const isRequesterEl = document.getElementById('is_requester');
-    const isRequester = isRequesterEl && isRequesterEl.value === 'True';
-
-    const requestIconHTML = `
-        <div class="request-icon" title="Request this content">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="10"></circle>
-                <line x1="12" y1="8" x2="12" y2="16"></line>
-                <line x1="8" y1="12" x2="16" y2="12"></line>
-            </svg>
-        </div>
-    `;
-
-    const testerIconHTML = `
-        <div class="tester-icon" title="Test this content">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M9 3h6v4H9zM6 7h12l-3 10H9z"></path>
-                <path d="M10 17h4v4h-4z"></path>
-            </svg>
-        </div>
-    `;
-
-    const assignMagnetIconHTML = `
-    <div class="assign-magnet-icon assign-magnet-mobile" title="Assign Magnet Link">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
-            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
-        </svg>
-    </div>
-    `;
-
-    results.forEach(item => {
-        if (window.DEBUG) console.log('Processing item for display:', JSON.stringify(item, null, 2));
-        const searchResDiv = document.createElement('div');
-        searchResDiv.className = 'sresult';
-        let posterUrl = '/static/images/placeholder.png'; // Default placeholder
-        let isPlaceholder = true;
-
-        // --- Use item.poster_path (lowercase with underscore) ---
-        if (item.poster_path && typeof item.poster_path === 'string' && item.poster_path.trim() !== '') {
-             const pathToCheck = item.poster_path.trim(); // Use correct key here
-             if (window.DEBUG) console.log('Checking poster_path:', pathToCheck); // Log correct key
-
-             // --- Logic remains the same, just uses pathToCheck from correct key ---
-             if (pathToCheck.startsWith('static/')) {
-                 posterUrl = pathToCheck.startsWith('/') ? pathToCheck : `/${pathToCheck}`;
-                 isPlaceholder = pathToCheck.includes('placeholder.png');
-                 if (window.DEBUG) console.log(`Poster type: static, Placeholder: ${isPlaceholder}`);
-             } else if (pathToCheck.startsWith('http')) {
-                 posterUrl = pathToCheck;
-                 isPlaceholder = false;
-                  if (window.DEBUG) console.log('Poster type: http');
-             } else if (pathToCheck.startsWith('/scraper/tmdb_image')) {
-                  posterUrl = pathToCheck.startsWith('/') ? pathToCheck : `/${pathToCheck}`;
-                  isPlaceholder = false;
-                  if (window.DEBUG) console.log('Poster type: proxy');
-             } else if (pathToCheck.startsWith('/')) { // Assume TMDB path
-                 posterUrl = `/scraper/tmdb_image/w300${pathToCheck}`; // Use proxy route
-                 isPlaceholder = false;
-                  if (window.DEBUG) console.log('Poster type: assumed TMDB, using proxy');
-             } else {
-                 if (window.DEBUG) console.warn(`Unknown poster_path format, using placeholder: ${pathToCheck}`);
-             }
-        } else {
-             if (window.DEBUG) console.warn('Missing, empty, or invalid poster_path, using placeholder. Value:', item.poster_path); // Log correct key
-        }
-        if (window.DEBUG) console.log('Final poster URL:', posterUrl);
-        // --- End Poster Path Logic ---
-
-        // --- Create DB Status Pip HTML ---
-        let dbStatusPipHTML = '';
-        if (item.db_status && item.db_status !== 'missing') {
-            dbStatusPipHTML = `<div class="db-status-pip db-status-${item.db_status}" title="Status: ${item.db_status.charAt(0).toUpperCase() + item.db_status.slice(1)}"></div>`;
-        }
-        // --- End DB Status Pip HTML ---
-
-        // --- Prioritize item.year for display ---
-        const displayYear = item.year || (item.release_date ? String(item.release_date).substring(0, 4) : 'N/A');
-        // --- End Year Display Fix ---
-
-        searchResDiv.innerHTML = `
-            <div class="media-poster">
-                    ${item.media_type === 'show' || item.media_type === 'tv' ? '<span class="mediatype-tv">TV</span>' : '<span class="mediatype-mv">MOVIE</span>'}
-                    <div class="poster-container">
-                        <img src="${posterUrl}"
-                            alt="${item.title}"
-                            class="${isPlaceholder ? 'placeholder-poster' : ''}">
-                        <div class="poster-overlay">
-                            <h3>${item.title}</h3>
-                            <p>${displayYear}</p>
-                        </div>
-                        ${requestIconHTML}
-                        ${testerIconHTML}
-                        ${dbStatusPipHTML}
-                    </div>
-                    <div class="searchresult-info" style="display: ${!tmdb_api_key_set ? 'block' : 'none'}">
-                        <h2 class="searchresult-item">${item.title}</h2>
-                        <p class="searchresult-year">${displayYear}</p>
-                    </div>
-                ${assignMagnetIconHTML}
-            </div>
-        `;
-
-        // ... (rest of the button handlers remain the same) ...
-         // Add click handler for the main content area
-         // Add click handlers for the poster
-        searchResDiv.onclick = function() {
-            if (isRequester) { return; }
-
-            if (window.innerWidth <= 768) {
-                item.tmdb_api_key_set = tmdb_api_key_set;
-                item.version = version;
-                showMobileActionModal(item);
-            } else {
-                if (item.media_type === 'movie') {
-                    const content = {
-                        mediaId: item.id,
-                        title: item.title,
-                        year: item.year,
-                        mediaType: 'movie',
-                        season: null,
-                        episode: null,
-                        multi: false,
-                        genre_ids: item.genre_ids
-                    };
-                    showScrapeVersionModal(content);
-                } else {
-                        // Make sure to pass the correct poster path key if needed by selectSeason
-                    selectSeason(item.id, item.title, item.year, item.media_type, null, null, true, item.genre_ids, item.vote_average || item.voteAverage, item.backdrop_path, item.show_overview, tmdb_api_key_set, item.rating);
-                }
-            }
-        };
- 
-
-        // Add click handler for the request icon
-        const requestIcon = searchResDiv.querySelector('.request-icon');
-        if (requestIcon) {
-            requestIcon.onclick = function(e) {
-                e.preventDefault();
-                e.stopPropagation();
-
-                // Show version modal with content info
-                showVersionModal({
-                    id: item.id,
-                    title: item.title,
-                    mediaType: item.media_type === 'show' ? 'tv' : item.media_type,
-                    year: item.year
-                });
-
-                return false;
-            };
-        }
-
-        // Add click handler for the tester icon
-        const testerIcon = searchResDiv.querySelector('.tester-icon');
-        if (testerIcon) {
-            testerIcon.onclick = function(e) {
-                e.preventDefault();
-                e.stopPropagation();
-
-                // Redirect to the scraper_tester.html page with the content data as URL parameters
-                const params = new URLSearchParams({
-                    title: item.title,
-                    id: item.id,
-                    year: item.year, // Use item.year which should be correct
-                    media_type: item.media_type === 'show' ? 'tv' : item.media_type
-                });
-                window.location.href = `/scraper/scraper_tester?${params.toString()}`;
-
-                return false;
-            };
-        }
-
-        // --- Add click handler for the assign magnet icon ---
-        const assignMagnetIcon = searchResDiv.querySelector('.assign-magnet-icon');
-        if (assignMagnetIcon) {
-            // Store data on the icon element itself for easy access
-            assignMagnetIcon.dataset.id = item.id;
-            assignMagnetIcon.dataset.title = item.title;
-            assignMagnetIcon.dataset.year = item.year; // Use item.year
-            assignMagnetIcon.dataset.mediaType = item.media_type === 'show' ? 'tv' : item.media_type; // Normalize to 'tv'
-
-            assignMagnetIcon.onclick = function(e) {
-                e.preventDefault();
-                e.stopPropagation();
-
-                const id = this.dataset.id;
-                const title = encodeURIComponent(this.dataset.title);
-                const year = this.dataset.year;
-                const mediaType = this.dataset.mediaType;
-                const currentVersion = document.getElementById('version-select').value; // Get current version
-
-                // Construct the URL for the magnet assigner page
-                const assignUrlParams = new URLSearchParams({
-                    prefill_id: id,
-                    prefill_type: mediaType,
-                    prefill_title: title,
-                    prefill_year: year,
-                    prefill_version: currentVersion
-                });
-                const assignUrl = `/magnet/assign_magnet?${assignUrlParams.toString()}`;
-
-                // Redirect the user
-                window.location.href = assignUrl;
-
-                return false;
-            };
-        }
-        // --- END Assign Magnet Icon Handler ---
-
-
-        resultsList.appendChild(searchResDiv);
-    });
-}
-
 // Render a batch of search results using infinite scroll
 function renderResultsBatch() {
     if (searchScrollState.isLoading) return;
@@ -4271,11 +4066,11 @@ function createResultElement(item, tmdb_api_key_set, isRequester, version, reque
                 ${item.media_type === 'show' || item.media_type === 'tv' ? '<span class="mediatype-tv">TV</span>' : '<span class="mediatype-mv">MOVIE</span>'}
                 <div class="poster-container">
                     <img src="${posterUrl}"
-                        alt="${item.title}"
+                        alt="${scrEsc(item.title)}"
                         loading="${index < 12 ? 'eager' : 'lazy'}"
                         class="${isPlaceholder ? 'placeholder-poster' : ''}">
                     <div class="poster-overlay">
-                        <h3>${item.title}</h3>
+                        <h3>${scrEsc(item.title)}</h3>
                         <p>${displayYear}</p>
                     </div>
                     ${requestIconHTML}
@@ -4283,7 +4078,7 @@ function createResultElement(item, tmdb_api_key_set, isRequester, version, reque
                     ${dbStatusPipHTML}
                 </div>
                 <div class="searchresult-info" style="display: ${!tmdb_api_key_set ? 'block' : 'none'}">
-                    <h2 class="searchresult-item">${item.title}</h2>
+                    <h2 class="searchresult-item">${scrEsc(item.title)}</h2>
                     <p class="searchresult-year">${displayYear}</p>
                 </div>
             ${assignMagnetIconHTML}
@@ -4417,7 +4212,7 @@ async function selectMedia(mediaId, title, year, mediaType, season, episode, mul
     }
 
     // Create cache key from search parameters
-    const cacheKey = `${mediaId}_${mediaType}_${version}_${season || 'null'}_${episode || 'null'}`;
+    const cacheKey = `${mediaId}_${mediaType}_${version}_${scrOptNum(season) ?? 'null'}_${scrOptNum(episode) ?? 'null'}`;
     
     // Check cache first
     const cachedData = getCachedTorrentResults(cacheKey);
@@ -4435,8 +4230,8 @@ async function selectMedia(mediaId, title, year, mediaType, season, episode, mul
     formData.append('title', title);
     formData.append('year', year);
     formData.append('media_type', mediaType);
-    if (season != null) formData.append('season', season);
-    if (episode != null) formData.append('episode', episode);
+    if (season != null && season !== '') formData.append('season', season);
+    if (episode != null && episode !== '') formData.append('episode', episode);
     formData.append('multi', multi);
     formData.append('version', version);
     formData.append('skip_cache_check', 'true'); // Always use background checking
@@ -4747,8 +4542,8 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi, g
     formData.append('title', title);
     formData.append('year', year);
     formData.append('media_type', mediaType);
-    if (season !== null) formData.append('season', season);
-    if (episode !== null) formData.append('episode', episode);
+    if (season != null && season !== '') formData.append('season', season);
+    if (episode != null && episode !== '') formData.append('episode', episode);
     formData.append('multi', multi);
     formData.append('version', version);
     formData.append('allow_specials', localStorage.getItem('allowSpecials') === 'true'); // Add allow_specials flag
@@ -4941,13 +4736,13 @@ function displaySeasonInfo(title, season_num, air_date, season_overview, poster_
 
     seasonInfo.innerHTML = `
         <div class="season-info-container">
-            <img src="/scraper/tmdb_image/w300${poster_path}" alt="${title} ${seasonLabel}" class="season-poster">
+            <img src="/scraper/tmdb_image/w300${poster_path}" alt="${scrEsc(title)} ${seasonLabel}" class="season-poster">
             <div class="season-details">
                 <span class="show-rating">${(vote_average || 0).toFixed(1)}</span>
-                <h2>${title} - ${seasonLabel}</h2>
+                <h2>${scrEsc(title)} - ${seasonLabel}</h2>
                 <p>${genreString}</p>
                 <div class="season-overview">
-                    <p>${season_overview ? season_overview : show_overview}</p>
+                    <p>${scrEsc(season_overview ? season_overview : show_overview)}</p>
                 </div>
             </div>
         </div>
@@ -4962,7 +4757,7 @@ function displaySeasonInfoTextOnly(title, season_num) {
 
     seasonInfo.innerHTML = `
         <div class="season-info-container text-only">
-            <h2>${title} - ${seasonLabel}</h2>
+            <h2>${scrEsc(title)} - ${seasonLabel}</h2>
         </div>
     `;
 }
@@ -5006,7 +4801,7 @@ function selectEpisode(mediaId, title, year, mediaType, season, episode, multi, 
     formData.append('year', year);
     formData.append('media_type', mediaType);
     formData.append('season', season);
-    if (episode !== null) formData.append('episode', episode);
+    if (episode != null && episode !== '') formData.append('episode', episode);
     formData.append('multi', multi);
     formData.append('version', version);
     formData.append('allow_specials', allowSpecials); // Add allow_specials flag
@@ -5193,58 +4988,6 @@ function closeMobileActionModal() {
     document.body.classList.remove('modal-open');
 }
 
-async function handleAutoScrape(imdbId, season, episode, version) {
-    showLoadingState();
-    if (window.DEBUG) console.log(`Auto-scraping for IMDb ID: ${imdbId}, Season: ${season}, Episode: ${episode}, Version: ${version}`);
-
-    try {
-        if (version) {
-            const versionSelect = document.getElementById('version-select');
-            if (versionSelect) {
-                if (availableVersions.length === 0) {
-                    await fetchVersions();
-                }
-                if (Array.from(versionSelect.options).some(opt => opt.value === version)) {
-                    versionSelect.value = version;
-                } else {
-                    if (window.DEBUG) console.warn(`Version "${version}" not found in dropdown. Using default.`);
-                }
-            }
-        }
-
-        const lookupResponse = await fetch('/scraper/lookup_by_id', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: `id_type=imdb&media_id=${encodeURIComponent(imdbId)}`
-        });
-
-        if (!lookupResponse.ok) {
-            const errorData = await lookupResponse.json().catch(() => ({}));
-            throw new Error(errorData.error || `Failed to look up IMDb ID: ${lookupResponse.statusText}`);
-        }
-
-        const lookupData = await lookupResponse.json();
-        if (!lookupData.results || lookupData.results.length === 0) {
-            throw new Error('No media found for the provided IMDb ID.');
-        }
-
-        const mediaInfo = lookupData.results[0];
-        if (mediaInfo.media_type !== 'show' && mediaInfo.media_type !== 'tv') {
-            throw new Error('Auto-scraping is only supported for TV shows.');
-        }
-        
-        const { id: mediaId, title, year, media_type: mediaType, genre_ids } = mediaInfo;
-        const isMulti = !!(season && !episode);
-
-        await selectMedia(mediaId, title, year, mediaType, season, episode, isMulti, genre_ids, version);
-
-    } catch (error) {
-        hideLoadingState();
-        if (window.DEBUG) console.error('Auto-scrape failed:', error);
-        displayError(`Auto-scrape failed: ${error.message}`);
-    }
-}
-
 /**
  * Show file list modal for an NZB result (single or aggregate pack)
  */
@@ -5384,10 +5127,10 @@ function displayFileListModal(files, torrentTitle, totalFiles, metadata = {}) {
                 <h3>Torrent Files</h3>
                 <button class="file-list-close" aria-label="Close">&times;</button>
             </div>
-            <div class="file-list-torrent-title">${metadata.filename || torrentTitle}</div>
+            <div class="file-list-torrent-title">${scrEsc(metadata.filename || torrentTitle)}</div>
             <div class="file-list-metadata">
-                ${metadata.id ? `<div class="metadata-item"><span class="metadata-label">ID:</span> <span class="metadata-value">${metadata.id}</span></div>` : ''}
-                <div class="metadata-item"><span class="metadata-label">Hash:</span> <span class="metadata-value">${metadata.hash || ''}</span></div>
+                ${metadata.id ? `<div class="metadata-item"><span class="metadata-label">ID:</span> <span class="metadata-value">${scrEsc(metadata.id)}</span></div>` : ''}
+                <div class="metadata-item"><span class="metadata-label">Hash:</span> <span class="metadata-value">${scrEsc(metadata.hash || '')}</span></div>
                 <div class="metadata-item"><span class="metadata-label">Status:</span> <span class="metadata-value" style="color: ${statusColor};">${displayStatus}</span></div>
                 <div class="metadata-item"><span class="metadata-label">Total:</span> <span class="metadata-value">${totalGB} GB</span></div>
             </div>
@@ -5403,8 +5146,8 @@ function displayFileListModal(files, torrentTitle, totalFiles, metadata = {}) {
                     <tbody>
                         ${files.map((file, index) => `
                             <tr>
-                                <td class="file-name" title="${(file.path || file.name).replace(/"/g, '&quot;')}">${file.name}</td>
-                                <td class="file-size text-right">${file.size_formatted}</td>
+                                <td class="file-name" title="${scrEsc(file.path || file.name)}">${scrEsc(file.name)}</td>
+                                <td class="file-size text-right">${scrEsc(file.size_formatted)}</td>
                             </tr>
                         `).join('')}
                     </tbody>

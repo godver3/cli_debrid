@@ -427,6 +427,14 @@ def _embedded_tracks(file_path):
 
 
 _EP_RE = re.compile(r'[Ss]\d{1,2}[ ._-]?[Ee]\d{1,3}|\b\d{1,2}x\d{2,3}\b')
+_VIDEO_EXTS = (
+    '.mkv', '.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm',
+    '.m4v', '.mpg', '.mpeg', '.ts', '.m2ts', '.vob', '.ogv',
+)
+
+
+def _has_video_ext(name):
+    return os.path.splitext((name or '').strip().lower())[1] in _VIDEO_EXTS
 
 
 def _looks_obfuscated(name):
@@ -441,12 +449,26 @@ def _looks_obfuscated(name):
 
 def _name_candidates(original_path, real_path, name_hint, item):
     """Names to parse, best first: release names before the templated
-    library name, which has the title but no group/source."""
+    library name, which has the title but no group/source.
+
+    For episodes, a filled_by_title (or name_hint) with a video extension
+    (e.g. a season pack named after one of its files) is demoted behind the
+    item's own video file name so searches aren't steered to another episode.
+    """
     item = item or {}
+    is_episode = item.get('type') == 'episode' or (
+        not item.get('type') and bool(_EP_RE.search(original_path.name))
+    )
+    filled_file = os.path.basename(item['filled_by_file']) if item.get('filled_by_file') else None
+    file_cands = [filled_file, real_path.name if real_path else None, original_path.name]
     raw = [name_hint, item.get('filled_by_title'), item.get('original_scraped_torrent_title'),
            item.get('original_filename'),
-           item.get('filled_by_file'), real_path.name if real_path else None,
-           item.get('debrid_folder_name'), original_path.name]
+           file_cands[0], file_cands[1],
+           item.get('debrid_folder_name'), file_cands[2]]
+    if is_episode and (_has_video_ext(item.get('filled_by_title')) or _has_video_ext(name_hint)):
+        demoted = [n for n in (name_hint, item.get('filled_by_title')) if _has_video_ext(n)]
+        kept = [n for n in raw if n not in demoted]
+        raw = file_cands + kept + demoted
     out = []
     for n in raw:
         n = (n or '').strip()
@@ -1156,6 +1178,41 @@ def _direct_mount_subtitle_server():
     return None
 
 
+def _choose_sidecar_path(symlink_dir, base_name, lang, ext, cli_mount_folder=None):
+    """Pick a sidecar path that never overwrites a release/user subtitle (regular
+    file or symlink). Re-writing a file Clyde itself wrote earlier (recorded in
+    subtitle_history) is allowed.
+
+    Plex local-subtitle naming ("Adding Local Subtitles to Your Media", 200471133)
+    reads the ISO language code from the dot-separated segment immediately before
+    the extension (or before `.forced`/`.sdh`/`.hi`/`.cc`). Putting a custom tag
+    AFTER the language code (`{stem}.{lang}.clyde{ext}`) makes Plex show the track
+    as "Unknown"; putting it BEFORE the language code (`{stem}.clyde.{lang}{ext}`)
+    keeps the language in both Plex and Jellyfin/Emby (which also uses the extra
+    segment as a track label) and in Clyde's own `sidecar_lang()`.
+    """
+    from database import subtitle_history
+    n = 0
+    while True:
+        if n == 0:
+            filename = f"{base_name}.{lang}{ext}"
+        elif n == 1:
+            filename = f"{base_name}.clyde.{lang}{ext}"
+        else:
+            filename = f"{base_name}.clyde{n}.{lang}{ext}"
+        full_path = symlink_dir / filename
+        if not os.path.lexists(full_path):
+            return full_path, filename
+        if not os.path.islink(full_path):
+            if cli_mount_folder is None:
+                if subtitle_history.is_clyde_path(str(full_path), saved_via='sidecar'):
+                    return full_path, filename
+            else:
+                if subtitle_history.is_clyde_path(f"{cli_mount_folder}/{filename}", saved_via='cli_mount'):
+                    return full_path, filename
+        n += 1
+
+
 def save_subtitles(ctx, subs, source='auto'):
     """Save downloaded subtitles next to the file (sidecar), to Plex (read-only
     mount) or through cli_mount, and record each in the subtitle history.
@@ -1208,7 +1265,7 @@ def save_subtitles(ctx, subs, source='auto'):
                 saved += 1
                 _record_history(ctx, sub, lang, fmt, 'plex', None, source)
         elif can_write_sidecar:
-            symlink_srt = symlink_dir / f"{base_name}.{lang}{ext}"
+            symlink_srt, _ = _choose_sidecar_path(symlink_dir, base_name, lang, ext)
             try:
                 with open(symlink_srt, 'wb') as f:
                     f.write(content)
@@ -1254,7 +1311,8 @@ def save_subtitles(ctx, subs, source='auto'):
                         logging.debug(f"[subs] Using job UUID for sidecar injection: {torrent_name}")
                 except Exception as _dbl:
                     logging.debug(f"[subs] Could not resolve job UUID from DB: {_dbl}")
-                srt_filename = f"{base_name}.{lang}{ext}"
+                _, srt_filename = _choose_sidecar_path(
+                    symlink_dir, base_name, lang, ext, cli_mount_folder=torrent_name)
                 client = get_climount_client()
                 if client.inject_sidecar_file(torrent_name, srt_filename, content):
                     logging.info(f"[subs] Injected sidecar subtitle via cli_mount: {torrent_name}/{srt_filename}")

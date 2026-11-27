@@ -415,6 +415,7 @@ body.tangerine-theme #stClassic{display:none!important}
 </div>
 
 <script>
+    function _slEsc(v) { return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 document.addEventListener('DOMContentLoaded', function() {
     // ── Classic theme JS ────────────────────────────────────────────
     const mediaTypeSelect = document.getElementById('media_type');
@@ -481,12 +482,12 @@ document.addEventListener('DOMContentLoaded', function() {
             body: JSON.stringify(formData)
         }).then(r => r.json()).then(data => {
             if (data.success) {
-                pathPreview.innerHTML = `<div class="path">${data.path}</div>`;
+                pathPreview.innerHTML = `<div class="path">${_slEsc(data.path)}</div>`;
                 if (data.exists) pathPreview.innerHTML += `<div class="exists">⚠️ This symlink already exists</div>`;
             } else {
-                pathPreview.innerHTML = `<div style="color:#dc3545">${data.message}</div>`;
+                pathPreview.innerHTML = `<div style="color:#dc3545">${_slEsc(data.message)}</div>`;
             }
-        }).catch(e => { pathPreview.innerHTML = `<div style="color:#dc3545">Error: ${e.message}</div>`; });
+        }).catch(e => { pathPreview.innerHTML = `<div style="color:#dc3545">Error: ${_slEsc(e.message)}</div>`; });
     });
 
     function showValidation(msg, isValid) {
@@ -521,8 +522,8 @@ document.addEventListener('DOMContentLoaded', function() {
             body: JSON.stringify({ path })
         }).then(r => r.json()).then(data => {
             if (data.success) displayClassicFiles(data.items);
-            else if (fileList) fileList.innerHTML = `<div class="error-message">${data.message}</div>`;
-        }).catch(e => { if (fileList) fileList.innerHTML = `<div class="error-message">Error: ${e.message}</div>`; });
+            else if (fileList) fileList.innerHTML = `<div class="error-message">${_slEsc(data.message)}</div>`;
+        }).catch(e => { if (fileList) fileList.innerHTML = `<div class="error-message">Error: ${_slEsc(e.message)}</div>`; });
     }
 
     function displayClassicFiles(items) {
@@ -627,12 +628,12 @@ document.addEventListener('DOMContentLoaded', function() {
             body: JSON.stringify(formData)
         }).then(r => r.json()).then(data => {
             if (data.success) {
-                tngPathPreview.innerHTML = '<div class="st-path">' + data.path + '</div>';
+                tngPathPreview.innerHTML = '<div class="st-path">' + _slEsc(data.path) + '</div>';
                 if (data.exists) tngPathPreview.innerHTML += '<div class="st-exists"><i class="fas fa-triangle-exclamation"></i> This symlink already exists</div>';
             } else {
-                tngPathPreview.innerHTML = '<div class="st-error">' + data.message + '</div>';
+                tngPathPreview.innerHTML = '<div class="st-error">' + _slEsc(data.message) + '</div>';
             }
-        }).catch(e => { tngPathPreview.innerHTML = '<div class="st-error">Error: ' + e.message + '</div>'; });
+        }).catch(e => { tngPathPreview.innerHTML = '<div class="st-error">Error: ' + _slEsc(e.message) + '</div>'; });
     });
 
     function tngLoadDir(path) {
@@ -645,8 +646,8 @@ document.addEventListener('DOMContentLoaded', function() {
             body: JSON.stringify({ path })
         }).then(r => r.json()).then(data => {
             if (data.success) tngDisplayFiles(data.items);
-            else if (tngFileList) tngFileList.innerHTML = '<div class="st-file-msg">' + data.message + '</div>';
-        }).catch(e => { if (tngFileList) tngFileList.innerHTML = '<div class="st-file-msg">Error: ' + e.message + '</div>'; });
+            else if (tngFileList) tngFileList.innerHTML = '<div class="st-file-msg">' + _slEsc(data.message) + '</div>';
+        }).catch(e => { if (tngFileList) tngFileList.innerHTML = '<div class="st-file-msg">Error: ' + _slEsc(e.message) + '</div>'; });
     }
 
     function tngDisplayFiles(items) {
@@ -660,7 +661,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const isMedia = !item.is_dir && mediaExtensions.includes(ext);
             el.innerHTML =
                 '<div class="st-file-item-icon">' + (item.is_dir ? '<i class="fas fa-folder" style="color:#f59e0b"></i>' : '<i class="fas fa-file' + (isMedia ? '-video" style="color:var(--st-accent)"' : '"') + '></i>') + '</div>' +
-                '<div class="st-file-item-name' + (isMedia ? ' media' : '') + '">' + item.name + '</div>' +
+                '<div class="st-file-item-name' + (isMedia ? ' media' : '') + '">' + _slEsc(item.name) + '</div>' +
                 '<div class="st-file-item-details">' + (item.is_dir ? 'Directory' : formatSize(item.size) + ' · ' + new Date(item.modified).toLocaleDateString()) + '</div>';
             el.addEventListener('click', () => {
                 if (item.is_dir) { tngLoadDir(item.path); }

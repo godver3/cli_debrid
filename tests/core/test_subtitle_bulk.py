@@ -191,7 +191,9 @@ def test_needs_check_skips_checked_sidecars(db, tmp_path):
     from utilities import subtitle_resync
     video = tmp_path / 'Show - S01E01.mkv'
     video.write_bytes(b'')
-    (tmp_path / 'Show - S01E01.en.srt').write_bytes(b'subtitle')
+    sc = tmp_path / 'Show - S01E01.en.srt'
+    sc.write_bytes(b'subtitle')
+    db.record(1, 'x', 'en', 'gestdown', 900, 971, [], '', 'srt', 'sidecar', str(sc), 'auto')
     item = {'id': 1, 'location_on_disk': str(video), 'ms_item_id': '101'}
     with _settings():
         assert subtitle_resync.needs_check(item)
@@ -220,6 +222,7 @@ def test_sync_existing_prefers_hash_match(db, tmp_path):
     video.write_bytes(b'')
     sc = tmp_path / 'Show - S01E01.en.srt'
     sc.write_bytes(b'old name-matched subtitle')
+    db.record(1, 'Show S01E01', 'en', 'gestdown', 800, 971, [], '', 'srt', 'sidecar', str(sc), 'auto')
     item = {'id': 1, 'location_on_disk': str(video), 'title': 'Show', 'type': 'episode',
             'season_number': 1, 'episode_number': 1}
     hashed = _Sub(b'1\n00:00:01,000 --> 00:00:02,000\nexact\n')
@@ -241,7 +244,9 @@ def test_fix_existing_keeps_subtitle_without_release_match(db, tmp_path):
     from utilities import subtitle_resync, downsub
     video = tmp_path / 'Show - S01E01.mkv'
     video.write_bytes(b'')
-    (tmp_path / 'Show - S01E01.en.srt').write_bytes(b'old')
+    sc = tmp_path / 'Show - S01E01.en.srt'
+    sc.write_bytes(b'old')
+    db.record(1, 'Show S01E01', 'en', 'gestdown', 800, 971, [], '', 'srt', 'sidecar', str(sc), 'auto')
     item = {'id': 1, 'location_on_disk': str(video)}
     with _settings('Symlinked/Local'), \
             mock.patch.object(downsub, 'resolve_item_path', return_value=str(video)), \
@@ -262,6 +267,7 @@ def test_undecided_sync_gets_one_hash_search(db, tmp_path):
     video.write_bytes(b'')
     sc = tmp_path / 'Show - S01E01.en.srt'
     sc.write_bytes(b'old')
+    db.record(1, 'Show S01E01', 'en', 'gestdown', 800, 971, [], '', 'srt', 'sidecar', str(sc), 'auto')
     digest = hashlib.sha1(b'old').hexdigest()
     db.mark_sync_checked(digest, 'left as is: no clearly better timing found (checked against audio)')
     item = {'id': 1, 'location_on_disk': str(video)}
@@ -309,6 +315,7 @@ def test_fix_existing_uses_release_match_when_no_hash(db, tmp_path):
     video.write_bytes(b'')
     sc = tmp_path / 'Show - S01E01.en.srt'
     sc.write_bytes(b'old name-only subtitle')
+    db.record(1, 'Show S01E01', 'en', 'gestdown', 800, 971, [], '', 'srt', 'sidecar', str(sc), 'auto')
     item = {'id': 1, 'location_on_disk': str(video), 'title': 'Show', 'type': 'episode',
             'season_number': 1, 'episode_number': 1}
     rel = _Sub(b'1\n00:00:01,000 --> 00:00:02,000\nsame release\n')
@@ -331,7 +338,9 @@ def test_kept_is_searched_again_when_a_provider_is_added(db, tmp_path):
     from utilities import subtitle_resync, downsub
     video = tmp_path / 'Show - S01E01.mkv'
     video.write_bytes(b'')
-    (tmp_path / 'Show - S01E01.en.srt').write_bytes(b'old')
+    sc = tmp_path / 'Show - S01E01.en.srt'
+    sc.write_bytes(b'old')
+    db.record(1, 'Show S01E01', 'en', 'gestdown', 800, 971, [], '', 'srt', 'sidecar', str(sc), 'auto')
     item = {'id': 1, 'location_on_disk': str(video)}
     patches = dict(resolve_item_path=str(video), prepare_video={'hash': True, 'video': object()},
                    hash_matches=[], release_matches=[])

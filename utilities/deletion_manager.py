@@ -44,12 +44,27 @@ def _item_from_plex_watchlist(item_source_types) -> bool:
 
 SIDECAR_SUBTITLE_EXTS = ('.srt', '.ass', '.ssa', '.sub', '.idx', '.vtt', '.smi')
 
+def _accepts_kwarg(func, name: str) -> bool:
+    """True if `func` takes keyword `name` (or **kwargs)."""
+    import inspect
+    try:
+        params = inspect.signature(func).parameters
+    except (TypeError, ValueError):
+        return False
+    return name in params or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
 
-def remove_sidecar_subtitles(video_path):
-    """Delete the subtitle files that belong to a library file being removed:
-    regular files next to it named '<video stem>.<anything><subtitle ext>'
-    (Movie.en.srt, Movie.eng.forced.ass). Without this a deleted item left its
-    subtitles behind and its folder never emptied. Returns the paths removed."""
+
+# FUSE mount types of debrid/usenet mounts (built-in engine, rclone/zurg,
+# cli_mount/decypharr). A file under one is removed through its provider,
+# never with os.remove.
+_DEBRID_FUSE_TYPES = frozenset({'fuse', 'fuse.clid', 'fuse.rclone', 'fuse.decypharr', 'fuse.zurg'})
+
+
+def remove_sidecar_subtitles(video_path, check_show_nfo: bool = True):
+    """Delete only the Clyde-written subtitle files that belong to a library
+    file being removed (recorded in subtitle_history, regular files only).
+    Subtitles that came with a release — symlinked or regular files — are
+    never deleted. Returns the paths removed."""
     removed = []
     folder, name = os.path.split(video_path or '')
     stem = os.path.splitext(name)[0]
@@ -59,6 +74,10 @@ def remove_sidecar_subtitles(video_path):
         names = os.listdir(folder)
     except OSError:
         return removed
+    try:
+        from database import subtitle_history
+    except Exception:
+        subtitle_history = None
     # Another video still here whose name starts with this one's
     # ('Movie.2020.1080p.REMUX.mkv' next to 'Movie.2020.1080p.mkv') owns
     # the subtitles named after it.
@@ -70,6 +89,10 @@ def remove_sidecar_subtitles(video_path):
         if any(f.startswith(s + '.') for s in longer):
             continue
         path = os.path.join(folder, f)
+        # Indexed lookup per candidate file (not the whole table per video:
+        # a 1,200-episode delete calls this 1,200 times)
+        if subtitle_history is None or not subtitle_history.is_clyde_path(path):
+            continue
         try:
             if os.path.isfile(path) and not os.path.islink(path):
                 os.remove(path)
@@ -78,6 +101,13 @@ def remove_sidecar_subtitles(video_path):
             logging.warning(f"Could not remove subtitle {path}: {e}")
     if removed:
         logging.info(f"Removed {len(removed)} subtitle file(s) of {name}")
+    # cli_debrid's NFO files of this episode (and tvshow.nfo once the show's
+    # folder has no video left), so the folder can empty
+    try:
+        from utilities.nfo_writer import remove_for_video
+        removed += remove_for_video(video_path, check_show_nfo=check_show_nfo)
+    except Exception as e:
+        logging.debug(f"NFO cleanup for {video_path} failed: {e}")
     return removed
 
 
@@ -85,12 +115,19 @@ VIDEO_EXTS = ('.mkv', '.mp4', '.avi', '.m4v', '.ts', '.m2ts', '.mov', '.wmv', '.
 
 
 def find_orphan_subtitles(library_root):
-    """Every subtitle file in the symlink library that matches no video in its
-    folder (regular files only: never symlinks, so never subtitles that came
-    with a release, and never tracks inside a video). For the Subtitle
-    Manager's opt-in 'Remove orphaned subtitles' tool."""
+    """Every Clyde-written subtitle file in the symlink library that matches
+    no video in its folder (recorded in subtitle_history, regular files only:
+    never symlinks, never release subtitles, never tracks inside a video).
+    For the Subtitle Manager's opt-in 'Remove orphaned subtitles' tool."""
     found = []
     if not library_root or not os.path.isdir(library_root):
+        return found
+    try:
+        from database import subtitle_history
+        clyde_paths = subtitle_history.clyde_sidecar_paths()
+    except Exception:
+        return found
+    if not clyde_paths:
         return found
     for folder, _dirs, files in os.walk(library_root):
         stems = [os.path.splitext(f)[0] for f in files if f.lower().endswith(VIDEO_EXTS)]
@@ -99,7 +136,7 @@ def find_orphan_subtitles(library_root):
         for f in files:
             if f.lower().endswith(SIDECAR_SUBTITLE_EXTS) and not any(f.startswith(s + '.') for s in stems):
                 path = os.path.join(folder, f)
-                if os.path.isfile(path) and not os.path.islink(path):
+                if os.path.normpath(path) in clyde_paths and os.path.isfile(path) and not os.path.islink(path):
                     found.append(path)
     return found
 
@@ -225,6 +262,24 @@ class DeletionManager:
         jellyfin_token = get_setting('Debug', 'emby_jellyfin_token', '')
 
         return bool(jellyfin_url and jellyfin_token)
+
+    def _nearest_existing_parent(self, local_path: str, target_path: str) -> str:
+        """Parent folder of target_path (the same file as local_path, possibly
+        as Plex sees it), moved up one level for each level of local_path's
+        parents that no longer exists on disk. Never above the symlink root."""
+        local_dir = os.path.dirname(local_path or '')
+        target_dir = os.path.dirname(target_path or '')
+        root = os.path.normpath(self.symlink_dir) if self.symlink_dir else None
+        while (local_dir and target_dir and root
+               and os.path.normpath(local_dir).startswith(root.rstrip(os.sep) + os.sep)
+               and not os.path.isdir(local_dir)):
+            parent_local, parent_target = os.path.dirname(local_dir), os.path.dirname(target_dir)
+            if parent_local == local_dir or parent_target == target_dir:
+                break
+            if os.path.normpath(parent_local) == root:
+                break  # the symlink root itself is never a scan target
+            local_dir, target_dir = parent_local, parent_target
+        return target_dir
 
     def _translate_plex_path_to_local(self, plex_path: str) -> str:
         """
@@ -474,11 +529,12 @@ class DeletionManager:
         Returns:
             dict with deleted_symlinks, folders_removed, errors
         """
-        from utilities.settings import get_setting
-
         result = {
             'success': True,
             'deleted_symlinks': [],
+            'deleted_plex_paths': [],
+            'already_missing_local_paths': [],
+            'already_missing_plex_paths': [],
             'folders_removed': [],
             'errors': []
         }
@@ -489,41 +545,62 @@ class DeletionManager:
         symlink_base = get_setting('File Management', 'symlinked_files_path', '/mnt/symlinked')
 
         # PHASE 1: Collect all symlink paths (fast, no I/O)
-        symlink_paths = []
+        symlink_entries = []  # list of (local_path, plex_path)
         for item in items:
-            symlink_path = item.get('location_on_disk')
+            if item.get('state', '') == 'Blacklisted':
+                continue
+            plex_path = item.get('location_on_disk')
             # Translate Plex-view paths to local paths, same as delete_single_item,
             # so items whose location_on_disk isn't already the local symlink path
             # aren't silently dropped from the batch.
-            if symlink_path:
-                symlink_path = self._translate_plex_path_to_local(symlink_path)
-            if symlink_path and symlink_path.startswith(symlink_base):
-                symlink_paths.append(symlink_path)
+            local_path = self._translate_plex_path_to_local(plex_path) if plex_path else None
+            if local_path and local_path.startswith(symlink_base):
+                symlink_entries.append((local_path, plex_path or local_path))
 
-        if not symlink_paths:
+        if not symlink_entries:
             logging.info(f"[BATCH_DELETE_SYMLINKS] No symlinks to delete")
             return result
 
-        logging.info(f"[BATCH_DELETE_SYMLINKS] Deleting {len(symlink_paths)} symlinks")
+        logging.info(f"[BATCH_DELETE_SYMLINKS] Deleting {len(symlink_entries)} symlinks")
 
-        # PHASE 2: Delete all symlinks (batch operation)
-        for symlink_path in symlink_paths:
+        # PHASE 2: Unlink all symlinks first, then clean up sidecar subtitles and episode NFOs,
+        # and finally check tvshow.nfo ONCE per unique show folder (avoids per-episode os.walk).
+        for local_path, plex_path in symlink_entries:
             try:
                 # os.path.islink() alone (not gated on os.path.exists()) is required
                 # to catch broken symlinks: exists() follows the link and returns
                 # False when the target is missing, which is the defining trait of
                 # a broken symlink — the exact case this deletion needs to handle.
-                if os.path.islink(symlink_path):
-                    os.unlink(symlink_path)
-                    result['deleted_symlinks'].append(symlink_path)
-                    remove_sidecar_subtitles(symlink_path)
-                elif os.path.exists(symlink_path):
-                    logging.warning(f"[BATCH_DELETE_SYMLINKS] Path exists but is not a symlink: {symlink_path}")
+                if os.path.islink(local_path):
+                    os.unlink(local_path)
+                    result['deleted_symlinks'].append(local_path)
+                    result['deleted_plex_paths'].append(plex_path)
+                elif os.path.exists(local_path):
+                    logging.warning(f"[BATCH_DELETE_SYMLINKS] Path exists but is not a symlink: {local_path}")
                 else:
-                    logging.info(f"[BATCH_DELETE_SYMLINKS] Symlink {symlink_path} already removed (not found)")
+                    logging.info(f"[BATCH_DELETE_SYMLINKS] Symlink {local_path} already removed (not found)")
+                    result['already_missing_local_paths'].append(local_path)
+                    result['already_missing_plex_paths'].append(plex_path)
             except Exception as e:
-                logging.error(f"[BATCH_DELETE_SYMLINKS] Failed to delete symlink {symlink_path}: {e}")
+                logging.error(f"[BATCH_DELETE_SYMLINKS] Failed to delete symlink {local_path}: {e}")
                 result['errors'].append(f"Symlink deletion failed: {str(e)}")
+
+        # Clean up sidecar subtitles and episode NFOs after unlinks so same-stem /
+        # longer-stem checks accurately see which videos remain in each folder.
+        for symlink_path in result['deleted_symlinks']:
+            remove_sidecar_subtitles(symlink_path, check_show_nfo=False)
+
+        # Check tvshow.nfo ONCE per unique show folder after all unlinks in the batch
+        if result['deleted_symlinks']:
+            try:
+                from utilities.nfo_writer import show_folder as _nfo_show_folder, remove_show_nfo_if_empty
+                unique_show_folders = {
+                    sf for sf in (_nfo_show_folder(p) for p in result['deleted_symlinks']) if sf
+                }
+                for sf in unique_show_folders:
+                    remove_show_nfo_if_empty(sf)
+            except Exception as e:
+                logging.debug(f"[BATCH_DELETE_SYMLINKS] Show NFO cleanup failed: {e}")
 
         logging.info(f"[BATCH_DELETE_SYMLINKS] Deleted {len(result['deleted_symlinks'])} symlinks")
 
@@ -556,6 +633,22 @@ class DeletionManager:
             # Allow deletion for folders at least 2 levels deep
             return depth >= 2
 
+        # Cache Plex verification result per (deletion_type, season_number) within this batch
+        # so we don't open a new PlexServer connection for every non-empty folder.
+        _plex_exists_cache = {}
+
+        def _cached_content_in_plex(del_type, season_num=None):
+            key = (del_type, season_num)
+            if key not in _plex_exists_cache:
+                _plex_exists_cache[key] = self._verify_content_in_plex(
+                    plex_deletion_type=del_type,
+                    content_title=plex_content_title,
+                    imdb_id=plex_imdb_id,
+                    tmdb_id=plex_tmdb_id,
+                    season_number=season_num
+                )
+            return _plex_exists_cache[key]
+
         # PHASE 4: Clean up parent folders (empty or force delete if verified)
         logging.info(f"[BATCH_DELETE_SYMLINKS] Checking {len(parent_folders)} parent folders (force_delete={force_delete_parent_folder})")
 
@@ -577,17 +670,10 @@ class DeletionManager:
                         logging.info(f"[BATCH_DELETE_SYMLINKS] Non-empty folder detected: {parent_folder}")
 
                         # Verify content no longer exists in Plex before force deleting
-                        content_still_exists = self._verify_content_in_plex(
-                            plex_deletion_type=plex_deletion_type,
-                            content_title=plex_content_title,
-                            imdb_id=plex_imdb_id,
-                            tmdb_id=plex_tmdb_id,
-                            season_number=plex_season_number
-                        )
+                        content_still_exists = _cached_content_in_plex(plex_deletion_type, plex_season_number)
 
                         if not content_still_exists:
                             # Safe to force delete - content confirmed removed from Plex
-                            import shutil
                             shutil.rmtree(parent_folder)
                             result['folders_removed'].append(parent_folder)
                             logging.info(f"[BATCH_DELETE_SYMLINKS] Force deleted non-empty folder (content not in Plex): {parent_folder}")
@@ -617,15 +703,9 @@ class DeletionManager:
                         logging.info(f"[BATCH_DELETE_SYMLINKS] Non-empty show folder detected: {grandparent_folder}")
 
                         # Verify show no longer exists in Plex
-                        content_still_exists = self._verify_content_in_plex(
-                            plex_deletion_type='show',
-                            content_title=plex_content_title,
-                            imdb_id=plex_imdb_id,
-                            tmdb_id=plex_tmdb_id
-                        )
+                        content_still_exists = _cached_content_in_plex('show')
 
                         if not content_still_exists:
-                            import shutil
                             shutil.rmtree(grandparent_folder)
                             result['folders_removed'].append(grandparent_folder)
                             logging.info(f"[BATCH_DELETE_SYMLINKS] Force deleted non-empty show folder (show not in Plex): {grandparent_folder}")
@@ -1023,25 +1103,28 @@ class DeletionManager:
             # Get authenticated user's Trakt username for permission checking
             # Fetch from Trakt API since it's not stored in settings
             authenticated_username = None
-            try:
-                import requests
-                from content_checkers.trakt import get_trakt_headers
+            # Only when there is a Trakt list to remove from: without credentials
+            # the lookup logs an ERROR on every delete
+            if trakt_list_sources:
+                try:
+                    import requests
+                    from content_checkers.trakt import get_trakt_headers
 
-                headers = get_trakt_headers()
-                if headers:
-                    response = requests.get('https://api.trakt.tv/users/settings', headers=headers, timeout=15)
-                    if response.status_code == 200:
-                        user_data = response.json()
-                        authenticated_username = user_data.get('user', {}).get('username', '')
-                        logging.info(f"[CONTENT_SOURCE_REMOVAL] Fetched authenticated Trakt username from API: '{authenticated_username}'")
+                    headers = get_trakt_headers()
+                    if headers:
+                        response = requests.get('https://api.trakt.tv/users/settings', headers=headers, timeout=15)
+                        if response.status_code == 200:
+                            user_data = response.json()
+                            authenticated_username = user_data.get('user', {}).get('username', '')
+                            logging.info(f"[CONTENT_SOURCE_REMOVAL] Fetched authenticated Trakt username from API: '{authenticated_username}'")
+                        else:
+                            logging.warning(f"[CONTENT_SOURCE_REMOVAL] Failed to fetch Trakt username from API: {response.status_code}")
                     else:
-                        logging.warning(f"[CONTENT_SOURCE_REMOVAL] Failed to fetch Trakt username from API: {response.status_code}")
-                else:
-                    logging.warning(f"[CONTENT_SOURCE_REMOVAL] No Trakt headers available (not authenticated)")
-            except Exception as e:
-                logging.error(f"[CONTENT_SOURCE_REMOVAL] Error fetching Trakt username: {e}")
+                        logging.warning(f"[CONTENT_SOURCE_REMOVAL] No Trakt headers available (not authenticated)")
+                except Exception as e:
+                    logging.error(f"[CONTENT_SOURCE_REMOVAL] Error fetching Trakt username: {e}")
 
-            if not authenticated_username:
+            if not authenticated_username and trakt_list_sources:
                 logging.warning(f"[CONTENT_SOURCE_REMOVAL] Could not determine authenticated Trakt username - will skip permission checks for all lists")
 
             for list_source in trakt_list_sources:
@@ -2040,6 +2123,66 @@ class DeletionManager:
             return result
 
 
+    def _mount_roots(self, mount_location: str) -> List[str]:
+        """Every root a debrid/usenet mount can sit under: the configured mount
+        settings (any of them can be stale) plus every FUSE mount point."""
+        roots = getattr(self, '_mount_roots_cache', None)
+        if roots is not None:
+            return roots
+        # Not File Management.original_files_path: in Local mode that is the
+        # user's own download folder, whose files a delete does remove.
+        roots = [mount_location,
+                 get_setting('Plex', 'mounted_file_location', '')]
+        try:
+            from utilities import builtin_engine
+            roots.append(builtin_engine.mount_path(get_setting('Built-in Mount') or {}))
+        except Exception:
+            pass
+        try:
+            with open('/proc/mounts') as f:
+                for line in f:
+                    parts = line.split()
+                    # Debrid/usenet mounts only: fuseblk (NTFS/exFAT) and mergerfs
+                    # pools are real disks a Local-mode user's downloads live on.
+                    if len(parts) >= 3 and parts[2] in _DEBRID_FUSE_TYPES:
+                        roots.append(parts[1].replace('\\040', ' '))
+        except OSError:
+            pass
+        roots = [os.path.normpath(r) for r in roots if r and str(r).strip()]
+        self._mount_roots_cache = roots
+        return roots
+
+    def _on_debrid_mount(self, path: str, mount_location: str) -> bool:
+        p = os.path.normpath(path)
+        for root in self._mount_roots(mount_location):
+            if root in ('/', '.'):
+                continue
+            if p == root or p.startswith(root.rstrip(os.sep) + os.sep):
+                return True
+        return False
+
+    def _remove_original_file_for_batch(self, item: dict, mount_location: str):
+        """Cheap local removal of an item's file, as the single-item delete route did.
+        Returns (removed_path_or_None, error_or_None). Never touches a media server."""
+        if item.get('state') not in ('Collected', 'Upgrading') or self.limited_env:
+            return None, None
+        if self.using_symlinks:
+            path = item.get('original_path_for_symlink')
+        else:
+            path = item.get('location_on_disk') if mount_location else None
+        if not path:
+            return None, None
+        if self.using_symlinks and self._on_debrid_mount(path, mount_location):
+            return None, None  # on the debrid mount: removed through the provider
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+                return path, None
+        except Exception as e:
+            logging.error(f"[DELETE_MULTIPLE] Error deleting file {path}: {e}")
+            return None, f"File deletion failed: {str(e)}"
+        return None, None
+
     def delete_multiple_items(self, item_ids: List[int], blacklist: bool = False,
                              blacklist_sources: bool = False,
                              delete_from_media_server: bool = True,
@@ -2054,7 +2197,9 @@ class DeletionManager:
                              plex_content_title: str = None,
                              plex_imdb_id: str = None,
                              plex_tmdb_id: str = None,
-                             plex_season_number: int = None) -> dict:
+                             plex_season_number: int = None,
+                             remove_original_files: bool = False,
+                             remove_climount_entries: bool = False) -> dict:
         """
         Delete multiple items at once
 
@@ -2075,6 +2220,11 @@ class DeletionManager:
             plex_imdb_id: IMDB ID for accurate Plex matching
             plex_tmdb_id: TMDB ID for accurate Plex matching
             plex_season_number: Season number (required when plex_deletion_type='season')
+            remove_original_files: If True (and delete_files), remove each Collected/Upgrading item's
+                file from disk like the single-item route (Direct Mount: location_on_disk; Symlinked:
+                original_path_for_symlink), skipping files on the debrid mount and limited environments
+            remove_climount_entries: If True, remove each unique cli_mount entry (NZB hash / btih) once,
+                unless an item outside this batch still references it
 
         Returns:
         {
@@ -2102,6 +2252,7 @@ class DeletionManager:
         # This avoids per-episode API calls and removes from Plex before files disappear
         # Works for: Plex mode (debrid mount) AND Symlink mode (local symlinks + debrid)
         plex_content_deleted = False
+        plex_result = {}
         if delete_from_media_server and plex_deletion_type and plex_content_title:
             logging.info(f"[DELETE_MULTIPLE] Content-level Plex deletion: {plex_deletion_type}-level for '{plex_content_title}'")
 
@@ -2190,20 +2341,70 @@ class DeletionManager:
                 aggregate_result['plex_not_found'] = True
                 return aggregate_result
 
+        # Fetch all items ONCE for all batch phases (avoids N individual DB queries)
+        from database.database_reading import get_items_by_ids
+        all_items = get_items_by_ids(item_ids) if item_ids else []
+        items_by_id = {it['id']: it for it in all_items if it and 'id' in it}
+        # get_items_by_ids returns [] on any error (a locked database): look the
+        # missing ones up one by one, and only delete rows that were found, so
+        # a failed lookup never drops rows whose files/torrents stayed behind.
+        _missing_ids = [i for i in item_ids if i not in items_by_id]
+        if _missing_ids:
+            from database.database_reading import get_item_by_id as _get_one
+            for _mid in _missing_ids:
+                try:
+                    _one = _get_one(_mid)
+                except Exception as e:
+                    logging.warning(f"[DELETE_MULTIPLE] Lookup of item {_mid} failed: {e}")
+                    _one = None
+                if _one:
+                    items_by_id[_mid] = dict(_one)
+            all_items = list(items_by_id.values())
+        found_item_ids = [i for i in item_ids if i in items_by_id]
+        if len(found_item_ids) != len(item_ids):
+            logging.warning(f"[DELETE_MULTIPLE] {len(item_ids) - len(found_item_ids)} of {len(item_ids)} item(s) "
+                            f"not found; their database rows are left alone")
+
+        # Sibling guard: never remove a torrent/NZB from the provider while a
+        # media_items row OUTSIDE this delete batch (e.g. a different version
+        # sharing the same job id due to a since-fixed dedup bug) still references
+        # it — that would delete the file out from under the surviving row,
+        # leaving it with a broken symlink. Mirrors the guard already used for
+        # single-item deletion in routes/database_routes.py.
+        _batch_id_set = set(item_ids)
+
+        def _has_external_sibling(_torrent_or_nzb_id):
+            # Select rows by torrent id (one small query, no per-batch-item
+            # placeholder) and compare returned ids against the batch in
+            # Python — avoids SQLite's bound-parameter limit on large batches
+            # (e.g. deleting an entire show with thousands of episodes).
+            try:
+                from database import get_db_connection as _gdb_dm
+                _conn_dm = _gdb_dm()
+                try:
+                    _rows = _conn_dm.execute(
+                        "SELECT id FROM media_items "
+                        "WHERE filled_by_torrent_id = ? AND state IN ('Collected','Upgrading','Checking')",
+                        (_torrent_or_nzb_id,)
+                    ).fetchall()
+                    return any(r[0] not in _batch_id_set for r in _rows)
+                finally:
+                    _conn_dm.close()
+            except Exception as _sib_err:
+                logging.warning(f"[DELETE_MULTIPLE] Sibling check failed for {_torrent_or_nzb_id!r}, skipping removal to be safe: {_sib_err}")
+                return True
+
         # PHASE 0: Deduplicated debrid/usenet removal - collect unique IDs and remove each ONCE
         # This prevents removing the same torrent/NZB 10+ times when episodes share a pack
         debrid_removed_ids = set()
         if delete_from_debrid:
-            from database.database_reading import get_item_by_id
-
             # Collect unique torrent/NZB IDs from all items, split by type
             unique_torrent_ids = {}   # torrent_id -> (title, infohash, debrid_folder_name)
             torrent_provider_names = {}  # torrent_id -> media_items.debrid_provider
             unique_nzb_ids = {}       # info_hash -> (filled_by_file, title) (cli_mount)
-            for item_id in item_ids:
+            for item in all_items:
                 try:
-                    item = get_item_by_id(item_id)
-                    if item and item.get('filled_by_torrent_id'):
+                    if item and item.get('filled_by_torrent_id') and item.get('state', '') != 'Blacklisted':
                         tid = item['filled_by_torrent_id']
                         title = item.get('title', 'Unknown')
                         if str(tid).startswith('nzb:'):
@@ -2222,36 +2423,7 @@ class DeletionManager:
                             unique_torrent_ids[tid] = (title, infohash, folder_name)
                             torrent_provider_names[tid] = item.get('debrid_provider')
                 except Exception as e:
-                    logging.warning(f"[DELETE_MULTIPLE] Could not get item {item_id} for dedup: {e}")
-
-            # Sibling guard: never remove a torrent/NZB from the provider while a
-            # media_items row OUTSIDE this delete batch (e.g. a different version
-            # sharing the same job id due to a since-fixed dedup bug) still references
-            # it — that would delete the file out from under the surviving row,
-            # leaving it with a broken symlink. Mirrors the guard already used for
-            # single-item deletion in routes/database_routes.py.
-            _batch_id_set = set(item_ids)
-
-            def _has_external_sibling(_torrent_or_nzb_id):
-                # Select rows by torrent id (one small query, no per-batch-item
-                # placeholder) and compare returned ids against the batch in
-                # Python — avoids SQLite's bound-parameter limit on large batches
-                # (e.g. deleting an entire show with thousands of episodes).
-                try:
-                    from database import get_db_connection as _gdb_dm
-                    _conn_dm = _gdb_dm()
-                    try:
-                        _rows = _conn_dm.execute(
-                            "SELECT id FROM media_items "
-                            "WHERE filled_by_torrent_id = ? AND state IN ('Collected','Upgrading','Checking')",
-                            (_torrent_or_nzb_id,)
-                        ).fetchall()
-                        return any(r[0] not in _batch_id_set for r in _rows)
-                    finally:
-                        _conn_dm.close()
-                except Exception as _sib_err:
-                    logging.warning(f"[DELETE_MULTIPLE] Sibling check failed for {_torrent_or_nzb_id!r}, skipping removal to be safe: {_sib_err}")
-                    return True
+                    logging.warning(f"[DELETE_MULTIPLE] Could not process item {item.get('id') if item else None} for dedup: {e}")
 
             # Remove NZB items from usenet provider (cli_mount or NzbDAV)
             if unique_nzb_ids:
@@ -2289,8 +2461,14 @@ class DeletionManager:
                         return torrent_id, False, None
                     try:
                         from debrid import provider_for_item
-                        provider_for_item(torrent_provider_names.get(torrent_id), self.debrid).remove_torrent(
-                            torrent_id, removal_reason=f"Library deletion: {first_title}", skip_hash_tracking=True)
+                        _provider = provider_for_item(torrent_provider_names.get(torrent_id), self.debrid)
+                        _remove_kwargs = {'removal_reason': f"Library deletion: {first_title}"}
+                        # Only Real-Debrid takes skip_hash_tracking; passing it to TorBox,
+                        # AllDebrid, Premiumize... raised TypeError, so a library delete
+                        # never removed their torrents.
+                        if _accepts_kwarg(_provider.remove_torrent, 'skip_hash_tracking'):
+                            _remove_kwargs['skip_hash_tracking'] = True
+                        _provider.remove_torrent(torrent_id, **_remove_kwargs)
                         logging.info(f"[DELETE_MULTIPLE] Removed torrent {torrent_id} from debrid")
                     except Exception as e:
                         error_msg = str(e)
@@ -2330,6 +2508,39 @@ class DeletionManager:
             else:
                 logging.info(f"[DELETE_MULTIPLE] Phase 0: No torrent/NZB IDs found for removal")
 
+        # PHASE 0.1: cli_mount entry removal (what the single-item delete route did per item):
+        # one remove_nzb per unique NZB hash / btih, only when no row outside this batch uses it.
+        if remove_climount_entries and not delete_from_debrid:
+            import re as _re_cm
+            unique_cm = {}
+            for item in all_items:
+                tid = item.get('filled_by_torrent_id') or ''
+                if not tid or item.get('state') not in ('Collected', 'Upgrading', 'Checking'):
+                    continue
+                if str(tid).startswith('nzb:'):
+                    key = tid[4:]
+                else:
+                    _m = _re_cm.search(r'urn:btih:([0-9a-fA-F]{40})', item.get('filled_by_magnet') or '', _re_cm.IGNORECASE)
+                    key = _m.group(1).lower() if _m else ''
+                if key and tid not in unique_cm:
+                    unique_cm[tid] = key
+            if unique_cm:
+                try:
+                    from usenet import get_usenet_client
+                    cm_client = get_usenet_client()
+                    if cm_client and cm_client.is_enabled():
+                        for tid, key in unique_cm.items():
+                            if _has_external_sibling(tid):
+                                logging.info(f"[DELETE_MULTIPLE] Skipping cli_mount removal for {tid!r} - still referenced outside this batch")
+                                continue
+                            try:
+                                cm_client.remove_nzb(key)
+                                logging.info(f"[DELETE_MULTIPLE] Removed {key!r} from cli_mount")
+                            except Exception as cm_err:
+                                logging.warning(f"[DELETE_MULTIPLE] cli_mount removal failed for {key!r}: {cm_err}")
+                except Exception as cm_err:
+                    logging.warning(f"[DELETE_MULTIPLE] cli_mount removal skipped: {cm_err}")
+
         # PHASE 0.3: Content source removal (Trakt/Overseerr/etc.) - grouped, not per-item.
         # For TV, a request/media record in a content source is tracked per SHOW, not per
         # episode — so this must only fire when this batch covers every remaining kept
@@ -2341,10 +2552,8 @@ class DeletionManager:
         # Mirrors the existing show-level call already used by the dedicated /delete_show
         # route, generalized here so every caller gets the same safety automatically.
         if remove_from_content_source:
-            from database.database_reading import get_items_by_ids as _get_items_for_cs
-
             content_source_results = {}
-            items_for_cs = _get_items_for_cs(item_ids)
+            items_for_cs = all_items
             _batch_id_set_cs = set(item_ids)
 
             for movie_item in (it for it in items_for_cs if it.get('type') == 'movie'):
@@ -2397,17 +2606,13 @@ class DeletionManager:
             # per-item loop below redundantly (and unsafely, for episodes) repeat this.
             remove_from_content_source = False
 
-        # PHASE 0.5: Batch cache clearing (if enabled) - BEFORE per-item loop
+        # PHASE 0.5: Batch cache clearing (if enabled) - BEFORE physical cleanup
         # Opens each cache file once instead of once per item
         batch_cache_cleared = False
         if clear_cache:
-            from database.database_reading import get_items_by_ids
-
-            items_for_cache = get_items_by_ids(item_ids)
-
-            if items_for_cache:
-                logging.info(f"[DELETE_MULTIPLE] Phase 0.5: Batch cache clearing for {len(items_for_cache)} items")
-                batch_cache_result = self._batch_clear_cache(items_for_cache)
+            if all_items:
+                logging.info(f"[DELETE_MULTIPLE] Phase 0.5: Batch cache clearing for {len(all_items)} items")
+                batch_cache_result = self._batch_clear_cache(all_items)
 
                 if batch_cache_result['success']:
                     batch_cache_cleared = True
@@ -2415,132 +2620,234 @@ class DeletionManager:
                 else:
                     logging.warning(f"[DELETE_MULTIPLE] Batch cache clearing had errors: {batch_cache_result['errors']}")
                     aggregate_result['errors'].extend(batch_cache_result['errors'])
+                    # The per-item delete used to clear each item's cache itself;
+                    # retry that way so one bad cache file doesn't leave the rest.
+                    _per_item_ok = True
+                    for _it in all_items:
+                        try:
+                            _files = self.check_content_sources(_it).get('cache_files') or []
+                            if _files and not self.clear_content_source_cache(_it, _files):
+                                _per_item_ok = False
+                        except Exception as _ce:
+                            _per_item_ok = False
+                            logging.warning(f"[DELETE_MULTIPLE] Per-item cache clear failed for {_it.get('id')}: {_ce}")
+                    batch_cache_cleared = _per_item_ok
             else:
                 logging.warning(f"[DELETE_MULTIPLE] Could not get items for batch cache clearing")
 
-        # PHASE 1: Physical cleanup (symlinks, cache) - debrid already handled in Phase 0
-        # Skip per-item Plex calls if we already did content-level deletion above
+        # PHASE 1: Physical cleanup (symlinks/files) - debrid already handled in Phase 0,
+        # media server folder scan + emptyTrash handled once in Phase 3 (no per-episode Plex/Silo/Jellyfin round trips).
         # Only force delete folders if Plex deletion succeeded (prevents orphaned Plex entries)
         logging.info(f"[DELETE_MULTIPLE] Phase 1: Physical cleanup for {len(item_ids)} items")
         if force_delete_parent_folder and not plex_content_deleted:
             logging.warning(f"[DELETE_MULTIPLE] Force folder deletion disabled: Plex deletion did not succeed. Will only delete empty folders.")
 
-        # OPTIMIZATION: Batch symlink deletion if using symlinks and delete_symlinks enabled
         batch_result = None
-        if delete_symlinks and self.using_symlinks:
-            from database.database_reading import get_items_by_ids
+        scan_folders_seen = {}  # ordered set of unique parent folders for Phase 3 media server scan
+        use_local_scan_paths = self.silo_enabled or self.jellyfin_direct_enabled
 
-            # Get all items at once for batch processing
-            items_for_batch = get_items_by_ids(item_ids)
+        if delete_symlinks and self.using_symlinks and all_items:
+            logging.info(f"[DELETE_MULTIPLE] Using BATCH symlink deletion for {len(all_items)} items")
 
-            if items_for_batch:
-                logging.info(f"[DELETE_MULTIPLE] Using BATCH symlink deletion for {len(items_for_batch)} items")
+            # Batch delete all symlinks, sidecars, episode NFOs, and show NFOs (once per show folder)
+            # Only force delete if Plex content-level deletion succeeded (prevents orphaned entries)
+            batch_result = self._batch_delete_symlinks(
+                all_items,
+                force_delete_parent_folder=force_delete_parent_folder and plex_content_deleted,
+                plex_deletion_type=plex_deletion_type,
+                plex_content_title=plex_content_title,
+                plex_imdb_id=plex_imdb_id,
+                plex_tmdb_id=plex_tmdb_id,
+                plex_season_number=plex_season_number
+            )
 
-                # Batch delete all symlinks at once
-                # Only force delete if Plex content-level deletion succeeded (prevents orphaned entries)
-                batch_result = self._batch_delete_symlinks(
-                    items_for_batch,
-                    force_delete_parent_folder=force_delete_parent_folder and plex_content_deleted,
-                    plex_deletion_type=plex_deletion_type,
-                    plex_content_title=plex_content_title,
-                    plex_imdb_id=plex_imdb_id,
-                    plex_tmdb_id=plex_tmdb_id,
-                    plex_season_number=plex_season_number
-                )
+            logging.info(f"[DELETE_MULTIPLE] Batch symlink deletion complete: {len(batch_result['deleted_symlinks'])} symlinks, {len(batch_result['folders_removed'])} folders")
 
-                # Single sleep after batch operation (instead of 1 second per item)
-                time.sleep(1)
+            if batch_result['errors']:
+                aggregate_result['errors'].extend(batch_result['errors'])
 
-                logging.info(f"[DELETE_MULTIPLE] Batch symlink deletion complete: {len(batch_result['deleted_symlinks'])} symlinks, {len(batch_result['folders_removed'])} folders")
+            # Collect unique parent folders for Phase 3 scan: the nearest one
+            # still on disk, found on the local side and mapped back to Plex's
+            # path (a removed season folder scans as nothing in Plex, and when
+            # Plex sees the library under another path the scan helper can't
+            # check which of its folders still exist)
+            local_paths = batch_result['deleted_symlinks'] + batch_result['already_missing_local_paths']
+            plex_paths = batch_result['deleted_plex_paths'] + batch_result['already_missing_plex_paths']
+            for local_p, plex_p in zip(local_paths, plex_paths):
+                parent_folder = self._nearest_existing_parent(local_p, local_p if use_local_scan_paths else plex_p)
+                if parent_folder:
+                    scan_folders_seen[parent_folder] = None
 
-                # Now process each item for cache/content-source cleanup only
-                # Skip symlink/file operations since we already did them in batch
-                for item_id in item_ids:
-                    result = self.delete_single_item(
-                        item_id,
-                        blacklist=blacklist,
-                        clear_cache=False if batch_cache_cleared else clear_cache,  # Skip if already done in batch
-                        delete_from_debrid=False,  # Already handled in Phase 0
-                        delete_from_media_server=delete_from_media_server and not plex_content_deleted,  # Skip if content-level deletion succeeded, otherwise fall back to individual
-                        delete_files=False,  # Already handled in batch above
-                        delete_symlinks=False,  # IMPORTANT: Already done in batch above
-                        remove_from_content_source=remove_from_content_source,
-                        skip_database=True,  # Always skip DB in Phase 1
-                        force_delete_parent_folder=False,  # Already handled in batch
-                        skip_filesystem_wait=True  # Skip per-item wait, batch-level wait at line 2312
-                    )
-
-                    # Merge batch results into individual result for tracking
-                    if batch_result['deleted_symlinks']:
-                        result['deleted_symlinks'] = batch_result['deleted_symlinks']
-                    if batch_result['errors']:
-                        result['errors'].extend(batch_result['errors'])
-
-                    aggregate_result['results'].append(result)
-
-                    if not result['success']:
-                        aggregate_result['failed_count'] += 1
-                        aggregate_result['errors'].extend(result['errors'])
-            else:
-                logging.warning(f"[DELETE_MULTIPLE] Could not get items for batch deletion, falling back to sequential")
-                # Fall back to original sequential processing
-                for item_id in item_ids:
-                    result = self.delete_single_item(
-                        item_id,
-                        blacklist=blacklist,
-                        clear_cache=False if batch_cache_cleared else clear_cache,  # Skip if already done in batch
-                        delete_from_debrid=False,
-                        delete_from_media_server=delete_from_media_server and not plex_content_deleted,  # Skip if content-level deletion succeeded, otherwise fall back to individual
-                        delete_files=delete_files,
-                        delete_symlinks=delete_symlinks,
-                        remove_from_content_source=remove_from_content_source,
-                        skip_database=True,
-                        force_delete_parent_folder=force_delete_parent_folder and plex_content_deleted,
-                        skip_filesystem_wait=False  # Keep per-item wait in fallback mode since no batch-level wait
-                    )
-                    aggregate_result['results'].append(result)
-
-                    if not result['success']:
-                        aggregate_result['failed_count'] += 1
-                        aggregate_result['errors'].extend(result['errors'])
-        else:
-            # Non-symlink mode or symlink deletion disabled - use original sequential processing
-            logging.info(f"[DELETE_MULTIPLE] Using sequential deletion (symlinks={'enabled' if delete_symlinks else 'disabled'}, mode={'symlink' if self.using_symlinks else 'plex'})")
+            # Record per-item results without calling delete_single_item (avoids per-episode Plex calls & DB reads)
+            deleted_symlink_set = set(batch_result['deleted_symlinks'])
+            sym_mount_location = self.mounted_location or get_setting('Plex', 'mounted_file_location', '')
             for item_id in item_ids:
-                result = self.delete_single_item(
-                    item_id,
-                    blacklist=blacklist,
-                    clear_cache=False if batch_cache_cleared else clear_cache,  # Skip if already done in batch
-                    delete_from_debrid=False,
-                    delete_from_media_server=delete_from_media_server and not plex_content_deleted,  # Skip if content-level deletion succeeded, otherwise fall back to individual
-                    delete_files=delete_files,
-                    delete_symlinks=delete_symlinks,
-                    remove_from_content_source=remove_from_content_source,
-                    skip_database=True,
-                    force_delete_parent_folder=force_delete_parent_folder and plex_content_deleted
-                )
-                aggregate_result['results'].append(result)
-
-                if not result['success']:
+                item = items_by_id.get(item_id)
+                if not item:
                     aggregate_result['failed_count'] += 1
-                    aggregate_result['errors'].extend(result['errors'])
+                    err = f"Item {item_id} not found"
+                    aggregate_result['errors'].append(err)
+                    aggregate_result['results'].append({
+                        'success': False,
+                        'item_id': item_id,
+                        'title': '',
+                        'deleted_files': [],
+                        'deleted_symlinks': [],
+                        'media_server_removed': False,
+                        'media_server_type': 'none',
+                        'debrid_removed': False,
+                        'cache_cleared': False,
+                        'blacklisted': blacklist,
+                        'content_source_removal': None,
+                        'errors': [err]
+                    })
+                    continue
+
+                item_plex_path = item.get('location_on_disk')
+                item_local_path = self._translate_plex_path_to_local(item_plex_path) if item_plex_path else None
+                item_deleted_symlinks = [item_local_path] if item_local_path in deleted_symlink_set else []
+                item_deleted_files, item_errors = [], []
+                if remove_original_files and delete_files:
+                    removed, file_err = self._remove_original_file_for_batch(item, sym_mount_location)
+                    if removed:
+                        item_deleted_files.append(removed)
+                    if file_err:
+                        item_errors.append(file_err)
+                        aggregate_result['failed_count'] += 1
+                        aggregate_result['errors'].append(file_err)
+                aggregate_result['results'].append({
+                    'success': not item_errors,
+                    'item_id': item_id,
+                    'title': item.get('title', 'Unknown'),
+                    'deleted_files': item_deleted_files,
+                    'deleted_symlinks': item_deleted_symlinks,
+                    'media_server_removed': plex_content_deleted,
+                    'media_server_type': ('silo' if self.silo_enabled else 'jellyfin' if self.jellyfin_direct_enabled else 'plex' if self.plex_enabled else 'none'),
+                    'debrid_removed': bool(item.get('filled_by_torrent_id') in debrid_removed_ids),
+                    'cache_cleared': batch_cache_cleared,
+                    'blacklisted': blacklist,
+                    'content_source_removal': None,
+                    'errors': item_errors
+                })
+        else:
+            # Direct Mount mode (Plex / Jellyfin / Silo) or symlink deletion disabled:
+            # Collect unique folders for a single batched media-server scan in Phase 3
+            # instead of per-episode remove_file_from_plex / Silo / Jellyfin calls.
+            logging.info(f"[DELETE_MULTIPLE] Using batched folder cleanup (symlinks={'enabled' if delete_symlinks else 'disabled'}, mode={'symlink' if self.using_symlinks else 'direct_mount'})")
+            mount_location = self.mounted_location or get_setting('Plex', 'mounted_file_location', '')
+            for item_id in item_ids:
+                item = items_by_id.get(item_id)
+                if not item:
+                    aggregate_result['failed_count'] += 1
+                    err = f"Item {item_id} not found"
+                    aggregate_result['errors'].append(err)
+                    aggregate_result['results'].append({
+                        'success': False,
+                        'item_id': item_id,
+                        'title': '',
+                        'deleted_files': [],
+                        'deleted_symlinks': [],
+                        'media_server_removed': False,
+                        'media_server_type': 'none',
+                        'debrid_removed': False,
+                        'cache_cleared': False,
+                        'blacklisted': blacklist,
+                        'content_source_removal': None,
+                        'errors': [err]
+                    })
+                    continue
+
+                item_deleted_files = []
+                item_errors = []
+                item_scan_paths = []
+                plex_removed = False
+                skip_physical = (item.get('state', '') == 'Blacklisted')
+
+                if not skip_physical:
+                    # In Symlinked/Local mode with delete_symlinks=False and delete_files=True,
+                    # remove non-mount original files if not in limited_env.
+                    if self.using_symlinks and delete_files:
+                        orig_path = item.get('original_path_for_symlink')
+                        # Same debrid-mount check as _remove_original_file_for_batch
+                        # (built-in engine path, FUSE mounts), not just a prefix match
+                        # on a possibly stale mounted_file_location.
+                        is_on_mount = bool(orig_path and self._on_debrid_mount(orig_path, mount_location))
+                        if orig_path and not is_on_mount and not self.limited_env:
+                            try:
+                                if os.path.exists(orig_path):
+                                    os.remove(orig_path)
+                                    item_deleted_files.append(orig_path)
+                            except Exception as e:
+                                err = f"Original file deletion failed: {str(e)}"
+                                logging.error(f"[DELETE_MULTIPLE] Error deleting original file {orig_path}: {e}")
+                                item_errors.append(err)
+
+                    if not self.using_symlinks and remove_original_files and delete_files:
+                        removed, file_err = self._remove_original_file_for_batch(item, mount_location)
+                        if removed:
+                            item_deleted_files.append(removed)
+                        if file_err:
+                            item_errors.append(file_err)
+
+                    media_path = item.get('location_on_disk') or item.get('filled_by_file')
+                    # Direct Mount + Plex with no show/season/movie delete: the file is
+                    # often still on the mount (debrid not removed, or the mount hasn't
+                    # refreshed), and a folder scan keeps anything whose file it still
+                    # sees. Remove the item through the Plex API as dev did; only fall
+                    # back to the batched folder scan when that fails.
+                    if (delete_from_media_server and media_path and not self.using_symlinks
+                            and not plex_content_deleted and self.plex_enabled
+                            and not self.silo_enabled and not self.jellyfin_direct_enabled):
+                        try:
+                            from utilities.plex_functions import remove_file_from_plex
+                            plex_removed = bool(remove_file_from_plex(
+                                item.get('title', 'Unknown'), media_path,
+                                item.get('episode_title') if item.get('type') == 'episode' else None))
+                        except Exception as e:
+                            logging.warning(f"[DELETE_MULTIPLE] Plex removal failed for item {item_id}: {e}")
+                    if media_path and not plex_removed:
+                        item_scan_paths.append(media_path)
+                        parent_folder = os.path.dirname(media_path)
+                        if parent_folder:
+                            scan_folders_seen[parent_folder] = None
+
+                item_ok = len(item_errors) == 0
+                if not item_ok:
+                    aggregate_result['failed_count'] += 1
+                    aggregate_result['errors'].extend(item_errors)
+
+                aggregate_result['results'].append({
+                    'success': item_ok,
+                    'item_id': item_id,
+                    'title': item.get('title', 'Unknown'),
+                    'deleted_files': item_deleted_files,
+                    'deleted_symlinks': [],
+                    'paths_for_plex_scan': item_scan_paths,
+                    'media_server_removed': plex_content_deleted or plex_removed,
+                    'media_server_type': ('silo' if self.silo_enabled else 'jellyfin' if self.jellyfin_direct_enabled else 'plex' if self.plex_enabled else 'none'),
+                    'debrid_removed': bool(item.get('filled_by_torrent_id') in debrid_removed_ids),
+                    'cache_cleared': batch_cache_cleared,
+                    'blacklisted': blacklist,
+                    'content_source_removal': None,
+                    'errors': item_errors
+                })
 
         # PHASE 2: Database deletion - ALL items in ONE transaction
         if not skip_database:
-            logging.info(f"[DELETE_MULTIPLE] Phase 2: Batch database deletion for {len(item_ids)} items (blacklist={blacklist})")
+            logging.info(f"[DELETE_MULTIPLE] Phase 2: Batch database deletion for {len(found_item_ids)} items (blacklist={blacklist})")
             from database.database_writing import delete_items_batch
 
             db_result = delete_items_batch(
-                item_ids=item_ids,
+                item_ids=found_item_ids,
                 blacklist=blacklist
-            )
+            ) if found_item_ids else {'success': True, 'deleted_count': 0}
 
             if db_result['success']:
                 aggregate_result['deleted_count'] = db_result['deleted_count']
                 logging.info(f"[DELETE_MULTIPLE] Database deletion successful: {db_result['deleted_count']} items")
             else:
                 # Database deletion failed
-                aggregate_result['failed_count'] += len(item_ids)
+                aggregate_result['failed_count'] += len(found_item_ids)
                 aggregate_result['errors'].append(db_result['error'])
                 aggregate_result['success'] = False
 
@@ -2555,39 +2862,47 @@ class DeletionManager:
             aggregate_result['deleted_count'] = len(item_ids)
             logging.info(f"[DELETE_MULTIPLE] Database operations skipped (skip_database=True)")
 
-        # PHASE 3: Scan and empty media server trash to clean up unavailable items
-        # Skip if we already did content-level Plex deletion (show/season/movie level)
-        if plex_content_deleted:
-            logging.info(f"[DELETE_MULTIPLE] Phase 3: Skipped - content-level Plex deletion already completed")
-        else:
-            # Collect all paths that need Plex scanning (deleted files, symlinks, or paths where files were already gone)
-            deleted_paths_for_scan = []
-            for r in aggregate_result['results']:
-                # Check for deleted symlinks (Symlink/Local mode)
-                for symlink_path in r.get('deleted_symlinks', []):
-                    parent_folder = os.path.dirname(symlink_path)
-                    if parent_folder and parent_folder not in deleted_paths_for_scan:
-                        deleted_paths_for_scan.append(parent_folder)
-                # Check for deleted files (Plex mode)
-                for file_path in r.get('deleted_files', []):
-                    parent_folder = os.path.dirname(file_path)
-                    if parent_folder and parent_folder not in deleted_paths_for_scan:
-                        deleted_paths_for_scan.append(parent_folder)
-                # Check for paths where file was already gone (e.g., debrid removal happened first)
-                for file_path in r.get('paths_for_plex_scan', []):
-                    parent_folder = os.path.dirname(file_path)
-                    if parent_folder and parent_folder not in deleted_paths_for_scan:
-                        deleted_paths_for_scan.append(parent_folder)
-
-            if deleted_paths_for_scan and delete_from_media_server:
-                logging.info(f"[DELETE_MULTIPLE] Phase 3: Scanning {len(deleted_paths_for_scan)} specific path(s) and emptying trash")
-                trash_result = self.scan_and_empty_media_server_trash(deleted_paths=deleted_paths_for_scan)
-                if trash_result.get('paths_scanned'):
-                    logging.info(f"[DELETE_MULTIPLE] Scanned paths: {trash_result['paths_scanned']}")
-                if trash_result.get('sections_cleaned'):
-                    logging.info(f"[DELETE_MULTIPLE] Emptied trash for sections: {trash_result['sections_cleaned']}")
-                if trash_result.get('errors'):
-                    logging.warning(f"[DELETE_MULTIPLE] Scan/trash errors: {trash_result['errors']}")
+        # PHASE 3: Scan and empty media server trash ONCE across all unique affected folders.
+        # Also after a content-level Plex delete: Plex answers it with success but
+        # keeps the items when it can't remove the files itself (symlinks it may
+        # not write), and with "Empty trash automatically after every scan" off
+        # nothing removes them later (seen live: show 122280 kept all 12 episodes).
+        # The content-level delete above runs while the files still exist. When
+        # Plex can't remove them (symlinks it has no write access to) it either
+        # answers 200 and keeps the item, or refuses with 400. Once the files are
+        # gone the same delete works, so re-send it if the item is still there and
+        # only fall back to a folder scan (for a removed show folder, a scan of
+        # the whole section) when Plex still keeps it.
+        plex_content_confirmed = False
+        if delete_from_media_server and plex_result.get('rating_key'):
+            from utilities.plex_functions import finish_plex_content_delete
+            plex_content_confirmed = finish_plex_content_delete(plex_result['rating_key'])
+            logging.info(f"[DELETE_MULTIPLE] Phase 3: Plex {plex_deletion_type} "
+                         f"{'removed' if plex_content_confirmed else 'still present, scanning folders'}")
+            if plex_content_confirmed:
+                # The delete summary reads these: a first attempt that Plex
+                # refused (400) but the re-send removed still counts as removed
+                aggregate_result['plex_deleted'] = True
+                for r in aggregate_result['results']:
+                    if r.get('item_id') in items_by_id:
+                        r['media_server_removed'] = True
+                        if r.get('media_server_type', 'none') == 'none':
+                            r['media_server_type'] = 'plex'
+        if delete_from_media_server and scan_folders_seen and not plex_content_confirmed:
+            deleted_paths_for_scan = list(scan_folders_seen.keys())
+            item_types = {it.get('type') for it in all_items if it.get('state', '') != 'Blacklisted' and it.get('type')}
+            batch_item_type = next(iter(item_types)) if len(item_types) == 1 else None
+            logging.info(f"[DELETE_MULTIPLE] Phase 3: Scanning {len(deleted_paths_for_scan)} unique folder(s) and emptying trash")
+            trash_result = self.scan_and_empty_media_server_trash(
+                deleted_paths=deleted_paths_for_scan,
+                item_type=batch_item_type
+            )
+            if trash_result.get('paths_scanned'):
+                logging.info(f"[DELETE_MULTIPLE] Scanned paths: {trash_result['paths_scanned']}")
+            if trash_result.get('sections_cleaned'):
+                logging.info(f"[DELETE_MULTIPLE] Emptied trash for sections: {trash_result['sections_cleaned']}")
+            if trash_result.get('errors'):
+                logging.warning(f"[DELETE_MULTIPLE] Scan/trash errors: {trash_result['errors']}")
 
         # Handle blacklist_sources if requested
         if blacklist_sources and blacklist:

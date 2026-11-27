@@ -246,7 +246,9 @@ function buildRows() {
     for (const group of groups) {
         const section = el('section', 'ma-season');
         let countEl = null;
-        if (group.season !== null && groups.length > 1) {
+        let skipBtn = null;
+        if (group.season !== null && (groups.length > 1 || group.season === 0)) {
+            const bar = el('div', 'ma-season-bar');
             const header = el('button', 'ma-season-header');
             header.type = 'button';
             header.setAttribute('aria-expanded', 'true');
@@ -258,11 +260,25 @@ function buildRows() {
                 if (collapsed.has(group.id)) collapsed.delete(group.id); else collapsed.add(group.id);
                 refresh();
             });
-            section.append(header);
+            bar.append(header);
+            if (group.season === 0) {
+                skipBtn = el('button', 'ma-btn ma-skip-specials', 'Skip specials');
+                skipBtn.type = 'button';
+                skipBtn.id = 'ma-skip-specials';
+                skipBtn.title = 'Ignore every Season 0 episode so they get no files and stop being searched';
+                skipBtn.addEventListener('click', () => {
+                    const updates = group.keys
+                        .filter(k => values.get(k) !== IGNORE)
+                        .map(k => [k, IGNORE]);
+                    if (updates.length) change(updates);
+                });
+                bar.append(skipBtn);
+            }
+            section.append(bar);
         }
         const body = el('div', 'ma-season-body');
         section.append(body);
-        groupEls.set(group.id, { section, body, countEl });
+        groupEls.set(group.id, { section, body, countEl, skipBtn });
 
         for (const key of group.keys) {
             const item = itemsByKey.get(key);
@@ -371,13 +387,17 @@ function refresh() {
     if (filter !== 'all' && !counts[filter]) filter = 'all';
 
     for (const group of groups) {
-        const { section, body, countEl } = groupEls.get(group.id);
+        const { section, body, countEl, skipBtn } = groupEls.get(group.id);
         let filled = 0;
+        let ignored = 0;
+        let duplicates = 0;
         let shown = 0;
         const isCollapsed = collapsed.has(group.id) && filter === 'all';
         for (const key of group.keys) {
             const state = states.get(key);
             if (state === 'set' || state === 'duplicate') filled += 1;
+            if (state === 'duplicate') duplicates += 1;
+            if (state === 'ignored') ignored += 1;
             const visible = rowVisible(key, state);
             if (visible) shown += 1;
             drawRow(key, state, visible, visible && !isCollapsed);
@@ -386,10 +406,13 @@ function refresh() {
         body.hidden = isCollapsed;
         if (countEl) {
             countEl.textContent = `${filled} / ${group.keys.length}`;
-            countEl.classList.toggle('ma-complete', filled === group.keys.length);
+            countEl.classList.toggle('ma-complete', filled + ignored === group.keys.length && !duplicates);
             const header = countEl.parentElement;
             header.setAttribute('aria-expanded', String(!isCollapsed));
             header.classList.toggle('ma-collapsed', isCollapsed);
+        }
+        if (skipBtn) {
+            skipBtn.disabled = ignored === group.keys.length;
         }
     }
 
