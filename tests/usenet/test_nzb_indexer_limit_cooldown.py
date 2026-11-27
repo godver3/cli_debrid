@@ -215,6 +215,49 @@ class TestProcessNzbResult(unittest.TestCase):
         self.assertEqual(hits, 1)
         self.client.add_nzb_content.assert_called_once()
 
+    def test_fallback_newznab_limit_error_defers_instead_of_dropping(self):
+        import requests
+        calls = {'n': 0}
+
+        def fake_get(url, **kw):
+            if url != self.URL:
+                return _Resp(404, '')
+            calls['n'] += 1
+            if calls['n'] == 1:
+                raise requests.exceptions.ConnectionError('transient timeout')
+            return _Resp(200, LIMIT_XML)
+
+        api = mock.Mock()
+        api.get.side_effect = fake_get
+        with mock.patch('routes.api_tracker.api', api):
+            out = self.proc._process_nzb_result(dict(self.result), dict(self.item))
+        self.assertIs(out, NZB_DEFERRED_INDEXER_COOLDOWN)
+        self.assertEqual(calls['n'], 2)
+        self.client.add_nzb.assert_called_once()
+        self.assertIsNotNone(cd.cooldown_reason(self.URL))
+
+    def test_fallback_raised_429_defers_instead_of_dropping(self):
+        import requests
+        calls = {'n': 0}
+        err_429 = requests.exceptions.HTTPError('429 Client Error', response=_Resp(429, 'Too Many Requests'))
+
+        def fake_get(url, **kw):
+            if url != self.URL:
+                return _Resp(404, '')
+            calls['n'] += 1
+            if calls['n'] == 1:
+                raise requests.exceptions.ConnectionError('transient timeout')
+            raise err_429
+
+        api = mock.Mock()
+        api.get.side_effect = fake_get
+        with mock.patch('routes.api_tracker.api', api):
+            out = self.proc._process_nzb_result(dict(self.result), dict(self.item))
+        self.assertIs(out, NZB_DEFERRED_INDEXER_COOLDOWN)
+        self.assertEqual(calls['n'], 2)
+        self.client.add_nzb.assert_called_once()
+        self.assertIsNotNone(cd.cooldown_reason(self.URL))
+
 
 @unittest.skipIf(TorrentProcessor is None, f'torrent_processor not importable: {_IMPORT_ERR}')
 class TestProcessResultsKeepsCooledResults(unittest.TestCase):
@@ -366,6 +409,25 @@ class TestCooldownParksItemInAdding(unittest.TestCase):
         self.assertEqual(cd.refusal_why(200, '<error code="501" description="Download limit reached"/>'),
                          'out of downloads')
         self.assertEqual(cd.refusal_why(503, '<html>maintenance</html>'), 'unavailable (HTTP 503)')
+
+    def test_remove_item_and_add_item_unpark_item(self):
+        q = self.aq.AddingQueue.__new__(self.aq.AddingQueue)
+        q.items = [dict(self.item)]
+        q._nzb_submitted_ids = set()
+        q._adding_ticks = {}
+
+        self.aq.park_for_indexer_cooldown(7, 1800, {'NinjaCentral': 'out of downloads'})
+        self.assertTrue(self.aq.item_parked_for_cooldown(7))
+        q.remove_item(self.item)
+        self.assertFalse(self.aq.item_parked_for_cooldown(7))
+        self.assertIsNone(self.aq.cooldown_note(7))
+
+        # Re-entering Adding via add_item also clears any stale park state.
+        self.aq.park_for_indexer_cooldown(7, 1800, {'NinjaCentral': 'out of downloads'})
+        self.assertTrue(self.aq.item_parked_for_cooldown(7))
+        q.add_item(dict(self.item))
+        self.assertFalse(self.aq.item_parked_for_cooldown(7))
+        self.assertIsNone(self.aq.cooldown_note(7))
 
 
 @unittest.skipIf(TorrentProcessor is None, f'torrent_processor not importable: {_IMPORT_ERR}')

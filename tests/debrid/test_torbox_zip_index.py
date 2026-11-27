@@ -13,14 +13,43 @@ _spec.loader.exec_module(zip_index)
 
 
 class _Resp:
-    def __init__(self, status, content):
-        self.status_code, self.content = status, content
+    def __init__(self, status, content, *, forbid_body_read=False):
+        self.status_code = status
+        self._data = content
+        self._forbid_body_read = forbid_body_read
+        self.closed = False
+        self.body_read = False
+
+    @property
+    def content(self):
+        self.body_read = True
+        if self._forbid_body_read:
+            raise AssertionError('response body must not be read')
+        return self._data
+
+    def iter_content(self, chunk_size=1):
+        self.body_read = True
+        if self._forbid_body_read:
+            raise AssertionError('response body must not be read')
+        step = max(1, chunk_size or len(self._data) or 1)
+        for i in range(0, len(self._data), step):
+            yield self._data[i:i + step]
+
+    def close(self):
+        self.closed = True
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
 
 
 def _serve(monkeypatch, blob: bytes):
     calls = []
 
-    def get(self, url, headers=None, timeout=None):
+    def get(self, url, headers=None, timeout=None, stream=False):
+        assert stream is True
         a, b = headers['Range'][len('bytes='):].split('-')
         calls.append((int(a), int(b)))
         return _Resp(206, blob[int(a):int(b) + 1])
@@ -104,3 +133,61 @@ def test_unreadable_zip_gives_none(monkeypatch, tmp_path):
     monkeypatch.setattr(zip_index, '_mem', {})
     _serve(monkeypatch, b'not a zip at all' * 10)
     assert zip_index.index('h', 1, 160, lambda: 'http://cdn/z') is None
+
+
+def test_range_200_does_not_read_body_and_retries(monkeypatch):
+    responses = []
+    sleeps = []
+
+    def get(self, url, headers=None, timeout=None, stream=False):
+        assert stream is True
+        resp = _Resp(200, b'X' * 1024, forbid_body_read=True)
+        responses.append(resp)
+        return resp
+
+    monkeypatch.setattr(zip_index.requests.Session, 'get', get)
+    monkeypatch.setattr(zip_index.time, 'sleep', sleeps.append)
+
+    with pytest.raises(ValueError, match='answered 200'):
+        zip_index._Range('http://cdn/z', 1000).read(0, 100)
+
+    assert len(responses) == 3
+    assert all(r.closed and not r.body_read for r in responses)
+    assert sleeps == [1, 3, 5]
+
+
+def test_range_206_reads_exact_bytes_and_closes(monkeypatch):
+    served = []
+
+    class _ChunkedResp(_Resp):
+        def iter_content(self, chunk_size=1):
+            self.body_read = True
+            # Emit small chunks and extra trailing bytes past requested length.
+            for part in (b'abc', b'defg', b'hijEXTRA'):
+                yield part
+
+    def get(self, url, headers=None, timeout=None, stream=False):
+        assert stream is True
+        resp = _ChunkedResp(206, b'')
+        served.append(resp)
+        return resp
+
+    monkeypatch.setattr(zip_index.requests.Session, 'get', get)
+    got = zip_index._Range('http://cdn/z', 1000).read(10, 10)
+    assert got == b'abcdefghij'
+    assert len(served) == 1 and served[0].closed
+
+
+def test_range_206_short_read_raises_and_closes(monkeypatch):
+    served = []
+
+    def get(self, url, headers=None, timeout=None, stream=False):
+        assert stream is True
+        resp = _Resp(206, b'short')
+        served.append(resp)
+        return resp
+
+    monkeypatch.setattr(zip_index.requests.Session, 'get', get)
+    with pytest.raises(ValueError, match='returned 5 of 10 bytes'):
+        zip_index._Range('http://cdn/z', 1000).read(0, 10)
+    assert len(served) == 1 and served[0].closed

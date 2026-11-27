@@ -1361,6 +1361,21 @@ class TorrentProcessor:
             classify_refusal, cooldown_reason, first_skip_this_window, record_indexer_limit,
             refusal_why,
         )
+
+        def _check_refusal_response(resp) -> Optional[str]:
+            if resp is None:
+                return None
+            try:
+                body = (getattr(resp, 'text', '') or '')[:2000]
+                cooldown_s = classify_refusal(resp.status_code, getattr(resp, 'headers', None), body)
+            except Exception:
+                return None
+            if not cooldown_s:
+                return None
+            record_indexer_limit(nzb_url, cooldown_s, refusal_why(resp.status_code, body))
+            return (f'indexer refused the download (HTTP {resp.status_code}); '
+                    f'skipping its NZBs for {max(1, cooldown_s // 60)} min')
+
         _indexer_refusal = cooldown_reason(nzb_url)
         if not _indexer_refusal:
             from usenet import indexer_quota as _iq
@@ -1377,35 +1392,16 @@ class TorrentProcessor:
                         logging.info(f'[{item_identifier}] Skipping NZB {title!r} — segment ID in not-wanted list')
                         return None
                 else:
-                    _cooldown_s = classify_refusal(_nr_early.status_code, getattr(_nr_early, 'headers', None),
-                                                   _nr_early.text[:2000])
-                    if _cooldown_s:
-                        # cli_mount's URL fetch and the direct-upload fallback would hit
-                        # the same refusal, so don't send either.
-                        record_indexer_limit(nzb_url, _cooldown_s,
-                                             refusal_why(_nr_early.status_code, _nr_early.text[:2000]))
-                        _indexer_refusal = (f'indexer refused the download (HTTP {_nr_early.status_code}); '
-                                            f'skipping its NZBs for {max(1, _cooldown_s // 60)} min')
+                    # cli_mount's URL fetch and the direct-upload fallback would hit
+                    # the same refusal, so don't send either.
+                    _indexer_refusal = _check_refusal_response(_nr_early)
             except Exception as _nzb_early_err:
                 # api.get raises on 4xx/5xx, so a 429/503 refusal lands here, not
                 # in the status-code branch above: classify it the same way so the
                 # cooldown starts and cli_mount's URL fetch + the direct-upload
                 # fallback don't hit the refusing indexer again.
-                _err_resp = getattr(_nzb_early_err, 'response', None)
-                _cooldown_s = 0
-                if _err_resp is not None:
-                    try:
-                        _cooldown_s = classify_refusal(_err_resp.status_code, getattr(_err_resp, 'headers', None),
-                                                       (getattr(_err_resp, 'text', '') or '')[:2000])
-                    except Exception:
-                        _cooldown_s = 0
-                if _cooldown_s:
-                    record_indexer_limit(nzb_url, _cooldown_s,
-                                         refusal_why(_err_resp.status_code,
-                                                     (getattr(_err_resp, 'text', '') or '')[:2000]))
-                    _indexer_refusal = (f'indexer refused the download (HTTP {_err_resp.status_code}); '
-                                        f'skipping its NZBs for {max(1, _cooldown_s // 60)} min')
-                else:
+                _indexer_refusal = _check_refusal_response(getattr(_nzb_early_err, 'response', None))
+                if not _indexer_refusal:
                     logging.debug(f'[{item_identifier}] Could not pre-check NZB segment: {_nzb_early_err}')
 
         _item = item or {}
@@ -1468,6 +1464,7 @@ class TorrentProcessor:
         if not job_id:
             # Fallback: download NZB and upload directly
             logging.info(f'[{item_identifier}] URL submission failed, trying direct upload: {job_title}')
+            _fallback_refusal = None
             try:
                 from routes.api_tracker import api as _nzb_api
                 _r = _nzb_api.get(nzb_url, timeout=15, allow_redirects=True)
@@ -1484,8 +1481,17 @@ class TorrentProcessor:
                         return None
                     if job_id:
                         logging.info(f'[{item_identifier}] Direct upload succeeded: {job_title}')
+                else:
+                    _fallback_refusal = _check_refusal_response(_r)
             except Exception as _fe:
-                logging.warning(f'[{item_identifier}] Direct upload fallback failed: {_fe}')
+                _fallback_refusal = _check_refusal_response(getattr(_fe, 'response', None))
+                if not _fallback_refusal:
+                    logging.warning(f'[{item_identifier}] Direct upload fallback failed: {_fe}')
+            if _fallback_refusal:
+                if first_skip_this_window((item or {}).get('id'), nzb_url):
+                    logging.warning(f'[{item_identifier}] Not submitting NZB {title!r} — {_fallback_refusal}; '
+                                    f'keeping it for later and trying the next result')
+                return NZB_DEFERRED_INDEXER_COOLDOWN
 
         if not job_id:
             logging.warning(f'[{item_identifier}] cli_mount rejected NZB: {title}')

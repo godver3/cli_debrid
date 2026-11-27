@@ -438,6 +438,7 @@ class AddingQueue:
             else:
                 logging.info(f"Adding item {item_id} to queue")
                 self.items.append(item)
+                unpark_item(item_id)
         else:
             logging.error("Attempted to add item without ID to queue")
         
@@ -447,6 +448,7 @@ class AddingQueue:
         if item_id:
             old_len = len(self.items)
             self.items = [i for i in self.items if i['id'] != item_id]
+            unpark_item(item_id)
             if len(self.items) < old_len:
                 logging.info(f"Removed item {item_id} from queue")
                 self._nzb_submitted_ids.discard(item_id)

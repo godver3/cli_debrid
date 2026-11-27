@@ -117,20 +117,30 @@ class _Range:
         last = None
         for attempt in range(3):
             try:
-                r = self.session.get(self.url, headers={'Range': f'bytes={start}-{start + length - 1}'},
-                                     timeout=_TIMEOUT)
-                if r.status_code == 206:
-                    break
-                last = ValueError(f'range request answered {r.status_code}')
+                with self.session.get(
+                    self.url,
+                    headers={'Range': f'bytes={start}-{start + length - 1}'},
+                    timeout=_TIMEOUT,
+                    stream=True,
+                ) as r:
+                    if r.status_code == 206:
+                        buf = bytearray()
+                        for chunk in r.iter_content(chunk_size=min(length, 65536)):
+                            if not chunk:
+                                continue
+                            need = length - len(buf)
+                            buf.extend(chunk[:need])
+                            if len(buf) >= length:
+                                break
+                        data = bytes(buf)
+                        if len(data) != length:
+                            raise ValueError(f'range request returned {len(data)} of {length} bytes')
+                        return data
+                    last = ValueError(f'range request answered {r.status_code}')
             except requests.RequestException as exc:
                 last = exc
             time.sleep(1 + 2 * attempt)
-        else:
-            raise last
-        data = r.content
-        if len(data) != length:
-            raise ValueError(f'range request returned {len(data)} of {length} bytes')
-        return data
+        raise last
 
 
 def _zip64(extra: bytes, usize: int, csize: int, local: int):
