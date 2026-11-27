@@ -560,8 +560,6 @@
   }
 
   document.addEventListener('DOMContentLoaded', function() {
-    if (!document.body.classList.contains('tangerine-theme')) return;
-
     buildCards();
     attachMonitoringObservers();
 

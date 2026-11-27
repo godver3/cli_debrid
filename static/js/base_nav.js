@@ -1,11 +1,9 @@
 // Tangerine nav wiring for base.html (moved out of the template so browsers cache it).
 // Loaded as a plain script at the same place in <body>, so it runs at the same time.
 
-// Reset scroll to top on page load for tangerine theme (sticky nav gets cut off by browser scroll restore)
-if (localStorage.getItem('selectedTheme') === 'tangerine') {
-    if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
-    window.scrollTo(0, 0);
-}
+// Reset scroll to top on page load (sticky nav gets cut off by browser scroll restore)
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+window.scrollTo(0, 0);
 // Tangerine nav JS (prefixed st_ to avoid conflicts)
 function stToggleDD(id) {
     document.querySelectorAll('.st-nav-item.open').forEach(function(el) {
@@ -339,10 +337,9 @@ document.addEventListener('DOMContentLoaded', function() {
         // Run once immediately in case task_monitor.js already populated the DOM
         stSyncFromDisplay();
 
-        // Replace "Interval:" with "Intvl:" in task display — tangerine only
+        // Replace "Interval:" with "Intvl:" in task display
         (function() {
             function shortenInterval(root) {
-                if (!document.body.classList.contains('tangerine-theme')) return;
                 root.querySelectorAll('.task-timing span, .current-task-time').forEach(function(el) {
                     if (el.textContent.includes('Interval:')) {
                         el.textContent = el.textContent.replace(/Interval:/g, 'Intvl:');

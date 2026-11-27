@@ -1,7 +1,3 @@
-/* Theme-based visibility (tangerine theme is active when this file loads) */
-.tangerine-only { display: block !important; }
-.classic-only   { display: none  !important; }
-
 /* ─────────────────────────────────────────────────────────
    Design tokens — exact values from mockup
    ───────────────────────────────────────────────────────── */
@@ -375,7 +371,7 @@ input:checked + .toggle-slider:before { transform: translateX(15px); background:
     font-weight: 400;
     color: var(--st-accent);
     text-decoration: none;
-    display: flex;
+    display: block;
     align-items: center;
     gap: 4px;
     flex-shrink: 0;

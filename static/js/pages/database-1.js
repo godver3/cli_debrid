@@ -1201,7 +1201,7 @@ document.addEventListener('DOMContentLoaded', function() {
             return `<th${style}>${text}</th>`;
         };
 
-        // Unified column order: Select | # | (classic: Delete+Rescrape) | (tangerine: Actions)
+        // Column order: Select | # | Actions | selected columns
         tableHTML += createHeader('Select', columnIndex++);
         tableHTML += `<th class="db-col-rownum">#</th>`;
         columnIndex++;
@@ -1459,8 +1459,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (dbShowingCount && typeof data.result_count !== "undefined") {
                     dbShowingCount.textContent = `Showing ${data.result_count} of ${data.total_count} results`;
                 }
-                // Tangerine: update top stat boxes to reflect current view
-                if (document.body.classList.contains('tangerine-theme') && typeof data.total_count !== "undefined") {
+                // Update the top stat boxes to reflect the current view
+                if (typeof data.total_count !== "undefined") {
                     const statVals = document.querySelectorAll('.db-stat-boxes .db-stat-val');
                     if (statVals[0]) statVals[0].textContent = data.total_count;
                     if (statVals[1]) statVals[1].textContent = data.unique_result_count;

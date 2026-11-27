@@ -125,22 +125,6 @@
 })();
 </script>
 <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_database.css') }}">
-<style>
-/* Prevent blue flash on filter buttons before tangerine CSS loads */
-#filter-sort .btn.btn-secondary,
-#filter-sort .btn-secondary {
-    background: transparent !important;
-    border: 1px solid #3d3d3d !important;
-    color: #aaa !important;
-    padding: 4px 11px !important;
-    border-radius: 4px !important;
-    font-size: 11px !important;
-    font-weight: 500 !important;
-    cursor: pointer !important;
-    box-shadow: none !important;
-    line-height: 1.4 !important;
-}
-</style>
 {% endblock %}
 {% block title %}Database{% endblock %}
 {% macro quick_buttons(id) -%}
@@ -155,7 +139,7 @@
 <svg class="db-icon-sprite" width="0" height="0" style="position:absolute" aria-hidden="true"><symbol id="dbi-trash" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></symbol><symbol id="dbi-refresh" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></symbol><symbol id="dbi-open" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></symbol><symbol id="dbi-wanted" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></symbol><symbol id="dbi-blacklist" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/></symbol></svg>
 
 <!-- Tangerine theme: top bar — stat boxes left, view buttons right -->
-<div class="db-topbar tangerine-only">
+<div class="db-topbar">
     <div class="db-stat-boxes">
         <div class="db-stat-box">
             <span class="db-stat-val">{{ total_count | default(0) }}</span>
@@ -257,7 +241,7 @@
         <button id="toggle-column-selector" class="toggle-button">Select Columns to Display</button>
         <div id="column-selector" class="hidden">
             <!-- Tangerine: header row with title + Hide button -->
-            <div class="db-col-sel-header tangerine-only">
+            <div class="db-col-sel-header">
                 <span class="db-col-sel-title">Column Selector</span>
                 <button class="db-view-btn" id="db-col-sel-hide-btn">Hide</button>
             </div>
@@ -292,7 +276,7 @@
     </div>
     <div class="db-filter-presets-row">
     <div id="filter-sort">
-        <div class="db-filter-header tangerine-only">
+        <div class="db-filter-header">
             <span class="db-filter-title">Filter &amp; Sort</span>
             <button class="db-view-btn" id="db-filter-collapse-btn">Collapse</button>
         </div>
@@ -349,12 +333,12 @@
                 <div class="filter-buttons">
                     <button type="submit">Apply</button>
                     <button type="button" id="clear-filter-sort">Clear all</button>
-                    <button type="button" class="db-save-preset-btn tangerine-only">Save Preset</button>
+                    <button type="button" class="db-save-preset-btn">Save Preset</button>
                 </div>
             </div>
         </form>
     </div>
-    <div id="db-presets-panel" class="tangerine-only">
+    <div id="db-presets-panel">
         <div class="db-filter-header">
             <span class="db-filter-title">Saved Presets</span>
         </div>
@@ -363,7 +347,7 @@
         </div>
     </div>
     </div><!-- /.db-filter-presets-row -->
-    <div class="content-type-filter-row tangerine-only">
+    <div class="content-type-filter-row">
         <div class="content-type-filter">
             <a href="#" data-content-type="all" class="content-type-link {% if content_type == 'all' %}active{% endif %}">All</a>
             <a href="#" data-content-type="movie" class="content-type-link {% if content_type == 'movie' %}active{% endif %}">Movies</a>
@@ -380,7 +364,7 @@
         </div>
     </div>
 </div>
-<div class="db-table-hint tangerine-only">
+<div class="db-table-hint">
     <span>↔ Drag column borders to resize &nbsp;·&nbsp; "Reset Cols" restores defaults &nbsp;·&nbsp; Click column headers to sort</span>
     <span class="db-showing-count" id="db-showing-count">Showing {{ result_count }} of {{ total_count }} results</span>
 </div>
@@ -537,7 +521,7 @@ window.TPL_DATABASE = {
     });
 })();
 </script>
-<button id="db-back-top" class="tangerine-only" title="Back to top / Row 1" aria-label="Back to top">
+<button id="db-back-top" title="Back to top / Row 1" aria-label="Back to top">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <polyline points="18 15 12 9 6 15"/>
         <line x1="12" y1="9" x2="12" y2="21"/>

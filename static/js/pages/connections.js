@@ -1,9 +1,6 @@
-// Page script for templates/connections.html.
+// Page script for templates/connections.html: checks every connection and renders the cards.
 (function() {
-  // Set hook immediately — runs before DOMContentLoaded so classic resolveCard can call it
-  window._tngOnResolve = function() {
-    if (typeof syncFromClassic === 'function') syncFromClassic();
-  };
+  const PAGE = window.CONNECTIONS_PAGE || {};
 
   const SECTION_LABELS = {
     system:  'System Connections',
@@ -42,7 +39,7 @@
     return 'Source';
   }
 
-  // card registry: service -> { name, group, status, ts, el }
+  // service -> { service, name, group, status, ts, expiryDate, autoRenew, usage }
   const registry = {};
 
   let tngFilter = 'all';
@@ -209,53 +206,128 @@
       <div class="stat"><div class="stat-icon fail"><i class="fa-solid fa-circle-xmark"></i></div><div><div class="stat-val" style="color:${offline>0?'var(--red)':'var(--text3)'}">${offline}</div><div class="stat-lbl">Offline</div></div></div>`;
   }
 
-  // Mirror classic cards into registry
-  function syncFromClassic() {
-    // system
-    document.querySelectorAll('#system-cards .connection-card').forEach(card => {
-      const service = card.dataset.service;
-      if (!service || card.style.display === 'none') return;
-      const name = card.querySelector('.connection-title')?.textContent.trim() || service;
-      const ind = card.querySelector('.status-indicator');
-      const connected = ind?.classList.contains('connected');
-      const disconnected = ind?.classList.contains('disconnected');
-      const status = connected ? 'online' : disconnected ? 'offline' : 'checking';
-      const footer = card.querySelector('.conn-card-footer');
-      const ts = footer?.dataset.ts ? parseInt(footer.dataset.ts) : null;
-      registry[service] = { service, name, group: 'system', status, ts };
-    });
-    // scraper
-    document.querySelectorAll('#scraper-cards .connection-card').forEach(card => {
-      const service = card.dataset.service;
-      if (!service) return;
-      const name = card.querySelector('.connection-title')?.textContent.trim() || service;
-      const ind = card.querySelector('.status-indicator');
-      const connected = ind?.classList.contains('connected');
-      const disconnected = ind?.classList.contains('disconnected');
-      const status = connected ? 'online' : disconnected ? 'offline' : 'checking';
-      const footer = card.querySelector('.conn-card-footer');
-      const ts = footer?.dataset.ts ? parseInt(footer.dataset.ts) : null;
-      const expiryEl = card.querySelector('.conn-card-expiry');
-      const expiryDate = expiryEl?.dataset.expiryDate || null;
-      const autoRenew = expiryEl?.dataset.autoRenew === 'true';
-      const usage = card.querySelector('.conn-card-usage-text')?.textContent.trim() || null;
-      registry[service] = { service, name, group: 'scraper', status, ts, expiryDate, autoRenew, usage };
-    });
-    // source
-    document.querySelectorAll('#source-cards .connection-card').forEach(card => {
-      const service = card.dataset.service;
-      if (!service) return;
-      const name = card.querySelector('.connection-title')?.textContent.trim() || service;
-      const ind = card.querySelector('.status-indicator');
-      const connected = ind?.classList.contains('connected');
-      const disconnected = ind?.classList.contains('disconnected');
-      const status = connected ? 'online' : disconnected ? 'offline' : 'checking';
-      const footer = card.querySelector('.conn-card-footer');
-      const ts = footer?.dataset.ts ? parseInt(footer.dataset.ts) : null;
-      registry[service] = { service, name, group: 'source', status, ts };
-    });
+  // Same key the server-side skeleton used: lower-case, spaces to dashes, no brackets or quotes.
+  function slugify(name) {
+    return name.toLowerCase().replace(/\s+/g, '-').replace(/[()'"]/g, '');
+  }
+
+  function setEntry(service, fields) {
+    registry[service] = Object.assign(registry[service] || { service, status: 'checking', ts: null }, fields);
+  }
+
+  function applyDetails(service, details) {
+    if (!details) return;
+    const fields = {};
+    if (details.subscription_expiry_date) {
+      fields.expiryDate = details.subscription_expiry_date;
+      fields.autoRenew = !!details.auto_renew;
+    }
+    if (details.indexer_usage) fields.usage = details.indexer_usage;
+    setEntry(service, fields);
+  }
+
+  function resolve(service, connected) {
+    setEntry(service, { status: connected ? 'online' : 'offline', ts: Date.now() });
+    render();
+  }
+
+  function setGroupChecking(group) {
+    allCards().forEach(e => { if (e.group === group) { e.status = 'checking'; e.ts = null; } });
+  }
+
+  function render() {
     tngRenderStats();
     tngRender();
+  }
+
+  // cli_battery is always listed; the other system services appear once the check reports them.
+  const SYSTEM = [
+    ['cli_battery_status', 'cli_battery', 'cli_battery'],
+    ['plex_status', 'plex', 'Plex'],
+    ['jellyfin_status', 'jellyfin', 'Jellyfin/Emby'],
+    ['silo_status', 'silo', 'Silo'],
+    ['mounted_files_status', 'mounted-files', 'Mounted Files'],
+    ['phalanx_db_status', 'phalanx-db', 'Phalanx DB'],
+    ['tvdb_status', 'tvdb', 'TVDB'],
+    ['tmdb_status', 'tmdb', 'TMDB'],
+    ['climount_status', 'climount', PAGE.usenetProviderName || 'cli_mount'],
+    ['scrob_status', 'scrob', 'Scrob'],
+    ['trakt_status', 'trakt', 'Trakt'],
+  ];
+
+  function seed() {
+    setEntry('cli_battery', { name: 'cli_battery', group: 'system' });
+    (PAGE.scrapers || []).forEach(s => {
+      const service = 'scraper-' + slugify(s.name);
+      setEntry(service, { name: s.name, group: 'scraper' });
+      applyDetails(service, s.details);
+    });
+    (PAGE.sources || []).forEach(s => {
+      setEntry('source-' + slugify(s.name), { name: s.name, group: 'source' });
+    });
+  }
+
+  async function checkSystem() {
+    setGroupChecking('system');
+    render();
+    try {
+      const resp = await fetch('/connections/api/check/system');
+      const data = await resp.json();
+      for (const [key, service, name] of SYSTEM) {
+        if (!data[key]) continue;
+        setEntry(service, { name, group: 'system' });
+        resolve(service, data[key].connected);
+      }
+    } catch (e) {
+      // Leave the cards as they are; "Refresh All" retries.
+    }
+    render();
+  }
+
+  // Scrapers and sources stream one SSE event per connection as each check finishes.
+  function streamGroup(url, eventName, group, timeoutMs) {
+    setGroupChecking(group);
+    render();
+    const seen = new Set();
+    return new Promise((done) => {
+      const es = new EventSource(url);
+      const finish = () => { es.close(); done(); };
+      es.addEventListener(eventName, (e) => {
+        const item = JSON.parse(e.data);
+        const service = group + '-' + slugify(item.name);
+        seen.add(service);
+        setEntry(service, { name: item.name, group });
+        if (group === 'scraper') applyDetails(service, item.details);
+        resolve(service, item.connected);
+      });
+      es.addEventListener('done', () => {
+        // Drop cards that never got a result (disabled or removed since the page loaded)
+        allCards().forEach(e => { if (e.group === group && !seen.has(e.service)) delete registry[e.service]; });
+        render();
+        finish();
+      });
+      es.onerror = finish;
+      setTimeout(finish, timeoutMs);
+    });
+  }
+
+  let running = false;
+  async function runAll() {
+    if (running) return;
+    running = true;
+    const btn = document.getElementById('tng-refresh-all');
+    const icon = btn && btn.querySelector('i');
+    if (btn) btn.disabled = true;
+    if (icon) icon.style.animation = 'conn-spin 0.7s linear infinite';
+    try {
+      await checkSystem();
+      await streamGroup('/connections/api/stream/scrapers', 'scraper', 'scraper', 30000);
+      await streamGroup('/connections/api/stream/content-sources', 'source', 'source', 60000);
+    } finally {
+      running = false;
+      if (btn) btn.disabled = false;
+      if (icon) icon.style.animation = '';
+    }
   }
 
   window.tngSetFilter = function(btn, val) {
@@ -272,23 +344,11 @@
 
   document.addEventListener('DOMContentLoaded', function() {
     if (!document.getElementById('tng-connections')) return;
-
-    window._tngOnResolve = syncFromClassic;
-
-    document.getElementById('tng-refresh-all')?.addEventListener('click', () => {
-      document.getElementById('conn-refresh-all')?.click();
-    });
-
-    syncFromClassic();
-
-    // Poll rapidly while connections are being checked, then slow down
-    let polls = 0;
-    const fastPoll = setInterval(() => {
-      syncFromClassic();
-      polls++;
-      if (polls >= 120) clearInterval(fastPoll);
-    }, 500);
-
-    setInterval(syncFromClassic, 30000);
+    document.getElementById('tng-refresh-all').addEventListener('click', runAll);
+    seed();
+    render();
+    runAll();
+    // Keeps "checked Xm ago" current
+    setInterval(tngRender, 30000);
   });
 })();

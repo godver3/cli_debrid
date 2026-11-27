@@ -313,11 +313,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
-    // Tangerine toolbar button wiring
-    function isTangerine() {
-        return document.body.classList.contains('tangerine-theme');
-    }
-
+    // Toolbar button wiring
     function dbToggleColumnSelector() {
         const colSel = document.getElementById('column-selector');
         const toggleBtn = document.getElementById('toggle-column-selector');

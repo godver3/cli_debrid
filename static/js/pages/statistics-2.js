@@ -26,12 +26,8 @@ function getGradientColor(percentage) {
     return `rgb(${r} ${g} ${b} / 65%)`;
 }
 
-// Apply color gradient to stat boxes (Tangerine theme only)
+// Apply color gradient to stat boxes
 function applyPercentageColorGradient() {
-    // Only apply for tangerine theme
-    const isTangerine = document.body.classList.contains('tangerine-theme');
-    if (!isTangerine) return;
-    
     // Active downloads percentage
     const activeDownloads = parseInt(document.getElementById('active_downloads')?.textContent || 0);
     const downloadLimit = parseInt(document.getElementById('download_limit')?.textContent || 75);

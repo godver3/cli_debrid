@@ -163,7 +163,7 @@
     <script src="{{ url_for('static', filename='js/pages/statistics-1.js') }}"></script>
 
     <div class="stats-container">
-        <div class="stats-box collection-stats tangerine-only" id="collection_stats_tangerine">
+        <div class="stats-box collection-stats" id="collection_stats_tangerine">
             <div class="stat-items">
                 <div class="stat-item stat-item-clickable" onclick="window.location.href='/library?status=all&type=movie&sort=added_desc'">
                     <div class="stat-content">
@@ -276,36 +276,6 @@
                 </div>
             </div>
         </div>
-        <div class="stats-box collection-stats classic-only" id="collection_stats_classic">
-            <div class="stat-items">
-                <div class="stat-item">
-                    <p data-label="Total Movies">{{ stats.total_movies }}</p>
-                </div>
-                <div class="stat-item">
-                    <p data-label="Total Shows">{{ stats.total_shows }}</p>
-                </div>
-                <div class="stat-item">
-                    <p data-label="Total Episodes">{{ stats.total_episodes }}</p>
-                </div>
-                {% if not limited_env %}
-                <div class="stat-item">
-                    <p data-label="Active Downloads" class="{{ stats.active_downloads_data.status }}">
-                        <span id="active_downloads_classic">{{ stats.active_downloads_data.count|default(0) }}</span>/<span id="download_limit_classic">{{ stats.active_downloads_data.limit|default(25) }}</span>
-                    </p>
-                </div>
-                <div class="stat-item">
-                    <p data-label="Daily Usage"><span id="daily_usage_classic">{{ stats.usage_stats_data.used }}</span> / <span id="daily_limit_classic">{{ stats.usage_stats_data.limit }}</span></p>
-                </div>
-                {% endif %}
-                <div class="stat-item">
-                    <p data-label="Uptime">{{ '%d days %d hours %d minutes' | format(
-                        stats.uptime // 86400,
-                        (stats.uptime % 86400) // 3600,
-                        (stats.uptime % 3600) // 60
-                    ) }}</p>
-                </div>
-            </div>
-        </div>
 
         {% if not is_user_system_enabled() or (current_user.is_authenticated and current_user.role == 'admin') %}
         {% include 'partials/_command_bar.html' %}
@@ -388,7 +358,7 @@
             <div class="stats-box recently-aired" id="recently_aired">
                 <h3>
                     Recently Aired
-                    <a href="/statistics/calendar" class="calendar-link tangerine-only">Calendar →</a>
+                    <a href="/statistics/calendar" class="calendar-link">Calendar →</a>
                 </h3>
                 <ul>
                     {% for item in recently_aired %}
@@ -465,7 +435,7 @@
             <div class="stats-box airing-soon" id="airing_soon">
                 <h3>
                     Airing Soon
-                    <a href="/statistics/calendar" class="calendar-link tangerine-only">Calendar →</a>
+                    <a href="/statistics/calendar" class="calendar-link">Calendar →</a>
                 </h3>
                 <ul>
                     {% for item in airing_soon %}
@@ -487,7 +457,7 @@
             <div class="stats-box upcoming-releases" id="upcoming_releases">
                 <h3>
                     Upcoming Releases
-                    <a href="/library?status=upcoming&type=movie&sort=release_asc" class="calendar-link tangerine-only">View All →</a>
+                    <a href="/library?status=upcoming&type=movie&sort=release_asc" class="calendar-link">View All →</a>
                 </h3>
                 <ul>
                     {% for release in upcoming_releases %}
@@ -516,7 +486,7 @@
             <div class="stats-box recently-added-section-top" id="recently_added_movies">
                 <h3>
                     Recently Added Movies
-                    <a href="/library?status=collected&type=movie&sort=added_desc" class="calendar-link tangerine-only">View All →</a>
+                    <a href="/library?status=collected&type=movie&sort=added_desc" class="calendar-link">View All →</a>
                 </h3>
                 <div class="stats-cards-container">
                     {% for movie in recently_added.movies %}
@@ -549,7 +519,7 @@
             <div class="stats-box recently-added-section-bottom" id="recently_added_shows">
                 <h3>
                     Recently Added Shows
-                    <a href="/library?status=collected&type=show&sort=added_desc" class="calendar-link tangerine-only">View All →</a>
+                    <a href="/library?status=collected&type=show&sort=added_desc" class="calendar-link">View All →</a>
                 </h3>
                 <div class="stats-cards-container">
                     {% for show in recently_added.shows %}
@@ -584,7 +554,7 @@
             <div class="stats-box recently-upgraded-section" id="recently_upgraded">
                 <h3>
                     Recently Upgraded
-                    <a href="/library?status=upgraded&type=all&sort=added_desc" class="calendar-link tangerine-only">View All →</a>
+                    <a href="/library?status=upgraded&type=all&sort=added_desc" class="calendar-link">View All →</a>
                 </h3>
                 <div class="stats-cards-container">
                     {% for item in recently_upgraded %}
@@ -805,61 +775,13 @@ function applyQualityBadges() {
     console.log('Finished applying badges to', processedCards.size, 'cards');
 }
 
-// Restore original filenames (for classic theme)
-function restoreOriginalFilenames() {
-    console.log('Restoring original filenames for classic theme...');
-
-    // Restore regular filename elements
-    const filenameElements = document.querySelectorAll('.filename[data-original-filename]');
-    filenameElements.forEach(element => {
-        const originalFilename = element.getAttribute('data-original-filename');
-        if (originalFilename && element.textContent !== originalFilename) {
-            element.textContent = originalFilename;
-        }
-        // Make sure the element is visible
-        element.style.display = '';
-    });
-
-    // Hide badge containers and show original From/To spans
-    const upgradedContainers = document.querySelectorAll('.upgraded-tags-container');
-    upgradedContainers.forEach(container => {
-        container.style.display = 'none';
-    });
-
-    // Show hidden From/To spans
-    const hiddenSpans = document.querySelectorAll('.filename[data-label="From:"][style*="display: none"], .filename[data-label="To:"][style*="display: none"]');
-    hiddenSpans.forEach(span => {
-        span.style.display = '';
-    });
-
-    // Clear badges-applied flags
-    document.querySelectorAll('.stats-card[data-badges-applied]').forEach(card => {
-        card.removeAttribute('data-badges-applied');
-    });
-}
-
 // Apply badges on page load
 document.addEventListener('DOMContentLoaded', function() {
     console.log('DOM loaded, waiting for scripts...');
     // Wait a bit to ensure all scripts are loaded
-    setTimeout(applyQualityBadges, 200);
+    setTimeout(applyQualityBadges, 100);
 });
 
-// Re-apply badges on theme change
-document.addEventListener('themeChanged', function(event) {
-    console.log('Theme changed to:', event.detail.theme);
-
-    if (event.detail.theme === 'tangerine') {
-        // Clear badges-applied flags to allow reprocessing
-        document.querySelectorAll('.stats-card[data-badges-applied]').forEach(card => {
-            card.removeAttribute('data-badges-applied');
-        });
-        setTimeout(applyQualityBadges, 100);
-    } else {
-        // Restore original filenames for classic theme
-        restoreOriginalFilenames();
-    }
-});
 </script>
 
 {% endblock %}
