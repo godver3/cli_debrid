@@ -263,6 +263,24 @@ class DeletionManager:
 
         return bool(jellyfin_url and jellyfin_token)
 
+    def _nearest_existing_parent(self, local_path: str, target_path: str) -> str:
+        """Parent folder of target_path (the same file as local_path, possibly
+        as Plex sees it), moved up one level for each level of local_path's
+        parents that no longer exists on disk. Never above the symlink root."""
+        local_dir = os.path.dirname(local_path or '')
+        target_dir = os.path.dirname(target_path or '')
+        root = os.path.normpath(self.symlink_dir) if self.symlink_dir else None
+        while (local_dir and target_dir and root
+               and os.path.normpath(local_dir).startswith(root.rstrip(os.sep) + os.sep)
+               and not os.path.isdir(local_dir)):
+            parent_local, parent_target = os.path.dirname(local_dir), os.path.dirname(target_dir)
+            if parent_local == local_dir or parent_target == target_dir:
+                break
+            if os.path.normpath(parent_local) == root:
+                break  # the symlink root itself is never a scan target
+            local_dir, target_dir = parent_local, parent_target
+        return target_dir
+
     def _translate_plex_path_to_local(self, plex_path: str) -> str:
         """
         Translate a Plex path to the local filesystem path.
@@ -1085,25 +1103,28 @@ class DeletionManager:
             # Get authenticated user's Trakt username for permission checking
             # Fetch from Trakt API since it's not stored in settings
             authenticated_username = None
-            try:
-                import requests
-                from content_checkers.trakt import get_trakt_headers
+            # Only when there is a Trakt list to remove from: without credentials
+            # the lookup logs an ERROR on every delete
+            if trakt_list_sources:
+                try:
+                    import requests
+                    from content_checkers.trakt import get_trakt_headers
 
-                headers = get_trakt_headers()
-                if headers:
-                    response = requests.get('https://api.trakt.tv/users/settings', headers=headers, timeout=15)
-                    if response.status_code == 200:
-                        user_data = response.json()
-                        authenticated_username = user_data.get('user', {}).get('username', '')
-                        logging.info(f"[CONTENT_SOURCE_REMOVAL] Fetched authenticated Trakt username from API: '{authenticated_username}'")
+                    headers = get_trakt_headers()
+                    if headers:
+                        response = requests.get('https://api.trakt.tv/users/settings', headers=headers, timeout=15)
+                        if response.status_code == 200:
+                            user_data = response.json()
+                            authenticated_username = user_data.get('user', {}).get('username', '')
+                            logging.info(f"[CONTENT_SOURCE_REMOVAL] Fetched authenticated Trakt username from API: '{authenticated_username}'")
+                        else:
+                            logging.warning(f"[CONTENT_SOURCE_REMOVAL] Failed to fetch Trakt username from API: {response.status_code}")
                     else:
-                        logging.warning(f"[CONTENT_SOURCE_REMOVAL] Failed to fetch Trakt username from API: {response.status_code}")
-                else:
-                    logging.warning(f"[CONTENT_SOURCE_REMOVAL] No Trakt headers available (not authenticated)")
-            except Exception as e:
-                logging.error(f"[CONTENT_SOURCE_REMOVAL] Error fetching Trakt username: {e}")
+                        logging.warning(f"[CONTENT_SOURCE_REMOVAL] No Trakt headers available (not authenticated)")
+                except Exception as e:
+                    logging.error(f"[CONTENT_SOURCE_REMOVAL] Error fetching Trakt username: {e}")
 
-            if not authenticated_username:
+            if not authenticated_username and trakt_list_sources:
                 logging.warning(f"[CONTENT_SOURCE_REMOVAL] Could not determine authenticated Trakt username - will skip permission checks for all lists")
 
             for list_source in trakt_list_sources:
@@ -2324,6 +2345,25 @@ class DeletionManager:
         from database.database_reading import get_items_by_ids
         all_items = get_items_by_ids(item_ids) if item_ids else []
         items_by_id = {it['id']: it for it in all_items if it and 'id' in it}
+        # get_items_by_ids returns [] on any error (a locked database): look the
+        # missing ones up one by one, and only delete rows that were found, so
+        # a failed lookup never drops rows whose files/torrents stayed behind.
+        _missing_ids = [i for i in item_ids if i not in items_by_id]
+        if _missing_ids:
+            from database.database_reading import get_item_by_id as _get_one
+            for _mid in _missing_ids:
+                try:
+                    _one = _get_one(_mid)
+                except Exception as e:
+                    logging.warning(f"[DELETE_MULTIPLE] Lookup of item {_mid} failed: {e}")
+                    _one = None
+                if _one:
+                    items_by_id[_mid] = dict(_one)
+            all_items = list(items_by_id.values())
+        found_item_ids = [i for i in item_ids if i in items_by_id]
+        if len(found_item_ids) != len(item_ids):
+            logging.warning(f"[DELETE_MULTIPLE] {len(item_ids) - len(found_item_ids)} of {len(item_ids)} item(s) "
+                            f"not found; their database rows are left alone")
 
         # Sibling guard: never remove a torrent/NZB from the provider while a
         # media_items row OUTSIDE this delete batch (e.g. a different version
@@ -2626,14 +2666,15 @@ class DeletionManager:
             if batch_result['errors']:
                 aggregate_result['errors'].extend(batch_result['errors'])
 
-            # Collect unique parent folders for Phase 3 scan
-            scan_source_paths = (
-                batch_result['deleted_symlinks'] + batch_result['already_missing_local_paths']
-                if use_local_scan_paths
-                else batch_result['deleted_plex_paths'] + batch_result['already_missing_plex_paths']
-            )
-            for p in scan_source_paths:
-                parent_folder = os.path.dirname(p)
+            # Collect unique parent folders for Phase 3 scan: the nearest one
+            # still on disk, found on the local side and mapped back to Plex's
+            # path (a removed season folder scans as nothing in Plex, and when
+            # Plex sees the library under another path the scan helper can't
+            # check which of its folders still exist)
+            local_paths = batch_result['deleted_symlinks'] + batch_result['already_missing_local_paths']
+            plex_paths = batch_result['deleted_plex_paths'] + batch_result['already_missing_plex_paths']
+            for local_p, plex_p in zip(local_paths, plex_paths):
+                parent_folder = self._nearest_existing_parent(local_p, local_p if use_local_scan_paths else plex_p)
                 if parent_folder:
                     scan_folders_seen[parent_folder] = None
 
@@ -2793,20 +2834,20 @@ class DeletionManager:
 
         # PHASE 2: Database deletion - ALL items in ONE transaction
         if not skip_database:
-            logging.info(f"[DELETE_MULTIPLE] Phase 2: Batch database deletion for {len(item_ids)} items (blacklist={blacklist})")
+            logging.info(f"[DELETE_MULTIPLE] Phase 2: Batch database deletion for {len(found_item_ids)} items (blacklist={blacklist})")
             from database.database_writing import delete_items_batch
 
             db_result = delete_items_batch(
-                item_ids=item_ids,
+                item_ids=found_item_ids,
                 blacklist=blacklist
-            )
+            ) if found_item_ids else {'success': True, 'deleted_count': 0}
 
             if db_result['success']:
                 aggregate_result['deleted_count'] = db_result['deleted_count']
                 logging.info(f"[DELETE_MULTIPLE] Database deletion successful: {db_result['deleted_count']} items")
             else:
                 # Database deletion failed
-                aggregate_result['failed_count'] += len(item_ids)
+                aggregate_result['failed_count'] += len(found_item_ids)
                 aggregate_result['errors'].append(db_result['error'])
                 aggregate_result['success'] = False
 

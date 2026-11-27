@@ -689,3 +689,102 @@ def test_finish_plex_content_delete_still_kept_returns_false():
     assert finish_plex_content_delete('122280', plex=plex) is False
     assert item.delete.call_count == 1
     assert finish_plex_content_delete(None, plex=plex) is False
+
+
+def test_bulk_lookup_failure_leaves_db_rows(tmp_path):
+    # get_items_by_ids returns [] on any error (locked DB): nothing was cleaned
+    # up, so no row may be deleted either
+    dm = _make_manager(using_symlinks=False)
+    items = _nzb_items(3)
+    with mock.patch('utilities.deletion_manager.get_setting', side_effect=_batch_settings(tmp_path)), \
+         mock.patch('database.database_reading.get_items_by_ids', return_value=[]), \
+         mock.patch('database.database_reading.get_item_by_id', side_effect=Exception('database is locked')), \
+         mock.patch('database.database_writing.delete_items_batch') as db, \
+         mock.patch.object(dm, 'scan_and_empty_media_server_trash', return_value={'success': True}), \
+         mock.patch('utilities.deletion_manager.time.sleep'):
+        res = dm.delete_multiple_items([i['id'] for i in items], clear_cache=False)
+    assert db.call_count == 0
+    assert res['success'] is False and res['failed_count'] == 3 and res['deleted_count'] == 0
+
+
+def test_bulk_lookup_falls_back_to_single_lookups(tmp_path):
+    dm = _make_manager(using_symlinks=False)
+    items = _nzb_items(3)
+    by_id = {i['id']: i for i in items}
+    with mock.patch('utilities.deletion_manager.get_setting', side_effect=_batch_settings(tmp_path)), \
+         mock.patch('database.database_reading.get_items_by_ids', return_value=items[:1]), \
+         mock.patch('database.database_reading.get_item_by_id', side_effect=lambda i: by_id.get(i)) as one, \
+         mock.patch('database.database_writing.delete_items_batch',
+                    return_value={'success': True, 'deleted_count': 3, 'error': None}) as db, \
+         mock.patch.object(dm, 'scan_and_empty_media_server_trash', return_value={'success': True}), \
+         mock.patch('utilities.deletion_manager.time.sleep'):
+        res = dm.delete_multiple_items([i['id'] for i in items], clear_cache=False)
+    assert sorted(c.args[0] for c in one.call_args_list) == [2, 3]
+    assert db.call_args.kwargs['item_ids'] == [1, 2, 3]
+    assert res['success'] is True and res['failed_count'] == 0
+
+
+def test_symlink_bulk_scan_walks_up_when_plex_sees_another_path(tmp_path):
+    # Plex sees the library as /media/TV Shows/..., Clyde as <symlinks>/media/TV Shows/...;
+    # a removed season folder scans as nothing, so the scan goes to the nearest
+    # folder still on disk, as Plex sees it
+    symlink_root = tmp_path / 'symlinks'
+    tv_local = symlink_root / 'media' / 'TV Shows'
+    (tv_local / 'Other Show').mkdir(parents=True)  # keeps "TV Shows" on disk
+    items = []
+    for s in (1, 2):
+        season = tv_local / 'Show' / f'Season {s:02d}'
+        season.mkdir(parents=True)
+        for e in (1, 2):
+            name = f'Show - S{s:02d}E{e:02d}.mkv'
+            os.symlink('/nonexistent/x.mkv', season / name)
+            items.append({'id': len(items) + 1, 'type': 'episode', 'title': 'Show', 'state': 'Collected',
+                          'season_number': s, 'episode_number': e, 'imdb_id': 'tt1',
+                          'location_on_disk': f'/media/TV Shows/Show/Season {s:02d}/{name}'})
+    dm = _make_manager(using_symlinks=True, symlink_dir=str(symlink_root))
+    base = _batch_settings(tmp_path)
+
+    def settings(section, key, default=None):
+        if (section, key) == ('File Management', 'symlinked_files_path'):
+            return str(symlink_root)
+        return base(section, key, default)
+
+    with mock.patch('utilities.deletion_manager.get_setting', side_effect=settings), \
+         mock.patch('database.database_reading.get_items_by_ids', return_value=items), \
+         mock.patch('database.database_writing.delete_items_batch',
+                    return_value={'success': True, 'deleted_count': 4, 'error': None}), \
+         mock.patch.object(nw, 'symlinked_mode', return_value=True), \
+         mock.patch.object(nw, 'library_root', return_value=str(symlink_root)), \
+         mock.patch.object(dm, 'scan_and_empty_media_server_trash', return_value={'success': True}) as scan, \
+         mock.patch('utilities.deletion_manager.time.sleep'):
+        res = dm.delete_multiple_items([i['id'] for i in items], clear_cache=False,
+                                       delete_from_media_server=True, delete_symlinks=True)
+    assert res['success'] is True
+    assert not (tv_local / 'Show').exists()
+    assert scan.call_args.kwargs['deleted_paths'] == ['/media/TV Shows']
+
+
+def test_nearest_existing_parent_keeps_existing_folder_and_stops_at_root(tmp_path):
+    root = tmp_path / 'symlinks'
+    (root / 'TV' / 'Show' / 'Season 01').mkdir(parents=True)
+    dm = _make_manager(using_symlinks=True, symlink_dir=str(root))
+    local = str(root / 'TV' / 'Show' / 'Season 01' / 'e.mkv')
+    assert dm._nearest_existing_parent(local, '/m/TV/Show/Season 01/e.mkv') == '/m/TV/Show/Season 01'
+    gone = str(root / 'Gone' / 'Season 01' / 'e.mkv')
+    assert dm._nearest_existing_parent(gone, '/m/Gone/Season 01/e.mkv') == '/m/Gone'  # never the root
+    outside = '/elsewhere/Show/Season 01/e.mkv'  # not under the symlink root: unchanged
+    assert dm._nearest_existing_parent(outside, outside) == '/elsewhere/Show/Season 01'
+
+
+def test_content_source_removal_without_trakt_lists_never_asks_trakt():
+    # Without Trakt credentials the username lookup logged an ERROR on every
+    # delete, even with no Trakt list in Content Sources
+    dm = _make_manager(using_symlinks=False)
+    item = {'id': 1, 'type': 'movie', 'title': 'Film', 'imdb_id': 'tt1', 'tmdb_id': '1',
+            'content_source': 'Content'}
+    with mock.patch('utilities.deletion_manager.get_setting',
+                    side_effect=lambda section, key=None, default=None: default), \
+         mock.patch('content_checkers.trakt.get_trakt_headers') as headers, \
+         mock.patch('requests.get') as http_get:
+        dm.remove_from_content_source(item, queue_retry=False)
+    assert headers.call_count == 0 and http_get.call_count == 0
