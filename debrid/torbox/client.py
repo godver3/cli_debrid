@@ -498,15 +498,15 @@ class TorboxProvider(DebridProvider):
             return BROKEN, MISSING_PROVIDER_LINK
         return HEALTHY, ''
 
-    def _requestdl(self, torrent_id: str, file_id: str, user_ip: Optional[str] = None) -> str:
-        params = {'token': self.api_key, 'torrent_id': torrent_id, 'file_id': file_id}
+    def _requestdl(self, torrent_id: str, file_id: str, *, user_ip: Optional[str], deadline: float) -> str:
+        api_key = self.api_key
+        params = {'token': api_key, 'torrent_id': torrent_id, 'file_id': file_id}
         if user_ip:
             params['user_ip'] = user_ip
-        # Four API attempts at most, with a 3s API budget and a 3s CDN
-        # probe for each, leave headroom in the engine's 30s callback.
-        url = get_data_payload(make_request_once(
-            'GET', '/torrents/requestdl', self.api_key, params=params,
-            deadline=time.monotonic() + 3, allow_redirects=False,
+        request = make_request_once if user_ip else make_request
+        url = get_data_payload(request(
+            'GET', '/torrents/requestdl', api_key, params=params,
+            deadline=deadline, honor_retry_after=not user_ip, allow_redirects=False,
         ))
         if not isinstance(url, str) or not url.startswith('http'):
             raise ValueError(f'TorBox gave no download link for {torrent_id}/{file_id}')
@@ -515,10 +515,19 @@ class TorboxProvider(DebridProvider):
     def mount_link(self, torrent_id: str, file_id: str) -> Tuple[str, int]:
         first_url = None
         first_error = None
-        # Try the nearest CDN first, then ask as if from another region.
+        # Stay below the engine's 30s callback. Allow local API retries and
+        # a CDN probe while reserving two full regional attempts.
+        deadline = time.monotonic() + 25
+        region_timeout = 3
+        probe_timeout = cdn_fallback.PROBE_TIMEOUT
+        local_deadline = deadline - 2 * (region_timeout + probe_timeout)
         for region, ip in ((None, None), *cdn_fallback.REGION_IPS):
+            now = time.monotonic()
+            if now >= deadline:
+                break
+            api_deadline = min(deadline, now + region_timeout) if ip else local_deadline - probe_timeout
             try:
-                url = self._requestdl(torrent_id, file_id, user_ip=ip)
+                url = self._requestdl(torrent_id, file_id, user_ip=ip, deadline=api_deadline)
             except Exception as exc:
                 if first_error is None:
                     first_error = exc
@@ -526,14 +535,17 @@ class TorboxProvider(DebridProvider):
                 continue
             if first_url is None:
                 first_url = url
-            if cdn_fallback.reachable(url):
+            remaining = (deadline if ip else local_deadline) - time.monotonic()
+            if remaining > 0 and cdn_fallback.reachable(url, timeout=min(probe_timeout, remaining)):
                 if region:
                     logging.warning(f'[Torbox] Using CDN server {cdn_fallback.host(url)} '
                                     f'({region}) for {torrent_id}/{file_id}')
                 return url, 2 * 3600
         if first_url is not None:
             return first_url, 2 * 3600  # the reader's own retries take over
-        raise first_error
+        if first_error is not None:
+            raise first_error
+        raise ProviderUnavailableError("Torbox mount link budget exhausted")
 
     def get_torrent_info_with_status(self, torrent_id: str) -> TorrentInfoStatus:
         try:

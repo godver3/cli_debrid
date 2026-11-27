@@ -8,7 +8,7 @@ from unittest import mock
 
 import database  # noqa: F401 - app import order
 
-from debrid.torbox import api as torbox_api, cdn_fallback
+from debrid.torbox import api as torbox_api, cdn_fallback, client as torbox_client
 from debrid.torbox.client import TorboxProvider
 from utilities import mount_debrid
 
@@ -54,11 +54,11 @@ class MountLinkFallbackTest(unittest.TestCase):
     def test_switches_region_when_the_server_is_down(self):
         asked = []
 
-        def requestdl(tid, fid, user_ip=None):
+        def requestdl(tid, fid, *, user_ip, deadline):
             asked.append(user_ip)
             return UP if user_ip else DOWN
         with mock.patch.object(self.p, '_requestdl', side_effect=requestdl), \
-                mock.patch.object(cdn_fallback, 'reachable', side_effect=lambda u: u == UP):
+                mock.patch.object(cdn_fallback, 'reachable', side_effect=lambda u, timeout: u == UP):
             url, _ = self.p.mount_link('1', '0')
         self.assertEqual(url, UP)
         self.assertEqual(asked, [None, cdn_fallback.REGION_IPS[0][1]])
@@ -75,23 +75,60 @@ class MountLinkFallbackTest(unittest.TestCase):
             self.assertEqual(self.p.mount_link('1', '0')[0], DOWN)
 
 
-    def test_request_timeout_leaves_time_for_later_regions(self):
-        reply = mock.Mock()
-        reply.status_code = 200
+    def test_local_rate_limit_retries_and_keeps_the_local_link(self):
+        reply = mock.Mock(status_code=200)
         reply.json.return_value = {'data': UP}
-        timeout = torbox_api.api.exceptions.Timeout
+        limited = mock.Mock(status_code=429, headers={'Retry-After': '1'})
+        error = torbox_api.api.exceptions.HTTPError(response=limited)
         with mock.patch.object(self.p, '_load_api_key', return_value='key'), \
-                mock.patch.object(torbox_api, '_wait_for_rate_limit') as throttle, \
-                mock.patch.object(torbox_api.api, 'get', side_effect=[timeout, torbox_api.api.exceptions.ConnectionError, reply]) as get, \
+                mock.patch.object(torbox_api, '_wait_for_rate_limit'), \
+                mock.patch.dict(torbox_api._api_rate_limiter), \
+                mock.patch.object(torbox_api, 'time', wraps=time) as clock, \
+                mock.patch.object(torbox_api.make_request.retry, 'sleep') as backoff, \
+                mock.patch.object(torbox_api.api, 'get', side_effect=[error, reply]) as get, \
                 mock.patch.object(cdn_fallback, 'reachable', return_value=True):
             self.assertEqual(self.p.mount_link('1', '0')[0], UP)
 
-        self.assertEqual([c.kwargs['params'].get('user_ip') for c in get.call_args_list],
-                         [None, cdn_fallback.REGION_IPS[0][1], cdn_fallback.REGION_IPS[1][1]])
-        for call in get.call_args_list:
-            self.assertGreater(call.kwargs['timeout'].total, 0)
-            self.assertLessEqual(call.kwargs['timeout'].total, 3)
-        self.assertEqual(throttle.call_count, 3)
+        clock.sleep.assert_called_once_with(1)
+        backoff.assert_called_once_with(2)
+        self.assertEqual([c.kwargs['params'].get('user_ip') for c in get.call_args_list], [None, None])
+        self.assertGreater(get.call_args.kwargs['timeout'].total, 5)
+
+    def test_request_budget_leaves_time_for_two_later_regions(self):
+        now = 100.0
+        attempts = []
+        reply = mock.Mock(status_code=200)
+        reply.json.return_value = {'data': UP}
+
+        def get(url, *, params, timeout, **kwargs):
+            nonlocal now
+            ip = params.get('user_ip')
+            attempts.append((ip, timeout.total))
+            if ip is None:
+                now += 9.0  # the next local retry's backoff would exhaust its budget
+            elif ip == cdn_fallback.REGION_IPS[0][1]:
+                now += timeout.total
+            else:
+                return reply
+            raise torbox_api.api.exceptions.ConnectionError
+
+        clock = mock.Mock(wraps=time)
+        clock.monotonic.side_effect = lambda: now
+        with mock.patch.object(self.p, '_load_api_key', return_value='key'), \
+                mock.patch.object(torbox_client, 'time', clock), \
+                mock.patch.object(torbox_api, 'time', clock), \
+                mock.patch.object(torbox_api, '_wait_for_rate_limit'), \
+                mock.patch.object(torbox_api.make_request.retry, 'sleep') as backoff, \
+                mock.patch.object(torbox_api.api, 'get', side_effect=get), \
+                mock.patch.object(cdn_fallback, 'reachable', return_value=True):
+            self.assertEqual(self.p.mount_link('1', '0')[0], UP)
+
+        backoff.assert_not_called()
+        self.assertEqual(attempts, [
+            (None, 10),
+            (cdn_fallback.REGION_IPS[0][1], 3),
+            (cdn_fallback.REGION_IPS[1][1], 3),
+        ])
 
 
 class UnreachableLinkTest(unittest.TestCase):
@@ -116,8 +153,8 @@ class UnreachableLinkTest(unittest.TestCase):
             self.assertEqual(mount_debrid.link(ref)[0], UP)
             self.assertFalse(cdn_fallback.reachable(DOWN))
             self.assertEqual(requestdl.call_args_list, [
-                mock.call('1', '0', user_ip=None),
-                mock.call('1', '0', user_ip=cdn_fallback.REGION_IPS[0][1]),
+                mock.call('1', '0', user_ip=None, deadline=mock.ANY),
+                mock.call('1', '0', user_ip=cdn_fallback.REGION_IPS[0][1], deadline=mock.ANY),
             ])
             self.assertEqual(connect.call_count, 2)
 

@@ -17,7 +17,7 @@ REGION_IPS = (('wnam', '8.8.8.8'), ('weur', '1.1.1.1'), ('nord', '95.216.0.1'))
 
 _TTL_UP = 300
 _TTL_DOWN = 120
-_TIMEOUT = 3
+PROBE_TIMEOUT = 3
 _lock = threading.Lock()
 _state = {}  # host -> (reachable, checked_at)
 
@@ -33,7 +33,7 @@ def mark_down(url: str) -> None:
             _state[h] = (False, time.time())
 
 
-def reachable(url: str) -> bool:
+def reachable(url: str, timeout: float = PROBE_TIMEOUT) -> bool:
     h = host(url)
     if not h:
         return True
@@ -44,9 +44,11 @@ def reachable(url: str) -> bool:
         return got[0]
     port = urlparse(url).port or (443 if url.startswith('https') else 80)
     try:
-        socket.create_connection((h, port), timeout=_TIMEOUT).close()
+        socket.create_connection((h, port), timeout=timeout).close()
         ok = True
     except OSError as exc:
+        if isinstance(exc, TimeoutError) and timeout < PROBE_TIMEOUT:
+            return False  # the remaining budget was too short for a full probe
         # A refusal or a dead route is the server; a DNS failure is more
         # likely ours, and switching regions wouldn't help.
         ok = isinstance(exc, socket.gaierror)
