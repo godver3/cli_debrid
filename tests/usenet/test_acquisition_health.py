@@ -253,7 +253,7 @@ def test_actual_torrent_processor_filters_known_offline_chain(monkeypatch):
     check([primary, fallback])
     monkeypatch.setitem(sys.modules, 'utilities.acquisition_health', health)
     providers = function('queues/torrent_processor.py', '_providers',
-                         {'get_debrid_providers': lambda: [primary, fallback]}, 'TorrentProcessor')
+                         {'get_grab_providers': lambda: [primary, fallback]}, 'TorrentProcessor')
     assert providers(None) == [fallback]
 
 

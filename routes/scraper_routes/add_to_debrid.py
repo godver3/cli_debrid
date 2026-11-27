@@ -234,9 +234,9 @@ def add_torrent_to_debrid():
                 return jsonify({'error': error_message}), 400
 
         # Add magnet/torrent to debrid provider — try each provider in order
-        from debrid import get_debrid_providers
+        from debrid import get_grab_providers
         from debrid.base import ProviderUnavailableError
-        providers = get_debrid_providers()
+        providers = get_grab_providers()
         torrent_id = None
         # None on a usenet-only setup; the add loop below simply won't run and we
         # return the "failed to add torrent" error.

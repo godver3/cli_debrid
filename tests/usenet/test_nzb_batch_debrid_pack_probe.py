@@ -159,7 +159,7 @@ class TestNzbBatchDebridPackProbe(unittest.TestCase):
 
         provider = object()
         debrid_stub = types.ModuleType('debrid')
-        debrid_stub.get_debrid_providers = lambda: [] if debrid == 'none' else [provider]
+        debrid_stub.get_grab_providers = debrid_stub.get_debrid_providers = lambda: [] if debrid == 'none' else [provider]
         import utilities.acquisition_health as acquisition_health
 
         qm = mock.MagicMock()

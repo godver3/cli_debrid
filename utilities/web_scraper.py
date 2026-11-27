@@ -1753,8 +1753,8 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
                 processed_passed_results.append(result)
 
     # Get all configured debrid providers (primary + fallbacks)
-    from debrid import get_debrid_providers
-    all_providers = get_debrid_providers()
+    from debrid import get_grab_providers
+    all_providers = get_grab_providers()
     # usenet-only setup: no debrid provider. Use None + capability flags off so the
     # cache-check blocks below (all gated on supports_cache_check) are skipped.
     debrid_provider = all_providers[0] if all_providers else None  # primary — capability flags / legacy paths

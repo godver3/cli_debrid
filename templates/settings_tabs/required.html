@@ -294,7 +294,7 @@
            rest as fallback_providers, so existing configs need no migration. #}
         <div class="settings-form-group">
             <label class="settings-title">Debrid Providers:</label>
-            <p class="settings-description">Every provider here is used. For each release Clyde checks them in this order and adds it to the first one that has it cached; if a provider fails (DMCA block, rate limit, outage) the next one is tried. Each needs its own API key. Change the order with the arrows. AllDebrid can only check cache by adding, so put it last.</p>
+            <p class="settings-description">Every provider here is used. For each release Clyde checks them in this order and adds it to the first one that has it cached; if a provider fails (DMCA block, rate limit, outage) the next one is tried. Each needs its own API key. Change the order with the arrows. AllDebrid can only check cache by adding, so put it last. Tick <em>Streaming only</em> on a fallback to stop adding new releases to it while the files already there keep playing.</p>
             <input type="hidden" id="debrid provider-provider" name="Debrid Provider.provider" data-section="Debrid Provider" data-key="provider" value="{{ _dp.get('provider', '') }}">
             <input type="hidden" id="debrid provider-api_key" name="Debrid Provider.api_key" data-section="Debrid Provider" data-key="api_key" value="{{ _dp.get('api_key', '') }}">
             <input type="hidden" id="fallback-providers-hidden" name="Debrid Provider.fallback_providers" data-section="Debrid Provider" data-key="fallback_providers" value="">
@@ -311,6 +311,7 @@
                     <input type="password" class="settings-input dpr-key" placeholder="API key" value="{{ row.api_key }}" autocomplete="off">
                     <button type="button" class="dpr-btn dpr-up" title="Move up"><i class="fa-solid fa-arrow-up"></i></button>
                     <button type="button" class="dpr-btn dpr-down" title="Move down"><i class="fa-solid fa-arrow-down"></i></button>
+                    <label class="dpr-stream" title="Keep this account's files playing (mount, library, repair) but never add new releases to it"><input type="checkbox" class="dpr-stream-only" {% if row.stream_only %}checked{% endif %}> Streaming only</label>
                     <button type="button" class="dpr-btn dpr-test" title="Test this key">Test</button>
                     <button type="button" class="dpr-btn dpr-remove" title="Remove"><i class="fa-solid fa-trash"></i></button>
                     <span class="dpr-result"></span>
@@ -331,6 +332,8 @@
         .debrid-provider-row .dpr-btn{background:#222;border:1px solid #3d3d3d;color:#ddd;border-radius:5px;padding:5px 9px;cursor:pointer;font-size:12px}
         .debrid-provider-row .dpr-btn:hover{border-color:#e8601c}
         .debrid-provider-row .dpr-result{font-size:12px;flex-basis:100%;padding-left:24px}
+        .debrid-provider-row .dpr-stream{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:#bbb;cursor:pointer;white-space:nowrap}
+        .debrid-provider-row:first-child .dpr-stream{display:none}
         .debrid-provider-row .dpr-result.ok{color:#22c55e}.debrid-provider-row .dpr-result.bad{color:#ef4444}
         </style>
         <script>
@@ -341,8 +344,12 @@
             function sync() {
                 const rows = Array.from(list.querySelectorAll('.debrid-provider-row'));
                 rows.forEach((r, i) => { r.querySelector('.dpr-rank').textContent = i + 1; });
-                const vals = rows.map(r => ({ provider: r.querySelector('.dpr-name').value, api_key: r.querySelector('.dpr-key').value.trim() }))
-                                 .filter(v => v.provider);
+                // Row 1 is the main provider and is never streaming only.
+                const vals = rows.map((r, i) => {
+                    const v = { provider: r.querySelector('.dpr-name').value, api_key: r.querySelector('.dpr-key').value.trim() };
+                    if (i > 0 && r.querySelector('.dpr-stream-only').checked) v.stream_only = true;
+                    return v;
+                }).filter(v => v.provider);
                 const first = vals[0] || { provider: '', api_key: '' };
                 document.getElementById('debrid provider-provider').value = first.provider;
                 document.getElementById('debrid provider-api_key').value = first.api_key;
@@ -354,6 +361,7 @@
                 const row = list.querySelector('.debrid-provider-row').cloneNode(true);
                 row.querySelector('.dpr-name').value = provider || '';
                 row.querySelector('.dpr-key').value = key || '';
+                row.querySelector('.dpr-stream-only').checked = false;
                 row.querySelector('.dpr-result').textContent = '';
                 list.appendChild(row);
                 sync();

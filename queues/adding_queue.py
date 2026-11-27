@@ -669,11 +669,11 @@ class AddingQueue:
                     self._handle_failed_item(item, "No results found", queue_manager)
                     continue
 
-                from debrid import get_debrid_providers
+                from debrid import get_grab_providers
                 from utilities.acquisition_health import usable_results, log_deferred
                 # Keep the durable candidate list intact. An unavailable
                 # backend is not a dead release or an acquisition failure.
-                results = usable_results(results, get_debrid_providers())
+                results = usable_results(results, get_grab_providers())
                 if not results:
                     log_deferred(item_identifier, 'every release needs an acquisition backend that is unavailable')
                     continue
@@ -741,7 +741,7 @@ class AddingQueue:
                     _all_candidates = item.get('scrape_results', [])
                     if isinstance(_all_candidates, str):
                         _all_candidates = json.loads(_all_candidates)
-                    if any(r not in usable_results(_all_candidates, get_debrid_providers())
+                    if any(r not in usable_results(_all_candidates, get_grab_providers())
                            for r in _all_candidates):
                         # A healthy candidate can fail without exhausting the
                         # preserved candidates of an unavailable alternative.

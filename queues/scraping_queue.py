@@ -899,7 +899,7 @@ class ScrapingQueue:
                                 _debrid_usable = False
                                 if _all_eps_requested and is_multi_pack and _disable_nzb_season_packs:
                                     try:
-                                        from debrid import get_debrid_providers as _get_debrid_providers
+                                        from debrid import get_grab_providers as _get_debrid_providers
                                         from utilities.acquisition_health import provider_available as _provider_available
                                         _debrid_providers = _get_debrid_providers()
                                         _debrid_usable = any(_provider_available(p) for p in _debrid_providers)

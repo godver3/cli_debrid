@@ -71,8 +71,8 @@ def check_cache_status():
                     logging.warning(f"Could not extract hash from torrent URL: {e}")
             
             # Check all providers: RD uses PhalanxDB, others use direct API
-            from debrid import get_debrid_providers
-            all_providers = get_debrid_providers()
+            from debrid import get_grab_providers
+            all_providers = get_grab_providers()
             cache_providers = {}
             is_cached = None
 
