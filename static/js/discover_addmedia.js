@@ -982,7 +982,7 @@
                     torResDiv.className = 'torresult' + (isFilteredOut ? ' filtered-out-item' : '');
 
                     const bitrateDisplay = torrent.bitrate ? ` | ${(torrent.bitrate / 1000).toFixed(1)} Mbps` : '';
-                    const scoreDisplay = isFilteredOut ? (torrent.filter_reason || 'Filtered') : (torrent.score_breakdown?.total_score || 'N/A');
+                    const scoreDisplay = isFilteredOut ? _amEsc(torrent.filter_reason || 'Filtered') : (torrent.score_breakdown?.total_score || 'N/A');
 
                     torResDiv.innerHTML = `
                         <button ${isFilteredOut ? 'style="cursor:pointer; opacity:0.7;"' : ''}>
@@ -1006,7 +1006,7 @@
                         };
 
                         if (isFilteredOut) {
-                            const confirmationMessage = `This item was filtered for the following reason:\n\n'${torrent.filter_reason || 'No specific reason provided'}'.\n\nDo you want to add it anyway?`;
+                            const confirmationMessage = `This item was filtered for the following reason:\n\n'${_amEsc(torrent.filter_reason || 'No specific reason provided')}'.\n\nDo you want to add it anyway?`;
                             if (typeof showPopup === 'function') {
                                 showPopup({
                                     type: POPUP_TYPES.CONFIRM,
@@ -1063,7 +1063,7 @@
                 const torResDiv = document.createElement('div');
                 torResDiv.className = 'torresult' + (isFilteredOut ? ' filtered-out-item' : '');
 
-                const scoreDisplay = isFilteredOut ? (torrent.filter_reason || 'Filtered') : (torrent.score_breakdown?.total_score || 'N/A');
+                const scoreDisplay = isFilteredOut ? _amEsc(torrent.filter_reason || 'Filtered') : (torrent.score_breakdown?.total_score || 'N/A');
 
                 torResDiv.innerHTML = `
                     <button ${isFilteredOut ? 'style="cursor:pointer; opacity:0.7;"' : ''}>
@@ -1087,7 +1087,7 @@
                     };
 
                     if (isFilteredOut) {
-                        const confirmationMessage = `This item was filtered for the following reason:\n\n'${torrent.filter_reason || 'No specific reason provided'}'.\n\nDo you want to add it anyway?`;
+                        const confirmationMessage = `This item was filtered for the following reason:\n\n'${_amEsc(torrent.filter_reason || 'No specific reason provided')}'.\n\nDo you want to add it anyway?`;
                         if (typeof showPopup === 'function') {
                             showPopup({
                                 type: POPUP_TYPES.CONFIRM,
@@ -1144,7 +1144,7 @@
                     torResDiv.className = 'torresult' + (isFilteredOut ? ' filtered-out-item' : '');
 
                     const bitrateDisplay = torrent.bitrate ? ` | ${(torrent.bitrate / 1000).toFixed(1)} Mbps` : '';
-                    const scoreDisplay = isFilteredOut ? (torrent.filter_reason || 'Filtered') : (torrent.score_breakdown?.total_score || 'N/A');
+                    const scoreDisplay = isFilteredOut ? _amEsc(torrent.filter_reason || 'Filtered') : (torrent.score_breakdown?.total_score || 'N/A');
 
                     torResDiv.innerHTML = `
                         <button ${isFilteredOut ? 'style="cursor:pointer; opacity:0.7;"' : ''}>
@@ -1168,7 +1168,7 @@
                         };
 
                         if (isFilteredOut) {
-                            const confirmationMessage = `This item was filtered for the following reason:\n\n'${torrent.filter_reason || 'No specific reason provided'}'.\n\nDo you want to add it anyway?`;
+                            const confirmationMessage = `This item was filtered for the following reason:\n\n'${_amEsc(torrent.filter_reason || 'No specific reason provided')}'.\n\nDo you want to add it anyway?`;
                             if (typeof showPopup === 'function') {
                                 showPopup({
                                     type: POPUP_TYPES.CONFIRM,

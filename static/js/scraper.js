@@ -9,14 +9,26 @@ function scrEsc(v) {
 
 // A result's clean title as HTML: the show title escaped, the season/episode
 // tags as markup. Escaping the whole string showed the tags as text
-// ("<span class="season-info">S02</span>").
-function scrCleanTitleHtml(title, year, season, episode, seasonCount) {
+// ("<span class="season-info">S02</span>"). Season 0 (Specials) shows S00;
+// multi-season packs show their range (S03-S04), not the season count.
+function scrCleanTitleHtml(title, year, season, episode, seasons) {
     const t = String(title ?? '');
     const withYear = year && !t.trim().endsWith(`(${year})`) ? `${t} (${year})` : t;
     const pad = n => n.toString().padStart(2, '0');
     const tags = [];
-    if (season) tags.push(`<span class="season-info">S${pad(season)}${seasonCount > 1 ? ` - ${seasonCount}` : ''}</span>`);
-    if (episode) tags.push(`<span class="ds-episode-info"> E${pad(episode)}</span>`);
+    if (season != null && season !== '') {
+        let seasonLabel = `S${pad(season)}`;
+        const list = Array.isArray(seasons)
+            ? seasons.map(Number).filter(n => !Number.isNaN(n))
+            : [];
+        if (list.length > 1) {
+            const lo = Math.min(...list);
+            const hi = Math.max(...list);
+            if (lo !== hi) seasonLabel = `S${pad(lo)}-S${pad(hi)}`;
+        }
+        tags.push(`<span class="season-info">${seasonLabel}</span>`);
+    }
+    if (episode != null && episode !== '') tags.push(`<span class="ds-episode-info"> E${pad(episode)}</span>`);
     return scrEsc(withYear) + (tags.length ? ' ' + tags.join(' ') : '');
 }
 
@@ -692,8 +704,8 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
     const mediaQuery = window.matchMedia('(max-width: 1024px)');
     async function handleScreenChange(e) {
         if (e.matches) { // Mobile view
-            const subText = season
-                ? `${title} · S${String(season).padStart(2,'0')}${episode ? 'E'+String(episode).padStart(2,'0') : ''} (${year})`
+            const subText = (season != null && season !== '')
+                ? `${title} · S${String(season).padStart(2,'0')}${(episode != null && episode !== '') ? 'E'+String(episode).padStart(2,'0') : ''} (${year})`
                 : `${title} (${year})`;
             overlayContent.innerHTML = `
                 <div class="tr-dlg-hdr">
@@ -940,7 +952,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                     
                     if (isFilteredOut) {
                         // Show confirmation dialog for filtered items
-                        const confirmationMessage = `This item was filtered for the following reason:\n\n'${torrent.filter_reason || 'No specific reason provided'}'.\n\nDo you want to add it anyway?`;
+                        const confirmationMessage = `This item was filtered for the following reason:\n\n'${scrEsc(torrent.filter_reason || 'No specific reason provided')}'.\n\nDo you want to add it anyway?`;
                         showPopup({
                             type: POPUP_TYPES.CONFIRM,
                             title: 'Add Filtered Item?',
@@ -1162,11 +1174,11 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 const globalTags = (cfgData['Tags'] || {})['tags_list'] || [];
                 const fileMode = (cfgData['File Management'] || {})['file_collection_management'] || '';
                 if (fileMode === 'Plex' && globalTags.length > 0) {
-                    const opts = globalTags.map(t => `<option value="${t}">${t}</option>`).join('');
+                    const opts = globalTags.map(t => `<option value="${scrEsc(t)}">${scrEsc(t)}</option>`).join('');
                     tagsDropdownHTML = `
                         <div class="torrent-tags-dropdown-wrapper" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">
                             <span style="font-size:12px;color:#aaa;margin-right:4px;">Tags:</span>
-                            ${globalTags.map(t => `<span class="torrent-tag-pill" data-tag="${t}" onclick="this.classList.toggle('active');this.style.background=this.classList.contains('active')?'#e8651a':'#333';this.style.color='#fff';" style="padding:3px 10px;border-radius:12px;background:#333;color:#ddd;font-size:11px;cursor:pointer;user-select:none;">${t}</span>`).join('')}
+                            ${globalTags.map(t => `<span class="torrent-tag-pill" data-tag="${scrEsc(t)}" onclick="this.classList.toggle('active');this.style.background=this.classList.contains('active')?'#e8651a':'#333';this.style.color='#fff';" style="padding:3px 10px;border-radius:12px;background:#333;color:#ddd;font-size:11px;cursor:pointer;user-select:none;">${scrEsc(t)}</span>`).join('')}
                         </div>`;
                 }
             } catch(e) {}
@@ -1261,13 +1273,13 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 const qualityBadgesHtml = qualityTags.map(tag => createQualityBadge(tag)).join('');
                 
                 // Use clean title from header, store filename for toggle
-                const cleanTitle = scrCleanTitleHtml(title, year, season, episode, torrent.parsed_info?.seasons?.length || 0);
+                const cleanTitle = scrCleanTitleHtml(title, year, season, episode, torrent.parsed_info?.seasons);
                 const filename = torrent.title || torrent.original_title || 'N/A';
                 
                 // Get score and color class
                 const score = torrent.score_breakdown?.total_score || 0;
                 const scoreClass = getScoreColorClass(score);
-                const scoreDisplay = isFilteredOut ? (torrent.filter_reason || 'Filtered') : (score || 'N/A');
+                const scoreDisplay = isFilteredOut ? scrEsc(torrent.filter_reason || 'Filtered') : (score || 'N/A');
                 
                 // NZB results show a usenet badge instead of cache status
                 const isNzbResult = (torrent.protocol === 'nzb') || !!torrent.nzb_url;
@@ -1329,7 +1341,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
 
                 if (isFilteredOut) {
                     addButton.onclick = function() {
-                        const confirmationMessage = `This item was filtered for the following reason:\n\n'${torrent.filter_reason || 'No specific reason provided'}'.\n\nDo you want to add it anyway?`;
+                        const confirmationMessage = `This item was filtered for the following reason:\n\n'${scrEsc(torrent.filter_reason || 'No specific reason provided')}'.\n\nDo you want to add it anyway?`;
                         showPopup({
                             type: POPUP_TYPES.CONFIRM,
                             title: 'Add Filtered Item?',
@@ -1619,12 +1631,12 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                     const qualityTags = extractQualityTags(torrent.title || torrent.original_title || '');
                     const qualityBadgesHtml = qualityTags.map(tag => createQualityBadge(tag)).join('');
 
-                    const cleanTitle = scrCleanTitleHtml(title, year, season, episode, torrent.parsed_info?.seasons?.length || 0);
+                    const cleanTitle = scrCleanTitleHtml(title, year, season, episode, torrent.parsed_info?.seasons);
                     const filename = torrent.title || torrent.original_title || 'N/A';
 
                     const score = torrent.score_breakdown?.total_score || 0;
                     const scoreClass = getScoreColorClass(score);
-                    const scoreDisplay = isFilteredOut ? (torrent.filter_reason || 'Filtered') : (score || 'N/A');
+                    const scoreDisplay = isFilteredOut ? scrEsc(torrent.filter_reason || 'Filtered') : (score || 'N/A');
 
                     const isNzbResult2 = (torrent.protocol === 'nzb') || !!torrent.nzb_url;
                     const cacheIconHtml = isNzbResult2
@@ -1702,7 +1714,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
 
                     if (isFilteredOut) {
                         addButton.onclick = function() {
-                            const confirmationMessage = `This item was filtered for the following reason:\n\n'${torrent.filter_reason || 'No specific reason provided'}'.\n\nDo you want to add it anyway?`;
+                            const confirmationMessage = `This item was filtered for the following reason:\n\n'${scrEsc(torrent.filter_reason || 'No specific reason provided')}'.\n\nDo you want to add it anyway?`;
                             showPopup({
                                 type: POPUP_TYPES.CONFIRM,
                                 title: 'Add Filtered Item?',

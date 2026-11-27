@@ -262,7 +262,7 @@ function generateSingleItem(item, queueName) {
         if (item.time_added) {
             formattedTime = formatDateTimeToYMD_HMS(item.time_added);
         }
-        itemContent += `<span class="item-separator"> - </span><span class="item-time"><span class="item-label">Time Added:</span> ${formattedTime}</span><span class="item-separator"> - </span><span class="item-magnet"><span class="item-label">Magnet Link:</span> ${item.filled_by_magnet || 'Unknown'}</span>`;
+        itemContent += `<span class="item-separator"> - </span><span class="item-time"><span class="item-label">Time Added:</span> ${formattedTime}</span><span class="item-separator"> - </span><span class="item-magnet"><span class="item-label">Magnet Link:</span> ${escapeHtml(item.filled_by_magnet || 'Unknown')}</span>`;
     }
 
     if (queueName === 'Sleeping') {
@@ -300,12 +300,12 @@ function generateSingleItem(item, queueName) {
     
     // Add Content Source inline for Wanted, Scraping, Adding, Pre-Release, Checking
     if (['Wanted', 'Scraping', 'Adding', 'Pre_release', 'Checking'].includes(queueName) && item.content_source && item.content_source !== 'Unknown') {
-        itemContent += `<span class="item-separator"> - </span><span class="item-source" style="font-size: smaller; font-style: italic;"><span class="item-label">Content Source:</span> ${item.content_source_display || item.content_source}</span>`;
+        itemContent += `<span class="item-separator"> - </span><span class="item-source" style="font-size: smaller; font-style: italic;"><span class="item-label">Content Source:</span> ${escapeHtml(item.content_source_display || item.content_source)}</span>`;
     }
     // Add Provider for Adding queue
     if (queueName === 'Adding' && item.provider_display) {
         const providerLabel = (item.filled_by_torrent_id && item.filled_by_torrent_id.startsWith('nzb:')) ? 'Indexer:' : 'Provider:';
-        itemContent += `<span class="item-separator"> - </span><span class="item-source" style="font-size: smaller; font-style: italic;"><span class="item-label">${providerLabel}</span> ${item.provider_display}</span>`;
+        itemContent += `<span class="item-separator"> - </span><span class="item-source" style="font-size: smaller; font-style: italic;"><span class="item-label">${providerLabel}</span> ${escapeHtml(item.provider_display)}</span>`;
     }
     // Adding item parked because its NZB indexer is refusing downloads
     if (queueName === 'Adding' && item.waiting_note) {
@@ -408,12 +408,12 @@ function generateCheckingItem(item, showProgress = true) {
 
     // Add Content Source inline for Checking queue items
     if (item.content_source && item.content_source !== 'Unknown') {
-        itemContent += `<span class="item-separator"> - </span><span class="item-source" style="font-size: smaller; font-style: italic;"><span class="item-label">Content Source:</span> ${item.content_source_display || item.content_source}</span>`;
+        itemContent += `<span class="item-separator"> - </span><span class="item-source" style="font-size: smaller; font-style: italic;"><span class="item-label">Content Source:</span> ${escapeHtml(item.content_source_display || item.content_source)}</span>`;
     }
     // Add Provider for Checking queue
     if (item.provider_display) {
         const providerLabel = (item.filled_by_torrent_id && item.filled_by_torrent_id.startsWith('nzb:')) ? 'Indexer:' : 'Provider:';
-        itemContent += `<span class="item-separator"> - </span><span class="item-source" style="font-size: smaller; font-style: italic;"><span class="item-label">${providerLabel}</span> ${item.provider_display}</span>`;
+        itemContent += `<span class="item-separator"> - </span><span class="item-source" style="font-size: smaller; font-style: italic;"><span class="item-label">${providerLabel}</span> ${escapeHtml(item.provider_display)}</span>`;
     }
 
     // Time in queue

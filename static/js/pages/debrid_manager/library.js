@@ -700,11 +700,11 @@ function libOpenDetail(e, id) {
 </div>
 <table class="dm-detail-table">
     <tr><th>Size</th><td>${size}</td></tr>
-    <tr><th>ID</th><td><code>${d.id||id}</code></td></tr>
-    <tr><th>Hash</th><td><code>${d.hash||'—'}</code></td></tr>
+    <tr><th>ID</th><td><code>${_esc(d.id||id)}</code></td></tr>
+    <tr><th>Hash</th><td><code>${_esc(d.hash||'—')}</code></td></tr>
     <tr><th>Original filename</th><td>${safeFilename}</td></tr>
     <tr><th>Original size</th><td>${origSize}</td></tr>
-    <tr><th>Status</th><td><span class="dm-status-badge ${statusCls}">${d.status||'—'}</span></td></tr>
+    <tr><th>Status</th><td><span class="dm-status-badge ${statusCls}">${_esc(d.status||'—')}</span></td></tr>
     <tr><th>Added</th><td>${added}</td></tr>
     <tr><th>Progress</th><td>${progress}</td></tr>
     ${d.seeders != null ? `<tr><th>Seeders</th><td>${d.seeders}</td></tr>` : ''}
@@ -733,8 +733,9 @@ function libOpenDetail(e, id) {
                     const res    = (f.resx && f.resy) ? `<span class="dm-file-badge">${_esc(f.resx)}×${_esc(f.resy)}</span>` : '';
                     const dur    = f.duration ? `<span class="dm-file-badge">${_esc(f.duration)}</span>` : '';
                     const brate  = f.bitrate  ? `<span class="dm-file-badge">${Math.round(f.bitrate/1000)} kbps</span>` : '';
-                    const streamBtn = streamLink ? `<a class="dm-btn dm-btn-secondary dm-btn-xs" href="${_esc(streamLink)}" target="_blank" title="Stream">▶</a>` : '';
-                    const dlBtn     = directLink ? `<a class="dm-btn dm-btn-secondary dm-btn-xs" href="${_esc(directLink)}" target="_blank" title="Download">↓</a>` : '';
+                    const safeHref = (u) => (typeof u === 'string' && /^(https?:\/\/|\/(?!\/))/i.test(u));
+                    const streamBtn = safeHref(streamLink) ? `<a class="dm-btn dm-btn-secondary dm-btn-xs" href="${_esc(streamLink)}" target="_blank" title="Stream">▶</a>` : '';
+                    const dlBtn     = safeHref(directLink) ? `<a class="dm-btn dm-btn-secondary dm-btn-xs" href="${_esc(directLink)}" target="_blank" title="Download">↓</a>` : '';
                     html += `<div class="dm-detail-file ${selected ? 'dm-file-selected' : 'dm-file-unselected'}">
     <span class="dm-file-sel-dot" title="${selected ? 'Selected' : 'Not selected'}"></span>
     <span class="dm-file-path">${_esc(f.path||f.name||f.id||'')}</span>

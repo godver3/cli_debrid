@@ -3123,8 +3123,8 @@
                     html += `<div style="padding: 10px; background: #2a2a2a; border-radius: 4px;">`;
                     html += `<div><strong>Plex Title:</strong> ${_tcEsc(plexInfo.title || 'N/A')}</div>`;
                     html += `<div><strong>Plex Year:</strong> ${plexInfo.year || 'N/A'}</div>`;
-                    html += `<div><strong>Plex GUID:</strong> ${plexInfo.guid || 'N/A'}</div>`;
-                    html += `<div><strong>Plex Labels:</strong> ${plexLabels.length > 0 ? plexLabels.join(', ') : 'None'}</div>`;
+                    html += `<div><strong>Plex GUID:</strong> ${_tcEsc(plexInfo.guid || 'N/A')}</div>`;
+                    html += `<div><strong>Plex Labels:</strong> ${plexLabels.length > 0 ? _tcEsc(plexLabels.join(', ')) : 'None'}</div>`;
                     html += `</div>`;
                 } else {
                     html += `<p style="color: #ffa500;">✗ Item NOT found in Plex</p>`;
