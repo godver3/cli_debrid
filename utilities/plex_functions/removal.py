@@ -81,9 +81,10 @@ def remove_show_from_plex(show_title: str, imdb_id: str = None, tmdb_id: str = N
                     if not (imdb_id or tmdb_id) or matched:
                         if show.title.lower() == show_title.lower() or matched:
                             logger.info(f"[PLEX_SHOW_DELETE] Found show '{show.title}' in section '{section.title}'. Deleting entire show.")
+                            # Kept even when the delete fails (400): resent once the files are gone
+                            result['rating_key'] = getattr(show, 'ratingKey', None)
                             try:
                                 show.delete()
-                                result['rating_key'] = getattr(show, 'ratingKey', None)
                                 result['success'] = True
                                 result['show_deleted'] = True
                                 logger.info(f"[PLEX_SHOW_DELETE] Successfully deleted show '{show.title}' from Plex")
@@ -191,9 +192,10 @@ def remove_season_from_plex(show_title: str, season_number: int, imdb_id: str = 
                             for season in show.seasons():
                                 if season.seasonNumber == season_number:
                                     logger.info(f"[PLEX_SEASON_DELETE] Found season {season_number} of '{show.title}'. Deleting entire season.")
+                                    # Kept even when the delete fails (400): resent once the files are gone
+                                    result['rating_key'] = getattr(season, 'ratingKey', None)
                                     try:
                                         season.delete()
-                                        result['rating_key'] = getattr(season, 'ratingKey', None)
                                         result['success'] = True
                                         result['season_deleted'] = True
                                         logger.info(f"[PLEX_SEASON_DELETE] Successfully deleted S{season_number:02d} of '{show.title}' from Plex")
@@ -299,9 +301,10 @@ def remove_movie_from_plex(movie_title: str, imdb_id: str = None, tmdb_id: str =
                     if not (imdb_id or tmdb_id) or matched:
                         if movie.title.lower() == movie_title.lower() or matched:
                             logger.info(f"[PLEX_MOVIE_DELETE] Found movie '{movie.title}' in section '{section.title}'. Deleting.")
+                            # Kept even when the delete fails (400): resent once the files are gone
+                            result['rating_key'] = getattr(movie, 'ratingKey', None)
                             try:
                                 movie.delete()
-                                result['rating_key'] = getattr(movie, 'ratingKey', None)
                                 result['success'] = True
                                 result['movie_deleted'] = True
                                 logger.info(f"[PLEX_MOVIE_DELETE] Successfully deleted movie '{movie.title}' from Plex")

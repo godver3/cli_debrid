@@ -2826,13 +2826,14 @@ class DeletionManager:
         # keeps the items when it can't remove the files itself (symlinks it may
         # not write), and with "Empty trash automatically after every scan" off
         # nothing removes them later (seen live: show 122280 kept all 12 episodes).
-        # The content-level delete above runs while the symlinks still exist; Plex
-        # can't remove them (no write access), answers 200 and keeps the item.
-        # Now that the files are gone, re-send the delete if the item is still
-        # there and only fall back to a folder scan (for a removed show folder,
-        # a scan of the whole section) when Plex still keeps it.
+        # The content-level delete above runs while the files still exist. When
+        # Plex can't remove them (symlinks it has no write access to) it either
+        # answers 200 and keeps the item, or refuses with 400. Once the files are
+        # gone the same delete works, so re-send it if the item is still there and
+        # only fall back to a folder scan (for a removed show folder, a scan of
+        # the whole section) when Plex still keeps it.
         plex_content_confirmed = False
-        if plex_content_deleted and plex_result.get('rating_key'):
+        if delete_from_media_server and plex_result.get('rating_key'):
             from utilities.plex_functions import finish_plex_content_delete
             plex_content_confirmed = finish_plex_content_delete(plex_result['rating_key'])
             logging.info(f"[DELETE_MULTIPLE] Phase 3: Plex {plex_deletion_type} "

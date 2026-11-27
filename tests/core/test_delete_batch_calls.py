@@ -637,6 +637,23 @@ def test_content_level_plex_delete_confirmed_skips_scan(tmp_path):
     assert scan.call_count == 0
 
 
+def test_content_level_400_resent_after_files_gone_skips_scan(tmp_path):
+    # Plex refuses a show delete with 400 while the symlinks exist; once they
+    # are gone the same delete works (seen live: This Hour Has 22 Minutes).
+    dm = _make_manager(using_symlinks=False)
+    items = _nzb_items(6)
+    with mock.patch('utilities.plex_functions.remove_show_from_plex',
+                    return_value={'success': False, 'rating_key': '113099',
+                                  'error': 'Plex deletion disabled (400 Bad Request)'}), \
+         mock.patch('utilities.plex_functions.finish_plex_content_delete',
+                    return_value=True) as finish:
+        res, _, _, scan = _run_batch(dm, items, tmp_path, plex_deletion_type='show',
+                                     plex_content_title='Show', plex_imdb_id='tt1')
+    finish.assert_called_once_with('113099')
+    assert scan.call_count == 0
+    assert not any('400' in e for e in res['errors'])
+
+
 def _fake_item(title='Detectorists'):
     item = mock.Mock()
     item.title = title
