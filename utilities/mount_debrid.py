@@ -349,17 +349,41 @@ def mount_file_name(files: List[Dict], path: str) -> str:
             return u['name']
     return os.path.basename(want)
 
-
-#: Video types a release can carry; the built-in mount's allowed list
-#: decides which of them it shows.
 _VIDEO_EXTS = {'mkv', 'mp4', 'm4v', 'avi', 'mov', 'mpg', 'mpeg', 'ts', 'm2ts', 'wmv', 'webm', 'flv'}
+#: Video types MediaMatcher.is_video_file accepts; extras/samples/other
+#: extensions (like .webm) are ignored by the matcher and must not mask a
+#: release whose real video files are hidden by the built-in mount.
+_MATCHER_VIDEO_EXTS = {'mkv', 'mp4', 'avi', 'm4v', 'ts', 'mov'}
+_MATCHER_EXTRA_RE = re.compile(
+    r'(?<![a-zA-Z0-9])(?:ncop|nced|opening|ending|ova|bloopers?|omakes?)(?=[._-]|$)'
+    r'|(?<=[._-])(?:specials?|extras?|bonus(?:es)?)(?=[._-]|$)'
+    r'|\b(?:ncop|nced|op|ed)\d+\b|\b(?:opening|ending)\s*\d+\b',
+    re.IGNORECASE,
+)
+
+
+def _matcher_video_ext(file_entry: Dict) -> Optional[str]:
+    """Lowercase extension if MediaMatcher would treat this file as a main video."""
+    name = str(file_entry.get('path') or file_entry.get('name') or '')
+    base = os.path.basename(name.replace('\\', '/'))
+    ext = os.path.splitext(base)[1].lstrip('.').lower()
+    if ext not in _MATCHER_VIDEO_EXTS:
+        return None
+    base_lower = base.lower()
+    if 'sample' in base_lower or 'specials' in base_lower or _MATCHER_EXTRA_RE.search(base_lower):
+        return None
+    from debrid.common.utils import is_promo_file, is_unwanted_file
+    if is_unwanted_file(base) or is_promo_file(base, file_entry.get('bytes')):
+        return None
+    return ext
 
 
 def videos_all_hidden(files: List[Dict], get_setting) -> List[str]:
-    """The extensions that hide every video file of a torrent on the
+    """The extensions that hide every main video file of a torrent on the
     built-in mount (a .ts-only release under the default list), or [] when
     the mount isn't serving debrid, lists everything, or shows at least one
-    video. Picking such a torrent can never produce a playable file."""
+    video the matcher would use. Picking such a torrent can never produce a
+    playable file."""
     try:
         if not engine_holds_debrid(get_setting):
             return []
@@ -372,9 +396,8 @@ def videos_all_hidden(files: List[Dict], get_setting) -> List[str]:
         return []
     exts = []
     for f in files or []:
-        name = str(f.get('path') or f.get('name') or '')
-        ext = os.path.splitext(name)[1].lstrip('.').lower()
-        if ext in _VIDEO_EXTS:
+        ext = _matcher_video_ext(f)
+        if ext is not None:
             if ext in allowed:
                 return []
             exts.append(ext)

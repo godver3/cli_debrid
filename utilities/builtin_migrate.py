@@ -896,13 +896,14 @@ _NOT_MEDIA = {'zip', 'rar', '7z', 'nzb', 'par2', 'nfo', 'txt', 'jpg', 'png'}
 
 
 def library_extensions() -> Dict[str, int]:
-    """Extensions of the files collected items are filled by, with counts."""
+    """Extensions of the files live library items (Collected/Upgrading) are filled by, with counts."""
     from database.core import get_db_connection
     counts: Dict[str, int] = {}
     conn = get_db_connection()
     try:
         rows = conn.execute("SELECT filled_by_file FROM media_items "
-                            "WHERE state = 'Collected' AND filled_by_file IS NOT NULL AND filled_by_file != ''")
+                            "WHERE state IN ('Collected', 'Upgrading') "
+                            "AND filled_by_file IS NOT NULL AND filled_by_file != ''")
         for (name,) in rows:
             ext = os.path.splitext(str(name))[1].lstrip('.').lower()
             if _EXT_RE.match(ext) and ext not in _NOT_MEDIA:

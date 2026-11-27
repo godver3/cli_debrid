@@ -39,6 +39,23 @@ class VideosAllHiddenTest(unittest.TestCase):
     def test_no_videos_is_left_to_the_usual_checks(self):
         self.assertEqual(self.check([{'path': 'a.nfo'}]), [])
 
+    def test_non_matcher_webm_or_extras_and_samples_do_not_mask_hidden_main_video(self):
+        # .webm is ignored by MediaMatcher even if allowed on the mount.
+        self.assertEqual(
+            self.check(TS_PACK + [{'path': 'Show.S03.HDTV.1080i/extra.webm'}],
+                       allowed='mkv,mp4,m4v,avi,mov,mpg,mpeg,webm'),
+            ['ts'],
+        )
+        # Samples, extras, and promo clips are ignored by the matcher too.
+        self.assertEqual(
+            self.check(TS_PACK + [
+                {'path': 'Show.S03.HDTV.1080i/Show.S03E01.sample.mkv'},
+                {'path': 'Show.S03.HDTV.1080i/Show.S03E01.extra.mkv'},
+                {'path': 'Show.S03.HDTV.1080i/RARBG.com.mp4', 'bytes': 500000},
+            ]),
+            ['ts'],
+        )
+
 
 class SkipHiddenReleaseTest(unittest.TestCase):
     def setUp(self):

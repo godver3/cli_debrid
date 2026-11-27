@@ -265,6 +265,8 @@ def partition_adding_items(items, downloading_job_ids=None, upgrade_locks=None, 
             else:
                 nzb_awaiting += 1
             continue
+        if item_parked_for_cooldown(item_id):
+            continue
         actionable.append(item)
     return actionable, nzb_awaiting, nzb_downloading, upgrade_locked
 

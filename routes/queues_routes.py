@@ -84,16 +84,21 @@ def _get_provider_display(item: dict) -> str:
             title = item.get('original_scraped_torrent_title', '') or item.get('filled_by_file', '')
 
             def _extract_indexer(r):
-                # 'source' field is like "NZBGeek_1" or "althub_1"
-                source = r.get('source', '')
-                if source:
-                    cleaned = _re.sub(r'_\d+$', '', source)
-                    if cleaned and not cleaned.isdigit():
-                        return cleaned
-                # scraper_type is the indexer name e.g. "althub", "NZBGeek"
-                scraper_type = r.get('scraper_type', '')
-                if scraper_type and scraper_type not in ('Newznab', 'newznab') and not scraper_type.isdigit():
-                    return scraper_type
+                try:
+                    # 'source' field is like "NZBGeek_1" or "althub_1"
+                    source = r.get('source')
+                    if source is not None and source != '':
+                        cleaned = _re.sub(r'_\d+$', '', str(source)).strip()
+                        if cleaned and not cleaned.isdigit():
+                            return cleaned
+                    # scraper_type is the indexer name e.g. "althub", "NZBGeek"
+                    scraper_type = r.get('scraper_type')
+                    if scraper_type is not None and scraper_type != '':
+                        st = str(scraper_type).strip()
+                        if st and st not in ('Newznab', 'newznab') and not st.isdigit():
+                            return st
+                except Exception:
+                    pass
                 return ''
 
             # The submitted NZB's indexer: its URL is filled_by_magnet. scrape_results

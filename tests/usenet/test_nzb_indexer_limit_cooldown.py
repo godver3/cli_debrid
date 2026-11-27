@@ -581,6 +581,36 @@ class TestHybridModeWithCooledNzb(unittest.TestCase):
         self.assertTrue(self.aq.item_parked_for_cooldown(44))
         q._handle_failed_item.assert_not_called()
 
+    def test_parked_items_skipped_before_per_tick_work_and_info_log(self):
+        """Parked items are excluded by partition_adding_items and produce no INFO log or queue fetches."""
+        self.aq.park_for_indexer_cooldown(45, 1800, {'NinjaCentral': 'out of downloads'})
+        item = {'id': 45, 'title': 'Show', 'type': 'episode', 'episode_number': 1,
+                'state': 'Adding', 'filled_by_torrent_id': None,
+                'scrape_results': [{'title': 'Show.S01E01.NZB', 'nzb_url': self.URL, 'protocol': 'nzb'}]}
+        actionable, awaiting, downloading, locked = self.aq.partition_adding_items([item])
+        self.assertEqual((actionable, awaiting, downloading, locked), ([], 0, 0, 0))
+
+        q = self.aq.AddingQueue.__new__(self.aq.AddingQueue)
+        q.items = [item]
+        q._nzb_downloading_job_ids = set()
+        q._nzb_submitted_ids = set()
+        q._adding_ticks = {}
+        q._held_summary = None
+        q._held_summary_at = 0.0
+        qm = mock.Mock()
+        qm.queues = {'Wanted': mock.Mock(), 'Scraping': mock.Mock()}
+        qm.upgrade_process_locks = set()
+
+        with mock.patch.object(self.aq.logging, 'info') as log_info, \
+                mock.patch.object(self.aq, 'collected_elsewhere_check') as ce_check:
+            result = q.process(qm)
+
+        self.assertFalse(result)
+        log_info.assert_not_called()
+        qm.queues['Wanted'].get_contents.assert_not_called()
+        qm.queues['Scraping'].get_contents.assert_not_called()
+        ce_check.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()

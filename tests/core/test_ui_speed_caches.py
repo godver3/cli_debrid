@@ -168,6 +168,33 @@ def test_provider_display_names_the_submitted_nzbs_indexer(fresh_modules, monkey
     assert queues_routes._get_provider_display(item) == 'DrunkenSlug'
 
 
+def test_provider_display_handles_non_string_source_and_scraper_type(fresh_modules, monkeypatch):
+    from routes import queues_routes
+    import usenet.indexer_quota as iq
+    monkeypatch.setattr(iq, 'instance_for_url', lambda url: None)
+
+    # Int source (indexer id) falls through to scraper_type instead of aborting to 'Usenet'.
+    item = {
+        'id': 2,
+        'filled_by_torrent_id': 'nzb:y',
+        'scrape_results': json.dumps([
+            {'protocol': 'nzb', 'source': 42, 'scraper_type': 'NZBGeek'},
+        ]),
+    }
+    assert queues_routes._get_provider_display(item) == 'NZBGeek'
+
+    # Both int source and int scraper_type on first result do not abort matching the next result.
+    item2 = {
+        'id': 3,
+        'filled_by_torrent_id': 'nzb:z',
+        'scrape_results': json.dumps([
+            {'protocol': 'nzb', 'source': 42, 'scraper_type': 7},
+            {'protocol': 'nzb', 'source': 'DrunkenSlug_1'},
+        ]),
+    }
+    assert queues_routes._get_provider_display(item2) == 'DrunkenSlug'
+
+
 # --- routes/statistics_routes.cache_for_seconds -------------------------------------
 
 def test_cache_for_seconds_recomputes_once_for_concurrent_callers(fresh_modules):
