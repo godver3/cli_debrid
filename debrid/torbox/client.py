@@ -11,7 +11,7 @@ import bencodepy
 from ..base import DebridProvider, ProviderUnavailableError, TooManyDownloadsError, TorrentAdditionError
 from ..common import extract_hash_from_magnet, timed_lru_cache
 from ..status import TorrentFetchStatus, TorrentInfoStatus, TorrentStatus
-from .api import get_all_torrents, get_api_key, get_data_payload, make_request
+from .api import get_all_torrents, get_api_key, get_data_payload, make_request, make_request_once
 from . import cdn_fallback, zip_index
 from .exceptions import TorboxAPIError, TorboxAuthError
 from database.not_wanted_magnets import add_to_not_wanted
@@ -502,29 +502,38 @@ class TorboxProvider(DebridProvider):
         params = {'token': self.api_key, 'torrent_id': torrent_id, 'file_id': file_id}
         if user_ip:
             params['user_ip'] = user_ip
-        url = get_data_payload(make_request('GET', '/torrents/requestdl', self.api_key, params=params))
+        # Four API attempts at most, with a 3s API budget and a 3s CDN
+        # probe for each, leave headroom in the engine's 30s callback.
+        url = get_data_payload(make_request_once(
+            'GET', '/torrents/requestdl', self.api_key, params=params,
+            deadline=time.monotonic() + 3, allow_redirects=False,
+        ))
         if not isinstance(url, str) or not url.startswith('http'):
             raise ValueError(f'TorBox gave no download link for {torrent_id}/{file_id}')
         return url
 
     def mount_link(self, torrent_id: str, file_id: str) -> Tuple[str, int]:
-        url = self._requestdl(torrent_id, file_id)
-        if cdn_fallback.reachable(url):
-            return url, 2 * 3600
-        # TorBox picks the CDN server nearest to us; when that server is
-        # down (nexus-409.ecan refused every connection for hours while the
-        # other regions served the same file), ask as if from another region.
-        for region, ip in cdn_fallback.REGION_IPS:
+        first_url = None
+        first_error = None
+        # Try the nearest CDN first, then ask as if from another region.
+        for region, ip in ((None, None), *cdn_fallback.REGION_IPS):
             try:
-                alt = self._requestdl(torrent_id, file_id, user_ip=ip)
+                url = self._requestdl(torrent_id, file_id, user_ip=ip)
             except Exception as exc:
-                logging.debug(f'[Torbox] {region} link for {torrent_id}/{file_id} failed: {exc}')
+                if first_error is None:
+                    first_error = exc
+                logging.debug(f'[Torbox] {region or "local"} link for {torrent_id}/{file_id} failed: {exc}')
                 continue
-            if cdn_fallback.reachable(alt):
-                logging.warning(f'[Torbox] CDN server {cdn_fallback.host(url)} is unreachable; '
-                                f'using {cdn_fallback.host(alt)} ({region}) for {torrent_id}/{file_id}')
-                return alt, 2 * 3600
-        return url, 2 * 3600  # nothing better: the reader's own retries take over
+            if first_url is None:
+                first_url = url
+            if cdn_fallback.reachable(url):
+                if region:
+                    logging.warning(f'[Torbox] Using CDN server {cdn_fallback.host(url)} '
+                                    f'({region}) for {torrent_id}/{file_id}')
+                return url, 2 * 3600
+        if first_url is not None:
+            return first_url, 2 * 3600  # the reader's own retries take over
+        raise first_error
 
     def get_torrent_info_with_status(self, torrent_id: str) -> TorrentInfoStatus:
         try:

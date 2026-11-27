@@ -26,6 +26,13 @@ def host(url: str) -> str:
     return urlparse(url).hostname or ''
 
 
+def mark_down(url: str) -> None:
+    h = host(url)
+    if h:
+        with _lock:
+            _state[h] = (False, time.time())
+
+
 def reachable(url: str) -> bool:
     h = host(url)
     if not h:
@@ -44,5 +51,9 @@ def reachable(url: str) -> bool:
         # likely ours, and switching regions wouldn't help.
         ok = isinstance(exc, socket.gaierror)
     with _lock:
+        # A reader can report a refusal while the TCP probe is in flight.
+        current = _state.get(h)
+        if current is not got and current is not None:
+            return current[0]
         _state[h] = (ok, now)
     return ok

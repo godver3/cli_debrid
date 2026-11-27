@@ -278,7 +278,7 @@ func (d *downloader) run(ctx context.Context) {
 		if progressed {
 			fails = 0
 		}
-		if status >= 400 && status < 500 && !transientStatus(status) {
+		if badLinkResponse(status, err) {
 			if relinked {
 				d.fail(err)
 				return
@@ -290,10 +290,11 @@ func (d *downloader) run(ctx context.Context) {
 			}
 			continue
 		}
-		if serverUnreachable(status, err) && !relinked {
+		var unreachable *unreachableLinkError
+		if !relinked && errors.As(err, &unreachable) {
 			// The link's server is down: one fresh link (maybe another server)
 			relinked = true
-			if _, lerr := r.links.Link(ctx, r.ref, true); lerr != nil {
+			if _, lerr := refreshUnreachable(ctx, r.links, r.ref, unreachable.url); lerr != nil {
 				d.fail(fmt.Errorf("stream: new link for %s: %w", r.ref, lerr))
 				return
 			}
@@ -379,12 +380,22 @@ func (d *downloader) pump(parent context.Context, start int64) (int, error) {
 		if parent.Err() == nil {
 			st.fail(err)
 		}
+		if serverUnreachable(0, err) {
+			err = &unreachableLinkError{url: url, err: err}
+		}
 		return 0, err
 	}
 	wd.progress()
 	st.headers(began)
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusPartialContent && !(resp.StatusCode == http.StatusOK && start == 0) {
+	switch {
+	case resp.StatusCode == http.StatusPartialContent:
+		if err := checkContentRange(resp, start, end); err != nil {
+			st.fail(err)
+			return resp.StatusCode, err
+		}
+	case resp.StatusCode == http.StatusOK && start == 0:
+	default:
 		io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 		err := fmt.Errorf("%w: HTTP %d from byte %d", ErrLinkRefused, resp.StatusCode, start)
 		st.fail(err)

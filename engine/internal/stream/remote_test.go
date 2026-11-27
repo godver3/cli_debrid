@@ -30,6 +30,7 @@ func serveRanges(file []byte, bps int, onReq func(r *http.Request)) http.Handler
 				fmt.Sscan(parts[1], &b)
 			}
 		}
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", a, b, len(file)))
 		w.Header().Set("Content-Length", fmt.Sprint(b-a+1))
 		w.WriteHeader(http.StatusPartialContent)
 		body := file[a : b+1]
@@ -148,6 +149,7 @@ func TestRemoteStreamResumesAfterReset(t *testing.T) {
 	serve := serveRanges(file, 0, nil)
 	cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if reqs.Add(1) == 1 { // first stream: send 1 MiB, then drop the connection
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes 0-%d/%d", len(file)-1, len(file)))
 			w.Header().Set("Content-Length", fmt.Sprint(len(file)))
 			w.WriteHeader(http.StatusPartialContent)
 			w.Write(file[:1<<20])
@@ -203,5 +205,51 @@ func TestRemoteOptionsFromLinkSource(t *testing.T) {
 	d := OpenRemote(staticLink(cdn.URL), nil, NewCache(64<<20), "rd:O:2", int64(len(file)), ReadAhead{})
 	if d.chunkSize != RemoteChunk || cap(d.slots) != RemoteMaxConns {
 		t.Fatalf("defaults: chunk=%d slots=%d", d.chunkSize, cap(d.slots))
+	}
+}
+
+func TestRemoteRejectsWrongContentRange(t *testing.T) {
+	file := bytes.Repeat([]byte("good"), 16)
+	for _, mode := range []string{"chunk", "stream"} {
+		for _, tc := range []struct {
+			name, header string
+		}{
+			{"wrong start", "bytes 1-64/65"},
+			{"wrong length", "bytes 0-62/64"},
+			{"missing", ""},
+		} {
+			t.Run(mode+"/"+tc.name, func(t *testing.T) {
+				var requests atomic.Int32
+				serve := serveRanges(file, 0, nil)
+				cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if requests.Add(1) == 1 {
+						w.Header().Set("Content-Range", tc.header)
+						w.WriteHeader(http.StatusPartialContent)
+						w.Write(bytes.Repeat([]byte("x"), len(file)))
+						return
+					}
+					serve(w, r)
+				}))
+				defer cdn.Close()
+				links := &countLink{url: cdn.URL}
+				r := OpenRemote(links, cdn.Client(), NewCache(RemoteChunk), t.Name(), int64(len(file)), ReadAhead{})
+				ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+				defer cancel()
+				var got []byte
+				var err error
+				if mode == "chunk" {
+					got, err = r.chunk(ctx, nntp.Prefetch, 0)
+				} else {
+					got = make([]byte, len(file))
+					_, err = r.ReadAtCtx(ctx, nntp.Live, got, 0)
+				}
+				if err != nil || !bytes.Equal(got, file) {
+					t.Fatalf("read after invalid 206: %q, %v", got, err)
+				}
+				if links.refreshes.Load() != 1 || requests.Load() != 2 {
+					t.Fatalf("refreshes=%d requests=%d, want 1 and 2", links.refreshes.Load(), requests.Load())
+				}
+			})
+		}
 	}
 }

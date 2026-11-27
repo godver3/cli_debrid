@@ -6,6 +6,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from urllib3.util import Timeout
 
 from ..base import ProviderUnavailableError, RateLimitError
 from .exceptions import TorboxAPIError, TorboxAuthError
@@ -50,14 +51,21 @@ def _pause_creates(response=None) -> float:
         return _create_limit['paused_until']
 
 
-def _wait_for_rate_limit() -> None:
-    with _api_rate_limiter['lock']:
-        current_time = time.time()
-        time_since_last = current_time - _api_rate_limiter['last_request_time']
-        min_interval = _api_rate_limiter['min_interval']
-        if time_since_last < min_interval:
-            time.sleep(min_interval - time_since_last)
+def _wait_for_rate_limit(deadline: Optional[float] = None) -> None:
+    lock = _api_rate_limiter['lock']
+    if deadline is None:
+        lock.acquire()
+    elif not lock.acquire(timeout=max(0, deadline - time.monotonic())):
+        raise ProviderUnavailableError("Torbox request timed out waiting for rate limit")
+    try:
+        delay = _api_rate_limiter['min_interval'] - (time.time() - _api_rate_limiter['last_request_time'])
+        if deadline is not None and max(0, delay) >= deadline - time.monotonic():
+            raise ProviderUnavailableError("Torbox request timed out waiting for rate limit")
+        if delay > 0:
+            time.sleep(delay)
         _api_rate_limiter['last_request_time'] = time.time()
+    finally:
+        lock.release()
 
 
 def _decrease_rate_limit_on_success() -> None:
@@ -79,19 +87,15 @@ def should_retry_error(exception: Exception) -> bool:
     return isinstance(exception, (api.exceptions.Timeout, api.exceptions.ConnectionError))
 
 
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=2, max=10),
-    retry=retry_if_exception_type((api.exceptions.RequestException, TorboxAPIError, RateLimitError, api.exceptions.HTTPError)),
-    retry_error_callback=lambda rs: rs.outcome.result(),
-)
-def make_request(
+def make_request_once(
     method: str,
     endpoint: str,
     api_key: str,
     data: Optional[Dict] = None,
     files: Optional[Dict] = None,
     json_data: Optional[Dict] = None,
+    *,
+    deadline: Optional[float] = None,
     **kwargs,
 ) -> Any:
     url = f"https://api.torbox.app/v1/api{endpoint}"
@@ -114,7 +118,14 @@ def make_request(
     if 'timeout' not in kwargs:
         kwargs['timeout'] = 30
 
-    _wait_for_rate_limit()
+    if deadline is None:
+        _wait_for_rate_limit()
+    else:
+        _wait_for_rate_limit(deadline)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ProviderUnavailableError("Torbox request timed out")
+        kwargs['timeout'] = Timeout(total=remaining)
 
     try:
         if method.upper() == 'GET':
@@ -137,7 +148,7 @@ def make_request(
                     raise ProviderUnavailableError(
                         f"Torbox torrent add limit reached; adds paused until {time.ctime(until)}")
                 retry_after = response.headers.get('Retry-After')
-                if retry_after:
+                if retry_after and deadline is None:
                     try:
                         time.sleep(int(retry_after))
                     except (TypeError, ValueError):
@@ -199,6 +210,15 @@ def make_request(
         if should_retry_error(e):
             raise TorboxAPIError(f"Temporary Torbox service error: {str(e)}")
         raise ProviderUnavailableError(f"Torbox request failed: {str(e)}")
+
+
+# The mount tries other regions itself within the engine's callback budget.
+make_request = retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception_type((api.exceptions.RequestException, TorboxAPIError, RateLimitError, api.exceptions.HTTPError)),
+    retry_error_callback=lambda rs: rs.outcome.result(),
+)(make_request_once)
 
 
 def get_data_payload(result: Any) -> Any:

@@ -148,8 +148,18 @@ func (c *callbackLinks) name(ref string) string {
 }
 
 func (c *callbackLinks) Link(ctx context.Context, ref string, refresh bool) (string, error) {
+	return c.link(ctx, ref, refresh, "")
+}
+
+func (c *callbackLinks) RefreshUnreachable(ctx context.Context, ref, failedURL string) (string, error) {
+	return c.link(ctx, ref, true, failedURL)
+}
+
+func (c *callbackLinks) link(ctx context.Context, ref string, refresh bool, failedURL string) (string, error) {
 	key := ref
-	if refresh {
+	if failedURL != "" {
+		key += "\x00unreachable\x00" + failedURL
+	} else if refresh {
 		key += "\x00refresh"
 	}
 	c.mu.Lock()
@@ -185,7 +195,7 @@ func (c *callbackLinks) Link(ctx context.Context, ref string, refresh bool) (str
 	// first reader went away, and the first reader may give up on its own
 	// deadline too (a request can wait up to callbackWait for cli_debrid).
 	go func() {
-		url, err := c.fetch(context.WithoutCancel(ctx), ref, refresh)
+		url, err := c.fetch(context.WithoutCancel(ctx), ref, refresh, failedURL)
 		c.mu.Lock()
 		call.url, call.err = url, err
 		delete(c.pending, key)
@@ -208,8 +218,12 @@ var callbackWait = 90 * time.Second
 
 const callbackRetryEvery = 2 * time.Second
 
-func (c *callbackLinks) fetch(ctx context.Context, ref string, refresh bool) (string, error) {
-	body, _ := json.Marshal(map[string]any{"ref": ref, "refresh": refresh})
+func (c *callbackLinks) fetch(ctx context.Context, ref string, refresh bool, failedURL string) (string, error) {
+	body, _ := json.Marshal(struct {
+		Ref       string `json:"ref"`
+		Refresh   bool   `json:"refresh"`
+		FailedURL string `json:"unreachable_url,omitempty"`
+	}{ref, refresh, failedURL})
 	start := time.Now()
 	var resp *http.Response
 	for waited := false; ; {

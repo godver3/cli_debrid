@@ -78,8 +78,7 @@ func TestImportSampleOffStillImports(t *testing.T) {
 func TestImportTimeoutIsRetryable(t *testing.T) {
 	s := nntptest.Start(t)
 	// One connection and three files: the probes queue behind each other,
-	// and the deadline passes while they wait. (A fetch already on the wire
-	// finishes; the connection's own read timeout covers hung servers.)
+	// and the deadline cancels both the waits and the in-flight fetch.
 	e := newEngine(t, s, func(c *Config) {
 		c.ImportTimeout, c.Providers[0].MaxConns = 1, 1
 		c.RetryBackoff = []time.Duration{50 * time.Millisecond}
@@ -272,11 +271,12 @@ func TestImportQueueAdvancesWhileFetchStalls(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			s := nntptest.Start(t)
 			e := newEngine(t, s, func(c *Config) {
+				c.Providers[0].MaxConns = 2
 				if mode != "default worker pool" {
 					c.ImportWorkers = 1
+					c.Providers[0].MaxConns = 1
 				}
 				c.RetryBackoff = []time.Duration{}
-				c.Providers[0].MaxConns = 2
 				c.Providers[0].Timeout = 10 * time.Second
 				if mode == "watchdog" {
 					c.ImportTimeout = 1
@@ -288,7 +288,7 @@ func TestImportQueueAdvancesWhileFetchStalls(t *testing.T) {
 			}
 			slow := nntptest.PostNZB(s, "slow", nntptest.File{Name: "Slow.mkv", Data: data(8, 1024)})
 			fast := nntptest.PostNZB(s, "fast", nntptest.File{Name: "Fast.mkv", Data: data(9, 1024)})
-			s.SetDelay(8 * time.Second) // the in-flight socket read outlives the watchdog
+			s.SetDelay(8 * time.Second) // the server delays the first BODY beyond the import deadline
 			stalled, err := e.Submit(slow, "Slow", "movies", "")
 			if err != nil {
 				t.Fatal(err)
@@ -328,19 +328,17 @@ func TestImportQueueAdvancesWhileFetchStalls(t *testing.T) {
 					break
 				}
 				if got.Status == store.Failed || time.Now().After(deadline) {
-					t.Fatalf("next import did not become ready while the socket read was blocked: %+v", got)
+					t.Fatalf("next import did not become ready before the slow server replied: %+v", got)
 				}
 				time.Sleep(10 * time.Millisecond)
 			}
 
-			// The first attempt is still on the wire when the next job
-			// finishes, even when the pool only has one slot.
-			if !e.Cache.Started("slow0.1@test") {
-				t.Fatal("slow fetch ended before the next job was ready")
-			}
 			old, _, err := e.Store.Get(stalled.ID)
 			switch mode {
 			case "default worker pool":
+				if !e.Cache.Started("slow0.1@test") {
+					t.Fatal("slow fetch ended before the next job was ready")
+				}
 				if err != nil || old.Status != store.Importing {
 					t.Fatalf("first job should still be importing: %+v, %v", old, err)
 				}

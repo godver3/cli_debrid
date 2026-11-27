@@ -580,7 +580,10 @@ def internal_link():
     body = request.get_json(silent=True) or {}
     ref = str(body.get('ref') or '')
     try:
-        url, ttl = mount_debrid.link(ref, refresh=bool(body.get('refresh')))
+        url, ttl = mount_debrid.link(
+            ref, refresh=bool(body.get('refresh')),
+            unreachable_url=str(body.get('unreachable_url') or ''),
+        )
     except MountFileGone as gone:
         logging.warning(f'[mount debrid] {ref} is gone on the provider: {gone}')
         return jsonify({'dead': True, 'reason': gone.reason, 'error': gone.detail or str(gone)}), 410

@@ -3,6 +3,7 @@ package stream
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -20,12 +21,20 @@ type switchLink struct {
 
 func (s *switchLink) Link(ctx context.Context, ref string, refresh bool) (string, error) {
 	if refresh {
-		s.refreshes.Add(1)
+		return "", fmt.Errorf("unreachable server reported as a plain refresh")
 	}
 	if s.refreshes.Load() > 0 {
 		return s.live, nil
 	}
 	return s.dead, nil
+}
+
+func (s *switchLink) RefreshUnreachable(_ context.Context, _, failedURL string) (string, error) {
+	if failedURL != s.dead {
+		return "", fmt.Errorf("unreachable URL = %q, want %q", failedURL, s.dead)
+	}
+	s.refreshes.Add(1)
+	return s.live, nil
 }
 
 // A link whose CDN server refuses connections gets one fresh link (the

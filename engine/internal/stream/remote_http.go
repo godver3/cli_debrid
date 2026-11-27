@@ -3,10 +3,12 @@ package stream
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -134,6 +136,48 @@ func serverUnreachable(status int, err error) bool {
 	}
 	msg := err.Error()
 	return strings.Contains(msg, "connection refused") || strings.Contains(msg, "actively refused") // Windows wording
+}
+
+// checkContentRange validates the byte positions before either reader stores
+// data from a partial response.
+func checkContentRange(resp *http.Response, start, end int64) error {
+	header := resp.Header.Get("Content-Range")
+	unit, span, _ := strings.Cut(header, " ")
+	bounds, total, _ := strings.Cut(span, "/")
+	first, last, _ := strings.Cut(bounds, "-")
+	a, aErr := strconv.ParseUint(first, 10, 64)
+	b, bErr := strconv.ParseUint(last, 10, 64)
+	size, sizeErr := strconv.ParseUint(total, 10, 64)
+	if strings.EqualFold(unit, "bytes") && aErr == nil && bErr == nil && a == uint64(start) && b == uint64(end) &&
+		(total == "*" || (sizeErr == nil && size > uint64(end))) &&
+		(resp.ContentLength < 0 || resp.ContentLength == end-start+1) {
+		return nil
+	}
+	return fmt.Errorf("%w: invalid Content-Range %q (Content-Length %d) for bytes %d-%d",
+		ErrLinkRefused, header, resp.ContentLength, start, end)
+}
+
+// refreshUnreachable carries the failed URL to link sources that can use it.
+func refreshUnreachable(ctx context.Context, links LinkSource, ref, failedURL string) (string, error) {
+	if source, ok := links.(interface {
+		RefreshUnreachable(context.Context, string, string) (string, error)
+	}); ok {
+		return source.RefreshUnreachable(ctx, ref, failedURL)
+	}
+	return links.Link(ctx, ref, true)
+}
+
+type unreachableLinkError struct {
+	url string
+	err error
+}
+
+func (e *unreachableLinkError) Error() string { return e.err.Error() }
+func (e *unreachableLinkError) Unwrap() error { return e.err }
+
+func badLinkResponse(status int, err error) bool {
+	return (status >= 400 && status < 500 && !transientStatus(status)) ||
+		(status == http.StatusPartialContent && errors.Is(err, ErrLinkRefused))
 }
 
 func transientStatus(code int) bool {

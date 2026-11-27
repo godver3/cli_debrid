@@ -96,6 +96,7 @@ func TestDebridRetriesResetConnections(t *testing.T) {
 			return
 		}
 		a, b := rangeOf(r, len(file))
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", a, b, len(file)))
 		w.WriteHeader(http.StatusPartialContent)
 		w.Write(file[a : b+1])
 	}))
@@ -293,5 +294,30 @@ func TestDebridZipMembersReadTheirRange(t *testing.T) {
 		if _, err := e.AddDebrid("torbox-Z2", "Bad", "", "torbox", bad); err == nil {
 			t.Fatalf("accepted %+v", bad[0])
 		}
+	}
+}
+
+func TestUnreachableLinkCallbackIncludesFailedURL(t *testing.T) {
+	const ref, failed = "tb:1:0", "https://down.example/path?token=test"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Ref       string `json:"ref"`
+			Refresh   bool   `json:"refresh"`
+			FailedURL string `json:"unreachable_url"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if body.Ref != ref || !body.Refresh || body.FailedURL != failed {
+			t.Errorf("unexpected callback payload: %+v", body)
+		}
+		io.WriteString(w, `{"url":"https://up.example/path","expires_in":3600}`)
+	}))
+	defer srv.Close()
+	c := newCallbackLinks(srv.URL, "t", nil)
+	if u, err := c.RefreshUnreachable(t.Context(), ref, failed); err != nil || u != "https://up.example/path" {
+		t.Fatalf("replacement link = %q, %v", u, err)
 	}
 }

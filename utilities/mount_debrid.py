@@ -74,9 +74,8 @@ def unique_names(files: List[Dict]) -> List[Dict]:
 
 # ---- link cache (survives restarts) ----------------------------------------
 
-#: A refresh within this many seconds of minting gets the same link back:
-#: a link that fails right away won't be fixed by minting another, and a
-#: refresh loop must not flood the provider.
+#: Plain refreshes reuse recent links to avoid flooding the provider.
+#: A connection failure can bypass this floor.
 REFRESH_MIN_AGE = 60
 _MAX_CACHED = 20000
 _link_lock = threading.Lock()
@@ -133,23 +132,36 @@ def _mint(ref: str) -> Tuple[str, int]:
 _mint_locks = [threading.Lock() for _ in range(64)]
 
 
-def _cached(ref: str, refresh: bool) -> Optional[Tuple[str, int]]:
+def _cached(ref: str, refresh: bool, unreachable_url: str = '') -> Optional[Tuple[str, int]]:
     now = time.time()
     with _link_lock:
         hit = _load_links().get(ref)
     if hit and hit.get('expires', 0) > now + 60:
-        if not refresh or now - hit.get('minted', 0) < REFRESH_MIN_AGE:
-            return hit['url'], int(hit['expires'] - now)
+        url = hit['url']
+        if unreachable_url:
+            # Reuse a replacement already minted by another reader.
+            if url == unreachable_url:
+                return None
+            if ref.startswith('tb:'):
+                from debrid.torbox.cdn_fallback import host
+                if host(url) == host(unreachable_url):
+                    return None
+        elif refresh and now - hit.get('minted', 0) >= REFRESH_MIN_AGE:
+            return None
+        return url, int(hit['expires'] - now)
     return None
 
 
-def link(ref: str, refresh: bool = False) -> Tuple[str, int]:
+def link(ref: str, refresh: bool = False, unreachable_url: str = '') -> Tuple[str, int]:
     """(url, ttl seconds) for an engine file ref. Raises on failure."""
-    hit = _cached(ref, refresh)
+    if unreachable_url and ref.startswith('tb:'):
+        from debrid.torbox.cdn_fallback import mark_down
+        mark_down(unreachable_url)
+    hit = _cached(ref, refresh, unreachable_url)
     if hit:
         return hit
     with _mint_locks[hash(ref) % len(_mint_locks)]:
-        hit = _cached(ref, refresh)
+        hit = _cached(ref, refresh, unreachable_url)
         if hit:
             return hit
         return _mint_and_store(ref)

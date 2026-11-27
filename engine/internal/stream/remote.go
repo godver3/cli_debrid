@@ -168,7 +168,7 @@ func (r *RemoteFile) fetchChunk(ctx context.Context, prio nntp.Priority, i int) 
 				return nil, ctx.Err()
 			}
 			last, lastStatus = err, status
-			if status >= 400 && status < 500 && !transientStatus(status) {
+			if badLinkResponse(status, err) {
 				// The link expired or was refused: one fresh link, then give up.
 				if relinked {
 					return nil, last
@@ -183,7 +183,7 @@ func (r *RemoteFile) fetchChunk(ctx context.Context, prio nntp.Priority, i int) 
 				// The link's server is down: one fresh link, which may be on
 				// another server, then the usual retries.
 				relinked = true
-				if _, err := r.links.Link(ctx, r.ref, true); err != nil {
+				if _, err := refreshUnreachable(ctx, r.links, r.ref, url); err != nil {
 					return nil, fmt.Errorf("stream: new link for %s: %w", r.ref, err)
 				}
 				continue
@@ -236,6 +236,10 @@ func (r *RemoteFile) get(parent context.Context, url string, start, n int64) ([]
 	defer resp.Body.Close()
 	switch {
 	case resp.StatusCode == http.StatusPartialContent:
+		if err := checkContentRange(resp, start, start+n-1); err != nil {
+			st.fail(err)
+			return nil, resp.StatusCode, err
+		}
 	case resp.StatusCode == http.StatusOK && start == 0 && n == r.size:
 	default:
 		io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
