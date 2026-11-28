@@ -1,10 +1,10 @@
-"""Per-run summary for Plex watchlist content sources.
+"""Per-run summary for Plex watchlist and Trakt content sources.
 
 The content-source pipeline drops items at several stages (list limit, per-item cache,
 metadata, source filters, add_wanted_items) and most drops were only visible at DEBUG, so
 "my item never showed up" meant guessing which stage ate it. A SourceRunReport collects
 what happened at each stage and logs one INFO summary line, plus one line per drop reason
-naming the affected titles/ids. It does nothing for non-Plex source types.
+naming the affected titles/ids. It does nothing for other source types.
 """
 import logging
 from collections import Counter
@@ -18,6 +18,14 @@ PLEX_SOURCE_TYPES = frozenset({
     'My Friends Plex RSS Watchlist',
 })
 
+TRAKT_SOURCE_TYPES = frozenset({
+    'Trakt Watchlist',
+    'Trakt Lists',
+    'Friends Trakt Watchlist',
+    'Trakt Collection',
+    'Special Trakt Lists',
+})
+
 _MAX_LABELS = 25
 
 
@@ -28,7 +36,8 @@ def _label(item: Dict[str, Any]) -> str:
 class SourceRunReport:
     def __init__(self, source: str, source_type: str):
         self.source = source
-        self.enabled = source_type in PLEX_SOURCE_TYPES
+        self.enabled = source_type in PLEX_SOURCE_TYPES or source_type in TRAKT_SOURCE_TYPES
+        self.tag = 'TRAKT_RUN' if source_type in TRAKT_SOURCE_TYPES else 'PLEX_RUN'
         self.counts: Counter = Counter()
         self.drops: Dict[str, List[str]] = {}
         self._prefilter: List[Dict[str, Any]] = []
@@ -97,12 +106,12 @@ class SourceRunReport:
         c = self.counts
         not_added = max(c['passed_to_add'] - c['added'], 0)
         logging.info(
-            f"[PLEX_RUN {self.source}] titles: fetched={c['fetched']} blocked={c['blocked']} cache_skipped={cache_skipped} "
+            f"[{self.tag} {self.source}] titles: fetched={c['fetched']} blocked={c['blocked']} cache_skipped={cache_skipped} "
             f"sent_to_metadata={c['sent_to_metadata']} | entries (movies/episodes): "
             f"passed_filters={c['passed_to_add']} newly_added={c['added']} not_added={not_added} "
-            f"(see 'Plex watchlist items not added' for why)"
+            f"(see 'watchlist/list items not added' for why)"
         )
         for reason, labels in self.drops.items():
             shown = ', '.join(repr(l) for l in labels[:_MAX_LABELS])
             more = f" (+{len(labels) - _MAX_LABELS} more)" if len(labels) > _MAX_LABELS else ''
-            logging.info(f"[PLEX_RUN {self.source}] {len(labels)} item(s) not added - {reason}: {shown}{more}")
+            logging.info(f"[{self.tag} {self.source}] {len(labels)} item(s) not added - {reason}: {shown}{more}")

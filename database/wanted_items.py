@@ -88,21 +88,25 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
         }
         airtime_cache = {}
 
-        # Which watchlist titles were not added and why. The skip summary only had counts, so a
+        # Which watchlist/list titles (Plex watchlists, Trakt sources) were not added and why. The skip summary only had counts, so a
         # watchlist item blocked by the blacklist, ghostlist, watch history or an existing row looked
         # like it had simply vanished. Bounded, deduplicated per title and reason.
         skipped_watchlist_titles = {}
         added_watchlist_titles = {}
+        def _tracked_source(item_):
+            # Plex watchlist and Trakt sources get per-title diagnostics (content_source is the source name).
+            source_name_ = str(item_.get('content_source') or '')
+            return 'Plex' in source_name_ or 'Trakt' in source_name_
         def _note_skip(reason, item_):
-            if 'Plex' not in str(item_.get('content_source') or ''):
+            if not _tracked_source(item_):
                 return
             title_ = item_.get('title') or item_.get('imdb_id') or item_.get('tmdb_id') or 'Unknown'
             titles_ = skipped_watchlist_titles.setdefault((reason, item_.get('content_source')), {})
             if title_ in titles_ or len(titles_) < 100:
                 titles_[title_] = titles_.get(title_, 0) + 1
         def _note_added(item_):
-            # What a Plex watchlist source actually added (episodes are counted per show).
-            if 'Plex' not in str(item_.get('content_source') or ''):
+            # What a tracked (Plex/Trakt) source actually added (episodes are counted per show).
+            if not _tracked_source(item_):
                 return
             title_ = item_.get('title') or item_.get('imdb_id') or item_.get('tmdb_id') or 'Unknown'
             per_source_ = added_watchlist_titles.setdefault(item_.get('content_source'), {})
@@ -1177,11 +1181,11 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
         for (reason_, source_), titles_ in skipped_watchlist_titles.items():
             shown_ = ', '.join(repr(t) if n == 1 else f"{t!r} ({n} entries)" for t, n in list(titles_.items())[:25])
             more_ = f" (+{len(titles_) - 25} more)" if len(titles_) > 25 else ''
-            logging.info(f"Plex watchlist items not added from {source_} ({reason_}): {shown_}{more_}")
+            logging.info(f"Watchlist/list items not added from {source_} ({reason_}): {shown_}{more_}")
         for source_, per_source_ in added_watchlist_titles.items():
             parts_ = [repr(t) if n == 1 else f"{t!r} ({n} entries)" for t, n in list(per_source_.items())[:25]]
             more_ = f" (+{len(per_source_) - 25} more)" if len(per_source_) > 25 else ''
-            logging.info(f"Plex watchlist items added from {source_}: {', '.join(parts_)}{more_}")
+            logging.info(f"Watchlist/list items added from {source_}: {', '.join(parts_)}{more_}")
         logging.info(f"Final stats - Added: {items_added}, Updated: {items_updated}, Total Skipped: {items_skipped}")
         
         return items_added

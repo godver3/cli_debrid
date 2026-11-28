@@ -166,8 +166,9 @@ class ContentSourceTasks:
             logging.debug(f"Initial cache state for {source}: {len(source_cache)} entries")
             cache_skipped = 0
             items_processed = 0
-            total_items = 0
-            report = SourceRunReport(source, source_type)  # no-op except for Plex watchlist sources
+            total_items = 0  # entries (movies/episodes) that passed the source filters
+            total_added = 0  # entries add_wanted_items really inserted
+            report = SourceRunReport(source, source_type)  # no-op except for Plex watchlist and Trakt sources
             media_type_skipped = 0
             genre_skipped = 0
             cutoff_date_skipped = 0
@@ -419,7 +420,9 @@ class ContentSourceTasks:
                                 from database import add_wanted_items
                                 # Pass the CONVERTED versions dict to add_wanted_items
                                 report.filters_done(all_items)
-                                report.added(len(all_items), add_wanted_items(all_items, versions_to_inject or versions_dict, unblacklist=unblacklist_on_source_run))
+                                added_result = add_wanted_items(all_items, versions_to_inject or versions_dict, unblacklist=unblacklist_on_source_run)
+                                report.added(len(all_items), added_result)
+                                total_added += added_result if isinstance(added_result, int) else 0
                                 
                                 # Update cache for all items that were processed (regardless of whether they made it through filtering)
                                 # This prevents reprocessing the same items repeatedly
@@ -543,7 +546,9 @@ class ContentSourceTasks:
                             from database import add_wanted_items
                             # Pass the CONVERTED versions_dict to add_wanted_items
                             report.filters_done(all_items)
-                            report.added(len(all_items), add_wanted_items(all_items, versions_dict, unblacklist=unblacklist_on_source_run))
+                            added_result = add_wanted_items(all_items, versions_dict, unblacklist=unblacklist_on_source_run)
+                            report.added(len(all_items), added_result)
+                            total_added += added_result if isinstance(added_result, int) else 0
                             
                             # Update cache for all items that were processed (regardless of whether they made it through filtering)
                             # This prevents reprocessing the same items repeatedly
@@ -559,7 +564,7 @@ class ContentSourceTasks:
                 save_source_cache(source, source_cache)
                 logging.debug(f"Final cache state for {source}: {len(source_cache)} entries")
                 
-                stats_msg = f"Added {total_items} wanted items from {source} (processed {items_processed} items"
+                stats_msg = f"Added {total_added} new wanted items from {source} ({total_items} entries passed filters, processed {items_processed} titles"
                 if cache_skipped > 0:
                     stats_msg += f", skipped {cache_skipped} cached items"
                 if media_type_skipped > 0:
