@@ -477,3 +477,29 @@ func TestImportNeverReadsLive(t *testing.T) {
 		t.Fatalf("no reads recorded: %v", f.seen)
 	}
 }
+
+// A post whose NZB lists dead articles past the file's end builds, reads
+// back whole, and reopens from the stored job.
+func TestTrailingSurplusSegmentsAreIgnored(t *testing.T) {
+	e := newEnv(t)
+	data := random(11, 300_000)
+	f := e.post("movie.mkv", "movie.mkv", data)
+	for i := 0; i < 3; i++ {
+		f.Segments = append(f.Segments, nzb.Segment{ID: fmt.Sprintf("dead%d@x", i), Number: f.Total + 1 + i, Bytes: 64_000})
+	}
+	f.Total += 3
+	e.nzb.Files[0] = f
+	res, err := e.build()
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if len(res.Entries) != 1 || res.Entries[0].Size != int64(len(data)) {
+		t.Fatalf("entries %+v", res.Entries)
+	}
+	if !bytes.Equal(e.read(res, res.Entries[0]), data) {
+		t.Fatal("content differs")
+	}
+	if !fits(res.Sources[0], &e.nzb.Files[0]) {
+		t.Fatal("stored source must still match its NZB file")
+	}
+}
