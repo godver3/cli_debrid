@@ -256,7 +256,13 @@ def extract_info_hash(stream: Dict[str, Any]) -> Tuple[str, Optional[int]]:
 
 def _is_notice(stream: Dict[str, Any]) -> bool:
     url = stream.get('url')
-    return isinstance(url, str) and _NOTICE_HOST in url and not stream.get('infoHash')
+    # Comet's status/error pseudo-streams link to the bare https://comet.feels.legal.
+    # That host is also the public instance, whose real debrid results link to
+    # .../playback/<hash>/..., so only the bare root counts as a notice.
+    if not isinstance(url, str) or stream.get('infoHash'):
+        return False
+    parts = urlsplit(url.strip())
+    return parts.netloc.lower() == _NOTICE_HOST and parts.path.strip('/') == ''
 
 
 def parse_size(text: str) -> float:

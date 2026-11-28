@@ -524,7 +524,13 @@
         {% endif %}
         {% if config.type == 'Comet' %}
         <div class="settings-form-group">
-            <small class="settings-description">Paste a Comet instance URL, or your configured <code>.../manifest.json</code> URL (Clyde works out the base from it). With no config Comet returns plain torrents; a debrid key in the config is only ever sent to this instance.</small>
+            <small class="settings-description">Paste a Comet instance URL, or your configured <code>.../manifest.json</code> URL (Clyde works out the base from it). The public instance <code>https://comet.feels.legal</code> works with no config at all. Some instances, such as ElfHosted, refuse requests without one.</small>
+        </div>
+        <div class="settings-form-group">
+            <small class="settings-description"><strong>Leave Comet's own filters off.</strong> Clyde filters and ranks every result by your versions (resolution, size, language and the rest). Anything Comet filters out never reaches Clyde: a "1080p only" Comet config, for example, hides every release from your 4K version and from upgrades. If you configure Comet, turn off its resolution, size and language filters and set its results limit high or to unlimited.</small>
+        </div>
+        <div class="settings-form-group">
+            <small class="settings-description"><strong>No debrid key needed.</strong> Clyde checks the cache on your debrid accounts itself. If you do put a key in Comet's config, it is only sent to this instance and never written to Clyde's logs.</small>
         </div>
         <div class="settings-form-group">
             <label for="{{ scraper_id }}-config" class="settings-title">Config (optional):</label>

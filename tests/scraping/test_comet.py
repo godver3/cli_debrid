@@ -166,6 +166,16 @@ def test_notice_streams_are_not_results():
     assert comet.parse_results(OBSOLETE['streams'] + BUSY['streams'], 'Comet_1') == []
 
 
+def test_debrid_results_from_the_public_instance_are_not_notices():
+    # comet.feels.legal is both the notice link and the public instance itself
+    s = {'name': '[RD+] Comet', 'description': '📄 Some.Movie.2020.1080p.WEB-DL.x264-GRP\n👤 5 💾 2.0 GB 🔎 DMM',
+         'url': f'https://comet.feels.legal/abc123/playback/{H1}/0/n/n/n?name=x',
+         'behaviorHints': {'filename': 'Some.Movie.2020.1080p.WEB-DL.x264-GRP.mkv'}}
+    out = comet.parse_results([s], 'Comet_1')
+    assert [r['info_hash'] for r in out] == [H1.lower()]
+    assert comet.parse_results(OBSOLETE['streams'], 'Comet_1') == []
+
+
 def test_title_falls_back_to_filename_when_result_format_has_no_title():
     s = {'name': 'x', 'description': '👤 3 💾 1.0 GB', 'infoHash': H1,
          'behaviorHints': {'filename': 'Fallback.Name.2020.1080p', 'videoSize': 0}}
