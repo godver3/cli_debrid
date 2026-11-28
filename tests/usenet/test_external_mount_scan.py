@@ -739,6 +739,38 @@ class TestHardening(ExternalMountScanTestBase):
             self.assertEqual(mount_layout.list_job_dirs(mount.name, known_jobs={'Job.A'}),
                              [('Job.A', os.path.join(mount.name, 'Job.A'))])
 
+    def test_known_non_release_name_is_probed_again(self):
+        # An empty "tv" category was recorded as a job on first sight; once a job
+        # lands in it, it must be listed as a category.
+        from usenet import mount_layout
+        mount = tempfile.TemporaryDirectory()
+        self.addCleanup(mount.cleanup)
+        job = os.path.join(mount.name, 'tv', 'Show.S01E01.1080p')
+        os.makedirs(job)
+        open(os.path.join(job, 'ep.mkv'), 'w').close()
+        self.assertEqual(mount_layout.list_job_dirs(mount.name, known_jobs={'tv'}),
+                         [('tv/Show.S01E01.1080p', job)])
+
+    def test_job_named_like_a_season_folder_does_not_hide_the_category(self):
+        from usenet import mount_layout
+        mount = tempfile.TemporaryDirectory()
+        self.addCleanup(mount.cleanup)
+        for name in ('Series.Name.S01.1080p', 'Extras.Movie.2019'):
+            job = os.path.join(mount.name, 'tv', name)
+            os.makedirs(job)
+            open(os.path.join(job, 'f.mkv'), 'w').close()
+        self.assertTrue(mount_layout.is_category_dir(os.path.join(mount.name, 'tv')))
+        self.assertFalse(mount_layout.is_category_dir(job))  # a job itself is not a category
+        os.makedirs(os.path.join(mount.name, 'Pack', 'Season 01'))
+        open(os.path.join(mount.name, 'Pack', 'Season 01', 'e.mkv'), 'w').close()
+        self.assertFalse(mount_layout.is_category_dir(os.path.join(mount.name, 'Pack')))
+
+    def test_release_parts_skip_library_folders(self):
+        self.assertEqual(ems._release_parts('/mnt/nzbdav/tv/Show.S01.1080p/Season 01/e01.mkv'),
+                         ['e01.mkv', 'Show.S01.1080p'])
+        self.assertEqual(ems._release_parts('/data/Movies/Movie.2019/m.mkv'), ['m.mkv', 'Movie.2019'])
+        self.assertEqual(ems._release_parts(''), [])
+
     def test_flaky_listing_accepted_after_repeated_low_counts(self):
         # A real mass deletion must not leave the root skipped forever.
         for i in range(25):

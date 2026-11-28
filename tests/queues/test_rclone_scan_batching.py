@@ -68,3 +68,16 @@ def test_notifications_sent_once_with_all_items():
     assert send.call_count == 1
     assert send.call_args[0][0] == items
     assert send.call_args[1]['notification_category'] == 'collected'
+
+
+def test_flush_imported_sends_once_and_survives_errors():
+    plex_items = [_ep('/lib/Show/Season 1', 1)]
+    notes = [{'title': 'Show'}]
+    with patch.object(rs, '_flush_plex_scans', side_effect=RuntimeError('plex down')) as scans, \
+         patch.object(rs, '_flush_collected_notifications') as notify:
+        rs._flush_imported(plex_items, notes, 't')
+        # A failing scan flush still sends the notifications.
+        notify.assert_called_once()
+        assert plex_items == [] and notes == []
+        rs._flush_imported(plex_items, notes, 't')  # second call (the finally) sends nothing again
+        assert scans.call_count == 1 and notify.call_count == 1

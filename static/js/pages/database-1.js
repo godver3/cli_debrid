@@ -1256,6 +1256,14 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!params.sort_column) params.sort_column = TPL_DATABASE.sort_column;
         if (!params.sort_order) params.sort_order = TPL_DATABASE.sort_order;
 
+        // Keep the chosen rows-per-page: the server falls back to 250 without it.
+        if (!params.per_page) {
+            let saved = null;
+            try { saved = localStorage.getItem('db_per_page'); } catch (e) {}
+            params.per_page = new URLSearchParams(window.location.search).get('per_page')
+                || saved || TPL_DATABASE.per_page;
+        }
+
         // Add filter logic if not present
         if (!params.filter_logic) {
             params.filter_logic = document.querySelector('input[name="filter_logic"]:checked')?.value || 'AND';
@@ -1277,6 +1285,13 @@ document.addEventListener('DOMContentLoaded', function() {
             .then(data => {
                 if (data.error) { // Should be caught by the !response.ok above, but good as a fallback
                     throw new Error(data.error);
+                }
+
+                // Row numbers on scroll use this; match what the server served.
+                if (data.per_page) {
+                    CONFIG.ITEMS_PER_PAGE = data.per_page;
+                    TPL_DATABASE.per_page = data.per_page;
+                    params.per_page = data.per_page;
                 }
 
                 // Keep the address bar on the view being shown: infinite scroll

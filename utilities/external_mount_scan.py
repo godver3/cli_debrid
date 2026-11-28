@@ -284,6 +284,22 @@ def _is_ours(folder_name: str, ours_names: Set[str]) -> bool:
     return bool(_name_variants(folder_name, normalize_string_for_comparison) & ours_names)
 
 
+def _release_parts(path: str) -> List[str]:
+    """File name and release folder of a media file path; a season/extras
+    subfolder ("Season 01") steps up one more level to the release folder."""
+    from usenet.mount_layout import _JOB_SUBDIR_RE
+    parts = [p for p in path.replace('\\', '/').split('/') if p]
+    if not parts:
+        return []
+    out = [parts[-1]]
+    folders = parts[:-1]
+    if folders and _JOB_SUBDIR_RE.match(folders[-1]):
+        folders = folders[:-1]
+    if folders:
+        out.append(folders[-1])
+    return out
+
+
 def _build_known_sets(include_locations: bool = False) -> tuple:
     """Build in-memory lookups of what the DB already knows about.
 
@@ -322,11 +338,14 @@ def _build_known_sets(include_locations: bool = False) -> tuple:
             'WHERE original_path_for_symlink IS NOT NULL OR location_on_disk IS NOT NULL'
         ).fetchall()
         for row in rows:
-            path = row['original_path_for_symlink'] or (row['location_on_disk'] if include_locations else None)
-            if not path:
-                continue
-            for part in path.replace('\\', '/').split('/'):
-                if part:
+            if row['original_path_for_symlink']:
+                for part in row['original_path_for_symlink'].replace('\\', '/').split('/'):
+                    if part:
+                        known_components.add(normalize_string_for_comparison(part))
+            elif include_locations and row['location_on_disk']:
+                # Only the file and its release folder: the rest of a library path
+                # ("Movies", "tv", a category) would mark any same-named folder known.
+                for part in _release_parts(row['location_on_disk']):
                     known_components.add(normalize_string_for_comparison(part))
     except Exception as e:
         logging.error(f"[ExternalScan] Could not build known-item lookups: {e}", exc_info=True)

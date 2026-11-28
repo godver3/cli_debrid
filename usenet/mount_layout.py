@@ -43,7 +43,14 @@ _MEDIA_EXTS = ('.mkv', '.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm', '.mpeg',
 
 # A job folder with season subfolders ("Show.S01/Season 01/*.mkv") looks exactly
 # like a category holding a job, so these names mark a folder as a job.
-_JOB_SUBDIR_RE = re.compile(r'^(season|series|specials?|extras?|subs?|subtitles?)\b|^s\d{1,2}$', re.I)
+# Whole names only: a job called "Series.Name.S01" or "Extras.Movie" inside a
+# category must not make the category look like a job.
+_JOB_SUBDIR_RE = re.compile(
+    r'^(?:(?:season|series)(?:[ ._-]*\d{1,4})?|specials?|extras?|featurettes?|subs?|subtitles?|s\d{1,2})$', re.I)
+
+# Release-style names (dots, a year, SxxEyy, a resolution). Category names
+# ("tv", "movies", "radarr-4k") don't look like this.
+_RELEASE_NAME_RE = re.compile(r'\.|\b(?:19|20)\d{2}\b|\bS\d{1,2}(?:E\d{1,3})?\b|\b\d{3,4}p\b', re.I)
 
 
 def dir_has_media(path: str, depth: int = 1) -> bool:
@@ -91,8 +98,10 @@ def list_job_dirs(mount: str, known_jobs: Optional[set] = None) -> List[Tuple[st
     """(relative path, absolute path) of every NZB job folder under ``mount``,
     for flat (<mount>/<job>) and nested (<mount>/<category>/<job>) layouts.
 
-    ``known_jobs``: top-level names already known to be jobs; they skip the
-    category probe (one extra listing per folder)."""
+    ``known_jobs``: top-level names already recorded as jobs. Those that look
+    like release names skip the category probe (one extra listing per folder);
+    the rest are probed again, since an empty category or one whose only job
+    is still uploading gets recorded as a job on first sight."""
     jobs: List[Tuple[str, str]] = []
     known_jobs = known_jobs or set()
     try:
@@ -102,7 +111,8 @@ def list_job_dirs(mount: str, known_jobs: Optional[set] = None) -> List[Tuple[st
     except OSError:
         return jobs
     for name, path in tops:
-        if name not in known_jobs and is_category_dir(path):
+        skip_probe = name in known_jobs and _RELEASE_NAME_RE.search(name)
+        if not skip_probe and is_category_dir(path):
             try:
                 with os.scandir(path) as it:
                     for e in sorted(it, key=lambda x: x.name):

@@ -24,15 +24,62 @@ class TestInFlightGuard(unittest.TestCase):
             with rs._IN_FLIGHT_LOCK:
                 rs._IN_FLIGHT_SCAN_PATHS.add(key)
             try:
-                rs._run_rclone_to_symlink_task(d, d, False, 'guard-task')
+                with patch.object(rs.threading, 'Timer') as timer:
+                    rs._run_rclone_to_symlink_task(d, d, False, 'guard-task')
                 progress = rs.rclone_scan_progress.pop('guard-task')
                 self.assertTrue(progress['complete'])
-                self.assertIn('already being processed', progress['message'])
+                self.assertIn('scanned again', progress['message'])
                 # The guard must not release a path it never acquired.
                 self.assertIn(key, rs._IN_FLIGHT_SCAN_PATHS)
+                # The skipped call's progress entry still gets its cleanup timer.
+                timer.assert_called_once()
+                # ...and its arguments wait for a re-run.
+                self.assertEqual(rs._RERUN_SCAN_ARGS[key]['rclone_mount_path_str'], d)
             finally:
                 with rs._IN_FLIGHT_LOCK:
                     rs._IN_FLIGHT_SCAN_PATHS.discard(key)
+                    rs._RERUN_SCAN_ARGS.pop(key, None)
+
+    def test_skipped_dry_run_is_not_queued(self):
+        with tempfile.TemporaryDirectory() as d:
+            key = os.path.realpath(d)
+            with rs._IN_FLIGHT_LOCK:
+                rs._IN_FLIGHT_SCAN_PATHS.add(key)
+            try:
+                with patch.object(rs.threading, 'Timer'):
+                    rs._run_rclone_to_symlink_task(d, d, True, 'dry-guard')
+                rs.rclone_scan_progress.pop('dry-guard', None)
+                self.assertNotIn(key, rs._RERUN_SCAN_ARGS)
+            finally:
+                with rs._IN_FLIGHT_LOCK:
+                    rs._IN_FLIGHT_SCAN_PATHS.discard(key)
+
+    def test_queued_call_runs_again_when_the_scan_ends(self):
+        with tempfile.TemporaryDirectory() as d:
+            key = os.path.realpath(d)
+            with rs._IN_FLIGHT_LOCK:
+                rs._RERUN_SCAN_ARGS[key] = dict(
+                    rclone_mount_path_str=d, symlink_base_path_str='x', dry_run=False,
+                    trigger_plex_update_on_success=True, assumed_item_title_from_path=None,
+                    user_initiated=True, skip_known_paths=False)
+            with patch.object(rs.threading, 'Timer'), patch.object(rs.threading, 'Thread') as thread:
+                rs._run_rclone_to_symlink_task(d, '', False, 'first-run')  # fails fast on empty symlink base
+            rs.rclone_scan_progress.pop('first-run', None)
+            thread.assert_called_once()
+            kwargs = thread.call_args.kwargs['kwargs']
+            self.assertEqual(kwargs['symlink_base_path_str'], 'x')
+            self.assertTrue(kwargs['user_initiated'])
+            self.assertNotEqual(kwargs['task_id'], 'first-run')
+            thread.return_value.start.assert_called_once()
+            self.assertNotIn(key, rs._RERUN_SCAN_ARGS)
+            self.assertNotIn(key, rs._IN_FLIGHT_SCAN_PATHS)
+
+    def test_batched_scans_are_sent_even_when_the_run_fails(self):
+        with tempfile.TemporaryDirectory() as d:
+            with patch.object(rs.threading, 'Timer'), patch.object(rs, '_flush_imported') as flush:
+                rs._run_rclone_to_symlink_task(d, '', False, 'fail-run')
+            rs.rclone_scan_progress.pop('fail-run', None)
+            flush.assert_called()
 
     def test_path_is_released_after_a_run(self):
         with tempfile.TemporaryDirectory() as d:

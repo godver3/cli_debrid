@@ -311,7 +311,9 @@
                     <input type="password" class="settings-input dpr-key" placeholder="API key" value="{{ row.api_key }}" autocomplete="off">
                     <button type="button" class="dpr-btn dpr-up" title="Move up"><i class="fa-solid fa-arrow-up"></i></button>
                     <button type="button" class="dpr-btn dpr-down" title="Move down"><i class="fa-solid fa-arrow-down"></i></button>
-                    {% if builtin_mount_debrid %}<label class="dpr-stream" title="Keep this account's files playing (mount, library, repair) but never add new releases to it"><input type="checkbox" class="dpr-stream-only" {% if row.stream_only %}checked{% endif %}> Streaming only</label>{% endif %}
+                    {# Always rendered so a save keeps the flag; hidden (and ignored by the
+                       backend) unless the built-in mount serves debrid. #}
+                    <label class="dpr-stream" {% if not builtin_mount_debrid %}hidden{% endif %} title="Keep this account's files playing (mount, library, repair) but never add new releases to it"><input type="checkbox" class="dpr-stream-only" {% if row.stream_only %}checked{% endif %}> Streaming only</label>
                     <button type="button" class="dpr-btn dpr-test" title="Test this key">Test</button>
                     <button type="button" class="dpr-btn dpr-remove" title="Remove"><i class="fa-solid fa-trash"></i></button>
                     <span class="dpr-result"></span>
@@ -333,7 +335,7 @@
         .debrid-provider-row .dpr-btn:hover{border-color:#e8601c}
         .debrid-provider-row .dpr-result{font-size:12px;flex-basis:100%;padding-left:24px}
         .debrid-provider-row .dpr-stream{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:#bbb;cursor:pointer;white-space:nowrap}
-        .debrid-provider-row:first-child .dpr-stream{display:none}
+        .debrid-provider-row:first-child .dpr-stream,.debrid-provider-row .dpr-stream[hidden]{display:none}
         .debrid-provider-row .dpr-result.ok{color:#22c55e}.debrid-provider-row .dpr-result.bad{color:#ef4444}
         </style>
         <script>
@@ -347,7 +349,7 @@
                 // Row 1 is the main provider and is never streaming only.
                 const vals = rows.map((r, i) => {
                     const v = { provider: r.querySelector('.dpr-name').value, api_key: r.querySelector('.dpr-key').value.trim() };
-                    const so = r.querySelector('.dpr-stream-only');  // built-in mount only
+                    const so = r.querySelector('.dpr-stream-only');  // hidden unless the built-in mount serves debrid
                     if (i > 0 && so && so.checked) v.stream_only = true;
                     return v;
                 }).filter(v => v.provider);

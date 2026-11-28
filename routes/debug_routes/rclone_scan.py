@@ -11,6 +11,7 @@ from datetime import datetime
 from routes.notifications import send_notifications, get_enabled_notifications
 import json
 import threading
+import uuid
 from utilities.plex_functions import plex_update_item
 from pathlib import Path
 from utilities.reverse_parser import parse_filename_for_version
@@ -146,6 +147,10 @@ def _describe_add_media_item_failure(item: dict) -> str:
 # (each would pass the DB duplicate check before the other's insert landed).
 _IN_FLIGHT_SCAN_PATHS = set()
 _IN_FLIGHT_LOCK = threading.Lock()
+# A call that arrives while its path is in flight (Zurg fires again as more of a
+# pack lands) is not dropped: its arguments wait here and the path is scanned
+# once more when the running scan ends. The latest call wins.
+_RERUN_SCAN_ARGS = {}
 
 
 _DEFAULT_VIDEO_EXTENSIONS = frozenset({'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm',
@@ -230,6 +235,24 @@ def _flush_plex_scans(items: list, task_id: str) -> None:
             plex_update_item(item=item)
         except Exception as plex_err:
             logging.error(f"[RcloneScan {task_id}] Failed to trigger Plex update for {folder}: {plex_err}", exc_info=True)
+
+
+def _flush_imported(plex_items: list, notification_items: list, task_id: str) -> None:
+    """Send the batched scans and notifications once, then empty the lists."""
+    try:
+        if plex_items:
+            _flush_plex_scans(plex_items, task_id)
+    except Exception as e:
+        logging.error(f"[RcloneScan {task_id}] Media server scan flush failed: {e}", exc_info=True)
+    finally:
+        plex_items.clear()
+    try:
+        if notification_items:
+            _flush_collected_notifications(notification_items, task_id)
+    except Exception as e:
+        logging.error(f"[RcloneScan {task_id}] Notification flush failed: {e}", exc_info=True)
+    finally:
+        notification_items.clear()
 
 
 def _flush_collected_notifications(items: list, task_id: str) -> None:
@@ -336,11 +359,25 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
         if not _already_running:
             _IN_FLIGHT_SCAN_PATHS.add(_flight_key)
     if _already_running:
-        logging.info(f"[RcloneScan {task_id}] '{_flight_key}' is already being processed by another scan; skipping this one.")
+        if not dry_run:
+            with _IN_FLIGHT_LOCK:
+                _RERUN_SCAN_ARGS[_flight_key] = dict(
+                    rclone_mount_path_str=rclone_mount_path_str, symlink_base_path_str=symlink_base_path_str,
+                    dry_run=dry_run, trigger_plex_update_on_success=trigger_plex_update_on_success,
+                    assumed_item_title_from_path=assumed_item_title_from_path,
+                    user_initiated=user_initiated, skip_known_paths=skip_known_paths)
+        logging.info(f"[RcloneScan {task_id}] '{_flight_key}' is already being processed by another scan; "
+                     f"{'skipping this dry run' if dry_run else 'it will be scanned again when that one ends'}.")
         update_progress(status='complete', complete=True, success=True,
-                        message='Skipped: this path is already being processed by another scan.')
+                        message='This path is already being scanned; it will be scanned again when that scan ends.'
+                        if not dry_run else 'Skipped: this path is already being processed by another scan.')
+        threading.Timer(300, lambda: rclone_scan_progress.pop(task_id, None)).start()
         return
 
+    # Filled by the loop, sent after it; the finally sends them too, so an error
+    # partway through still scans and announces what was already imported.
+    plex_scan_items = []
+    notification_items = []
     try:
         rclone_mount_path = Path(rclone_mount_path_str)
 
@@ -363,8 +400,6 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
         total_files_scanned = 0
         media_files_found = 0
         items_processed = 0
-        plex_scan_items = []
-        notification_items = []
         items_added_to_db = 0
         symlinks_created = 0
         parser_errors = 0
@@ -972,8 +1007,7 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                         symlink_errors += 1; error_list.append(f"Symlink Error ({item_path.name}): {e}"); update_progress(symlink_errors=symlink_errors, errors=error_list)
             update_progress(items_processed=items_processed)
 
-        _flush_plex_scans(plex_scan_items, task_id)
-        _flush_collected_notifications(notification_items, task_id)
+        _flush_imported(plex_scan_items, notification_items, task_id)
 
         final_message_parts = [
             f"Rclone scan finished. Scanned: {total_files_scanned}, Media Files Initially Found: {media_files_found}, Items Chosen for Processing: {items_processed}."
@@ -1011,8 +1045,17 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
         logging.error(f"[RcloneScan {task_id}] Critical error in Rclone scan task: {e}", exc_info=True)
         update_progress(status='error', message=f'Task failed: {e}', complete=True, success=False)
     finally:
+        # Normally already sent (and emptied) above; this catches an error mid-loop.
+        _flush_imported(plex_scan_items, notification_items, task_id)
         with _IN_FLIGHT_LOCK:
             _IN_FLIGHT_SCAN_PATHS.discard(_flight_key)
+            rerun = _RERUN_SCAN_ARGS.pop(_flight_key, None)
+        if rerun:
+            rerun_id = str(uuid.uuid4())
+            logging.info(f"[RcloneScan {task_id}] Scanning '{_flight_key}' again for a call that came in "
+                         f"while it ran (task {rerun_id}).")
+            threading.Thread(target=_run_rclone_to_symlink_task, kwargs=dict(rerun, task_id=rerun_id),
+                             daemon=True).start()
         # Save final progress one last time, e.g. if loop broke early
         if not dry_run: save_rclone_progress() 
         threading.Timer(300, lambda: rclone_scan_progress.pop(task_id, None)).start()
