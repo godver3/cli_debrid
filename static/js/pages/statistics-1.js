@@ -151,6 +151,32 @@ document.addEventListener('DOMContentLoaded', function() {
                     if (icon) icon.classList.remove('fa-spin');
                 });
         });
+        // Right after a restart the mount stats may not be in yet ('…'):
+        // fetch the size now, then refresh the other top-bar and card values.
+        if (sizeDisplaySpan.textContent.trim() === '\u2026') {
+            // Backs off 3s → 30s and gives up after about 10 minutes: a slow
+            // mount on a cold start can take well over the first few tries.
+            let tries = 0;
+            const MAX_TRIES = 25;
+            const retry = () => {
+                if (++tries < MAX_TRIES) setTimeout(loadSize, Math.min(3000 * Math.pow(1.5, tries - 1), 30000));
+            };
+            const loadSize = () => {
+                fetch('/statistics/api/library_size')
+                    .then(r => r.ok ? r.json() : null)
+                    .then(d => {
+                        const v = d && d.total_library_size;
+                        if (v && v !== '\u2026') {
+                            sizeDisplaySpan.textContent = v;
+                            if (typeof window.refreshStats === 'function') window.refreshStats();
+                        } else {
+                            retry();
+                        }
+                    })
+                    .catch(retry);
+            };
+            loadSize();
+        }
     }
 
 });

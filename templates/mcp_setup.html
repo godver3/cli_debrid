@@ -42,11 +42,14 @@
   <div class="card">
     <strong>What the assistant can see</strong>
     <ul>
-      <li><code>get_overview</code>: version, running state, library mode, providers, connection health, item counts</li>
-      <li><code>list_settings</code> / <code>explain_setting</code>: every setting with its value and description</li>
+      <li><code>get_overview</code>: version, running state, library mode, providers (which debrid accounts get new releases and which are streaming only), NFO mode, connection health, item counts</li>
+      <li><code>list_settings</code> / <code>explain_setting</code>: every setting with its value and description, including NFO, Upgrade Hub and preset collections</li>
       <li><code>search_logs</code> / <code>recent_errors</code>: Clyde and built-in mount logs</li>
       <li><code>queue_status</code>, <code>mount_status</code>, <code>connection_health</code></li>
+      <li><code>external_scan_status</code>: files found on the mount that were added outside Clyde, and whether they imported</li>
       <li><code>lookup_item</code>: one movie or episode's state, release, file and related log lines</li>
+      <li><code>get_help</code>: the built-in help pages</li>
+      <li><code>prepare_issue_report</code>: everything a bug report needs (nothing is sent)</li>
     </ul>
   </div>
 </div>

@@ -13,7 +13,7 @@ import os
 import inspect
 from datetime import datetime, timedelta
 
-from debrid import get_debrid_providers
+from debrid import get_grab_providers
 from debrid.base import DebridProvider, TooManyDownloadsError, ProviderUnavailableError
 from debrid.common import (
     extract_hash_from_magnet,
@@ -90,7 +90,7 @@ class TorrentProcessor:
         Initialize the processor.
 
         debrid_provider is the primary provider (kept for backward compat).
-        The full ordered provider chain is loaded via get_debrid_providers().
+        The full ordered provider chain is loaded via get_grab_providers() (streaming-only fallbacks left out).
         """
         self.debrid_provider = debrid_provider
         self._last_direct_checks = {}
@@ -98,9 +98,10 @@ class TorrentProcessor:
 
     @property
     def _providers(self):
-        """Ordered list of providers: primary first, then fallbacks."""
+        """Ordered providers new releases may go to: primary first, then
+        fallbacks, minus streaming-only ones."""
         from utilities.acquisition_health import provider_available
-        return [p for p in get_debrid_providers() if provider_available(p)]
+        return [p for p in get_grab_providers() if provider_available(p)]
         
     def _should_direct_check(self, hash_value: str) -> bool:
         """

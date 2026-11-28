@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"sync"
 
 	"github.com/godver3/cli_debrid/engine/internal/nntp"
@@ -24,6 +25,17 @@ type Layout struct {
 	Size     int64  `json:"size"`
 	PartSize int64  `json:"part_size"`
 	YencName string `json:"yenc_name,omitempty"` // filename from the yEnc header
+}
+
+// Parts is how many articles the file needs: its size over the part size,
+// rounded up. It is the one source of truth for the file's real segment
+// count; an NZB may list more (trailing surplus) and Probe, Open and the
+// health sampling all go by this, never by the NZB's own count.
+func (l Layout) Parts() int {
+	if l.PartSize <= 0 || l.Size <= 0 {
+		return 0
+	}
+	return int((l.Size + l.PartSize - 1) / l.PartSize)
 }
 
 // ErrLayout means a segment did not sit where the layout says: the server
@@ -83,11 +95,68 @@ func Probe(ctx context.Context, f Fetcher, cache *Cache, file nzb.File) (Layout,
 	}
 	// The yEnc header is real data; the subject's "(1/N)" isn't (see
 	// nzb.File.Announced). A shorter NZB is missing its tail segments.
-	if want := int((l.Size + l.PartSize - 1) / l.PartSize); want != file.Total {
+	want := l.Parts()
+	switch {
+	case want == file.Total:
+	case want < file.Total && !file.HasPrefix(want):
+		// Surplus, but the needed range itself has a gap: not tolerated.
+		return Layout{}, fmt.Errorf("%w: %s: %d bytes in %d-byte parts needs %d segments, NZB lists %d (with gaps)",
+			ErrLayout, file.Name, l.Size, l.PartSize, want, file.Total)
+	case want < file.Total:
+		// Some posters list extra articles past the end of the file (often
+		// dead). They are not damage: only the first `want` are ever used.
+		// The first header alone can't tell surplus from a lying =ybegin
+		// size, so the last needed article must end exactly at that size.
+		if err := checkLastPart(ctx, f, cache, file, l, want); err != nil {
+			return Layout{}, err
+		}
+		slog.Info("nzb lists more segments than the file needs; ignoring the trailing surplus",
+			"file", file.Name, "needed", want, "listed", file.Total, "surplus", file.Total-want)
+	default:
 		return Layout{}, fmt.Errorf("%w: %s: %d bytes in %d-byte parts needs %d segments, NZB lists %d",
 			ErrLayout, file.Name, l.Size, l.PartSize, want, file.Total)
 	}
 	return l, nil
+}
+
+// checkLastPart proves a surplus layout: segment `want` must sit at
+// PartSize*(want-1) and end at the file's size. A missing article stays a
+// SegmentError (proof the file can't play); a header that disagrees is
+// ErrLayout, exactly as without surplus.
+func checkLastPart(ctx context.Context, f Fetcher, cache *Cache, file nzb.File, l Layout, want int) error {
+	if want <= 1 {
+		return nil // the first header already covers the whole file
+	}
+	var seg nzb.Segment
+	for _, s := range file.Segments {
+		if s.Number == want {
+			seg = s
+			break
+		}
+	}
+	if seg.ID == "" {
+		return &SegmentError{File: file.Name, Number: want, Err: ErrNotInNZB}
+	}
+	var meta nntp.Meta
+	_, err := cache.DoCtx(ctx, seg.ID, nntp.Read, func(ctx context.Context) ([]byte, error) {
+		d, m, err := f.Body(ctx, nntp.Read, seg.ID)
+		meta = m
+		return d, err
+	})
+	if err != nil {
+		return &SegmentError{File: file.Name, Number: want, ID: seg.ID, Err: err}
+	}
+	if meta.FileSize == 0 { // served from cache; refetch the header
+		if _, meta, err = f.Body(ctx, nntp.Read, seg.ID); err != nil {
+			return &SegmentError{File: file.Name, Number: want, ID: seg.ID, Err: err}
+		}
+	}
+	wantOff := l.PartSize * int64(want-1)
+	if meta.FileSize != l.Size || meta.Offset != wantOff || meta.Offset+meta.PartSize != l.Size {
+		return fmt.Errorf("%w: %s: NZB lists %d segments but segment %d's header (size=%d offset=%d part=%d) doesn't end the %d-byte file",
+			ErrLayout, file.Name, file.Total, want, meta.FileSize, meta.Offset, meta.PartSize, l.Size)
+	}
+	return nil
 }
 
 // File reads a posted file at any offset. Safe for concurrent use.
@@ -124,7 +193,11 @@ func (ra ReadAhead) segments(partSize int64) int {
 // Open wraps file with a known layout. A zero ReadAhead disables prefetch.
 func Open(f Fetcher, cache *Cache, file nzb.File, l Layout, ra ReadAhead) *File {
 	by := make(map[int]nzb.Segment, len(file.Segments))
+	need := l.Parts()
 	for _, s := range file.Segments {
+		if need > 0 && s.Number > need {
+			continue // trailing surplus: never fetched
+		}
 		by[s.Number] = s
 	}
 	r := &File{name: file.Name, fetch: f, cache: cache, layout: l, byNumber: by,

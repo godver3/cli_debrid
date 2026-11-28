@@ -1,7 +1,3 @@
-/* Theme-based visibility (tangerine theme is active when this file loads) */
-.tangerine-only { display: block !important; }
-.classic-only   { display: none  !important; }
-
 /* ─────────────────────────────────────────────────────────
    Design tokens — exact values from mockup
    ───────────────────────────────────────────────────────── */
@@ -206,12 +202,12 @@ input:checked + .toggle-slider:before { transform: translateX(15px); background:
     flex-wrap: unset !important;
     justify-content: unset !important;
 }
-/* Each KPI card — override classic statistics.css bleeding rules */
+/* Each KPI card */
 .stats-box.collection-stats .stat-item {
     background: var(--st-surf);
     border: 1px solid var(--st-border);
     border-radius: 8px;
-    padding: 13px 14px;
+    padding: 8px 12px;
     display: flex !important;
     align-items: center;
     gap: 11px;
@@ -231,14 +227,14 @@ input:checked + .toggle-slider:before { transform: translateX(15px); background:
 }
 /* Icon — default orange bg */
 .stats-box.collection-stats .stat-item .stat-icon {
-    width: 34px; height: 34px;
-    border-radius: 7px;
+    width: 26px; height: 26px;
+    border-radius: 6px;
     display: flex; align-items: center; justify-content: center;
-    font-size: 15px; flex-shrink: 0;
+    font-size: 13px; flex-shrink: 0;
     background: #e8601c18;
     color: var(--st-accent);
 }
-.stats-box.collection-stats .stat-item .stat-icon i { font-size: 15px; color: inherit; }
+.stats-box.collection-stats .stat-item .stat-icon i { font-size: 13px; color: inherit; }
 
 /* Active downloads KPI — icon + number color driven by status */
 .stats-box.collection-stats .stat-item.status-normal .stat-icon  { background: #14532d22 !important; color: var(--st-green) !important; }
@@ -259,8 +255,10 @@ input:checked + .toggle-slider:before { transform: translateX(15px); background:
     color: #fb923c;
 }
 
+/* Slim card: label and number on one line */
 .stats-box.collection-stats .stat-item .stat-text-content {
-    display: flex; flex-direction: column; gap: 3px; flex: 1;
+    display: flex; flex-direction: row; align-items: center;
+    justify-content: space-between; gap: 8px; flex: 1; min-width: 0;
 }
 .stats-box.collection-stats .stat-item .stat-label {
     font-size: 9px;
@@ -268,10 +266,13 @@ input:checked + .toggle-slider:before { transform: translateX(15px); background:
     letter-spacing: .7px;
     color: var(--st-text2);
     font-weight: 600;
-    margin-bottom: 3px;
+    margin-bottom: 0;
+    line-height: 1;
+    white-space: nowrap;
 }
 .stats-box.collection-stats .stat-item .stat-number {
-    font-size: 18px;
+    padding: 0; /* the global .error rule pads 20px when Active can't be read */
+    font-size: 15px;
     font-weight: 700;
     font-family: var(--st-mono);
     color: var(--st-text);
@@ -286,13 +287,6 @@ input:checked + .toggle-slider:before { transform: translateX(15px); background:
 /* Uptime value — accent */
 #kpi-uptime .stat-number { color: var(--st-accent) !important; }
 
-.stats-box.collection-stats .stat-item .stat-badges { display: none; }
-
-/* classic stat-item warning/critical labels */
-.stat-item p[data-label="Active Downloads"].warning,
-.stat-item p[data-label="Daily Usage"].warning  { color: #ffa500; }
-.stat-item p[data-label="Active Downloads"].critical,
-.stat-item p[data-label="Daily Usage"].critical { color: #e17c52; }
 
 /* ─────────────────────────────────────────────────────────
    Grid layouts — top-stats (3-col) and recently-added (3-col)
@@ -375,7 +369,7 @@ input:checked + .toggle-slider:before { transform: translateX(15px); background:
     font-weight: 400;
     color: var(--st-accent);
     text-decoration: none;
-    display: flex;
+    display: block;
     align-items: center;
     gap: 4px;
     flex-shrink: 0;
@@ -916,6 +910,8 @@ body[data-theme="tangerine"] .recently-upgraded-section .stats-poster-hover .fil
     #compact_toggle { display: none; }
     .stats-box.collection-stats .stat-items { grid-template-columns: repeat(2,1fr) !important; gap: .75rem !important; }
     .stats-box.collection-stats .stat-item .stat-number { font-size: .95rem; }
+    /* Two cards per row: label above the number so long numbers fit */
+    .stats-box.collection-stats .stat-item .stat-text-content { flex-direction: column; align-items: flex-start; gap: 2px; }
     .top-stats      { grid-template-columns: 1fr; }
     .recently-added { grid-template-columns: 1fr; }
     .stats-container { padding: 0 0.75rem; }

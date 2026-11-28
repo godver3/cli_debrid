@@ -489,9 +489,27 @@
         '<button class="rowbtn" data-act="delete">Delete</button></td></tr>';
     }).join('') : '<tr><td colspan="8" style="color:#888">No jobs' + (jobs.length ? ' match these filters' : ' yet') + '.</td></tr>';
     $('#qInfo').textContent = list.length ? (page * PER + 1) + '–' + Math.min(list.length, page * PER + PER) + ' of ' + list.length : '';
-    $('#qPages').innerHTML = pages > 1 ? [...Array(pages).keys()].map(i => '<button class="rowbtn" data-page="' + i + '"' + (i === page ? ' style="border-color:#e8601c"' : '') + '>' + (i + 1) + '</button>').join('') : '';
+    $('#qPages').innerHTML = pagerHTML(page, pages);
     $('#qAll').checked = false;
     updateSel();
+  }
+  // Prev, first, two either side of the current page, last, Next; "…" for
+  // the gaps. A full button per page ran to hundreds of buttons.
+  function pagerHTML(cur, pages) {
+    if (pages <= 1) return '';
+    const btn = (i, label, off) => '<button class="rowbtn" data-page="' + i + '"' + (off ? ' disabled' : '') +
+      (i === cur && label == null ? ' style="border-color:#e8601c" aria-current="page"' : '') + '>' + (label || i + 1) + '</button>';
+    const want = new Set([0, pages - 1]);
+    for (let i = cur - 2; i <= cur + 2; i++) if (i >= 0 && i < pages) want.add(i);
+    const nums = [...want].sort((a, b) => a - b);
+    let out = btn(cur - 1, '‹ Prev', cur === 0), last = -1;
+    nums.forEach(i => {
+      if (i - last > 2) out += '<span style="padding:0 4px;color:#888">…</span>';
+      else if (i - last === 2) out += btn(last + 1);
+      out += btn(i);
+      last = i;
+    });
+    return out + btn(cur + 1, 'Next ›', cur === pages - 1);
   }
   function updateSel() { $('#qDeleteSel').hidden = !document.querySelector('.qSel:checked'); }
   async function del(ids) {

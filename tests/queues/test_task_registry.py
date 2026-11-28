@@ -53,6 +53,18 @@ class DefaultsTests(unittest.TestCase):
         self.assertNotIn('task_plex_full_scan', on)
         self.assertNotIn('task_scan_mount_for_external_adds', on)
 
+    def test_external_adds_scan_follows_toggle_in_symlink_and_direct_mount(self):
+        for fm in ('Symlinked/Local', 'Plex'):
+            on = reg.default_enabled(_settings(**{'File Management': {
+                'file_collection_management': fm, 'scan_mount_for_external_adds': True}}))
+            self.assertIn('task_scan_mount_for_external_adds', on, fm)
+        off = reg.default_enabled(_settings(**{'File Management': {
+            'file_collection_management': 'Plex', 'scan_mount_for_external_adds': False}}))
+        self.assertNotIn('task_scan_mount_for_external_adds', off)
+        zurg = reg.default_enabled(_settings(**{'File Management': {
+            'file_collection_management': 'Zurg', 'scan_mount_for_external_adds': True}}))
+        self.assertNotIn('task_scan_mount_for_external_adds', zurg)
+
     def test_jellyfin_symlink_mode_skips_plex_collections(self):
         get = _settings(**{'File Management': {'file_collection_management': 'Symlinked/Local',
                                                'media_server_type': 'jellyfin'}})

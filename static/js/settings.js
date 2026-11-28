@@ -95,14 +95,19 @@ function togglePlexSection() {
         // Handle path fields
         const pathElements = [
             originalFilesPath?.closest('.settings-form-group'),
-            symlinkedFilesPath?.closest('.settings-form-group'),
-            // Symlink-mode only: the scan imports mount content by symlinking it
-            externalAddScan?.closest('.settings-form-group')
+            symlinkedFilesPath?.closest('.settings-form-group')
         ].filter(Boolean);
 
         pathElements.forEach(element => {
             element.style.display = isSymlinked ? 'block' : 'none';
         });
+
+        // Symlink mode imports mount content by symlinking it; Direct Mount asks
+        // the media server to scan it. Other modes don't use the scan.
+        const externalAddGroup = externalAddScan?.closest('.settings-form-group');
+        if (externalAddGroup) {
+            externalAddGroup.style.display = (isSymlinked || fileManagementSelect.value === 'Plex') ? 'block' : 'none';
+        }
 
         // Handle Plex symlink settings - only show if media server type is plex
         if (isSymlinked) {
@@ -531,7 +536,7 @@ export function updateSettings() {
     }
 
     // Remove any scrapers that are not actual scrapers
-    const validScraperTypes = ['Zilean', 'MediaFusion', 'AIOStreams', 'AIOStreams-API', 'Jackett', 'Torrentio', 'Nyaa', 'Prowlarr', 'OldNyaa', 'Newznab'];
+    const validScraperTypes = ['Zilean', 'MediaFusion', 'Comet', 'AIOStreams', 'AIOStreams-API', 'Jackett', 'Torrentio', 'Nyaa', 'Prowlarr', 'OldNyaa', 'Newznab'];
     if (settingsData['Scrapers'] && typeof settingsData['Scrapers'] === 'object') {
         Object.keys(settingsData['Scrapers']).forEach(key => {
             if (settingsData['Scrapers'][key] && settingsData['Scrapers'][key].type && !validScraperTypes.includes(settingsData['Scrapers'][key].type)) {

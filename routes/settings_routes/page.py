@@ -14,6 +14,15 @@ import threading
 from ._common import settings_bp
 from .versions import get_content_source_settings_route
 
+def _builtin_mount_debrid(config):
+    """The built-in mount serves the debrid files (shows Streaming only)."""
+    try:
+        from utilities import builtin_engine
+        return builtin_engine.selected(config)
+    except Exception:
+        return False
+
+
 def _preset_collection_groups():
     try:
         from database.plex_preset_collections import catalog_for_template
@@ -158,6 +167,7 @@ def index():
                                version_names=scraping_versions,
                                settings_schema=SETTINGS_SCHEMA,
                                preset_collection_groups=_preset_collection_groups(),
+                               builtin_mount_debrid=_builtin_mount_debrid(config),
                                is_windows=is_windows,
                                allow_windows_symlinks=allow_windows_symlinks_value,
                                environment_mode=environment_mode))

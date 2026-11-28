@@ -128,6 +128,7 @@ def _fetch_browse_page(url: str, api_key: str, cats: str, limit: int,
 def _parse_items(items: List[ET.Element], instance: str) -> List[Dict]:
     """Parse Newznab XML items into result dicts with PTT-parsed info."""
     from PTT import parse_title as ptt_parse
+    from scraper.functions.ptt_parser import progressive_resolution
     ns = {'newznab': 'http://www.newznab.com/DTD/2010/feeds/attributes/'}
     results = []
     for item in items:
@@ -187,7 +188,7 @@ def _parse_items(items: List[ET.Element], instance: str) -> List[Dict]:
             'source_instance': instance,
             'title': ptt.get('title', title),
             'year': ptt.get('year'),
-            'resolution': ptt.get('resolution'),
+            'resolution': progressive_resolution(ptt.get('resolution')),
             'source': ptt.get('quality'),
             'audio': ptt.get('audio', []),
             'codec': ptt.get('codec'),

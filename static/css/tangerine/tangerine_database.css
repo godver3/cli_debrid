@@ -658,16 +658,6 @@
     }
 
     /* ========================================
-       Tangerine-only / classic-only visibility
-       ======================================== */
-    body:not(.tangerine-theme) .tangerine-only {
-        display: none !important;
-    }
-    body.tangerine-theme .classic-only {
-        display: none !important;
-    }
-
-    /* ========================================
        Tangerine theme: page layout overhaul
        ======================================== */
 
@@ -931,7 +921,7 @@
         padding: 14px;
         margin-top: 0;
     }
-    /* Column selector header (tangerine-only) */
+    /* Column selector header */
     .db-col-sel-header {
         display: flex;
         align-items: center;

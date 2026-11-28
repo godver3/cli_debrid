@@ -1624,16 +1624,28 @@ class UsenetTasks:
         from utilities.external_mount_scan import scan_mount_for_external_adds
         try:
             summary = scan_mount_for_external_adds()
-            if summary.get('skipped_reason'):
-                logging.debug(f"[ExternalScan] Skipped: {summary['skipped_reason']}")
-            elif summary.get('baselined'):
-                logging.info(f"[ExternalScan] Baselined {summary['baselined']} existing mount entries.")
-            elif summary.get('imported') or summary.get('failed') or summary.get('rejected'):
-                logging.info(
-                    f"[ExternalScan] Scanned {summary.get('entries_seen', 0)} entries — "
-                    f"imported {summary.get('imported', 0)}, failed {summary.get('failed', 0)}, "
-                    f"skipped {summary.get('rejected', 0)} as previously rejected."
-                )
+            reason = summary.get('skipped_reason')
+            if reason:
+                # INFO the first time a reason shows up (a misconfiguration should
+                # be visible), DEBUG while it repeats every 15 minutes.
+                if reason != getattr(self, '_external_scan_last_skip', None):
+                    self._external_scan_last_skip = reason
+                    logging.info(f"[ExternalScan] Skipped: {reason}")
+                else:
+                    logging.debug(f"[ExternalScan] Skipped: {reason}")
+            else:
+                self._external_scan_last_skip = None
+                if summary.get('baselined'):
+                    logging.info(f"[ExternalScan] Baselined {summary['baselined']} existing mount entries.")
+                if any(summary.get(k) for k in ('imported', 'failed', 'rejected', 'ours', 'given_up')):
+                    logging.info(
+                        f"[ExternalScan] Scanned {summary.get('entries_seen', 0)} entries — "
+                        f"imported {summary.get('imported', 0)}, failed {summary.get('failed', 0)}, "
+                        f"pending {summary.get('pending', 0)}, "
+                        f"skipped {summary.get('rejected', 0)} as previously rejected, "
+                        f"{summary.get('ours', 0)} as cli_debrid's own, "
+                        f"given up {summary.get('given_up', 0)}."
+                    )
         except Exception as e:
             logging.error(f"[ExternalScan] Task error: {e}", exc_info=True)
 

@@ -1,35 +1,32 @@
 ### Connections Help
 
-This page displays the real-time connection status of various internal services and external integrations used by the application. It helps you quickly diagnose if a component or integration is experiencing connectivity issues.
+This page checks whether Clyde can reach the services it depends on. Use it to find out which one is down.
 
-**Page Features:**
+**Checking:**
 
-*   **Auto-Refresh:** The page automatically refreshes every 30 seconds to provide up-to-date status information.
-*   **Status Indicators:** Each connection card features a status indicator dot:
-    *   <span style="color: #81C784;">●</span> **Green:** Indicates a successful connection.
-    *   <span style="color: #e74c3c;">●</span> **Red:** Indicates a disconnection or an error.
+*   The checks run when you open the page. Cards show **Checking** until their result arrives, then **Online** or **Offline**.
+*   Click **Refresh All** to run every check again. The page does not refresh itself. The "checked ... ago" text next to the count only shows how old the last check is.
+*   If a check fails or times out, the card shows **Offline**.
 
-**Connection Sections:**
+**Top of the page:**
 
-The connections are grouped into logical sections:
+*   **Total**, **Online** and **Offline** counts.
+*   **All / Online / Offline** buttons show only the cards with that status.
+*   **Filter connections...** searches by name. While you use a button or the search box, the cards show in one list without section headings.
 
-1.  **System Connections:**
-    *   Shows the status of core internal components and essential external services.
-    *   Cards include:
-        *   `cli_battery`: The core background processing service. (Always shown)
-        *   `Plex`: Connection to your Plex Media Server. (Only shown if Plex integration is configured)
-        *   `Mounted Files`: Status check for configured mounted network drives/paths. (Only shown if configured)
-        *   `Phalanx DB`: Connection to the distributed hash checking service. (Only shown if configured and enabled)
+**Sections:**
 
-2.  **Scraper Connections:**
-    *   This section appears if you have configured any scrapers (e.g., Jackett, Torrentio, Nyaa).
-    *   Displays a card for each configured scraper, showing its name and connection status.
+Each section title has a count such as `3/4`, meaning 3 of 4 are online. The count turns red when anything in the section is offline.
 
-3.  **Content Source Connections:**
-    *   This section appears if you have configured any content sources (e.g., Trakt, Overseerr, MDBList, Plex Watchlists).
-    *   Displays a card for each configured source, showing its name and connection status.
+1.  **System Connections:** `cli_battery` is always shown. The others appear when they apply to your setup: Plex, Jellyfin/Emby, Silo, Mounted Files, Phalanx DB, TVDB, TMDB, Scrob, Trakt, and cli_mount (or the Usenet provider name).
+2.  **Torrent Scrapers:** one card per scraper you have enabled in Settings → Scrapers (Torrentio, Comet, Jackett, Prowlarr, Zilean, Nyaa, MediaFusion, AIOStreams and so on).
+3.  **Usenet Indexers:** one card per Newznab indexer. They have their own section because they show extra lines:
+    *   **Expires** or **renews** date of your subscription, when the indexer reports it. It turns orange within 14 days of the end and red once it has passed.
+    *   **Usage**, for example `API 123/5000 · Grabs 4/100 today`. It counts the searches and NZB grabs Clyde has made against that indexer, with the limit if you have set one. Some indexers count over the last 24 hours instead of per day.
+4.  **Content Source Connections:** one card per content source you have set up (Trakt, MDBList, Plex Watchlist, Overseerr and so on).
+
+A scraper card is named after the instance (for example `NZBGeek_1`) with its type underneath (for example `Newznab`).
 
 **Connection Issues:**
 
-*   If any connections are currently experiencing errors (i.e., their status indicator is red), an additional section titled "Connection Issues" will appear at the bottom.
-*   This section lists each failing connection by name and provides details about the specific `Status` or `Error` message reported. This is useful for troubleshooting.
+*   If anything is offline, a **Connection Issues** box appears at the bottom with the name of each one. Open the matching settings page and check the address, key or login, or check the service itself.

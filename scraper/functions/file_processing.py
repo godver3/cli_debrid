@@ -378,9 +378,9 @@ def get_resolution_rank(resolution: str) -> int:
         return 4
     elif resolution in ['1080p', '1080i']:
         return 3
-    elif resolution == '720p':
+    elif resolution in ['720p', '720i']:
         return 2
-    elif resolution in ['576p', '480p', 'sd']:
+    elif resolution in ['576p', '576i', '480p', '480i', 'sd']:
         return 1
     return 0  # For unknown resolutions
 

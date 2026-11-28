@@ -1,360 +1,6 @@
 {% extends "base.html" %}
 
 {% block head %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_database.css') }}">
-<style>
-/* Prevent blue flash on filter buttons before tangerine CSS loads */
-#filter-sort .btn.btn-secondary,
-#filter-sort .btn-secondary {
-    background: transparent !important;
-    border: 1px solid #3d3d3d !important;
-    color: #aaa !important;
-    padding: 4px 11px !important;
-    border-radius: 4px !important;
-    font-size: 11px !important;
-    font-weight: 500 !important;
-    cursor: pointer !important;
-    box-shadow: none !important;
-    line-height: 1.4 !important;
-}
-</style>
-{% endblock %}
-{% block title %}Database{% endblock %}
-{% block content %}
-<div class="db-page-wrapper">
-<!-- Tangerine theme: top bar — stat boxes left, view buttons right -->
-<div class="db-topbar tangerine-only">
-    <div class="db-stat-boxes">
-        <div class="db-stat-box">
-            <span class="db-stat-val">{{ total_count | default(0) }}</span>
-            <span class="db-stat-label">Total Items</span>
-        </div>
-        <div class="db-stat-box">
-            <span class="db-stat-val">{{ unique_result_count | default(0) }}</span>
-            <span class="db-stat-label">Unique Titles</span>
-        </div>
-        <div class="db-stat-box">
-            <span class="db-stat-val">{{ total_pages | default(1) }}</span>
-            <span class="db-stat-label">Pages</span>
-        </div>
-        <div class="db-stat-box">
-            <select id="db-per-page-select" class="db-per-page-select" title="Items per page">
-                {% for n in [100, 250, 500, 1000, 2000, 5000] %}
-                <option value="{{ n }}" {% if per_page == n %}selected{% endif %}>{{ n }}</option>
-                {% endfor %}
-            </select>
-            <span class="db-stat-label">Per Page</span>
-        </div>
-    </div>
-    <div class="db-view-controls">
-        <button class="db-view-btn" id="db-columns-btn" title="Select columns to display">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="3" width="4" height="10" rx="1"/><rect x="6" y="3" width="4" height="10" rx="1"/><rect x="11" y="3" width="4" height="10" rx="1"/></svg>
-            Columns
-        </button>
-        <button class="db-view-btn" id="db-reset-cols-btn" title="Reset column widths">
-            <svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M12 16c1.671 0 3-1.331 3-3s-1.329-3-3-3-3 1.331-3 3 1.329 3 3 3z"/><path d="M20.817 11.186a8.94 8.94 0 0 0-1.355-3.219 9.053 9.053 0 0 0-2.43-2.43 8.95 8.95 0 0 0-3.219-1.355 9.028 9.028 0 0 0-1.838-.18V2L8 5l3.975 3V6.002c.484-.002.968.044 1.435.14a6.961 6.961 0 0 1 2.502 1.053 7.005 7.005 0 0 1 1.892 1.892A6.967 6.967 0 0 1 19 13a7.032 7.032 0 0 1-.55 2.725 7.11 7.11 0 0 1-.644 1.188 7.2 7.2 0 0 1-.858 1.039 7.028 7.028 0 0 1-3.536 1.907 7.13 7.13 0 0 1-2.822 0 6.961 6.961 0 0 1-2.503-1.054 7.002 7.002 0 0 1-1.89-1.89A6.996 6.996 0 0 1 5 13H3a9.02 9.02 0 0 0 1.539 5.034 9.096 9.096 0 0 0 2.428 2.428A8.95 8.95 0 0 0 12 22a9.09 9.09 0 0 0 1.814-.183 9.014 9.014 0 0 0 3.218-1.355 8.886 8.886 0 0 0 1.331-1.099 9.228 9.228 0 0 0 1.1-1.332A8.952 8.952 0 0 0 21 13a9.09 9.09 0 0 0-.183-1.814z"/></svg>
-            Reset Cols
-        </button>
-        <button class="db-view-btn db-view-btn-accent" id="db-filter-btn" title="Filter and sort">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12M4 8h8M6 12h4"/></svg>
-            Filter &amp; Sort
-        </button>
-    </div>
-</div>
-<div class="stats-panel">
-    <button class="stats-toggle" title="Toggle Statistics">
-        <i class="fas fa-chart-bar"></i>
-    </button>
-    <div class="stats-content">
-        <div class="stats-box collection-stats" id="collection_stats">
-            <h3>Collection Stats</h3>
-            <div class="stat-items">
-                <div class="stat-item">
-                    <p data-label="Total Movies">{{ stats.total_movies }}</p>
-                </div>
-                <div class="stat-item">
-                    <p data-label="Total Shows">{{ stats.total_shows }}</p>
-                </div>
-                <div class="stat-item">
-                    <p data-label="Total Episodes">{{ stats.total_episodes }}</p>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-<div class="container">
-    <h2>Database Content</h2>
-    <div id="bulk-actions" class="bulk-actions">
-        <div class="select-all-container">
-            <button id="select-all" class="select-all-btn">Select All</button>
-            <button id="bulk-delete" class="bulk-action-btn" disabled>Delete Selected</button>
-            <button id="bulk-rescrape" class="bulk-action-btn" disabled>Rescrape Selected</button>
-            <label for="bulk-move-queue" class="sr-only">Move Selected to Queue</label>
-            <select id="bulk-move-queue" name="bulk_move_queue" class="bulk-action-select" disabled>
-                <option value="">Move Selected to Queue...</option>
-                <option value="Adding">Adding</option>
-                <option value="Blacklisted">Blacklisted</option>
-                <option value="Checking">Checking</option>
-                <option value="Final_Check">Final Scrape</option>
-                <option value="Pending Uncached">Pending Uncached</option>
-                <option value="Scraping">Scraping</option>
-                <option value="Sleeping">Sleeping</option>
-                <option value="Unreleased">Unreleased</option>
-                <option value="Upgrading">Upgrading</option>
-                <option value="Wanted">Wanted</option>
-                <option value="ghostlist">Ghostlist</option>
-            </select>
-            <label for="bulk-change-version" class="sr-only">Change Selected Version</label>
-            <select id="bulk-change-version" name="bulk_change_version" class="bulk-action-select" disabled>
-                <option value="">Change Selected Version...</option>
-            </select>
-            <label for="bulk-assign-tags" class="sr-only">Tags</label>
-            <select id="bulk-assign-tags" name="bulk_assign_tags" class="bulk-action-select" disabled>
-                <option value="">Tags...</option>
-            </select>
-            <button id="bulk-early-release" class="bulk-action-btn" disabled>Early Release</button>
-            <button id="bulk-force-priority" class="bulk-action-btn" disabled>Force Priority</button>
-            <!-- NEW: Manual resync for selected items -->
-            <button id="bulk-resync" class="bulk-action-btn" disabled>Resync Selected</button>
-            <!-- NEW: Manual symlink verification for selected items -->
-            <button id="bulk-verify-symlinks" class="bulk-action-btn" disabled>Verify Symlinks</button>
-        </div>
-    </div>
-    <div id="column-selector-wrapper">
-        <button id="toggle-column-selector" class="toggle-button">Select Columns to Display</button>
-        <div id="column-selector" class="hidden">
-            <!-- Tangerine: header row with title + Hide button -->
-            <div class="db-col-sel-header tangerine-only">
-                <span class="db-col-sel-title">Column Selector</span>
-                <button class="db-view-btn" id="db-col-sel-hide-btn">Hide</button>
-            </div>
-            <div class="column-selector-container">
-                <div class="column-list">
-                    <label for="available-columns"><h4>Available Columns</h4></label>
-                    <select id="available-columns" name="available_columns" multiple>
-                        {% for column in all_columns %}
-                            {% if column not in selected_columns %}
-                                <option value="{{ column }}">{{ column }}</option>
-                            {% endif %}
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="column-buttons">
-                    <button id="add-column">&gt;</button>
-                    <button id="remove-column">&lt;</button>
-                    <button id="move-up" title="Move selected column up">▲</button>
-                    <button id="move-down" title="Move selected column down">▼</button>
-                </div>
-                <div class="column-list">
-                    <label for="selected-columns"><h4>Selected Columns</h4></label>
-                    <select id="selected-columns" name="selected_columns" multiple>
-                        {% for column in selected_columns %}
-                            <option value="{{ column }}">{{ column }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-            </div>
-            <button id="update-columns">Update View</button>
-        </div>
-    </div>
-    <div class="db-filter-presets-row">
-    <div id="filter-sort">
-        <div class="db-filter-header tangerine-only">
-            <span class="db-filter-title">Filter &amp; Sort</span>
-            <button class="db-view-btn" id="db-filter-collapse-btn">Collapse</button>
-        </div>
-        <h3>Filter and Sort:</h3>
-        <div class="result-count">
-            Showing {{ result_count }} results
-            <span class="unique-count">(Unique: {{ unique_result_count }})</span>
-            | Total pages: {{ total_pages }} | Total items: {{ total_count }}
-        </div>
-        <form id="filter-form" class="mb-3">
-
-            
-            <div class="filter-section">
-                <button type="button" id="add-filter" class="btn btn-secondary">Add Filter</button>
-                <button type="button" class="btn btn-secondary quick-filter" data-column="title">Title</button>
-                <button type="button" class="btn btn-secondary quick-filter" data-column="state">State</button>
-                <button type="button" class="btn btn-secondary quick-filter" data-column="version">Version</button>
-                <button type="button" class="btn btn-secondary quick-filter" data-column="imdb_id">IMDB ID</button>
-                <button type="button" class="btn btn-secondary quick-filter" data-column="type">Type</button>
-            </div>
-            <div id="filters-container">
-                <!-- Filter rows will be added here dynamically -->
-            </div>
-
-            <div class="sort-section">
-                <div class="sort-container">
-                    <label for="sort-column">Sort Column:</label>
-                    <select id="sort-column" name="sort_column">
-                        <option value="">None</option>
-                        {# Populate with all_columns from backend which now includes 'size' #}
-                        {% for column in all_columns %} 
-                        <option value="{{ column }}" {% if column == sort_column %}selected{% endif %}>{{ column }}</option>
-                        {% endfor %}
-                    </select>
-                    <label for="sort-order">Sort Order:</label>
-                    <select id="sort-order" name="sort_order">
-                        <option value="asc" {% if sort_order == 'asc' %}selected{% endif %}>Ascending</option>
-                        <option value="desc" {% if sort_order == 'desc' %}selected{% endif %}>Descending</option>
-                    </select>
-                </div>
-            </div>
-
-            <!-- Add Filter Logic Selection -->
-            <div class="filter-logic-section">
-                <label>Filter Logic:</label>
-                <input type="radio" id="filter-logic-and" name="filter_logic" value="AND" {% if filter_logic == 'AND' %}checked{% endif %}>
-                <label for="filter-logic-and">AND (All filters match)</label>
-                <input type="radio" id="filter-logic-or" name="filter_logic" value="OR" {% if filter_logic == 'OR' %}checked{% endif %}>
-                <label for="filter-logic-or">OR (Any filter matches)</label>
-            </div>
-            <!-- End Filter Logic Selection -->
-
-            <div class="button-section">
-                <div class="filter-buttons">
-                    <button type="submit">Apply</button>
-                    <button type="button" id="clear-filter-sort"><span class="tangerine-only">Clear all</span><span class="classic-only">Clear Filter &amp; Sort</span></button>
-                    <button type="button" class="db-save-preset-btn tangerine-only">Save Preset</button>
-                </div>
-            </div>
-        </form>
-    </div>
-    <div id="db-presets-panel" class="tangerine-only">
-        <div class="db-filter-header">
-            <span class="db-filter-title">Saved Presets</span>
-        </div>
-        <div id="db-presets-list">
-            <div class="db-presets-empty">No presets saved yet</div>
-        </div>
-    </div>
-    </div><!-- /.db-filter-presets-row -->
-    <div class="content-type-filter-row tangerine-only">
-        <div class="content-type-filter">
-            <a href="#" data-content-type="all" class="content-type-link {% if content_type == 'all' %}active{% endif %}">All</a>
-            <a href="#" data-content-type="movie" class="content-type-link {% if content_type == 'movie' %}active{% endif %}">Movies</a>
-            <a href="#" data-content-type="episode" class="content-type-link {% if content_type == 'episode' %}active{% endif %}">Episodes</a>
-        </div>
-        <div class="pagination">
-            {% if alphabet %}
-                <a href="#" data-letter="" class="pagination-link {% if current_letter == '' %}active{% endif %}">All</a>
-                <a href="#" data-letter="#" class="pagination-link {% if current_letter == '#' %}active{% endif %}">#</a>
-                {% for letter in alphabet %}
-                <a href="#" data-letter="{{ letter }}" class="pagination-link {% if letter == current_letter %}active{% endif %}">{{ letter }}</a>
-                {% endfor %}
-            {% endif %}
-        </div>
-    </div>
-    <div class="content-type-filter classic-only">
-        <a href="#" data-content-type="all" class="content-type-link {% if content_type == 'all' %}active{% endif %}">All</a>
-        <a href="#" data-content-type="movie" class="content-type-link {% if content_type == 'movie' %}active{% endif %}">Movies</a>
-        <a href="#" data-content-type="episode" class="content-type-link {% if content_type == 'episode' %}active{% endif %}">Episodes</a>
-    </div>
-    <div class="pagination classic-only">
-        {% if alphabet %}
-            <a href="#" data-letter="" class="pagination-link {% if current_letter == '' %}active{% endif %}">All</a>
-            <a href="#" data-letter="#" class="pagination-link {% if current_letter == '#' %}active{% endif %}">#</a>
-            {% for letter in alphabet %}
-            <a href="#" data-letter="{{ letter }}" class="pagination-link {% if letter == current_letter %}active{% endif %}">{{ letter }}</a>
-            {% endfor %}
-        {% else %}
-            <p>No pagination data available</p>
-        {% endif %}
-    </div>
-    {# --- START Numerical Pagination --- #}
-    <div class="numerical-pagination" id="numerical-pagination">
-        {# Pagination controls will be rendered here by JavaScript #}
-    </div>
-    {# --- END Numerical Pagination --- #}
-</div>
-<div class="db-table-hint tangerine-only">
-    <span>↔ Drag column borders to resize &nbsp;·&nbsp; "Reset Cols" restores defaults &nbsp;·&nbsp; Click column headers to sort</span>
-    <span class="db-showing-count" id="db-showing-count">Showing {{ result_count }} of {{ total_count }} results</span>
-</div>
-<div class="table-container">
-    {% if items %}
-        <table>
-            <thead>
-                <tr>
-                    <th>Select</th>
-                    <th class="db-col-rownum">#</th>
-                    <th class="classic-only">Delete</th>
-                    <th class="classic-only">Rescrape</th>
-                    <th class="tangerine-only">Actions</th>
-                    {% for column in selected_columns %}
-                        {% set label = 'S#' if column == 'season_number' else 'E#' if column == 'episode_number' else 'Size (GB)' if column == 'size' else column %}
-                        <th data-col="{{ column }}"{% if column == sort_column %} class="db-sort-active"{% endif %}>{{ label }}<span class="db-sort-icon">{% if column == sort_column %}{% if sort_order == 'desc' %}▼{% else %}▲{% endif %}{% else %}⇅{% endif %}</span></th>
-                    {% endfor %}
-                </tr>
-            </thead>
-            <tbody>
-                {% for item in items %}
-                    <tr data-page="{{ current_page | default(1) }}">
-                        <td><input type="checkbox" id="item-select-{{ item['id'] }}" name="item_select" class="item-select" data-item-id="{{ item['id'] }}" aria-label="Select item {{ item['id'] }}"></td>
-                        <td class="db-row-num">{{ loop.index }}</td>
-                        {# Classic: separate Delete / Rescrape columns #}
-                        <td class="classic-only">
-                            <button class="delete-item" data-item-id="{{ item['id'] }}">X</button>
-                        </td>
-                        <td class="classic-only">
-                            <button class="rescrape-item" data-item-id="{{ item['id'] }}">↻</button>
-                        </td>
-                        {# Tangerine: single Actions column with icon buttons #}
-                        <td class="tangerine-only">
-                            <span style="display:flex;gap:4px;align-items:center">
-                                <button class="db-action-btn db-action-btn-delete delete-item" data-item-id="{{ item['id'] }}" title="Delete">
-                                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                                </button>
-                                <button class="db-action-btn db-action-btn-refresh rescrape-item" data-item-id="{{ item['id'] }}" title="Rescrape">
-                                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
-                                </button>
-                                <span class="db-quick-slot" data-item-id="{{ item['id'] }}" data-type="{{ item['type'] or '' }}" data-tmdb="{{ item['tmdb_id'] or '' }}" data-imdb="{{ item['imdb_id'] or '' }}"></span>
-                            </span>
-                        </td>
-                        {% for column in selected_columns %}
-                            {% if column == 'size' %}
-                                <td class="truncate" data-full-content="{{ '%.2f'|format(item['size_gb']) if item['size_gb'] is defined and item['size_gb'] is not none else 'N/A' }}">{{ '%.2f'|format(item['size_gb']) if item['size_gb'] is defined and item['size_gb'] is not none else 'N/A' }}</td>
-                            {% elif column == 'source' %}
-                                <td>{% if item['source'] %}<span class="db-src {{ 'db-src-usenet' if item['source'] == 'Usenet' else 'db-src-debrid' }}">{{ item['source'] }}</span>{% endif %}</td>
-                            {% elif column == 'imdb_id' %}
-                                <td class="truncate" data-full-content="{{ item[column] }}"><span class="db-imdb-link classic-plain">{{ item[column] }}</span></td>
-                            {% elif column == 'state' %}
-                                {% set state_val = item[column] | string %}
-                                {% set state_val = 'Final Scrape' if state_val == 'Final_Check' else state_val %}
-                                {% set state_val = 'Ghostlisted' if state_val == 'ghostlisted' else state_val %}
-                                {% set state_val = 'All Versions Blacklisted' if state_val == 'all_blacklisted' else state_val %}
-                                {% set state_cls = {
-                                    'Collected': 'db-pill db-pill-collected',
-                                    'Wanted': 'db-pill db-pill-wanted',
-                                    'Scraping': 'db-pill db-pill-scraping',
-                                    'Upgrading': 'db-pill db-pill-upgrading',
-                                    'Blacklisted': 'db-pill db-pill-blacklisted',
-                                    'Checking': 'db-pill db-pill-checking',
-                                    'Sleeping': 'db-pill db-pill-sleeping',
-                                    'Unreleased': 'db-pill db-pill-unreleased'
-                                } %}
-                                <td class="truncate" data-full-content="{{ state_val }}"><span class="tangerine-only {{ state_cls.get(state_val, 'db-pill db-pill-other') }}">{{ state_val }}</span><span class="classic-only">{{ state_val }}</span></td>
-                            {% elif column == 'type' %}
-                                {% set type_cls = 'db-pill db-pill-movie' if item[column] == 'movie' else 'db-pill db-pill-episode' %}
-                                <td class="truncate" data-full-content="{{ item[column] }}"><span class="tangerine-only {{ type_cls }}">{{ item[column] }}</span><span class="classic-only">{{ item[column] }}</span></td>
-                            {% elif column == 'version' %}
-                                <td class="truncate" data-full-content="{{ item[column] }}"><span class="tangerine-only db-pill-version">{{ item[column] }}</span><span class="classic-only">{{ item[column] }}</span></td>
-                            {% else %}
-                                <td class="truncate{% if column == 'title' %} db-col-title{% endif %}" data-full-content="{{ item[column] }}">{{ item[column] }}</td>
-                            {% endif %}
-                        {% endfor %}
-                    </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    {% else %}
-        <p>No items found in the database.</p>
-    {% endif %}
-</div>
-
-<script src="{{ url_for('static', filename='js/loading.js') }}"></script>
-
 <script>
 // Early redirect script to load page with localStorage settings
 (function() {
@@ -368,7 +14,9 @@
         LETTER: 'db_current_letter',
         PER_PAGE: 'db_per_page'
     };
-    const VALID_PER_PAGE = [100, 250, 500, 1000, 2000, 5000];
+    const VALID_PER_PAGE = [100, 250, 500, 1000];
+    // A bare visit gets an empty shell from the server: it must always redirect.
+    const SHELL = {{ 'true' if shell else 'false' }};
     const DEFAULTS = {
         SORT_COLUMN: 'id',
         SORT_ORDER: 'asc',
@@ -383,14 +31,21 @@
         return urlParams.get(param);
     }
 
-    const savedFiltersJSON = localStorage.getItem(STORAGE_KEYS.FILTERS);
-    const savedSortColumn = localStorage.getItem(STORAGE_KEYS.SORT_COLUMN);
-    const savedSortOrder = localStorage.getItem(STORAGE_KEYS.SORT_ORDER);
-    const savedColumnsJSON = localStorage.getItem(STORAGE_KEYS.SELECTED_COLUMNS);
-    const savedContentType = localStorage.getItem(STORAGE_KEYS.CONTENT_TYPE);
-    const savedFilterLogic = localStorage.getItem(STORAGE_KEYS.FILTER_LOGIC);
-    const savedLetter = localStorage.getItem(STORAGE_KEYS.LETTER);
-    const savedPerPage = localStorage.getItem(STORAGE_KEYS.PER_PAGE);
+    // Storage can throw (site data blocked, some private modes). A shell page
+    // must still redirect, so every read falls back to the defaults.
+    function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+    function ssGet(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }
+    function ssSet(k, v) { try { sessionStorage.setItem(k, v); } catch (e) { /* ignore */ } }
+    function ssDel(k) { try { sessionStorage.removeItem(k); } catch (e) { /* ignore */ } }
+
+    const savedFiltersJSON = lsGet(STORAGE_KEYS.FILTERS);
+    const savedSortColumn = lsGet(STORAGE_KEYS.SORT_COLUMN);
+    const savedSortOrder = lsGet(STORAGE_KEYS.SORT_ORDER);
+    const savedColumnsJSON = lsGet(STORAGE_KEYS.SELECTED_COLUMNS);
+    const savedContentType = lsGet(STORAGE_KEYS.CONTENT_TYPE);
+    const savedFilterLogic = lsGet(STORAGE_KEYS.FILTER_LOGIC);
+    const savedLetter = lsGet(STORAGE_KEYS.LETTER);
+    const savedPerPage = lsGet(STORAGE_KEYS.PER_PAGE);
 
     const queryParams = new URLSearchParams();
     let needsRedirect = false;
@@ -451,29 +106,330 @@
 
     // Per Page
     const perPageRaw = parseInt(savedPerPage, 10);
-    const perPage = VALID_PER_PAGE.includes(perPageRaw) ? perPageRaw : DEFAULTS.PER_PAGE;
+    // 2000 and 5000 were options once: keep the biggest page that is still offered.
+    const perPage = perPageRaw > 1000 ? 1000 : (VALID_PER_PAGE.includes(perPageRaw) ? perPageRaw : DEFAULTS.PER_PAGE);
     if (getQueryParam('per_page') !== String(perPage)) needsRedirect = true;
     queryParams.set('per_page', perPage);
 
     const redirectFlag = 'database_redirect_marker';
-    const flagIsSet = sessionStorage.getItem(redirectFlag) === 'true';
+    const flagIsSet = ssGet(redirectFlag) === 'true';
 
     if (getQueryParam('ajax') === '1' || flagIsSet) {
         needsRedirect = false;
     }
+    if (SHELL) needsRedirect = true;
 
     if (needsRedirect) {
-        sessionStorage.setItem(redirectFlag, 'true');
+        ssSet(redirectFlag, 'true');
         const baseUrl = "{{ url_for('database.index') }}";
         const newUrl = queryParams.toString() ? `${baseUrl}?${queryParams.toString()}` : baseUrl;
         window.location.replace(newUrl);
     } else {
         if (flagIsSet) {
-            sessionStorage.removeItem(redirectFlag);
+            ssDel(redirectFlag);
         }
     }
 })();
 </script>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_database.css') }}">
+{% endblock %}
+{% block title %}Database{% endblock %}
+{% macro quick_buttons(id) -%}
+<span class="db-quick"><button class="db-action-btn" data-qa="open" data-item-id="{{ id }}" title="Open in Library"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><use href="#dbi-open"/></svg></button><button class="db-action-btn" data-qa="wanted" data-item-id="{{ id }}" title="Move to Wanted"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><use href="#dbi-wanted"/></svg></button><button class="db-action-btn db-action-btn-delete" data-qa="blacklist" data-item-id="{{ id }}" title="Blacklist"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><use href="#dbi-blacklist"/></svg></button></span>
+{%- endmacro %}
+{% block content %}
+{% if shell %}
+<div class="db-page-wrapper"><p class="db-shell-loading">Loading…</p></div>
+{% else %}
+<div class="db-page-wrapper">
+{# Row icons, defined once: every row references them with <use>. #}
+<svg class="db-icon-sprite" width="0" height="0" style="position:absolute" aria-hidden="true"><symbol id="dbi-trash" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></symbol><symbol id="dbi-refresh" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></symbol><symbol id="dbi-open" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></symbol><symbol id="dbi-wanted" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></symbol><symbol id="dbi-blacklist" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/></symbol></svg>
+
+<!-- Tangerine theme: top bar — stat boxes left, view buttons right -->
+<div class="db-topbar">
+    <div class="db-stat-boxes">
+        <div class="db-stat-box">
+            <span class="db-stat-val">{{ total_count | default(0) }}</span>
+            <span class="db-stat-label">Total Items</span>
+        </div>
+        <div class="db-stat-box">
+            <span class="db-stat-val">{{ unique_result_count | default(0) }}</span>
+            <span class="db-stat-label" title="Versions of the same movie or episode count once">Unique Items</span>
+        </div>
+        <div class="db-stat-box">
+            <span class="db-stat-val">{{ total_pages | default(1) }}</span>
+            <span class="db-stat-label">Pages</span>
+        </div>
+        <div class="db-stat-box">
+            <select id="db-per-page-select" class="db-per-page-select" title="Items per page">
+                {% for n in [100, 250, 500, 1000] %}
+                <option value="{{ n }}" {% if per_page == n %}selected{% endif %}>{{ n }}</option>
+                {% endfor %}
+            </select>
+            <span class="db-stat-label">Per Page</span>
+        </div>
+    </div>
+    <div class="db-view-controls">
+        <button class="db-view-btn" id="db-columns-btn" title="Select columns to display">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="3" width="4" height="10" rx="1"/><rect x="6" y="3" width="4" height="10" rx="1"/><rect x="11" y="3" width="4" height="10" rx="1"/></svg>
+            Columns
+        </button>
+        <button class="db-view-btn" id="db-reset-cols-btn" title="Reset column widths">
+            <svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M12 16c1.671 0 3-1.331 3-3s-1.329-3-3-3-3 1.331-3 3 1.329 3 3 3z"/><path d="M20.817 11.186a8.94 8.94 0 0 0-1.355-3.219 9.053 9.053 0 0 0-2.43-2.43 8.95 8.95 0 0 0-3.219-1.355 9.028 9.028 0 0 0-1.838-.18V2L8 5l3.975 3V6.002c.484-.002.968.044 1.435.14a6.961 6.961 0 0 1 2.502 1.053 7.005 7.005 0 0 1 1.892 1.892A6.967 6.967 0 0 1 19 13a7.032 7.032 0 0 1-.55 2.725 7.11 7.11 0 0 1-.644 1.188 7.2 7.2 0 0 1-.858 1.039 7.028 7.028 0 0 1-3.536 1.907 7.13 7.13 0 0 1-2.822 0 6.961 6.961 0 0 1-2.503-1.054 7.002 7.002 0 0 1-1.89-1.89A6.996 6.996 0 0 1 5 13H3a9.02 9.02 0 0 0 1.539 5.034 9.096 9.096 0 0 0 2.428 2.428A8.95 8.95 0 0 0 12 22a9.09 9.09 0 0 0 1.814-.183 9.014 9.014 0 0 0 3.218-1.355 8.886 8.886 0 0 0 1.331-1.099 9.228 9.228 0 0 0 1.1-1.332A8.952 8.952 0 0 0 21 13a9.09 9.09 0 0 0-.183-1.814z"/></svg>
+            Reset Cols
+        </button>
+        <button class="db-view-btn db-view-btn-accent" id="db-filter-btn" title="Filter and sort">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12M4 8h8M6 12h4"/></svg>
+            Filter &amp; Sort
+        </button>
+    </div>
+</div>
+<div class="stats-panel">
+    <button class="stats-toggle" title="Toggle Statistics">
+        <i class="fas fa-chart-bar"></i>
+    </button>
+    <div class="stats-content">
+        <div class="stats-box collection-stats" id="collection_stats">
+            <h3>Collection Stats</h3>
+            <div class="stat-items">
+                <div class="stat-item">
+                    <p data-label="Total Movies">{{ stats.total_movies }}</p>
+                </div>
+                <div class="stat-item">
+                    <p data-label="Total Shows">{{ stats.total_shows }}</p>
+                </div>
+                <div class="stat-item">
+                    <p data-label="Total Episodes">{{ stats.total_episodes }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="container">
+    <h2>Database Content</h2>
+    <div id="bulk-actions" class="bulk-actions">
+        <div class="select-all-container">
+            <button id="select-all" class="select-all-btn">Select All</button>
+            <span id="db-select-info" class="db-select-info" hidden></span>
+            <button id="bulk-delete" class="bulk-action-btn" disabled>Delete Selected</button>
+            <button id="bulk-rescrape" class="bulk-action-btn" disabled>Rescrape Selected</button>
+            <label for="bulk-move-queue" class="sr-only">Move Selected to Queue</label>
+            <select id="bulk-move-queue" name="bulk_move_queue" class="bulk-action-select" disabled>
+                <option value="">Move Selected to Queue...</option>
+                <option value="Adding">Adding</option>
+                <option value="Blacklisted">Blacklisted</option>
+                <option value="Checking">Checking</option>
+                <option value="Final_Check">Final Scrape</option>
+                <option value="Pending Uncached">Pending Uncached</option>
+                <option value="Scraping">Scraping</option>
+                <option value="Sleeping">Sleeping</option>
+                <option value="Unreleased">Unreleased</option>
+                <option value="Upgrading">Upgrading</option>
+                <option value="Wanted">Wanted</option>
+                <option value="ghostlist">Ghostlist</option>
+            </select>
+            <label for="bulk-change-version" class="sr-only">Change Selected Version</label>
+            <select id="bulk-change-version" name="bulk_change_version" class="bulk-action-select" disabled>
+                <option value="">Change Selected Version...</option>
+            </select>
+            <label for="bulk-assign-tags" class="sr-only">Tags</label>
+            <select id="bulk-assign-tags" name="bulk_assign_tags" class="bulk-action-select" disabled>
+                <option value="">Tags...</option>
+            </select>
+            <button id="bulk-early-release" class="bulk-action-btn" disabled>Early Release</button>
+            <button id="bulk-force-priority" class="bulk-action-btn" disabled>Force Priority</button>
+            <!-- NEW: Manual resync for selected items -->
+            <button id="bulk-resync" class="bulk-action-btn" disabled>Resync Selected</button>
+            <!-- NEW: Manual symlink verification for selected items -->
+            <button id="bulk-verify-symlinks" class="bulk-action-btn" disabled>Verify Symlinks</button>
+        </div>
+    </div>
+    <div id="column-selector-wrapper">
+        <button id="toggle-column-selector" class="toggle-button">Select Columns to Display</button>
+        <div id="column-selector" class="hidden">
+            <!-- Tangerine: header row with title + Hide button -->
+            <div class="db-col-sel-header">
+                <span class="db-col-sel-title">Column Selector</span>
+                <button class="db-view-btn" id="db-col-sel-hide-btn">Hide</button>
+            </div>
+            <div class="column-selector-container">
+                <div class="column-list">
+                    <label for="available-columns"><h4>Available Columns</h4></label>
+                    <select id="available-columns" name="available_columns" multiple>
+                        {% for column in all_columns %}
+                            {% if column not in selected_columns %}
+                                <option value="{{ column }}">{{ column }}</option>
+                            {% endif %}
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="column-buttons">
+                    <button id="add-column">&gt;</button>
+                    <button id="remove-column">&lt;</button>
+                    <button id="move-up" title="Move selected column up">▲</button>
+                    <button id="move-down" title="Move selected column down">▼</button>
+                </div>
+                <div class="column-list">
+                    <label for="selected-columns"><h4>Selected Columns</h4></label>
+                    <select id="selected-columns" name="selected_columns" multiple>
+                        {% for column in selected_columns %}
+                            <option value="{{ column }}">{{ column }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+            <button id="update-columns">Update View</button>
+        </div>
+    </div>
+    <div class="db-filter-presets-row">
+    <div id="filter-sort">
+        <div class="db-filter-header">
+            <span class="db-filter-title">Filter &amp; Sort</span>
+            <button class="db-view-btn" id="db-filter-collapse-btn">Collapse</button>
+        </div>
+        <h3>Filter and Sort:</h3>
+        <div class="result-count">
+            Showing {{ result_count }} results
+            <span class="unique-count">(Unique: {{ unique_result_count }})</span>
+            | Total pages: {{ total_pages }} | Total items: {{ total_count }}
+        </div>
+        <form id="filter-form" class="mb-3">
+
+            
+            <div class="filter-section">
+                <button type="button" id="add-filter" class="btn btn-secondary">Add Filter</button>
+                <button type="button" class="btn btn-secondary quick-filter" data-column="title">Title</button>
+                <button type="button" class="btn btn-secondary quick-filter" data-column="state">State</button>
+                <button type="button" class="btn btn-secondary quick-filter" data-column="version">Version</button>
+                <button type="button" class="btn btn-secondary quick-filter" data-column="imdb_id">IMDB ID</button>
+                <button type="button" class="btn btn-secondary quick-filter" data-column="type">Type</button>
+            </div>
+            <div id="filters-container">
+                <!-- Filter rows will be added here dynamically -->
+            </div>
+
+            <div class="sort-section">
+                <div class="sort-container">
+                    <label for="sort-column">Sort Column:</label>
+                    <select id="sort-column" name="sort_column">
+                        <option value="">None</option>
+                        {# Populate with all_columns from backend which now includes 'size' #}
+                        {% for column in all_columns %} 
+                        <option value="{{ column }}" {% if column == sort_column %}selected{% endif %}>{{ column }}</option>
+                        {% endfor %}
+                    </select>
+                    <label for="sort-order">Sort Order:</label>
+                    <select id="sort-order" name="sort_order">
+                        <option value="asc" {% if sort_order == 'asc' %}selected{% endif %}>Ascending</option>
+                        <option value="desc" {% if sort_order == 'desc' %}selected{% endif %}>Descending</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Add Filter Logic Selection -->
+            <div class="filter-logic-section">
+                <label>Filter Logic:</label>
+                <input type="radio" id="filter-logic-and" name="filter_logic" value="AND" {% if filter_logic == 'AND' %}checked{% endif %}>
+                <label for="filter-logic-and">AND (All filters match)</label>
+                <input type="radio" id="filter-logic-or" name="filter_logic" value="OR" {% if filter_logic == 'OR' %}checked{% endif %}>
+                <label for="filter-logic-or">OR (Any filter matches)</label>
+            </div>
+            <!-- End Filter Logic Selection -->
+
+            <div class="button-section">
+                <div class="filter-buttons">
+                    <button type="submit">Apply</button>
+                    <button type="button" id="clear-filter-sort">Clear all</button>
+                    <button type="button" class="db-save-preset-btn">Save Preset</button>
+                </div>
+            </div>
+        </form>
+    </div>
+    <div id="db-presets-panel">
+        <div class="db-filter-header">
+            <span class="db-filter-title">Saved Presets</span>
+        </div>
+        <div id="db-presets-list">
+            <div class="db-presets-empty">No presets saved yet</div>
+        </div>
+    </div>
+    </div><!-- /.db-filter-presets-row -->
+    <div class="content-type-filter-row">
+        <div class="content-type-filter">
+            <a href="#" data-content-type="all" class="content-type-link {% if content_type == 'all' %}active{% endif %}">All</a>
+            <a href="#" data-content-type="movie" class="content-type-link {% if content_type == 'movie' %}active{% endif %}">Movies</a>
+            <a href="#" data-content-type="episode" class="content-type-link {% if content_type == 'episode' %}active{% endif %}">Episodes</a>
+        </div>
+        <div class="pagination">
+            {% if alphabet %}
+                <a href="#" data-letter="" class="pagination-link {% if current_letter == '' %}active{% endif %}">All</a>
+                <a href="#" data-letter="#" class="pagination-link {% if current_letter == '#' %}active{% endif %}">#</a>
+                {% for letter in alphabet %}
+                <a href="#" data-letter="{{ letter }}" class="pagination-link {% if letter == current_letter %}active{% endif %}">{{ letter }}</a>
+                {% endfor %}
+            {% endif %}
+        </div>
+    </div>
+</div>
+<div class="db-table-hint">
+    <span>↔ Drag column borders to resize &nbsp;·&nbsp; "Reset Cols" restores defaults &nbsp;·&nbsp; Click column headers to sort</span>
+    <span class="db-showing-count" id="db-showing-count">Showing {{ result_count }} of {{ total_count }} results</span>
+</div>
+<div class="table-container">
+    {% if items %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Select</th>
+                    <th class="db-col-rownum">#</th>
+                    <th>Actions</th>
+                    {% for column in selected_columns %}
+                        {% set label = 'S#' if column == 'season_number' else 'E#' if column == 'episode_number' else 'Size (GB)' if column == 'size' else column %}
+                        <th data-col="{{ column }}"{% if column == sort_column %} class="db-sort-active"{% endif %}>{{ label }}<span class="db-sort-icon">{% if column == sort_column %}{% if sort_order == 'desc' %}▼{% else %}▲{% endif %}{% else %}⇅{% endif %}</span></th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            {#- Whitespace-trimmed: indentation here used to be most of each row's bytes. -#}
+            {%- set state_labels = {'Final_Check': 'Final Scrape', 'ghostlisted': 'Ghostlisted', 'all_blacklisted': 'All Versions Blacklisted'} -%}
+            {%- set state_cls = {'Collected': 'db-pill-collected', 'Wanted': 'db-pill-wanted', 'Scraping': 'db-pill-scraping', 'Upgrading': 'db-pill-upgrading', 'Blacklisted': 'db-pill-blacklisted', 'Checking': 'db-pill-checking', 'Sleeping': 'db-pill-sleeping', 'Unreleased': 'db-pill-unreleased'} -%}
+            {%- set row_offset = ((current_page | default(1)) - 1) * (per_page | default(250)) -%}
+            <tbody>
+            {%- for item in items %}
+<tr data-page="{{ current_page | default(1) }}">
+<td><input type="checkbox" class="item-select" data-item-id="{{ item['id'] }}" aria-label="Select item {{ item['id'] }}"></td>
+<td class="db-row-num">{{ row_offset + loop.index }}</td>
+<td><span style="display:flex;gap:4px;align-items:center"><button class="db-action-btn db-action-btn-delete delete-item" data-item-id="{{ item['id'] }}" title="Delete"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><use href="#dbi-trash"/></svg></button><button class="db-action-btn db-action-btn-refresh rescrape-item" data-item-id="{{ item['id'] }}" title="Rescrape"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><use href="#dbi-refresh"/></svg></button><span class="db-quick-slot" data-item-id="{{ item['id'] }}" data-type="{{ item['type'] or '' }}" data-tmdb="{{ item['tmdb_id'] or '' }}" data-imdb="{{ item['imdb_id'] or '' }}">{{ quick_buttons(item['id']) }}</span></span></td>
+            {%- for column in selected_columns %}
+            {%- if column == 'size' %}
+            {%- set size_txt = '%.2f'|format(item['size_gb']) if item['size_gb'] is defined and item['size_gb'] is not none else 'N/A' %}
+<td class="truncate" data-full-content="{{ size_txt }}">{{ size_txt }}</td>
+            {%- elif column == 'source' %}
+<td>{% if item['source'] %}<span class="db-src {{ 'db-src-usenet' if item['source'] == 'Usenet' else 'db-src-debrid' }}">{{ item['source'] }}</span>{% endif %}</td>
+            {%- elif column == 'imdb_id' %}
+<td class="truncate" data-full-content="{{ item[column] }}"><span class="db-imdb-link">{{ item[column] }}</span></td>
+            {%- elif column == 'state' %}
+            {%- set state_val = item[column] | string %}
+            {%- set state_val = state_labels.get(state_val, state_val) %}
+<td class="truncate" data-full-content="{{ state_val }}"><span class="db-pill {{ state_cls.get(state_val, 'db-pill-other') }}">{{ state_val }}</span></td>
+            {%- elif column == 'type' %}
+<td class="truncate" data-full-content="{{ item[column] }}"><span class="db-pill {{ 'db-pill-movie' if item[column] == 'movie' else 'db-pill-episode' }}">{{ item[column] }}</span></td>
+            {%- elif column == 'version' %}
+<td class="truncate" data-full-content="{{ item[column] }}"><span class="db-pill-version">{{ item[column] }}</span></td>
+            {%- else %}
+<td class="truncate{% if column == 'title' %} db-col-title{% endif %}" data-full-content="{{ item[column] }}">{{ item[column] }}</td>
+            {%- endif %}
+            {%- endfor %}
+</tr>
+            {%- endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p>No items found in the database.</p>
+    {% endif %}
+</div>
+
+<script src="{{ url_for('static', filename='js/loading.js') }}"></script>
+
 
 <script>
     window.templateData = {
@@ -502,6 +458,7 @@ window.TPL_DATABASE = {
     selected_columns: {{ selected_columns | tojson }},
     total_pages: {{ total_pages | default(1) }},
     current_page: {{ current_page | default(1) }},
+    total_count: {{ total_count | default(0) }},
 };
 </script>
 <script src="{{ url_for('static', filename='js/pages/database-1.js') }}"></script>
@@ -513,14 +470,16 @@ window.TPL_DATABASE = {
 .db-src-debrid{background:#3b2a12;color:#fdba74}
 .db-quick{display:inline-flex;gap:4px}
 .db-quick .db-action-btn{font-size:11px}
+.db-select-info{font-size:12px;color:#aaa;align-self:center;margin:0 6px}
+.db-select-info a{color:#e8601c}
 </style>
 <script>
 (function () {
     // Row quick actions: open the item, move it to Wanted, or blacklist it.
     const ICONS = {
-        open: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>',
-        wanted: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>',
-        blacklist: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/></svg>',
+        open: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><use href="#dbi-open"/></svg>',
+        wanted: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><use href="#dbi-wanted"/></svg>',
+        blacklist: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><use href="#dbi-blacklist"/></svg>',
     };
     function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
     function buttons(id) {
@@ -534,20 +493,6 @@ window.TPL_DATABASE = {
     window.dbQuickSlot = function (item) {
         return `<span class="db-quick-slot" data-item-id="${esc(item.id)}" data-type="${esc(item.type)}" data-tmdb="${esc(item.tmdb_id)}" data-imdb="${esc(item.imdb_id)}">${buttons(item.id)}</span>`;
     };
-    function fillSlots(root) {
-        root.querySelectorAll('.db-quick-slot:empty').forEach(slot => { slot.innerHTML = buttons(slot.dataset.itemId); });
-        // Source column: badge the plain-text cells the script-built rows produce.
-        const ths = Array.from(document.querySelectorAll('thead th'));
-        const idx = ths.findIndex(th => th.dataset.col === 'source');
-        if (idx < 0) return;
-        root.querySelectorAll('tbody tr').forEach(tr => {
-            const td = tr.children[idx];
-            if (!td || td.querySelector('.db-src')) return;
-            const t = td.textContent.trim();
-            if (!t || t === 'None') { if (td.childNodes.length) td.textContent = ''; return; }
-            td.innerHTML = `<span class="db-src ${t === 'Usenet' ? 'db-src-usenet' : 'db-src-debrid'}">${esc(t)}</span>`;
-        });
-    }
     async function move(id, queue) {
         const fd = new FormData();
         fd.append('action', 'move'); fd.append('target_queue', queue); fd.append('selected_items', id);
@@ -581,22 +526,9 @@ window.TPL_DATABASE = {
             btn.disabled = false;
         }
     });
-    document.addEventListener('DOMContentLoaded', function () {
-        fillSlots(document);
-        // Rows arrive from infinite scroll / filter reloads. Coalesce bursts into
-        // one pass per frame, and ignore the observer's own slot/badge writes.
-        let pending = false;
-        new MutationObserver(muts => {
-            if (pending) return;
-            const relevant = muts.some(m => !(m.target.closest && m.target.closest('.db-quick-slot, td')));
-            if (!relevant) return;
-            pending = true;
-            requestAnimationFrame(() => { pending = false; fillSlots(document); });
-        }).observe(document.body, { childList: true, subtree: true });
-    });
 })();
 </script>
-<button id="db-back-top" class="tangerine-only" title="Back to top / Row 1" aria-label="Back to top">
+<button id="db-back-top" title="Back to top / Row 1" aria-label="Back to top">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <polyline points="18 15 12 9 6 15"/>
         <line x1="12" y1="9" x2="12" y2="21"/>
@@ -604,4 +536,5 @@ window.TPL_DATABASE = {
     </svg>
 </button>
 </div><!-- /.db-page-wrapper -->
+{% endif %}
 {% endblock %}

@@ -1,0 +1,59 @@
+{# Discover settings modal: included only by the pages that open it (block page_modals). #}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_discover_settings_modal.css') }}">
+<!-- Discover Settings Modal -->
+<div id="discoverSettingsModal" class="discover-settings-modal" style="display: none;">
+    <div class="discover-settings-modal-overlay"></div>
+    <div class="discover-settings-modal-content">
+        <div class="discover-settings-modal-header">
+            <h2>Discover Settings</h2>
+            <button class="discover-settings-modal-close" aria-label="Close">&times;</button>
+        </div>
+        <div class="discover-settings-modal-body">
+            <div class="discover-setting-group">
+                <label for="discoverHideNoRating">
+                    <input type="checkbox" id="discoverHideNoRating" class="discover-setting-checkbox">
+                    Hide items without rating
+                </label>
+                <p class="discover-setting-description">Hide items that don't have a TMDB rating from discover results.</p>
+            </div>
+
+            <div class="discover-setting-group">
+                <label for="discoverHideNoPoster">
+                    <input type="checkbox" id="discoverHideNoPoster" class="discover-setting-checkbox">
+                    Hide items without poster image
+                </label>
+                <p class="discover-setting-description">Hide items that don't have a poster image from discover results.</p>
+            </div>
+
+            <div class="discover-setting-group">
+                <label for="discoverOnlyShowMissing">
+                    <input type="checkbox" id="discoverOnlyShowMissing" class="discover-setting-checkbox">
+                    Only show missing items
+                </label>
+                <p class="discover-setting-description">Only show items that are not already in your library. Items will be filtered based on their database status.</p>
+            </div>
+
+            <div class="discover-setting-group">
+                <label for="discoverHideSpecials">
+                    <input type="checkbox" id="discoverHideSpecials" class="discover-setting-checkbox">
+                    Hide TV specials (Season 0)
+                </label>
+                <p class="discover-setting-description">Hide Season 0 (specials) from the season list on TV show detail pages.</p>
+            </div>
+
+            <div class="discover-setting-group">
+                <label for="discoverEpisodeView">TV Show Episode View</label>
+                <select id="discoverEpisodeView" class="discover-setting-select">
+                    <option value="discover">Discover</option>
+                    <option value="add_media">Classic (Add Media)</option>
+                </select>
+                <p class="discover-setting-description">Choose where to route when clicking on TV shows not in your library. Movies always go to Discover details page.</p>
+            </div>
+        </div>
+        <div class="discover-settings-modal-footer">
+            <button class="discover-settings-btn-cancel">Cancel</button>
+            <button class="discover-settings-btn-save">Save Settings</button>
+        </div>
+    </div>
+</div>
+<script src="{{ url_for('static', filename='js/discover_settings_modal.js') }}" defer></script>

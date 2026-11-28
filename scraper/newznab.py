@@ -15,6 +15,7 @@ from typing import List, Dict, Any, Optional
 from routes.api_tracker import api
 from utilities.settings import get_setting
 from PTT import parse_title as ptt_parse
+from scraper.functions.ptt_parser import progressive_resolution
 from rapidfuzz import fuzz as _fuzz
 from scraper.request_dedup import SingleFlightGuard
 from usenet import indexer_quota
@@ -741,7 +742,7 @@ def _parse_newznab_xml(xml_text: str, instance: str) -> List[Dict[str, Any]]:
             'source_instance': instance,
             'title': ptt.get('title', title),
             'year': ptt.get('year'),
-            'resolution': ptt.get('resolution'),
+            'resolution': progressive_resolution(ptt.get('resolution')),
             'source': ptt.get('quality'),
             'audio': ptt.get('audio', []),
             'codec': ptt.get('codec'),

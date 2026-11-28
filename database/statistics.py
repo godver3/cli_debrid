@@ -258,8 +258,18 @@ def get_cached_download_stats():
     if (download_stats_cache['active_downloads'] is not None and
             download_stats_cache['usage_stats'] is not None):
         return download_stats_cache['active_downloads'], download_stats_cache['usage_stats']
-    # cold start and the provider is still slow → do NOT block; show a placeholder
-    return ({'count': 0, 'limit': 0, 'percentage': 0, 'status': 'loading', 'error': None},
+    # cold start and the provider is still slow → do NOT block; show a placeholder.
+    # It keeps the mode's source so the page shows the cli_mount layout, with the
+    # library size pending ('…', fetched by the page) rather than the debrid-only
+    # library_size_cache.json value.
+    placeholder = {'count': 0, 'limit': 0, 'percentage': 0, 'status': 'loading', 'error': None}
+    try:
+        _source = {'combined': 'combined', 'usenet': 'climount'}.get(resolve_stats_mode())
+    except Exception:
+        _source = None
+    if _source:
+        placeholder.update(source=_source, library_size='…', broken_nzbs=0, broken_debrid=None)
+    return (placeholder,
             {'used': '—', 'limit': '—', 'percentage': 0, 'error': None})
 
 

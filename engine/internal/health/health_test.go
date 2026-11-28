@@ -182,3 +182,26 @@ func TestSampleRunsInParallelAndStopsOnMiss(t *testing.T) {
 		t.Fatalf("%+v asked %d movie articles", rep, movie)
 	}
 }
+
+// An NZB listing extra (dead) articles past the file's end: they are never
+// checked, and their being dead is not proof of anything.
+func TestTrailingSurplusIsNeverCheckedOrCounted(t *testing.T) {
+	n, res := twoFiles()
+	dead := map[string]bool{}
+	for i := 0; i < 4; i++ {
+		id := "x.surplus" + itoa(i)
+		n.Files[0].Segments = append(n.Files[0].Segments, nzb.Segment{ID: id, Number: 101 + i})
+		dead[id] = true
+	}
+	n.Files[0].Total = 104
+	st := &fakeStat{missing: dead}
+	rep, err := Check(context.Background(), st, n, res, Options{Full: true, Parallel: 1})
+	if err != nil || rep.Status != Healthy || len(rep.Broken()) != 0 {
+		t.Fatalf("%+v %v", rep, err)
+	}
+	for _, id := range st.asked {
+		if dead[id] {
+			t.Fatalf("surplus article %s was checked", id)
+		}
+	}
+}
