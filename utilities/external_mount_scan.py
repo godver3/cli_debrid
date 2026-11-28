@@ -671,6 +671,14 @@ def _scan(summary: Dict) -> None:
             summary['skipped_reason'] = ("neither Plex mounted_file_location nor original_files_path "
                                          "is a readable directory")
             return
+        if (get_setting('Plex', 'disable_plex_library_checks', False)
+                and not (get_setting('Plex', 'mounted_file_location', '') or '').strip()):
+            # task_plex_full_scan (the library sync that creates the Collected
+            # rows) is off in exactly this setup, so a scan request would never
+            # be followed up.
+            summary['skipped_reason'] = ('Plex library checks are disabled and no Plex mounted_file_location '
+                                         'is set, so the library sync that collects new content is off')
+            return
         why = _plex_scan_unavailable()
         if why:
             summary['skipped_reason'] = why
@@ -890,7 +898,7 @@ def _scan(summary: Dict) -> None:
                 entry['media_server_scan'] = now
                 summary['imported'] += 1
                 logging.info(f"[ExternalScan] Media server accepted a scan of '{name}'; "
-                             f"Direct Mount collection picks it up from the library sync.")
+                             f"the Plex library sync (task_plex_full_scan, every 30 min) collects it.")
             elif outcome == 'no_library':
                 _give_up(entry, name, f"no media server library holds '{scan_path}' "
                                       f"(check the library paths match the mount path Clyde sees)", summary)

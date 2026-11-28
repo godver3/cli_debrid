@@ -908,6 +908,21 @@ class TestDirectMountScan(ExternalMountScanTestBase):
         self._mkfolder(name)
         return self._run_settled(name)
 
+    def test_skips_when_library_sync_is_off(self):
+        # Library checks off + no Plex mount path = task_plex_full_scan disabled,
+        # so nothing would ever collect what the scan request surfaces.
+        base = _settings_for(self.mount_dir.name, self.symlink_dir.name, mode='Plex')
+
+        def fake(section, key, default=None):
+            if (section, key) == ('Plex', 'disable_plex_library_checks'):
+                return True
+            return base(section, key, default)
+        self._mkfolder('Old.Show.S01')
+        with patch.object(ems, 'get_setting', side_effect=fake):
+            summary = ems.scan_mount_for_external_adds()
+        self.assertIn('library sync', summary['skipped_reason'])
+        self.assertEqual(self.scan_calls, [])
+
     def test_new_folder_requests_scan_and_is_marked_imported(self):
         summary = self._new_settled('New.Show.S01')
         self.assertEqual(summary['imported'], 1)
