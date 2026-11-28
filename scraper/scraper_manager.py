@@ -7,6 +7,7 @@ import time
 from .nyaa import scrape_nyaa, contains_target_episode
 from .jackett import scrape_jackett_instance
 from .mediafusion import scrape_mediafusion_instance
+from .comet import scrape_comet_instance
 from .aiostreams import scrape_aiostreams_instance, scrape_aiostreams_api
 from .prowlarr import scrape_prowlarr_instance
 from .torrentio import scrape_torrentio_instance
@@ -61,6 +62,7 @@ class ScraperManager:
         self.scrapers = {
             'Jackett': scrape_jackett_instance,
             'MediaFusion': scrape_mediafusion_instance,
+            'Comet': scrape_comet_instance,
             'AIOStreams': scrape_aiostreams_instance,
             'AIOStreams-API': scrape_aiostreams_api,
             'Prowlarr': scrape_prowlarr_instance,
@@ -464,7 +466,7 @@ class ScraperManager:
                     if binge_group:
                         additional_metadata['bingeGroup'] = binge_group
             
-            elif scraper_type in ('AIOStreams', 'AIOStreams-API'):
+            elif scraper_type in ('AIOStreams', 'AIOStreams-API', 'Comet'):
                 filename = parsed_info.get('filename')
                 binge_group = parsed_info.get('bingeGroup')
 
