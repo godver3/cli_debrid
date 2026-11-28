@@ -149,7 +149,8 @@ func (c Config) memoryLimit() int64 {
 
 func (c *Config) defaults() {
 	if c.MemCacheBytes <= 0 {
-		c.MemCacheBytes = 256 << 20
+		// Match Clyde's generated config and cli_mount's buffer default.
+		c.MemCacheBytes = 512 << 20
 	}
 	if c.ReadAhead <= 0 {
 		c.ReadAhead = 8

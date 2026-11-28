@@ -2,6 +2,14 @@ package engine
 
 import "testing"
 
+func TestDefaultMemoryCache(t *testing.T) {
+	c := Config{}
+	c.defaults()
+	if got := c.MemCacheBytes; got != 512<<20 {
+		t.Fatalf("memory cache default: %d", got)
+	}
+}
+
 // The GC limit follows the memory cache (found live: 2.7 GB heap for a
 // 1 GB cache under the default GOGC); an explicit value wins, -1 = off.
 func TestMemoryLimit(t *testing.T) {
