@@ -2491,9 +2491,10 @@ def get_resolution_value(resolution: str) -> int:
     resolution_order = {
         '2160p': 2160, '4k': 2160, 'uhd': 2160,
         '1440p': 1440, 'qhd': 1440,
-        '1080p': 1080, 'fhd': 1080,
-        '720p': 720, 'hd': 720,
-        '480p': 480, 'sd': 480,
+        # PTT 1.8+ reports interlaced resolutions as-is ('1080i'); rate them like their progressive twin
+        '1080p': 1080, '1080i': 1080, 'fhd': 1080,
+        '720p': 720, '720i': 720, 'hd': 720,
+        '480p': 480, '480i': 480, 'sd': 480,
         '360p': 360
     }
     return resolution_order.get(resolution.lower(), 0)
