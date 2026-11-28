@@ -83,18 +83,26 @@ def is_category_dir(path: str) -> bool:
     return any(dir_has_media(c.path, depth=1) for c in children)
 
 
-def list_job_dirs(mount: str) -> List[Tuple[str, str]]:
+# cli_mount/built-in mount views of the same content, never categories or jobs.
+_RESERVED_TOP = {'__all__', '__bad__', 'nzbs', 'torrents'}
+
+
+def list_job_dirs(mount: str, known_jobs: Optional[set] = None) -> List[Tuple[str, str]]:
     """(relative path, absolute path) of every NZB job folder under ``mount``,
-    for flat (<mount>/<job>) and nested (<mount>/<category>/<job>) layouts."""
+    for flat (<mount>/<job>) and nested (<mount>/<category>/<job>) layouts.
+
+    ``known_jobs``: top-level names already known to be jobs; they skip the
+    category probe (one extra listing per folder)."""
     jobs: List[Tuple[str, str]] = []
+    known_jobs = known_jobs or set()
     try:
         with os.scandir(mount) as it:
             tops = sorted((e.name, e.path) for e in it
-                          if not e.name.startswith('.') and e.is_dir())
+                          if not e.name.startswith('.') and e.name not in _RESERVED_TOP and e.is_dir())
     except OSError:
         return jobs
     for name, path in tops:
-        if is_category_dir(path):
+        if name not in known_jobs and is_category_dir(path):
             try:
                 with os.scandir(path) as it:
                     for e in sorted(it, key=lambda x: x.name):

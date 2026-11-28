@@ -669,6 +669,49 @@ class TestHardening(ExternalMountScanTestBase):
         self.assertEqual(len(self.import_calls), 1)
         self.assertTrue(self.import_calls[0].endswith(os.path.join('tv', 'Job.C')))
 
+    def test_usenet_cli_mount_layout_scans_all_and_skips_reserved(self):
+        # A separate cli_mount/built-in mount used for usenet exposes each job in
+        # __all__ AND nzbs/; listing the root would see every job twice.
+        usenet = tempfile.TemporaryDirectory()
+        self.addCleanup(usenet.cleanup)
+        for view in ('__all__', 'nzbs'):
+            d = os.path.join(usenet.name, view, 'Job.A')
+            os.makedirs(d)
+            open(os.path.join(d, 'x.mkv'), 'w').close()
+        os.makedirs(os.path.join(usenet.name, 'torrents', 'Torrent.X'))
+        base = _settings_for(self.mount_dir.name, self.symlink_dir.name)
+        with patch.object(ems, 'get_setting', side_effect=lambda s, k, d=None: usenet.name if k == 'mounted_file_location' else base(s, k, d)):
+            roots = ems._resolve_roots(self.mount_dir.name)
+        usenet_root = [r for r in roots if r['id'] == 'usenet'][0]
+        self.assertEqual(usenet_root['path'], os.path.join(usenet.name, '__all__'))
+        self.assertEqual([k for k, _, _ in ems._list_root(usenet_root)], ['usenet:Job.A'])
+
+    def test_known_jobs_skip_category_probe(self):
+        from usenet import mount_layout
+        mount = tempfile.TemporaryDirectory()
+        self.addCleanup(mount.cleanup)
+        os.makedirs(os.path.join(mount.name, 'Job.A'))
+        with patch.object(mount_layout, 'is_category_dir', side_effect=AssertionError('probed')):
+            self.assertEqual(mount_layout.list_job_dirs(mount.name, known_jobs={'Job.A'}),
+                             [('Job.A', os.path.join(mount.name, 'Job.A'))])
+
+    def test_flaky_listing_accepted_after_repeated_low_counts(self):
+        # A real mass deletion must not leave the root skipped forever.
+        for i in range(25):
+            self._mkfolder(f'Show.{i}')
+        self._run_scan()
+        for i in range(5, 25):
+            shutil.rmtree(os.path.join(self.mount_dir.name, f'Show.{i}'))
+        with self.assertLogs(level='WARNING'):
+            for _ in range(ems.FLAKY_ACCEPT_AFTER):
+                self._run_scan()
+        meta = self._state()['__meta__']
+        self.assertEqual(meta['last_entry_count'], 5)
+        self.assertNotIn('low_listing_runs', meta)
+        self._mkfolder('New.Arrival')
+        self._run_scan()  # back to normal: no flaky skip at 6 vs 5
+        self.assertIn('New.Arrival', self._state())
+
     def test_usenet_root_inside_main_root_is_ignored(self):
         self._mkfolder('Main.One')
         self._run_scan()

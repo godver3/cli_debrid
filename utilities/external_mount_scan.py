@@ -92,6 +92,10 @@ LONG_GAP_SECONDS = 2 * 24 * 60 * 60
 # one was at least this big, is a mount hiccup, not hundreds of deletions.
 FLAKY_MIN_COUNT = 20
 FLAKY_RATIO = 0.5
+# ...unless it stays that small this many runs in a row (an hour at the 15 min
+# interval): then the folders really went (account cleared), so accept the new
+# count instead of skipping the root forever.
+FLAKY_ACCEPT_AFTER = 4
 
 META_KEY = '__meta__'
 USENET_PREFIX = 'usenet:'
@@ -445,21 +449,30 @@ def _resolve_roots(mount_path: str) -> List[Dict]:
         pass
     roots = [{'id': 'main', 'path': main_path, 'prefix': '', 'swapped': swapped}]
 
-    usenet = _strip_all_suffix(get_setting('Usenet Provider', 'mounted_file_location', '') or '')
+    usenet_raw = (get_setting('Usenet Provider', 'mounted_file_location', '') or '').rstrip('/')
+    usenet = _strip_all_suffix(usenet_raw)
     if usenet and os.path.isdir(usenet) and os.access(usenet, os.R_OK | os.X_OK):
         # Same/nested mounts would list every folder twice under two keys.
         overlaps = any(_is_inside(usenet, p) or _is_inside(p, usenet) for p in (mount_path, main_path))
         if not overlaps:
-            roots.append({'id': 'usenet', 'path': usenet, 'prefix': USENET_PREFIX, 'swapped': False})
+            # A separate cli_mount/built-in mount used for usenet has the same
+            # __all__/nzbs/torrents/__bad__ layout; its jobs are in __all__, and
+            # listing the mount root would see each job twice (and torrents too).
+            usenet_path = os.path.join(usenet, '__all__') if os.path.isdir(os.path.join(usenet, '__all__')) else usenet
+            roots.append({'id': 'usenet', 'path': usenet_path, 'prefix': USENET_PREFIX, 'swapped': False})
     return roots
 
 
-def _list_root(root: Dict) -> List[Tuple[str, str, str]]:
+def _list_root(root: Dict, state: Optional[Dict] = None) -> List[Tuple[str, str, str]]:
     """(state key, folder name, absolute path) for every importable folder."""
     if root['id'] == 'usenet':
         from usenet.mount_layout import list_job_dirs
-        return [(root['prefix'] + rel, os.path.basename(abs_path), abs_path)
-                for rel, abs_path in list_job_dirs(root['path'])]
+        # Top-level names already recorded as jobs skip the category probe, so a
+        # flat mount with thousands of jobs isn't listed folder by folder every run.
+        prefix = root['prefix']
+        known_jobs = {k[len(prefix):] for k in (state or {}) if k.startswith(prefix) and '/' not in k[len(prefix):]}
+        return [(prefix + rel, os.path.basename(abs_path), abs_path)
+                for rel, abs_path in list_job_dirs(root['path'], known_jobs=known_jobs)]
     return [(name, name, os.path.join(root['path'], name)) for name in _list_top_level(root['path'])]
 
 
@@ -568,15 +581,24 @@ def _scan(summary: Dict) -> None:
 
     candidates = []  # (key, name, abs path)
     for root in _resolve_roots(mount_path):
-        entries = _list_root(root)
+        entries = _list_root(root, state)
         rm = _root_meta(meta, root)
         prev_count = rm.get('last_entry_count')
         if prev_count and prev_count >= FLAKY_MIN_COUNT and len(entries) < prev_count * FLAKY_RATIO:
-            # A half-listed mount would make the pruning below forget folders and
-            # the rest look new; wait for a sane listing.
-            logging.warning(f"[ExternalScan] '{root['path']}' listed {len(entries)} entries "
-                            f"(previously {prev_count}); looks like a flaky mount, skipping this root.")
-            continue
+            low_runs = rm.get('low_listing_runs', 0) + 1
+            rm['low_listing_runs'] = low_runs
+            dirty = True
+            if low_runs < FLAKY_ACCEPT_AFTER:
+                # A half-listed mount would make the pruning below forget folders and
+                # the rest look new; wait for a sane listing.
+                logging.warning(f"[ExternalScan] '{root['path']}' listed {len(entries)} entries "
+                                f"(previously {prev_count}); looks like a flaky mount, skipping this root "
+                                f"({low_runs}/{FLAKY_ACCEPT_AFTER}).")
+                continue
+            logging.warning(f"[ExternalScan] '{root['path']}' has listed {len(entries)} entries "
+                            f"(previously {prev_count}) {low_runs} runs in a row; accepting the new count.")
+        if rm.pop('low_listing_runs', None) is not None:
+            dirty = True
         if not entries:
             continue
         summary['entries_seen'] += len(entries)
