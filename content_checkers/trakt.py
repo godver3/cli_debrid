@@ -640,7 +640,8 @@ def fetch_items_from_trakt(
     headers: Dict[str, str] | None = None,
     max_retries: int = 5,
     initial_delay: int = DEFAULT_INITIAL_RETRY_DELAY,
-) -> List[Dict[str, Any]]:
+    return_none_on_error: bool = False,
+) -> List[Dict[str, Any]] | None:
     """Fetch items from Trakt API with retry and exponential back-off.
 
     Args:
@@ -648,18 +649,21 @@ def fetch_items_from_trakt(
         headers: Optional custom headers. Falls back to :func:`get_trakt_headers`.
         max_retries: Maximum number of retry attempts before giving up.
         initial_delay: Initial delay (seconds) for the exponential back-off.
+        return_none_on_error: Return None instead of [] when the request fails, so callers
+            can tell a failed fetch from a genuinely empty result.
 
     Returns:
         A list of dictionaries returned from the Trakt API, or an empty list
-        if all retry attempts fail.
+        (None if ``return_none_on_error``) if all retry attempts fail.
     """
+    failed = None if return_none_on_error else []
 
     if headers is None:
         headers = get_trakt_headers()
 
     # If header retrieval failed, exit early.
     if not headers:
-        return []
+        return failed
 
     url = f"{TRAKT_API_URL}{endpoint}"
     logging.debug(f"Fetching items from Trakt API: {url}")
@@ -689,7 +693,7 @@ def fetch_items_from_trakt(
                 # extract Retry-After header before raising error so it gets handled properly
                 if response.status_code == 404:
                     logging.warning(f"Trakt API returned 404 for {url} — resource may no longer exist. Skipping.")
-                    return []
+                    return failed
 
                 if response.status_code == 429:
                     retry_after = int(response.headers.get("Retry-After", 60))
@@ -712,10 +716,13 @@ def fetch_items_from_trakt(
             return response.json()
 
         except requests.exceptions.HTTPError as http_err:
-            status_code = http_err.response.status_code if http_err.response else "N/A"
+            # requests.Response is falsy for 4xx/5xx, so test against None explicitly.
+            resp = http_err.response
+            has_resp = resp is not None
+            status_code = resp.status_code if has_resp else "N/A"
 
             if status_code == 429:  # Too Many Requests – rate-limited
-                retry_after = int(http_err.response.headers.get("Retry-After", 0)) if http_err.response else 0
+                retry_after = int(resp.headers.get("Retry-After", 0)) if has_resp else 0
 
                 # Trust Trakt's Retry-After header instead of enforcing conservative minimum
                 if retry_after > 0:
@@ -740,11 +747,11 @@ def fetch_items_from_trakt(
                 GlobalTraktCoordinator.get_instance().set_global_cooldown(delay)
 
             elif status_code == 420:  # VIP Enhanced - Account limit exceeded
-                is_vip = http_err.response.headers.get('X-VIP-User', 'false') == 'true' if http_err.response else False
-                account_limit = http_err.response.headers.get('X-Account-Limit', 'unknown') if http_err.response else 'unknown'
-                upgrade_url = http_err.response.headers.get('X-Upgrade-URL', 'https://trakt.tv/vip') if http_err.response else 'https://trakt.tv/vip'
+                is_vip = resp.headers.get('X-VIP-User', 'false') == 'true' if has_resp else False
+                account_limit = resp.headers.get('X-Account-Limit', 'unknown') if has_resp else 'unknown'
+                upgrade_url = resp.headers.get('X-Upgrade-URL', 'https://trakt.tv/vip') if has_resp else 'https://trakt.tv/vip'
 
-                retry_after = int(http_err.response.headers.get("Retry-After", 0)) if http_err.response else 0
+                retry_after = int(resp.headers.get("Retry-After", 0)) if has_resp else 0
                 delay = retry_after if retry_after > 0 else initial_delay * (2 ** attempt) + random.uniform(0, 1)
 
                 if is_vip:
@@ -754,18 +761,18 @@ def fetch_items_from_trakt(
 
             elif status_code == 423:  # Locked User Account
                 logging.error("Trakt account is locked or deactivated. Please contact Trakt support.")
-                return []
+                return failed
 
             elif status_code == 426:  # VIP Only
-                upgrade_url = http_err.response.headers.get('X-Upgrade-URL', 'https://trakt.tv/vip') if http_err.response else 'https://trakt.tv/vip'
+                upgrade_url = resp.headers.get('X-Upgrade-URL', 'https://trakt.tv/vip') if has_resp else 'https://trakt.tv/vip'
                 logging.error(f"This API method requires Trakt VIP. Upgrade at {upgrade_url}")
-                return []
+                return failed
 
             elif status_code == 404:  # Not Found — resource no longer exists, no point retrying
                 logging.warning(
                     f"Trakt API returned 404 for {url} — resource may no longer exist. Skipping."
                 )
-                return []
+                return failed
 
             elif status_code in (502, 504):  # Temporary gateway issues
                 delay = initial_delay * (2 ** attempt) + random.uniform(0, 1)
@@ -777,7 +784,7 @@ def fetch_items_from_trakt(
                 logging.error(
                     f"Unrecoverable HTTP error {status_code} when fetching items from Trakt API: {http_err}"
                 )
-                return []
+                return failed
 
         except (requests.exceptions.RequestException, ValueError) as req_err:
             # Network problem or unexpected content-type
@@ -791,7 +798,41 @@ def fetch_items_from_trakt(
             sleep(delay)
 
     logging.error(f"Failed to fetch items from Trakt API after {max_retries} attempts: {url}")
-    return []
+    return failed
+
+def fetch_all_pages_from_trakt(
+    endpoint: str,
+    headers: Dict[str, str] | None = None,
+    limit: int = PAGINATION_LIMIT,
+    max_pages: int = 200,
+) -> List[Dict[str, Any]] | None:
+    """Fetch every page of a paginated Trakt list endpoint (watchlists etc.).
+
+    Returns None if any page fails, so callers can tell a failed fetch from an empty
+    list and avoid treating a partial result as the whole list.
+
+    Trakt returns only the first page (100 items) when no page/limit is given,
+    so unpaginated calls silently truncate large watchlists. Reuses
+    fetch_items_from_trakt for retries/rate limiting, so custom (friend) headers work.
+    """
+    sep = '&' if '?' in endpoint else '?'
+    all_items: List[Dict[str, Any]] = []
+    for page in range(1, max_pages + 1):
+        batch = fetch_items_from_trakt(f"{endpoint}{sep}page={page}&limit={limit}", headers, return_none_on_error=True)
+        if batch is None or (batch and not isinstance(batch, list)):
+            logging.error(f"[Trakt] {endpoint}: page {page} failed; discarding partial result ({len(all_items)} items)")
+            return None
+        if not batch:
+            break
+        all_items.extend(batch)
+        if len(batch) < limit:
+            break
+        sleep(PAGINATION_DELAY)
+    else:
+        logging.warning(f"[Trakt] {endpoint}: stopped after {max_pages} pages ({len(all_items)} items)")
+    logging.debug(f"[Trakt] {endpoint}: fetched {len(all_items)} items")
+    return all_items
+
 
 def assign_media_type(item: Dict[str, Any]) -> str:
     if 'movie' in item:  # Item is a wrapper e.g. {"movie": {...}}
@@ -816,13 +857,14 @@ def assign_media_type(item: Dict[str, Any]) -> str:
         logging.warning(f"Unknown media type for item: Title='{item_title}', Year='{item_year}', ID keys={id_keys}. Skipping. Full item keys: {list(item.keys())}")
         return ''
 
-def get_imdb_id(item: Dict[str, Any], media_type: str) -> str:
+def _get_item_ids(item: Dict[str, Any], media_type: str) -> Dict[str, str]:
+    """Return {'imdb': ..., 'tmdb': ..., 'tvdb': ...} (only the ids present, as strings)."""
     ids_container = None
 
     if 'episode' in item:
         if 'show' not in item:
             logging.error(f"Episode item missing show data: {json.dumps(item, indent=2)}")
-            return ''
+            return {}
         ids_container = item['show']
     else:  # Item is a movie or a show (not an episode)
         # Based on media_type, determine the expected key if it's a wrapped item
@@ -838,28 +880,23 @@ def get_imdb_id(item: Dict[str, Any], media_type: str) -> str:
             
     if not ids_container:
         logging.error(f"Could not determine ids_container for item: {json.dumps(item, indent=2)} with media_type: {media_type}")
-        return ''
-        
+        return {}
+
     ids = ids_container.get('ids', {})
     if not ids:
         logging.warning(f"No 'ids' dictionary found in determined container for item: {json.dumps(item, indent=2)}. Container was part of item.")
-        return ''
-    
-    # Prioritize IMDb, then TMDB, then TVDB, ensuring the ID is a string.
-    imdb = ids.get('imdb')
-    if imdb:
-        return str(imdb)
-    
-    tmdb = ids.get('tmdb')
-    if tmdb:
-        return str(tmdb)
-        
-    tvdb = ids.get('tvdb')
-    if tvdb:
-        return str(tvdb)
+        return {}
 
-    logging.warning(f"No IMDb, TMDB, or TVDB ID found in 'ids' for item: {json.dumps(item, indent=2)}")
-    return ''
+    return {k: str(ids[k]) for k in ('imdb', 'tmdb', 'tvdb') if ids.get(k)}
+
+def get_imdb_id(item: Dict[str, Any], media_type: str) -> str:
+    """Best single identifier for an item: IMDb, else TMDB, else TVDB (as a string).
+
+    Used for matching/removal. Not a guaranteed IMDb id: process_trakt_items uses
+    _get_item_ids so a TMDB/TVDB number is never emitted in the imdb_id field.
+    """
+    ids = _get_item_ids(item, media_type)
+    return ids.get('imdb') or ids.get('tmdb') or ids.get('tvdb') or ''
 
 def process_trakt_items(items: List[Dict[str, Any]], unblacklist: bool = False) -> List[Dict[str, Any]]:
     from database.core import get_db_connection
@@ -877,14 +914,22 @@ def process_trakt_items(items: List[Dict[str, Any]], unblacklist: bool = False) 
             skipped_count += 1
             continue
 
-        imdb_id = get_imdb_id(item, media_type)
-        if not imdb_id:
-            logging.warning(f"Skipping item due to missing ID: {item.get(media_type, {}).get('title', 'Unknown Title')}")
+        ids = _get_item_ids(item, media_type)
+        imdb_id = ids.get('imdb', '')
+        tmdb_id = ids.get('tmdb', '') if not imdb_id else ''
+        # Dedupe/lookup key. A numeric TMDB id must never travel in the imdb_id field.
+        key_id = imdb_id or tmdb_id
+        if not key_id:
+            title = (item.get('movie') or item.get('show') or item).get('title', 'Unknown Title')
+            if ids.get('tvdb'):
+                logging.warning(f"Skipping '{title}': Trakt only lists a TVDB id ({ids['tvdb']}), no IMDb or TMDB id to look it up with")
+            else:
+                logging.warning(f"Skipping item due to missing ID: {title}")
             skipped_count += 1
             continue
 
-        # Skip if we've already processed this IMDb ID
-        if imdb_id in seen_imdb_ids:
+        # Skip if we've already processed this ID
+        if key_id in seen_imdb_ids:
             duplicate_count += 1
             continue
 
@@ -895,10 +940,16 @@ def process_trakt_items(items: List[Dict[str, Any]], unblacklist: bool = False) 
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
-            cursor.execute(
-                "SELECT title, state, ghostlisted FROM media_items WHERE imdb_id = ? LIMIT 1",
-                (imdb_id,)
-            )
+            if imdb_id:
+                cursor.execute(
+                    "SELECT title, state, ghostlisted FROM media_items WHERE imdb_id = ? LIMIT 1",
+                    (imdb_id,)
+                )
+            else:
+                cursor.execute(
+                    "SELECT title, state, ghostlisted FROM media_items WHERE tmdb_id = ? LIMIT 1",
+                    (tmdb_id,)
+                )
             row = cursor.fetchone()
 
             if row:
@@ -909,29 +960,29 @@ def process_trakt_items(items: List[Dict[str, Any]], unblacklist: bool = False) 
 
                 if is_ghostlisted:
                     # Always block ghostlisted items regardless of toggle
-                    logging.info(f"⛔ BLOCKED: Skipping ghostlisted item from Trakt: {item_title} (IMDB: {imdb_id})")
+                    logging.info(f"⛔ BLOCKED: Skipping ghostlisted item from Trakt: {item_title} (ID: {key_id})")
                     blacklisted_count += 1
-                    seen_imdb_ids.add(imdb_id)
+                    seen_imdb_ids.add(key_id)
                     continue
                 elif is_blacklisted:
                     if unblacklist:
                         # Allow through — add_wanted_items will unblacklist it
-                        logging.info(f"🔓 Allowing blacklisted item through for unblacklist: {item_title} (IMDB: {imdb_id})")
+                        logging.info(f"🔓 Allowing blacklisted item through for unblacklist: {item_title} (ID: {key_id})")
                         unblacklisted_count += 1
                     else:
-                        logging.info(f"⛔ BLOCKED: Skipping blacklisted item from Trakt: {item_title} (IMDB: {imdb_id})")
+                        logging.info(f"⛔ BLOCKED: Skipping blacklisted item from Trakt: {item_title} (ID: {key_id})")
                         blacklisted_count += 1
-                        seen_imdb_ids.add(imdb_id)
+                        seen_imdb_ids.add(key_id)
                         continue
         except Exception as e:
-            logging.error(f"Error checking blacklist status for {imdb_id}: {e}")
+            logging.error(f"Error checking blacklist status for {key_id}: {e}")
             # Continue processing - don't block on database errors
 
-        seen_imdb_ids.add(imdb_id)
-        processed_items.append({
-            'imdb_id': imdb_id,
-            'media_type': media_type
-        })
+        seen_imdb_ids.add(key_id)
+        if imdb_id:
+            processed_items.append({'imdb_id': imdb_id, 'media_type': media_type})
+        else:
+            processed_items.append({'tmdb_id': tmdb_id, 'media_type': media_type})
 
     if skipped_count > 0:
         logging.info(f"Skipped {skipped_count} items due to missing media type or ID")
@@ -1147,7 +1198,7 @@ def save_trakt_cache(cache, cache_file):
 
 def get_last_activity() -> Dict[str, Any]:
     endpoint = "/sync/last_activities"
-    return fetch_items_from_trakt(endpoint)
+    return fetch_items_from_trakt(endpoint)  # [] on failure; check_for_updates treats that as "unknown"
 
 def check_for_updates(list_url: str = None, cache_ttl_minutes=30) -> bool:
     """
@@ -1155,48 +1206,74 @@ def check_for_updates(list_url: str = None, cache_ttl_minutes=30) -> bool:
 
     Args:
         list_url: Optional list URL to check for updates
-        cache_ttl_minutes: Cache TTL in minutes (Phase 3.2 enhancement)
+        cache_ttl_minutes: Per-key cache TTL in minutes. The watchlist and every list
+            keep their own "last detected update" time, so one source's detection never
+            suppresses another's check.
 
     Returns:
-        bool: True if updates detected or cache expired, False otherwise
+        bool: True if updates detected, cache reset, or activity unknown (force a
+        refetch); False only when nothing changed. Never raises.
     """
     cached_activity = load_trakt_cache(LAST_ACTIVITY_CACHE_FILE)
+    if not isinstance(cached_activity, dict):
+        cached_activity = {}
+    # Older cache files have no per-key timestamps ('checked'); they simply get re-checked once.
+    if not isinstance(cached_activity.get('checked'), dict):
+        cached_activity['checked'] = {}
+    if not isinstance(cached_activity.get('lists'), dict):
+        cached_activity['lists'] = {}
+
+    list_id = list_url.split('/')[-1].split('?')[0] if list_url else None
+    cache_key = list_id if list_id else 'watchlist'
     current_time = time.time()
 
-    # Phase 3.2: Check if cache TTL expired (default 30 minutes)
-    if cached_activity and 'last_updated' in cached_activity:
-        cache_age_minutes = (current_time - cached_activity['last_updated']) / 60
+    # Phase 3.2: Check if this key's cache TTL expired (default 30 minutes)
+    last_checked = cached_activity['checked'].get(cache_key)
+    if isinstance(last_checked, (int, float)):
+        cache_age_minutes = (current_time - last_checked) / 60
         if cache_age_minutes < cache_ttl_minutes:
             # Cache still valid, no need to check activity
-            logging.debug(f"Cache is fresh ({cache_age_minutes:.1f}min < {cache_ttl_minutes}min), skipping activity check")
+            logging.debug(f"Cache is fresh for {cache_key} ({cache_age_minutes:.1f}min < {cache_ttl_minutes}min), skipping activity check")
             return False
 
     current_activity = get_last_activity()
     current_time = int(time.time())
+
+    # last_activities failed or came back in an unexpected shape: we can't tell, so refetch.
+    section = current_activity.get('lists' if list_id else 'watchlist') if isinstance(current_activity, dict) else None
+    current_updated_at = section.get('updated_at') if isinstance(section, dict) else None
+    if current_updated_at is None:
+        logging.warning(f"Trakt last_activities unavailable or malformed ({type(current_activity).__name__}); assuming {cache_key} changed")
+        return True
+
     cache_age = current_time - cached_activity.get('last_updated', 0)
 
     # If cache is 24 hours old or older, recreate it
     if cache_age >= 86400:  # 86400 seconds = 24 hours
         logging.info("Cache is 24 hours old or older. Recreating cache.")
-        cached_activity = {'lists': {}, 'watchlist': None, 'last_updated': current_time}
+        cached_activity = {'lists': {}, 'watchlist': None, 'checked': {}, 'last_updated': current_time}
+        if list_id:
+            cached_activity['lists'][list_id] = current_updated_at
+        else:
+            cached_activity['watchlist'] = current_updated_at
+        cached_activity['checked'][cache_key] = current_time
         save_trakt_cache(cached_activity, LAST_ACTIVITY_CACHE_FILE)
         return True
 
-    if list_url:
-        list_id = list_url.split('/')[-1].split('?')[0]
-        if list_id not in cached_activity['lists'] or current_activity['lists']['updated_at'] != cached_activity['lists'].get(list_id):
+    if list_id:
+        if list_id not in cached_activity['lists'] or current_updated_at != cached_activity['lists'].get(list_id):
             logging.info(f"Update detected for list {list_id}")
-            cached_activity['lists'][list_id] = current_activity['lists']['updated_at']
-            cached_activity['last_updated'] = current_time
+            cached_activity['lists'][list_id] = current_updated_at
+            cached_activity['checked'][list_id] = current_time
             save_trakt_cache(cached_activity, LAST_ACTIVITY_CACHE_FILE)
             return True
         else:
             logging.info(f"No update detected for list {list_id}")
     else:  # Checking watchlist
-        if 'watchlist' not in cached_activity or current_activity['watchlist']['updated_at'] != cached_activity['watchlist']:
+        if current_updated_at != cached_activity.get('watchlist'):
             logging.info("Update detected for watchlist")
-            cached_activity['watchlist'] = current_activity['watchlist']['updated_at']
-            cached_activity['last_updated'] = current_time
+            cached_activity['watchlist'] = current_updated_at
+            cached_activity['checked']['watchlist'] = current_time
             save_trakt_cache(cached_activity, LAST_ACTIVITY_CACHE_FILE)
             return True
         else:
@@ -1228,17 +1305,35 @@ def get_wanted_from_trakt_watchlist(versions: Dict[str, bool], unblacklist: bool
                 logging.debug("Trakt watchlist removal enabled" + (" (keeping series)" if keep_series else ""))
             # Skip API fetch if watchlist hasn't changed and removal is not enabled
             # (removal needs fresh items to check which are collected)
-            cached_processed = cache.get('processed_items') if isinstance(cache, dict) else None
+            # Caches written before pagination held at most one page (100 items); ignore them.
+            cached_processed = cache.get('processed_items') if isinstance(cache, dict) and cache.get('paginated') and not cache.get('refetch_pending') else None
             if not should_remove and cached_processed and not check_for_updates(cache_ttl_minutes=30):
                 logging.debug("Trakt watchlist unchanged (check_for_updates=False), using cached items")
                 processed_items = cached_processed
                 all_wanted_items.append((processed_items, versions))
                 continue
 
-            watchlist_items = fetch_items_from_trakt("/sync/watchlist")
+            watchlist_items = fetch_all_pages_from_trakt("/sync/watchlist")
+            if watchlist_items is None:
+                # Failed fetch: never save a partial/empty result to the cache or report it as an empty watchlist
+                # last_activities already recorded the new updated_at, so without this flag the next
+                # run would see "no update" and keep serving the stale cache until the watchlist changes again.
+                cache['refetch_pending'] = True
+                save_trakt_cache(cache, TRAKT_WATCHLIST_CACHE_FILE)
+                fallback_items = cache.get('processed_items') if cache.get('paginated') else None
+                if fallback_items:
+                    logging.warning("Trakt watchlist fetch failed; using the last cached watchlist items this run (will refetch next run)")
+                    all_wanted_items.append((fallback_items, versions))
+                else:
+                    logging.warning("Trakt watchlist fetch failed and no cached items are available; returning nothing this run")
+                    all_wanted_items.append(([], versions))
+                continue
             processed_items = process_trakt_items(watchlist_items, unblacklist=unblacklist)
-            # Save to cache for future skip-if-unchanged logic
+            logging.info(f"Fetched {len(watchlist_items)} Trakt watchlist entries ({len(processed_items)} usable)")
+            # Save to cache (complete fetches only) for future skip-if-unchanged logic
             cache['processed_items'] = processed_items
+            cache['paginated'] = True
+            cache['refetch_pending'] = False
             save_trakt_cache(cache, TRAKT_WATCHLIST_CACHE_FILE)
             
             # Handle removal of collected items if enabled
@@ -1246,6 +1341,8 @@ def get_wanted_from_trakt_watchlist(versions: Dict[str, bool], unblacklist: bool
                 movies_to_remove = []
                 shows_to_remove = []
                 for item in processed_items[:]:  # Create a copy to iterate while modifying
+                    if not item.get('imdb_id'):
+                        continue  # TMDB-only entries can't be matched against the library by IMDb id
                     item_state = get_media_item_presence_overall(imdb_id=item['imdb_id'])
                     if item_state in ("Collected", "Partial"):
                         # If it's a TV show and we want to keep series, skip removal
@@ -1304,6 +1401,21 @@ def get_wanted_from_trakt_watchlist(versions: Dict[str, bool], unblacklist: bool
 
     return all_wanted_items
 
+def _clean_trakt_list_url(url: str) -> str:
+    """Strip trailing comma/'asc' sort artifacts (e.g. 'url,asc') from a Trakt list URL.
+
+    Returns '' when nothing usable is left (e.g. the entry was just 'asc' from a
+    '...?sort=added,asc' value that was split on commas). Only a standalone or
+    comma-separated trailing 'asc' is removed, so slugs such as 'nascar' are kept.
+    """
+    url = (url or '').strip()
+    while True:
+        cleaned = re.sub(r'[\s,]*,\s*asc\s*$', '', url, flags=re.IGNORECASE).rstrip(', \t')
+        if cleaned == url:
+            break
+        url = cleaned
+    return '' if url.lower() == 'asc' else url
+
 def get_wanted_from_trakt_lists(trakt_list_url: str, versions: Dict[str, bool], unblacklist: bool = False) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     logging.debug("Fetching Trakt lists")
     # Phase 2.3: Set high priority for user-created lists (critical task)
@@ -1313,8 +1425,8 @@ def get_wanted_from_trakt_lists(trakt_list_url: str, versions: Dict[str, bool], 
         logging.error("Failed to obtain a valid Trakt access token")
         raise Exception("Failed to obtain a valid Trakt access token")
     
-    # Skip processing if URL contains 'asc'
-    if 'asc' in trakt_list_url:
+    trakt_list_url = _clean_trakt_list_url(trakt_list_url)
+    if not trakt_list_url:
         return [([], versions)]
     
     all_wanted_items = []
@@ -1486,8 +1598,10 @@ def get_wanted_from_friend_trakt_watchlist(source_config: Dict[str, Any], versio
         endpoint = f"/users/{clean_username}/watchlist"
         logging.debug(f"Making watchlist request to endpoint: {endpoint}")
         logging.debug(f"Using headers: {headers}")
-        items = fetch_items_from_trakt(endpoint, headers)
-        
+        items = fetch_all_pages_from_trakt(endpoint, headers)
+        if items is None:
+            raise ValueError(f"Trakt watchlist fetch failed for {endpoint}")
+
         # Process the items
         processed_items = process_trakt_items(items, unblacklist=unblacklist)
         logging.info(f"Found {len(processed_items)} wanted items from friend's Trakt watchlist: {username}")
@@ -1510,7 +1624,9 @@ def get_wanted_from_friend_trakt_watchlist(source_config: Dict[str, Any], versio
             if user_id:
                 logging.info(f"Trying fallback with user ID: {user_id}")
                 endpoint = f"/users/{user_id}/watchlist"
-                items = fetch_items_from_trakt(endpoint, headers)
+                items = fetch_all_pages_from_trakt(endpoint, headers)
+                if items is None:
+                    raise ValueError(f"Trakt watchlist fetch failed for {endpoint}")
 
                 processed_items = process_trakt_items(items, unblacklist=unblacklist)
                 logging.info(f"Found {len(processed_items)} wanted items from friend's Trakt watchlist using user ID: {user_id}")
@@ -1606,9 +1722,10 @@ def get_wanted_from_special_trakt_lists(source_config: Dict[str, Any], versions_
                     continue
 
             for item_detail in processed_batch:
-                if item_detail['imdb_id'] and item_detail['imdb_id'] not in seen_imdb_ids_for_this_source:
+                detail_key = item_detail.get('imdb_id') or item_detail.get('tmdb_id')
+                if detail_key and detail_key not in seen_imdb_ids_for_this_source:
                     all_items_for_this_source.append(item_detail)
-                    seen_imdb_ids_for_this_source.add(item_detail['imdb_id'])
+                    seen_imdb_ids_for_this_source.add(detail_key)
 
     if not all_items_for_this_source:
         logging.info(f"No items found for Special Trakt List source: {source_config.get('display_name')}")
@@ -1649,7 +1766,7 @@ def check_trakt_early_releases():
             no_early_release_skipped += 1
             continue
 
-        imdb_id = item['imdb_id']
+        imdb_id = item.get('imdb_id')
         tmdb_id = item.get('tmdb_id')
 
         # Skip if no IMDB ID or TMDB ID
