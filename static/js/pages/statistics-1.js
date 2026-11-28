@@ -151,6 +151,26 @@ document.addEventListener('DOMContentLoaded', function() {
                     if (icon) icon.classList.remove('fa-spin');
                 });
         });
+        // Right after a restart the mount stats may not be in yet ('…'):
+        // fetch the size now, then refresh the other top-bar and card values.
+        if (sizeDisplaySpan.textContent.trim() === '\u2026') {
+            let tries = 0;
+            const loadSize = () => {
+                fetch('/statistics/api/library_size')
+                    .then(r => r.ok ? r.json() : null)
+                    .then(d => {
+                        const v = d && d.total_library_size;
+                        if (v && v !== '\u2026') {
+                            sizeDisplaySpan.textContent = v;
+                            if (typeof window.refreshStats === 'function') window.refreshStats();
+                        } else if (++tries < 6) {
+                            setTimeout(loadSize, 3000);
+                        }
+                    })
+                    .catch(() => { if (++tries < 6) setTimeout(loadSize, 3000); });
+            };
+            loadSize();
+        }
     }
 
 });
