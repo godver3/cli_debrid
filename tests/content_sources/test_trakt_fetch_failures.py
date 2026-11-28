@@ -132,7 +132,7 @@ class FetchAllPagesTests(unittest.TestCase):
 class WatchlistFallbackTests(unittest.TestCase):
     def _ns(self, fetched, cache, **extra):
         saved = mock.Mock()
-        ns = load_trakt(
+        stubs = dict(
             ensure_trakt_auth=lambda: 'tok',
             get_trakt_sources=lambda: {'watchlist': [{'enabled': True}]},
             load_trakt_cache=lambda f: cache,
@@ -141,21 +141,39 @@ class WatchlistFallbackTests(unittest.TestCase):
             check_for_updates=lambda **kw: True,
             process_trakt_items=lambda items, unblacklist=False: [{'imdb_id': x, 'media_type': 'movie'} for x in items],
             get_media_item_presence_overall=lambda **kw: None,
-            **extra,
         )
+        stubs.update(extra)
+        ns = load_trakt(**stubs)
         return ns, saved
 
-    def test_failed_fetch_uses_cached_items_and_does_not_save(self):
+    def test_failed_fetch_uses_cached_items_keeps_them_and_flags_refetch(self):
         cached = [{'imdb_id': 'tt1', 'media_type': 'movie'}]
-        ns, saved = self._ns(None, {'processed_items': cached, 'paginated': True})
+        cache = {'processed_items': cached, 'paginated': True}
+        ns, saved = self._ns(None, cache)
         result = ns['get_wanted_from_trakt_watchlist']({'1080p': True})
         self.assertEqual(result, [(cached, {'1080p': True})])
-        saved.assert_not_called()
+        self.assertIs(cache['processed_items'], cached)  # partial/empty result never replaces the cache
+        self.assertTrue(cache['refetch_pending'])
+        saved.assert_called_once()
 
-    def test_failed_fetch_without_cache_returns_empty_and_does_not_save(self):
-        ns, saved = self._ns(None, {})
+    def test_repeated_failure_still_falls_back_to_cache(self):
+        cached = [{'imdb_id': 'tt1', 'media_type': 'movie'}]
+        cache = {'processed_items': cached, 'paginated': True, 'refetch_pending': True}
+        ns, _ = self._ns(None, cache)
+        self.assertEqual(ns['get_wanted_from_trakt_watchlist']({'v': True}), [(cached, {'v': True})])
+
+    def test_refetch_pending_bypasses_unchanged_shortcut(self):
+        cache = {'processed_items': [{'imdb_id': 'old'}], 'paginated': True, 'refetch_pending': True}
+        ns, _ = self._ns(['tt9'], cache, check_for_updates=lambda **kw: False)
+        result = ns['get_wanted_from_trakt_watchlist']({'v': True})
+        self.assertEqual(result[0][0], [{'imdb_id': 'tt9', 'media_type': 'movie'}])
+        self.assertFalse(cache['refetch_pending'])
+
+    def test_failed_fetch_without_cache_returns_empty(self):
+        cache = {}
+        ns, _ = self._ns(None, cache)
         self.assertEqual(ns['get_wanted_from_trakt_watchlist']({'v': True}), [([], {'v': True})])
-        saved.assert_not_called()
+        self.assertNotIn('processed_items', cache)
 
     def test_complete_fetch_is_cached(self):
         cache = {}

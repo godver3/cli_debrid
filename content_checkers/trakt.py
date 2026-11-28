@@ -1306,7 +1306,7 @@ def get_wanted_from_trakt_watchlist(versions: Dict[str, bool], unblacklist: bool
             # Skip API fetch if watchlist hasn't changed and removal is not enabled
             # (removal needs fresh items to check which are collected)
             # Caches written before pagination held at most one page (100 items); ignore them.
-            cached_processed = cache.get('processed_items') if isinstance(cache, dict) and cache.get('paginated') else None
+            cached_processed = cache.get('processed_items') if isinstance(cache, dict) and cache.get('paginated') and not cache.get('refetch_pending') else None
             if not should_remove and cached_processed and not check_for_updates(cache_ttl_minutes=30):
                 logging.debug("Trakt watchlist unchanged (check_for_updates=False), using cached items")
                 processed_items = cached_processed
@@ -1316,9 +1316,14 @@ def get_wanted_from_trakt_watchlist(versions: Dict[str, bool], unblacklist: bool
             watchlist_items = fetch_all_pages_from_trakt("/sync/watchlist")
             if watchlist_items is None:
                 # Failed fetch: never save a partial/empty result to the cache or report it as an empty watchlist
-                if cached_processed:
-                    logging.warning("Trakt watchlist fetch failed; using the last cached watchlist items this run")
-                    all_wanted_items.append((cached_processed, versions))
+                # last_activities already recorded the new updated_at, so without this flag the next
+                # run would see "no update" and keep serving the stale cache until the watchlist changes again.
+                cache['refetch_pending'] = True
+                save_trakt_cache(cache, TRAKT_WATCHLIST_CACHE_FILE)
+                fallback_items = cache.get('processed_items') if cache.get('paginated') else None
+                if fallback_items:
+                    logging.warning("Trakt watchlist fetch failed; using the last cached watchlist items this run (will refetch next run)")
+                    all_wanted_items.append((fallback_items, versions))
                 else:
                     logging.warning("Trakt watchlist fetch failed and no cached items are available; returning nothing this run")
                     all_wanted_items.append(([], versions))
@@ -1328,6 +1333,7 @@ def get_wanted_from_trakt_watchlist(versions: Dict[str, bool], unblacklist: bool
             # Save to cache (complete fetches only) for future skip-if-unchanged logic
             cache['processed_items'] = processed_items
             cache['paginated'] = True
+            cache['refetch_pending'] = False
             save_trakt_cache(cache, TRAKT_WATCHLIST_CACHE_FILE)
             
             # Handle removal of collected items if enabled
