@@ -140,7 +140,62 @@ def _describe_add_media_item_failure(item: dict) -> str:
     except Exception as e:
         return f"add_media_item returned None; could not determine why ({e})"
 
-def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dry_run, task_id, trigger_plex_update_on_success: bool = False, assumed_item_title_from_path: str = None, user_initiated: bool = False): # Add new parameter
+# Scan paths currently being processed. The Zurg webhook, the manual debug scan and the
+# periodic external-mount scan all feed this same task, and with the progress file
+# removed nothing else stops two of them importing one folder at the same moment
+# (each would pass the DB duplicate check before the other's insert landed).
+_IN_FLIGHT_SCAN_PATHS = set()
+_IN_FLIGHT_LOCK = threading.Lock()
+
+
+_DEFAULT_VIDEO_EXTENSIONS = frozenset({'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm',
+                                       '.mpeg', '.mpg', '.m4v'})
+
+
+def _video_extensions_for(scan_path: str) -> set:
+    """Extensions to import under scan_path.
+
+    The Built-in mount only exposes files matching its own allowed_extensions
+    setting, so a scan of that mount must honour it. Anything else (Zurg, cli_mount,
+    a mount scanned alongside the engine) uses the default list.
+    """
+    try:
+        from utilities import builtin_engine
+        settings = builtin_engine._load_settings()
+        if builtin_engine.selected(settings):
+            bm = settings.get('Built-in Mount') or {}
+            root = os.path.realpath(builtin_engine.mount_path(bm))
+            real = os.path.realpath(str(scan_path))
+            if real == root or real.startswith(root.rstrip(os.sep) + os.sep):
+                exts = {'.' + e for e in builtin_engine.allowed_extensions(bm)}
+                if exts:
+                    return exts
+    except Exception as e:
+        logging.debug(f"[RcloneScan] Built-in extension lookup failed, using defaults: {e}")
+    return set(_DEFAULT_VIDEO_EXTENSIONS)
+
+
+def _load_known_original_paths(prefix: str) -> set:
+    """original_path_for_symlink values under prefix, for skip_known_paths."""
+    try:
+        from database.core import get_db_connection
+        conn = get_db_connection()
+        try:
+            escaped = prefix.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+            rows = conn.execute(
+                "SELECT original_path_for_symlink FROM media_items "
+                "WHERE original_path_for_symlink LIKE ? ESCAPE '\\'",
+                (escaped + '%',)
+            ).fetchall()
+            return {r['original_path_for_symlink'] for r in rows if r['original_path_for_symlink']}
+        finally:
+            conn.close()
+    except Exception as e:
+        logging.warning(f"[RcloneScan] Could not load already-imported file paths: {e}")
+        return set()
+
+
+def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dry_run, task_id, trigger_plex_update_on_success: bool = False, assumed_item_title_from_path: str = None, user_initiated: bool = False, skip_known_paths: bool = False): # Add new parameter
     """Background task to scan Rclone mount, fetch metadata, and create DB entries/symlinks.
 
     user_initiated is passed straight to add_media_item, where it bypasses the
@@ -150,6 +205,12 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
     the mount also fills up with cli_debrid's own leftovers (cache-check probes,
     torrents orphaned when a grab failed), and bypassing the guard for those
     re-imports the exact releases the queues just blacklisted.
+
+    skip_known_paths skips any file whose path is already some media_items row's
+    original_path_for_symlink. The periodic scan sets it so that retrying a folder
+    that only partly imported does not insert the files that did import a second
+    time (processed_original_files is no longer persisted, so it cannot do this).
+    It is off for the webhook/manual scan, which may legitimately re-run a file.
     """
 
     # --- Progress File Setup ---
@@ -219,6 +280,20 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
             logging.warning(f"Rclone scan Task ID {task_id} not found in progress dict during update.")
 
     try:
+        _flight_key = os.path.realpath(str(rclone_mount_path_str))
+    except Exception:
+        _flight_key = str(rclone_mount_path_str)
+    with _IN_FLIGHT_LOCK:
+        _already_running = _flight_key in _IN_FLIGHT_SCAN_PATHS
+        if not _already_running:
+            _IN_FLIGHT_SCAN_PATHS.add(_flight_key)
+    if _already_running:
+        logging.info(f"[RcloneScan {task_id}] '{_flight_key}' is already being processed by another scan; skipping this one.")
+        update_progress(status='complete', complete=True, success=True,
+                        message='Skipped: this path is already being processed by another scan.')
+        return
+
+    try:
         rclone_mount_path = Path(rclone_mount_path_str)
 
         # Check if rclone_mount_path is a directory
@@ -233,7 +308,10 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
         # afterwards; a restart mid-scan, a settings save or an overlapping
         # webhook/external scan could leave the wrong path saved.
         update_progress(status='scanning', message='Scanning Rclone mount path...')
-        video_extensions = {'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm', '.mpeg', '.mpg'}
+        video_extensions = _video_extensions_for(rclone_mount_path_str)
+        known_original_paths = set()
+        if skip_known_paths and not dry_run:
+            known_original_paths = _load_known_original_paths(str(rclone_mount_path))
         total_files_scanned = 0
         media_files_found = 0
         items_processed = 0
@@ -260,7 +338,7 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
             original_file_path_str = str(item_path) # Used for progress tracking
 
             # Check if this specific file was already processed and recorded
-            if original_file_path_str in processed_original_files:
+            if original_file_path_str in processed_original_files or original_file_path_str in known_original_paths:
                 logging.info(f"[RcloneScan {task_id}] Skipping previously processed file: {item_path.name}")
                 skipped_previously_processed_count += 1
                 update_progress(skipped_previously_processed=skipped_previously_processed_count)
@@ -896,6 +974,8 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
         logging.error(f"[RcloneScan {task_id}] Critical error in Rclone scan task: {e}", exc_info=True)
         update_progress(status='error', message=f'Task failed: {e}', complete=True, success=False)
     finally:
+        with _IN_FLIGHT_LOCK:
+            _IN_FLIGHT_SCAN_PATHS.discard(_flight_key)
         # Save final progress one last time, e.g. if loop broke early
         if not dry_run: save_rclone_progress() 
         threading.Timer(300, lambda: rclone_scan_progress.pop(task_id, None)).start()

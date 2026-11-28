@@ -9,7 +9,8 @@ mount as categories.
 from __future__ import annotations
 
 import os
-from typing import Optional
+import re
+from typing import List, Optional, Tuple
 
 
 def resolve_nzb_job_dir(mount: str, folder: str) -> Optional[str]:
@@ -35,3 +36,72 @@ def resolve_nzb_job_dir(mount: str, folder: str) -> Optional[str]:
         return None
 
     return None
+
+
+_MEDIA_EXTS = ('.mkv', '.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm', '.mpeg',
+               '.mpg', '.m4v')
+
+# A job folder with season subfolders ("Show.S01/Season 01/*.mkv") looks exactly
+# like a category holding a job, so these names mark a folder as a job.
+_JOB_SUBDIR_RE = re.compile(r'^(season|series|specials?|extras?|subs?|subtitles?)\b|^s\d{1,2}$', re.I)
+
+
+def dir_has_media(path: str, depth: int = 1) -> bool:
+    """True when ``path`` holds a video file directly, or (depth > 0) in a
+    subfolder. Stops at the first hit so a big job costs one short listing."""
+    try:
+        with os.scandir(path) as it:
+            subdirs = []
+            for e in it:
+                if e.name.startswith('.'):
+                    continue
+                if e.is_dir():
+                    subdirs.append(e.path)
+                elif e.name.lower().endswith(_MEDIA_EXTS):
+                    return True
+    except OSError:
+        return False
+    return depth > 0 and any(dir_has_media(d, depth - 1) for d in subdirs)
+
+
+def is_category_dir(path: str) -> bool:
+    """A category is a folder with no media of its own whose child folders
+    contain media (NzbDAV's <mount>/<category>/<job>)."""
+    try:
+        with os.scandir(path) as it:
+            children = [e for e in it if not e.name.startswith('.') and e.is_dir()]
+    except OSError:
+        return False
+    if not children or any(_JOB_SUBDIR_RE.match(c.name) for c in children):
+        return False
+    try:
+        with os.scandir(path) as it:
+            if any(e.is_file() and e.name.lower().endswith(_MEDIA_EXTS) for e in it):
+                return False
+    except OSError:
+        return False
+    return any(dir_has_media(c.path, depth=1) for c in children)
+
+
+def list_job_dirs(mount: str) -> List[Tuple[str, str]]:
+    """(relative path, absolute path) of every NZB job folder under ``mount``,
+    for flat (<mount>/<job>) and nested (<mount>/<category>/<job>) layouts."""
+    jobs: List[Tuple[str, str]] = []
+    try:
+        with os.scandir(mount) as it:
+            tops = sorted((e.name, e.path) for e in it
+                          if not e.name.startswith('.') and e.is_dir())
+    except OSError:
+        return jobs
+    for name, path in tops:
+        if is_category_dir(path):
+            try:
+                with os.scandir(path) as it:
+                    for e in sorted(it, key=lambda x: x.name):
+                        if not e.name.startswith('.') and e.is_dir():
+                            jobs.append((f'{name}/{e.name}', e.path))
+            except OSError:
+                continue
+        else:
+            jobs.append((name, path))
+    return jobs

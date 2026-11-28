@@ -25,14 +25,39 @@ pointing at the torrent while the folder stays. Those are junk, not external
 adds, and importing them reinstates releases the queues deliberately rejected --
 so candidates are also checked against the not-wanted and blacklist sets
 (_build_rejected_sets) before being imported.
+
+Safeguards, each there because a periodic import over a live mount goes wrong
+in a specific way:
+  * Own leftovers: a folder whose name matches ANY torrent_additions record
+    (or a media_items title column) is cli_debrid's own, whatever its hash's
+    not-wanted status. A trailing " (N)" duplicate suffix is ignored.
+  * Settle time: a new folder is only recorded on first sight; it is imported
+    once a later run sees it AND it is SETTLE_SECONDS old, so a torrent still
+    being added is not imported half-populated.
+  * No media yet: a run that found zero video files does not use up an attempt;
+    it is retried every run until PENDING_GIVE_UP_SECONDS after first_seen.
+  * Partial imports stay retryable (only an error-free run is 'imported'), and
+    the pipeline is asked to skip files already in media_items so retries do not
+    duplicate rows.
+  * Baseline robustness: a '__meta__' key keeps baselined_at/last_run/
+    last_entry_count. A corrupt state file is moved aside and the run skipped;
+    a listing under half the previous size is treated as a flaky mount; a run
+    after a >2 day gap baselines new folders instead of importing them.
+  * Layouts: original_files_path (stepping into '__all__' if the mount root was
+    configured) and, if set and separate, the Usenet Provider mount, including
+    NzbDAV's <category>/<job> nesting. Usenet keys are prefixed 'usenet:'.
+  * Runs never overlap (module lock) and the import pipeline refuses a path
+    another scan is already processing.
 """
 
 import json
 import logging
 import os
+import re
+import threading
 import time
 import uuid
-from typing import Dict, List, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 from utilities.settings import get_setting
 
@@ -52,23 +77,65 @@ RETRY_AFTER_SECONDS = 6 * 60 * 60
 # listing recovered.
 GONE_GRACE_SECONDS = 7 * 24 * 60 * 60
 
+# A new folder must have been first seen this long ago (and on an earlier run)
+# before it is imported, so a torrent still being populated isn't half-imported.
+SETTLE_SECONDS = 10 * 60
+
+# A folder with no media files yet is retried every run for this long.
+PENDING_GIVE_UP_SECONDS = 24 * 60 * 60
+
+# If the task was off longer than this, whatever appeared meanwhile is
+# baselined rather than imported (it is not "new", it is just unseen).
+LONG_GAP_SECONDS = 2 * 24 * 60 * 60
+
+# Flaky-listing guard: a listing under half the previous size, when the previous
+# one was at least this big, is a mount hiccup, not hundreds of deletions.
+FLAKY_MIN_COUNT = 20
+FLAKY_RATIO = 0.5
+
+META_KEY = '__meta__'
+USENET_PREFIX = 'usenet:'
+# last_run only needs to be fresh to within the long-gap window; don't rewrite
+# the state file every run just to bump it.
+LAST_RUN_WRITE_INTERVAL = 60 * 60
+
+_SCAN_LOCK = threading.Lock()
+_warned_all_dir = False
+_DUP_SUFFIX_RE = re.compile(r'\s*\(\d+\)\s*$')
+
 
 def _state_path() -> str:
     db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
     return os.path.join(db_content_dir, STATE_FILENAME)
 
 
-def _load_state() -> Dict:
+_CORRUPT = object()
+
+
+def _load_state():
+    """State dict, {} when there is none, or _CORRUPT after moving an unreadable
+    file aside. Silently re-baselining on a corrupt file would hide every folder
+    that arrived since; skipping once and baselining fresh next run is safer."""
     path = _state_path()
     if not os.path.exists(path):
         return {}
     try:
         with open(path, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except (json.JSONDecodeError, OSError) as e:
-        logging.warning(f"[ExternalScan] Could not read state file {path}: {e}. Treating as empty.")
-        return {}
+        if isinstance(data, dict):
+            return data
+        err = 'not a JSON object'
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
+        err = str(e)
+    dest = f"{path}.corrupt-{int(time.time())}"
+    try:
+        os.replace(path, dest)
+        moved = f"moved to {dest}"
+    except OSError as e:
+        moved = f"could not be moved aside ({e})"
+    logging.error(f"[ExternalScan] State file {path} is unreadable ({err}); {moved}. "
+                  f"Skipping this run; the next run baselines fresh.")
+    return _CORRUPT
 
 
 def _save_state(state: Dict) -> None:
@@ -100,6 +167,70 @@ def _list_top_level(mount_path: str) -> List[str]:
         return []
 
 
+def _name_variants(name: str, normalize) -> Set[str]:
+    """Normalized name plus the form with a trailing " (N)" duplicate suffix
+    removed -- the debrid account names a re-added torrent "Name (1)"."""
+    out = {normalize(name)}
+    stripped = _DUP_SUFFIX_RE.sub('', name)
+    if stripped != name:
+        out.add(normalize(stripped))
+    out.discard('')
+    return out
+
+
+def _load_torrent_additions() -> List[Tuple[str, Dict]]:
+    """(hash, item_data dict) for every torrent_additions row, read once per run
+    and filtered in Python (no huge IN (...))."""
+    conn = None
+    out: List[Tuple[str, Dict]] = []
+    try:
+        from database.core import get_db_connection
+        conn = get_db_connection()
+        rows = conn.execute('SELECT torrent_hash, item_data FROM torrent_additions').fetchall()
+        for row in rows:
+            try:
+                data = json.loads(row['item_data']) if row['item_data'] else {}
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if isinstance(data, dict):
+                out.append(((row['torrent_hash'] or '').lower(), data))
+    except Exception as e:
+        logging.debug(f"[ExternalScan] torrent_additions unavailable: {e}")  # absent on a fresh install
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    return out
+
+
+_OURS_KEYS = ('debrid_folder_name', 'filled_by_title', 'original_scraped_torrent_title',
+              'real_debrid_original_title')
+
+
+def _build_ours_sets(additions: Optional[List[Tuple[str, Dict]]] = None) -> Set[str]:
+    """Normalized names of every folder cli_debrid itself added to the account,
+    from any torrent_additions row regardless of not-wanted status."""
+    from database.database_reading import normalize_string_for_comparison
+    if additions is None:
+        additions = _load_torrent_additions()
+    ours: Set[str] = set()
+    for _hash, data in additions:
+        for key in _OURS_KEYS:
+            value = data.get(key)
+            if value and isinstance(value, str):
+                ours.update(_name_variants(value, normalize_string_for_comparison))
+    return ours
+
+
+def _is_ours(folder_name: str, ours_names: Set[str]) -> bool:
+    if not ours_names:
+        return False
+    from database.database_reading import normalize_string_for_comparison
+    return bool(_name_variants(folder_name, normalize_string_for_comparison) & ours_names)
+
+
 def _build_known_sets() -> tuple:
     """Build in-memory lookups of what the DB already knows about.
 
@@ -120,13 +251,14 @@ def _build_known_sets() -> tuple:
         conn = get_db_connection()
 
         rows = conn.execute(
-            'SELECT filled_by_title, real_debrid_original_title FROM media_items '
-            'WHERE filled_by_title IS NOT NULL OR real_debrid_original_title IS NOT NULL'
+            'SELECT filled_by_title, real_debrid_original_title, debrid_folder_name, '
+            'original_scraped_torrent_title FROM media_items'
         ).fetchall()
         for row in rows:
-            for value in (row['filled_by_title'], row['real_debrid_original_title']):
+            for value in (row['filled_by_title'], row['real_debrid_original_title'],
+                          row['debrid_folder_name'], row['original_scraped_torrent_title']):
                 if value:
-                    known_titles.add(normalize_string_for_comparison(value))
+                    known_titles.update(_name_variants(value, normalize_string_for_comparison))
 
         rows = conn.execute(
             'SELECT original_path_for_symlink FROM media_items '
@@ -151,7 +283,7 @@ def _build_known_sets() -> tuple:
     return known_titles, known_components
 
 
-def _build_rejected_sets() -> Set[str]:
+def _build_rejected_sets(additions: Optional[List[Tuple[str, Dict]]] = None) -> Set[str]:
     """Normalized mount-folder names cli_debrid added itself and then rejected.
 
     The premise of this whole task is that an untracked mount folder came from
@@ -196,19 +328,10 @@ def _build_rejected_sets() -> Set[str]:
         if not_wanted:
             # Filtered in Python rather than a huge IN (...) -- the not-wanted set
             # runs to thousands of hashes and would blow SQLite's parameter limit.
-            try:
-                rows = conn.execute(
-                    'SELECT torrent_hash, item_data FROM torrent_additions'
-                ).fetchall()
-            except Exception:
-                rows = []  # table absent on a fresh install
-            for row in rows:
-                torrent_hash = (row['torrent_hash'] or '').lower()
+            if additions is None:
+                additions = _load_torrent_additions()
+            for torrent_hash, data in additions:
                 if torrent_hash not in not_wanted:
-                    continue
-                try:
-                    data = json.loads(row['item_data']) if row['item_data'] else {}
-                except (json.JSONDecodeError, TypeError):
                     continue
                 for key in ('debrid_folder_name', 'filled_by_title'):
                     value = data.get(key)
@@ -246,8 +369,8 @@ def _already_tracked(folder_name: str, known_titles: Set[str], known_components:
         check_item_exists_with_symlink_path_containing,
     )
 
-    normalized = normalize_string_for_comparison(folder_name)
-    if normalized in known_titles or normalized in known_components:
+    variants = _name_variants(folder_name, normalize_string_for_comparison)
+    if variants & known_titles or variants & known_components:
         return True
 
     # Not positively identified above -- fall through to the authoritative
@@ -268,7 +391,7 @@ def _is_rejected(folder_name: str, rejected_names: Set[str]) -> bool:
     if not rejected_names:
         return False
     from database.database_reading import normalize_string_for_comparison
-    return normalize_string_for_comparison(folder_name) in rejected_names
+    return bool(_name_variants(folder_name, normalize_string_for_comparison) & rejected_names)
 
 
 def _should_retry(entry: Dict, now: float) -> bool:
@@ -277,7 +400,7 @@ def _should_retry(entry: Dict, now: float) -> bool:
     # not drag an established library's worth of untracked content into the DB.
     if entry.get('baseline'):
         return False
-    if entry.get('imported'):
+    if entry.get('imported') or entry.get('given_up'):
         return False
     if entry.get('rejected'):
         # Known junk, but re-check on the normal window rather than permanently:
@@ -291,10 +414,98 @@ def _should_retry(entry: Dict, now: float) -> bool:
     return (now - last) >= RETRY_AFTER_SECONDS
 
 
-def scan_mount_for_external_adds() -> Dict:
-    """Scan the mount for folders cli_debrid has no record of and import them.
+def _strip_all_suffix(path: str) -> str:
+    path = (path or '').rstrip('/')
+    return path[:-len('/__all__')] if path.endswith('/__all__') else path
 
-    Returns a summary dict for logging.
+
+def _is_inside(child: str, parent: str) -> bool:
+    child, parent = os.path.realpath(child), os.path.realpath(parent)
+    return child == parent or child.startswith(parent.rstrip(os.sep) + os.sep)
+
+
+def _resolve_roots(mount_path: str) -> List[Dict]:
+    """Scan roots: the configured mount, plus a separate Usenet Provider mount.
+
+    Each root is {'id', 'path', 'prefix', 'swapped'}; 'usenet' roots list
+    <category>/<job> layouts too.
+    """
+    global _warned_all_dir
+    main_path, swapped = mount_path, False
+    try:
+        # cli_mount/decypharr/built-in/zurg are sometimes pointed at the mount
+        # root; the torrent folders then sit one level down, in __all__.
+        if os.path.isdir(os.path.join(mount_path, '__all__')):
+            main_path, swapped = os.path.join(mount_path, '__all__'), True
+            if not _warned_all_dir:
+                _warned_all_dir = True
+                logging.warning(f"[ExternalScan] original_files_path '{mount_path}' contains an '__all__' "
+                                f"folder; scanning '{main_path}' instead. Point the setting there to silence this.")
+    except OSError:
+        pass
+    roots = [{'id': 'main', 'path': main_path, 'prefix': '', 'swapped': swapped}]
+
+    usenet = _strip_all_suffix(get_setting('Usenet Provider', 'mounted_file_location', '') or '')
+    if usenet and os.path.isdir(usenet) and os.access(usenet, os.R_OK | os.X_OK):
+        # Same/nested mounts would list every folder twice under two keys.
+        overlaps = any(_is_inside(usenet, p) or _is_inside(p, usenet) for p in (mount_path, main_path))
+        if not overlaps:
+            roots.append({'id': 'usenet', 'path': usenet, 'prefix': USENET_PREFIX, 'swapped': False})
+    return roots
+
+
+def _list_root(root: Dict) -> List[Tuple[str, str, str]]:
+    """(state key, folder name, absolute path) for every importable folder."""
+    if root['id'] == 'usenet':
+        from usenet.mount_layout import list_job_dirs
+        return [(root['prefix'] + rel, os.path.basename(abs_path), abs_path)
+                for rel, abs_path in list_job_dirs(root['path'])]
+    return [(name, name, os.path.join(root['path'], name)) for name in _list_top_level(root['path'])]
+
+
+def _root_meta(meta: Dict, root: Dict) -> Dict:
+    if root['id'] == 'main':
+        return meta
+    return meta.setdefault(root['id'], {})
+
+
+def _give_up(entry: Dict, name: str, why: str, summary: Dict) -> None:
+    entry['given_up'] = True
+    summary['given_up'] += 1
+    logging.warning(f"[ExternalScan] giving up on '{name}' after {why}")
+
+
+def _run_import(name: str, scan_path: str, symlink_base_path: str):
+    """Run the pipeline; returns its progress dict."""
+    from routes.debug_routes import _run_rclone_to_symlink_task, rclone_scan_progress
+    task_id = str(uuid.uuid4())
+    # Same call the rclone webhook makes - metadata lookup, DB insert
+    # as Collected, symlink creation, media server scan and the
+    # 'collected' notification all happen inside.
+    #
+    # user_initiated stays False. The webhook passes True because a person
+    # deliberately put that content in the debrid account, which justifies
+    # unghosting an existing entry. This task runs on a timer over whatever
+    # happens to be in the mount, including cli_debrid's own leftovers, so
+    # the ghostlist/blacklist guard is the only thing stopping it importing
+    # releases the queues just rejected.
+    _run_rclone_to_symlink_task(
+        scan_path,
+        symlink_base_path,
+        False,               # dry_run
+        task_id,
+        True,                # trigger_plex_update_on_success
+        name,                # assumed_item_title_from_path
+        False,               # user_initiated - see above
+        skip_known_paths=True,  # a retry must not re-insert files that already imported
+    )
+    return rclone_scan_progress.pop(task_id, None) or {}
+
+
+def scan_mount_for_external_adds() -> Dict:
+    """Scan the mount(s) for folders cli_debrid has no record of and import them.
+
+    Returns a summary dict for logging. Never runs concurrently with itself.
     """
     summary = {
         'skipped_reason': None,
@@ -304,170 +515,256 @@ def scan_mount_for_external_adds() -> Dict:
         'failed': 0,
         'baselined': 0,
         'rejected': 0,
+        'pending': 0,
+        'ours': 0,
+        'given_up': 0,
     }
+    if not _SCAN_LOCK.acquire(blocking=False):
+        summary['skipped_reason'] = 'previous external scan still running'
+        return summary
+    try:
+        _scan(summary)
+    finally:
+        _SCAN_LOCK.release()
+    return summary
 
+
+def _scan(summary: Dict) -> None:
     if get_setting('File Management', 'file_collection_management', 'Symlinked/Local') != 'Symlinked/Local':
         summary['skipped_reason'] = 'file collection management is not Symlinked/Local'
-        return summary
+        return
 
     mount_path = get_setting('File Management', 'original_files_path', '')
     if not mount_path or not os.path.isdir(mount_path):
         summary['skipped_reason'] = f"original_files_path '{mount_path}' is not a readable directory"
-        return summary
+        return
 
     symlink_base_path = get_setting('File Management', 'symlinked_files_path', '')
     if not symlink_base_path:
         summary['skipped_reason'] = 'symlinked_files_path is not configured'
-        return summary
-
-    entries = _list_top_level(mount_path)
-    summary['entries_seen'] = len(entries)
-    if not entries:
-        return summary
+        return
 
     state = _load_state()
-    is_first_run = not state
+    if state is _CORRUPT:
+        summary['skipped_reason'] = 'state file was corrupt; moved aside, re-baselining next run'
+        return
+
     now = time.time()
-
-    # First run: record what's already there and import none of it.
-    if is_first_run:
-        for name in entries:
-            state[name] = {'imported': False, 'baseline': True, 'first_seen': now}
-        _save_state(state)
-        summary['baselined'] = len(entries)
-        logging.info(
-            f"[ExternalScan] First run - recorded {len(entries)} existing mount entries as baseline "
-            f"without importing. Content appearing from now on will be imported. "
-            f"Delete {_state_path()} to re-baseline."
-        )
-        return summary
-
     # Only write the state file when something actually changed. The steady
     # state is a large mount where every entry is already known, and rewriting
     # a file with one key per mount folder on every run buys nothing.
     dirty = False
 
-    # Forget folders that have been gone from the mount for a while, so the
-    # file doesn't grow without bound -- but not on a single missed listing.
-    present = set(entries)
-    for name in list(state):
-        entry = state[name]
-        if name in present:
-            if isinstance(entry, dict) and entry.pop('gone_since', None) is not None:
+    meta = state.get(META_KEY)
+    if not isinstance(meta, dict):
+        # Old state files have no meta; they keep working, it is added now.
+        meta = state[META_KEY] = {}
+        dirty = True
+    prev_last_run = meta.get('last_run')
+    long_gap = bool(prev_last_run) and (now - prev_last_run) > LONG_GAP_SECONDS
+    if not prev_last_run or now - prev_last_run >= LAST_RUN_WRITE_INTERVAL:
+        dirty = True
+    meta['last_run'] = now
+
+    candidates = []  # (key, name, abs path)
+    for root in _resolve_roots(mount_path):
+        entries = _list_root(root)
+        rm = _root_meta(meta, root)
+        prev_count = rm.get('last_entry_count')
+        if prev_count and prev_count >= FLAKY_MIN_COUNT and len(entries) < prev_count * FLAKY_RATIO:
+            # A half-listed mount would make the pruning below forget folders and
+            # the rest look new; wait for a sane listing.
+            logging.warning(f"[ExternalScan] '{root['path']}' listed {len(entries)} entries "
+                            f"(previously {prev_count}); looks like a flaky mount, skipping this root.")
+            continue
+        if not entries:
+            continue
+        summary['entries_seen'] += len(entries)
+
+        keys = {k for k, _, _ in entries}
+        root_keys = [k for k in state if k != META_KEY and k.startswith(USENET_PREFIX) == (root['id'] == 'usenet')]
+        first_run = not rm.get('baselined_at') and not root_keys
+        # The scan path changing (or an '__all__' step-in on a state recorded
+        # against the mount root) makes every folder name look new.
+        old_path = rm.get('scan_path')
+        relocated = (old_path is not None and old_path != root['path']) or \
+                    (old_path is None and root['swapped'] and bool(root_keys))
+        if first_run or relocated or long_gap:
+            added = 0
+            for key, _name, _p in entries:
+                if key not in state:
+                    state[key] = {'imported': False, 'baseline': True, 'first_seen': now}
+                    added += 1
+            if added:
                 dirty = True
-            continue
-        if not isinstance(entry, dict):
-            del state[name]
+                summary['baselined'] += added
+                if first_run:
+                    logging.info(
+                        f"[ExternalScan] First run for '{root['path']}' - recorded {added} existing mount "
+                        f"entries as baseline without importing. Content appearing from now on will be "
+                        f"imported. Delete {_state_path()} to re-baseline.")
+                else:
+                    why = 'the scan path changed' if relocated else f"the task was off for over {LONG_GAP_SECONDS // 86400} days"
+                    logging.info(f"[ExternalScan] Baselined {added} unknown folders under '{root['path']}' "
+                                 f"instead of importing them ({why}).")
+        if not rm.get('baselined_at'):
+            rm['baselined_at'] = now
             dirty = True
-            continue
-        gone_since = entry.get('gone_since')
-        if gone_since is None:
-            entry['gone_since'] = now
+        if rm.get('scan_path') != root['path']:
+            rm['scan_path'] = root['path']
             dirty = True
-        elif now - gone_since >= GONE_GRACE_SECONDS:
-            del state[name]
+        if rm.get('last_entry_count') != len(entries):
+            rm['last_entry_count'] = len(entries)
             dirty = True
 
-    candidates = []
-    for name in entries:
-        entry = state.get(name)
-        if entry is not None and not _should_retry(entry, now):
-            continue
-        candidates.append(name)
+        # Forget folders that have been gone from the mount for a while, so the
+        # file doesn't grow without bound -- but not on a single missed listing.
+        for key in root_keys:
+            entry = state[key]
+            if key in keys:
+                if isinstance(entry, dict) and entry.pop('gone_since', None) is not None:
+                    dirty = True
+                continue
+            if not isinstance(entry, dict):
+                del state[key]
+                dirty = True
+                continue
+            gone_since = entry.get('gone_since')
+            if gone_since is None:
+                entry['gone_since'] = now
+                dirty = True
+            elif now - gone_since >= GONE_GRACE_SECONDS:
+                del state[key]
+                dirty = True
 
-    if not candidates:
+        for key, name, path in entries:
+            entry = state.get(key)
+            if entry is not None and not _should_retry(entry, now):
+                continue
+            candidates.append((key, name, path))
+
+    def finish():
         if dirty:
             _save_state(state)
-        return summary
+
+    if not candidates:
+        finish()
+        return
 
     known_titles, known_components = _build_known_sets()
-    rejected_names = _build_rejected_sets()
+    additions = _load_torrent_additions()
+    rejected_names = _build_rejected_sets(additions)
+    ours_names = _build_ours_sets(additions)
 
-    new_folders = []
-    for name in candidates:
+    ready = []
+    for key, name, path in candidates:
         if _already_tracked(name, known_titles, known_components):
             # Tracked by cli_debrid already - record it so we don't re-check
             # it against the DB on every run.
-            state[name] = {'imported': True, 'tracked_existing': True, 'first_seen': now}
+            state[key] = {'imported': True, 'tracked_existing': True, 'first_seen': now}
             dirty = True
             continue
-        if _is_rejected(name, rejected_names):
-            # cli_debrid's own leftover, not an external add: this release was
-            # blacklisted or ghostlisted, so importing it would reinstate exactly
-            # what the queues rejected.
-            entry = state.get(name) or {'first_seen': now}
+        is_ours = _is_ours(name, ours_names)
+        if is_ours or _is_rejected(name, rejected_names):
+            # cli_debrid's own leftover (a torrent it added itself, or a release
+            # it blacklisted/ghostlisted), not an external add: importing it
+            # would reinstate exactly what the queues rejected.
+            entry = state.get(key) or {'first_seen': now}
             entry['rejected'] = True
             entry['last_attempt'] = now
-            state[name] = entry
-            summary['rejected'] += 1
+            if is_ours:
+                entry['ours'] = True
+                summary['ours'] += 1
+            else:
+                summary['rejected'] += 1
+            state[key] = entry
             dirty = True
-            logging.info(f"[ExternalScan] Skipping '{name}' - blacklisted/not-wanted content "
-                         f"cli_debrid rejected itself, not an external add.")
+            logging.info(f"[ExternalScan] Skipping '{name}' - "
+                         f"{'a torrent cli_debrid added itself' if is_ours else 'blacklisted/not-wanted content cli_debrid rejected itself'}, "
+                         f"not an external add.")
             continue
-        new_folders.append(name)
 
-    summary['new_candidates'] = len(new_folders)
-    if not new_folders:
-        if dirty:
-            _save_state(state)
-        return summary
+        entry = state.get(key)
+        if entry is None:
+            # First sight: record only. It may still be mid-upload.
+            state[key] = {'first_seen': now, 'seen_runs': 1, 'pending': True}
+            dirty = True
+            summary['pending'] += 1
+            continue
+        if entry.get('rejected'):
+            # Was junk, no longer matches (e.g. un-blacklisted): treat as new.
+            entry.pop('rejected', None)
+            entry.pop('ours', None)
+        seen_runs = entry.get('seen_runs', 2)  # old entries predate settling
+        entry['seen_runs'] = seen_runs + 1
+        dirty = True
+        if seen_runs + 1 < 2 or now - entry.get('first_seen', 0) < SETTLE_SECONDS:
+            summary['pending'] += 1
+            continue
+        state[key] = entry
+        ready.append((key, name, path))
 
-    logging.info(f"[ExternalScan] {len(new_folders)} mount entries with no database record; "
+    summary['new_candidates'] = len(ready)
+    if not ready:
+        finish()
+        return
+
+    logging.info(f"[ExternalScan] {len(ready)} mount entries with no database record; "
                  f"importing up to {MAX_IMPORTS_PER_RUN} this run.")
 
-    # Imported lazily: routes.debug_routes pulls in a large chunk of the app,
-    # and importing it at module level from utilities risks a circular import.
-    from routes.debug_routes import _run_rclone_to_symlink_task, rclone_scan_progress
-
-    for name in new_folders[:MAX_IMPORTS_PER_RUN]:
-        entry = state.get(name) or {'first_seen': now}
-        entry['attempts'] = entry.get('attempts', 0) + 1
-        entry['last_attempt'] = now
-
-        scan_path = os.path.join(mount_path, name)
-        task_id = str(uuid.uuid4())
+    for key, name, scan_path in ready[:MAX_IMPORTS_PER_RUN]:
+        entry = state[key]
+        first_seen = entry.get('first_seen', now)
+        if entry.get('no_media') and now - first_seen >= PENDING_GIVE_UP_SECONDS:
+            _give_up(entry, name, '24h with no media files', summary)
+            continue
 
         logging.info(f"[ExternalScan] Importing external add: {scan_path}")
+        attempt_used = True
         try:
-            # Same call the rclone webhook makes - metadata lookup, DB insert
-            # as Collected, symlink creation, media server scan and the
-            # 'collected' notification all happen inside.
-            #
-            # user_initiated stays False. The webhook passes True because a person
-            # deliberately put that content in the debrid account, which justifies
-            # unghosting an existing entry. This task runs on a timer over whatever
-            # happens to be in the mount, including cli_debrid's own leftovers, so
-            # the ghostlist/blacklist guard is the only thing stopping it importing
-            # releases the queues just rejected.
-            _run_rclone_to_symlink_task(
-                scan_path,
-                symlink_base_path,
-                False,               # dry_run
-                task_id,
-                True,                # trigger_plex_update_on_success
-                name,                # assumed_item_title_from_path
-                False,               # user_initiated - see below
-            )
-            progress = rclone_scan_progress.pop(task_id, None) or {}
+            progress = _run_import(name, scan_path, symlink_base_path)
             added = progress.get('items_added_to_db', 0)
             symlinks = progress.get('symlinks_created', 0)
-            if added > 0:
+            problems = [f"{label} {progress.get(k, 0)}" for k, label in (
+                ('parser_errors', 'parser'), ('metadata_errors', 'metadata'),
+                ('db_errors', 'db'), ('symlink_errors', 'symlink')) if progress.get(k, 0)]
+            if progress.get('status') == 'error':
+                problems.append('task error')
+            already = progress.get('skipped_previously_processed', 0)
+
+            if not problems and added == 0 and already == 0 and progress.get('media_files_found', 0) == 0:
+                # Nothing to import yet (files not listed, or still uploading):
+                # not a failure, so no attempt is consumed.
+                attempt_used = False
+                entry['no_media'] = True
+                summary['pending'] += 1
+                logging.info(f"[ExternalScan] '{name}' has no media files yet; will retry next run.")
+                if now - first_seen >= PENDING_GIVE_UP_SECONDS:
+                    _give_up(entry, name, '24h with no media files', summary)
+            elif not problems and (added > 0 or already > 0):
+                entry.pop('no_media', None)
                 entry['imported'] = True
                 summary['imported'] += 1
                 logging.info(f"[ExternalScan] Imported '{name}' - {added} item(s) added, "
                              f"{symlinks} symlink(s) created.")
             else:
+                entry.pop('no_media', None)
                 summary['failed'] += 1
                 logging.warning(
-                    f"[ExternalScan] '{name}' produced no database entries "
-                    f"(attempt {entry['attempts']}/{MAX_ATTEMPTS}): "
+                    f"[ExternalScan] '{name}' import incomplete "
+                    f"(attempt {entry.get('attempts', 0) + 1}/{MAX_ATTEMPTS}"
+                    f"{'; ' + ', '.join(problems) if problems else ''}; {added} added): "
                     f"{progress.get('message', 'no progress reported')}"
                 )
         except Exception as e:
             summary['failed'] += 1
             logging.error(f"[ExternalScan] Import failed for '{name}': {e}", exc_info=True)
 
-        state[name] = entry
+        if attempt_used:
+            entry['attempts'] = entry.get('attempts', 0) + 1
+            entry['last_attempt'] = now
+            if not entry.get('imported') and entry['attempts'] >= MAX_ATTEMPTS:
+                _give_up(entry, name, f"{entry['attempts']} attempts", summary)
+        dirty = True
 
-    _save_state(state)
-    return summary
+    finish()
