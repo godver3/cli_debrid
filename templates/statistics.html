@@ -95,58 +95,59 @@
       <div class="topbar-inner">
         {% set _stats_source = stats.active_downloads_data.get('source') if stats.active_downloads_data else none %}
         {% set _is_dcy = _stats_source in ('climount', 'combined') %}
+        <div class="tb-row tb-row-status">
         {% if not limited_env %}
-        <div class="tb-pill">
+        <div class="tb-pill" title="Library size">
             <i class="fas fa-server" style="color:var(--st-accent)"></i>
-            <span class="tb-label">Library:</span>
             <span class="tb-val" id="library-size-display">{% if _is_dcy %}{{ stats.active_downloads_data.get('library_size', 'N/A') }}{% else %}{{ stats.total_library_size | default('Click Refresh') }}{% endif %}</span>
             <button id="refresh-library-size-btn" class="tb-refresh" title="Refresh Library Size"><i class="fas fa-rotate"></i></button>
         </div>
-        <div class="tb-sep"></div>
-        <div class="tb-pill">
-            <i class="fas fa-globe" style="color:var(--st-blue)"></i>
-            <span class="tb-val">{{ stats.timezone }}</span>
-        </div>
-        <div class="tb-break"></div>
         {% if _stats_source != 'climount' %}
-        <div class="tb-pill">
+        {% set _sub = stats.subscription_status or {} %}
+        {% set _subs = _sub.get('providers') or [] %}
+        <div class="tb-pill" title="Debrid subscription days left">
             <i class="fas fa-crown" style="color:var(--st-yellow)"></i>
-            <span class="tb-label">Sub:</span>
-            <span class="tb-val {% if stats.subscription_status and stats.subscription_status.days_remaining is not none and stats.subscription_status.days_remaining < 10 %}critical{% endif %}" id="subscription-days-toggle">{% if stats.subscription_status and stats.subscription_status.days_remaining is not none %}{{ stats.subscription_status.days_remaining }} days{% else %}N/A{% endif %}</span>
+            <span class="tb-subs" id="subscription-days-toggle">{% if _subs %}{% for s in _subs %}<span class="tb-sub{% if s.days_remaining is not none and s.days_remaining < 10 %} critical{% endif %}" title="{{ s.name }}{% if s.expiration %} · expires {{ (s.expiration|string)[:10] }}{% endif %}{% if s.stream_only %} · streaming only{% endif %}"><span class="tb-label">{{ s.label }}</span> <span class="tb-val">{% if s.days_remaining is not none %}{{ s.days_remaining }}d{% else %}N/A{% endif %}</span></span>{% endfor %}{% else %}<span class="tb-sub{% if _sub.days_remaining is not none and _sub.days_remaining < 10 %} critical{% endif %}"><span class="tb-val">{% if _sub.days_remaining is not none %}{{ _sub.days_remaining }}d{% else %}N/A{% endif %}</span></span>{% endif %}</span>
         </div>
         {% endif %}
         {% if _is_dcy %}
         {% set _broken_nzbs = stats.active_downloads_data.get('broken_nzbs') or 0 %}
         {% set _broken_debrid = stats.active_downloads_data.get('broken_debrid') %}
         {% set _broken = _broken_nzbs + (_broken_debrid or 0) %}
-        <div class="tb-pill">
+        <div class="tb-pill" title="Broken files">
             <i class="fas fa-triangle-exclamation" id="broken-count-icon" style="color:{% if _broken > 0 %}var(--st-red){% else %}var(--st-yellow){% endif %};line-height:1;display:flex;align-items:center"></i>
-            <span class="tb-label">Broken:</span>
+            <span class="tb-label">Broken</span>
             <span class="tb-val {% if _broken > 0 %}critical{% endif %}" id="broken-count-toggle">{% if _broken_debrid is none %}{{ _broken_nzbs }}{% else %}{{ _broken_nzbs }} NZB · {{ _broken_debrid }} debrid{% endif %}</span>
         </div>
         {% endif %}
-        <div class="tb-sep"></div>
         {% endif %}
-        <div class="tb-toggle-wrap">
-            <span class="tb-label">24h</span>
-            <label class="toggle-switch">
-                <input type="checkbox" id="time-format-toggle">
-                <span class="toggle-slider"></span>
-            </label>
+        {% if stats.queue_snapshot %}
+        <a class="tb-pill tb-queues" id="tb-queues" href="/queues/" title="Open Queues">
+            <i class="fas fa-layer-group" style="color:var(--st-accent)"></i>
+            {% for q in stats.queue_snapshot %}<span class="tb-q{% if not q.count %} zero{% endif %}" data-queue="{{ q.name }}"><span class="tb-label">{{ q.name }}</span> <span class="tb-val">{{ "{:,}".format(q.count) }}</span></span>{% endfor %}
+        </a>
+        {% endif %}
         </div>
-        <div class="tb-toggle-wrap" id="compact_toggle">
-            <span class="tb-label">Compact</span>
-            <label class="toggle-switch">
-                <input type="checkbox" id="compact-toggle">
-                <span class="toggle-slider"></span>
-            </label>
-        </div>
-        <div class="tb-break"></div>
+        <div class="tb-row tb-row-tools">
         <div class="tb-search" id="stats-search-box" style="display: none;">
             <i class="fas fa-magnifying-glass tb-search-icon"></i>
             <form id="stats-search-form">
                 <input type="text" id="stats-search-input" placeholder="Search or enter IMDb/TMDB ID..." class="stats-search-input">
             </form>
+        </div>
+        <div class="tb-prefs">
+            {% if not limited_env %}
+            <span class="tb-tz" title="Time zone"><i class="fas fa-globe"></i>{{ stats.timezone }}</span>
+            {% endif %}
+            <label class="tb-seg" title="Clock format">
+                <input type="checkbox" id="time-format-toggle" aria-label="24-hour clock">
+                <span class="tb-seg-opt tb-seg-off">12h</span><span class="tb-seg-opt tb-seg-on">24h</span>
+            </label>
+            <label class="tb-seg" id="compact_toggle" title="Cards or compact list">
+                <input type="checkbox" id="compact-toggle" aria-label="Compact view">
+                <span class="tb-seg-opt tb-seg-off" title="Cards"><i class="fas fa-grip"></i></span><span class="tb-seg-opt tb-seg-on" title="Compact"><i class="fas fa-list"></i></span>
+            </label>
+        </div>
         </div>
       </div>
     </div>

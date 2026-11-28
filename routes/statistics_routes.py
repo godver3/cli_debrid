@@ -584,6 +584,8 @@ def root():
         stats['usage_stats_data'] = None
         stats['subscription_status'] = None
     
+    stats['queue_snapshot'] = _queue_snapshot()
+
     # --- Read Cached Library Size for Initial Display ---
     library_cache_read_start = time.perf_counter()
     cached_size_data = _read_size_cache()
@@ -1049,6 +1051,36 @@ def usage_stats():
                 'error': 'failed'
             }
         })
+
+# Queues shown in the home page's top bar, in pipeline order.
+_TOPBAR_QUEUES = ('Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping')
+
+
+def _queue_snapshot():
+    """Item counts for the top bar's queue snapshot (one indexed COUNT each)."""
+    from database.database_reading import get_item_counts_by_states
+    counts = get_item_counts_by_states(list(_TOPBAR_QUEUES))
+    return [{'name': q, 'count': counts.get(q, 0)} for q in _TOPBAR_QUEUES]
+
+
+def _subscription_entries():
+    """Per-provider subscription days from the background cache."""
+    from database.statistics import get_cached_subscription_status
+    sub = get_cached_subscription_status() or {}
+    return [{k: e.get(k) for k in ('name', 'label', 'days_remaining', 'expiration', 'premium', 'error', 'stream_only')}
+            for e in (sub.get('providers') or [])]
+
+
+@statistics_bp.route('/api/topbar')
+@user_required
+def topbar_api():
+    """Live values for the home page's top bar: queue counts and subscriptions."""
+    from utilities.set_supervisor_env import is_limited_environment
+    data = {'queues': _queue_snapshot()}
+    if not is_limited_environment():
+        data['subscriptions'] = _subscription_entries()
+    return jsonify(data)
+
 
 @statistics_bp.route('/api/index')
 @user_required
