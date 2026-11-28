@@ -1,5 +1,3 @@
-/* ── Classic (non-tangerine) styles kept in manual_assignment.css ── */
-
 /* ── Tangerine redesign ── */
 body.tangerine-theme .manual-assignment-container {
     max-width: 1120px;
@@ -347,20 +345,34 @@ body.tangerine-theme .no-items {
 
 body.tangerine-theme .ma-season + .ma-season { border-top: 1px solid #2d2d2d; }
 
+body.tangerine-theme .ma-season-bar {
+    display: flex;
+    align-items: center;
+    background: #222;
+}
+
 body.tangerine-theme .ma-season-header {
     display: flex;
     align-items: center;
+    flex: 1;
+    min-width: 0;
     gap: 8px;
-    width: 100%;
     padding: 9px 14px;
     border: none;
-    background: #222;
+    background: transparent;
     color: #ccc;
     font-size: 12px;
     font-weight: 600;
     font-family: inherit;
     text-align: left;
     cursor: pointer;
+}
+
+body.tangerine-theme .ma-skip-specials {
+    margin-right: 10px;
+    height: 24px;
+    padding: 0 8px;
+    font-size: 11px;
 }
 
 body.tangerine-theme .ma-season-chevron {

@@ -55,7 +55,7 @@ GROUPS = [
                           'debrid_sync_seconds', 'debrid_link_lifetime_hours', 'debrid_download_api_keys',
                           'debrid_proxy', 'debrid_user_agent']),
     ('Disk cache', ['cache_dir', 'cache_size_gb', 'cache_expiry_hours', 'cache_cleanup_minutes']),
-    ('Importing & health checks', ['processing_connections', 'processing_timeout_minutes',
+    ('Importing & health checks', ['import_workers', 'processing_connections', 'processing_timeout_minutes',
                                    'import_sample_percent', 'health_sample_percent', 'media_probe']),
     ('Advanced', ['debug_logging', 'api_port', 'api_token']),
 ]
@@ -73,7 +73,7 @@ LABELS = {
     'plex_playback_protection': 'Stream protection (reserve only for what your media server is playing)', 'cache_dir': 'Cache directory',
     'cache_size_gb': 'Disk cache size (GB)', 'cache_expiry_hours': 'Cache expiry (hours)',
     'cache_cleanup_minutes': 'Cache cleanup interval (minutes)', 'processing_connections': 'Processing connections per file',
-    'processing_timeout_minutes': 'Processing timeout (minutes)', 'import_sample_percent': 'NZB import availability sample %',
+    'import_workers': 'Concurrent NZB imports', 'processing_timeout_minutes': 'Processing timeout (minutes)', 'import_sample_percent': 'NZB import availability sample %',
     'health_sample_percent': 'Repair availability sample %', 'media_probe': 'Check playability with ffprobe',
     'debug_logging': 'Debug logging', 'plex_url': 'Plex URL', 'plex_token': 'Plex token',
     'jellyfin_url': 'Jellyfin / Emby URL', 'jellyfin_token': 'Jellyfin / Emby API key',
@@ -580,7 +580,10 @@ def internal_link():
     body = request.get_json(silent=True) or {}
     ref = str(body.get('ref') or '')
     try:
-        url, ttl = mount_debrid.link(ref, refresh=bool(body.get('refresh')))
+        url, ttl = mount_debrid.link(
+            ref, refresh=bool(body.get('refresh')),
+            unreachable_url=str(body.get('unreachable_url') or ''),
+        )
     except MountFileGone as gone:
         logging.warning(f'[mount debrid] {ref} is gone on the provider: {gone}')
         return jsonify({'dead': True, 'reason': gone.reason, 'error': gone.detail or str(gone)}), 410
@@ -808,6 +811,12 @@ def migrate_compare():
     if not root:
         return jsonify({'success': False, 'error': "cli_mount's mount path isn't known (File Management → original files path)."}), 400
     out = bm.compare(client, os.path.join(root, '__all__'), os.path.join(client.mount_path, '__all__'), sample)
+    try:
+        from utilities import builtin_engine
+        out['hidden_extensions'] = bm.hidden_library_extensions(
+            builtin_engine.allowed_extensions(get_setting('Built-in Mount') or {}))
+    except Exception as exc:
+        logging.warning(f'[migrate] library extension check failed: {exc}')
     return jsonify({'success': True, **out})
 
 
@@ -843,11 +852,18 @@ def migrate_switch():
     cur = (get_setting('Built-in Mount') or {}).get('mount_path') or '/mnt/clid'
     if cur.rstrip('/') != root.rstrip('/'):
         set_setting(SECTION, 'pre_migration_mount_path', cur)
+    # Before the mount moves: files of the library's types that cli_mount
+    # showed must stay listed, or their symlinks go dead.
+    try:
+        added = bm.keep_library_extensions(get_setting, set_setting)
+    except Exception as exc:
+        logging.warning(f'[migrate] keeping library extensions failed: {exc}')
+        added = {}
     set_setting(SECTION, 'mount_path', root)
     set_setting(SECTION, 'run_alongside', False)
     set_setting('Usenet Provider', 'provider', 'builtin')  # URL/token kept for switching back
     _sync_in_background()
-    return jsonify({'success': True, 'mount_path': root})
+    return jsonify({'success': True, 'mount_path': root, 'added_extensions': added})
 
 
 @mount_bp.route('/api/migrate/rollback', methods=['POST'])

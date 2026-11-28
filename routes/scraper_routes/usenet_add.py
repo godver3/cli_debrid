@@ -583,6 +583,10 @@ def _add_nzb_to_usenet(nzb_url, title, year, media_type, season, episode, versio
     Library items: one per (season, episode) in episode_list when given (manual
     assign of a pack: the seasons picked there), else every episode of season
     when episode is None, else the one episode or movie."""
+    # Manual assign sends 'show'; get_metadata leaves out seasons and episodes
+    # unless asked for 'tv' (what the scraper sends), so a pack found none.
+    if media_type == 'show':
+        media_type = 'tv'
     from usenet import get_usenet_client, reset_usenet_client
     from metadata.metadata import get_metadata, get_release_date
     reset_usenet_client()

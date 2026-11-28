@@ -489,9 +489,27 @@
         '<button class="rowbtn" data-act="delete">Delete</button></td></tr>';
     }).join('') : '<tr><td colspan="8" style="color:#888">No jobs' + (jobs.length ? ' match these filters' : ' yet') + '.</td></tr>';
     $('#qInfo').textContent = list.length ? (page * PER + 1) + '–' + Math.min(list.length, page * PER + PER) + ' of ' + list.length : '';
-    $('#qPages').innerHTML = pages > 1 ? [...Array(pages).keys()].map(i => '<button class="rowbtn" data-page="' + i + '"' + (i === page ? ' style="border-color:#e8601c"' : '') + '>' + (i + 1) + '</button>').join('') : '';
+    $('#qPages').innerHTML = pagerHTML(page, pages);
     $('#qAll').checked = false;
     updateSel();
+  }
+  // Prev, first, two either side of the current page, last, Next; "…" for
+  // the gaps. A full button per page ran to hundreds of buttons.
+  function pagerHTML(cur, pages) {
+    if (pages <= 1) return '';
+    const btn = (i, label, off) => '<button class="rowbtn" data-page="' + i + '"' + (off ? ' disabled' : '') +
+      (i === cur && label == null ? ' style="border-color:#e8601c" aria-current="page"' : '') + '>' + (label || i + 1) + '</button>';
+    const want = new Set([0, pages - 1]);
+    for (let i = cur - 2; i <= cur + 2; i++) if (i >= 0 && i < pages) want.add(i);
+    const nums = [...want].sort((a, b) => a - b);
+    let out = btn(cur - 1, '‹ Prev', cur === 0), last = -1;
+    nums.forEach(i => {
+      if (i - last > 2) out += '<span style="padding:0 4px;color:#888">…</span>';
+      else if (i - last === 2) out += btn(last + 1);
+      out += btn(i);
+      last = i;
+    });
+    return out + btn(cur + 1, 'Next ›', cur === pages - 1);
   }
   function updateSel() { $('#qDeleteSel').hidden = !document.querySelector('.qSel:checked'); }
   async function del(ids) {
@@ -677,7 +695,10 @@
     const r = await fetch('/mount/api/migrate/compare', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({sample: 10})});
     const d = await r.json();
     b.disabled = false; b.textContent = 'Compare 10 files';
-    $('#mgCmp tbody').innerHTML = d.success ? '<tr><td colspan="3"><strong>' + d.identical + ' of ' + d.checked + ' identical</strong></td></tr>' +
+    const hidden = Object.entries((d.success && d.hidden_extensions) || {});
+    const hiddenRow = hidden.length ? '<tr><td colspan="3"><span class="no">' + hidden.map(([e, n]) => n + ' .' + esc(e)).join(', ') +
+      ' collected file(s) use extensions the built-in mount doesn\'t list (Allowed file extensions). Switching adds them, so their symlinks keep working.</span></td></tr>' : '';
+    $('#mgCmp tbody').innerHTML = d.success ? hiddenRow + '<tr><td colspan="3"><strong>' + d.identical + ' of ' + d.checked + ' identical</strong></td></tr>' +
       d.rows.map(x => '<tr><td>' + (x.ok ? '<span class="ok">✔</span>' : '<span class="no">✘</span>') + '</td><td class="nm">' + esc(x.folder) + '<div style="color:#888;font-size:12px">' + esc(x.file) + '</div></td><td>' + esc(x.detail) + (x.seconds != null ? ' (' + x.seconds + ' s)' : '') + '</td></tr>').join('')
       : '<tr><td class="no">' + esc(d.error) + '</td></tr>';
   };
@@ -685,7 +706,10 @@
     if (!confirm("Switch to the built-in mount? Make sure the cli_mount container is stopped first. You can switch back here at any time.")) return;
     const r = await fetch('/mount/api/migrate/switch', {method: 'POST'});
     const d = await r.json();
-    $('#mgSwitchMsg').innerHTML = d.success ? '<span class="ok">Switched: the built-in mount now serves ' + esc(d.mount_path) + '.</span>' : '<span class="no">' + esc(d.error) + '</span>';
+    const added = Object.keys((d.success && d.added_extensions) || {});
+    $('#mgSwitchMsg').innerHTML = d.success ? '<span class="ok">Switched: the built-in mount now serves ' + esc(d.mount_path) + '.' +
+      (added.length ? ' Added ' + added.map(e => '.' + esc(e)).join(', ') + ' to Allowed file extensions: your library has files of those types.' : '') +
+      '</span>' : '<span class="no">' + esc(d.error) + '</span>';
     setTimeout(loadMigrate, 3000);
   };
   $('#mgBack').onclick = async () => {

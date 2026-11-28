@@ -6,11 +6,6 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_metadata_debug.css') }}">
 
 <style>
-/* ── Tangerine metadata debug — show/hide ── */
-body.tangerine-theme .metadata-debug-container,
-body.tangerine-theme #result { display: none !important; }
-body:not(.tangerine-theme) #tngMeta { display: none !important; }
-
 /* ── Tangerine metadata debug styles ── */
 body.tangerine-theme {
   --tmd-bg:#111;--tmd-surface:#1a1a1a;--tmd-surface2:#222;--tmd-surface3:#2a2a2a;
@@ -161,167 +156,8 @@ body.tangerine-theme {
 </div>
 <div class="tmd-toast" id="tmdToast"><span class="tmd-toast-dot"></span>Copied to clipboard</div>
 
-<div class="metadata-debug-container">
-    <div class="page-header">
-        <h2>Metadata Debug</h2>
-        <p class="subtitle">Lookup or delete items by IMDB ID from the metadata database.</p>
-        <hr>
-    </div>
-
-    <div class="controls" style="display:flex; gap: 0.5rem; align-items:center; margin-top: 20px;">
-        <input type="text" id="imdbIdInput" placeholder="Enter IMDB ID (e.g., tt1234567)" style="flex:1;">
-        <button id="fetchBtn" class="primary">Fetch</button>
-        <button id="deleteBtn" class="danger">Recreate</button>
-        <button id="deleteOnlyBtn" class="danger">Delete</button>
-    </div>
-    <div id="status" style="margin-top: 0.5rem; color: #888;"></div>
-
-</div>
-
-<div id="result" style="display:none; margin-top: 1rem; margin: 60px !important;">
-    <h3>Item</h3>
-    <pre id="itemBlock" class="code-block"></pre>
-
-    <h3>Metadata</h3>
-    <pre id="metadataBlock" class="code-block"></pre>
-
-    <h3>Seasons</h3>
-    <pre id="seasonsBlock" class="code-block"></pre>
-</div>
-
-
 <script type="module">
 import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
-document.addEventListener('DOMContentLoaded', function() {
-    const imdbInput = document.getElementById('imdbIdInput');
-    const fetchBtn = document.getElementById('fetchBtn');
-    const deleteBtn = document.getElementById('deleteBtn');
-    const deleteOnlyBtn = document.getElementById('deleteOnlyBtn');
-    const status = document.getElementById('status');
-    const result = document.getElementById('result');
-    const itemBlock = document.getElementById('itemBlock');
-    const metadataBlock = document.getElementById('metadataBlock');
-    const seasonsBlock = document.getElementById('seasonsBlock');
-
-    function setStatus(text, isError=false) {
-        status.textContent = text || '';
-        status.style.color = isError ? '#ff6b6b' : '#888';
-    }
-
-    function renderJSON(element, data) {
-        try {
-            // Deep-parse any string values that are themselves JSON
-            function deepParse(obj) {
-                if (typeof obj === 'string') {
-                    const t = obj.trim();
-                    if ((t.startsWith('{') && t.endsWith('}')) || (t.startsWith('[') && t.endsWith(']'))) {
-                        try { return deepParse(JSON.parse(t)); } catch {}
-                    }
-                    return obj;
-                }
-                if (Array.isArray(obj)) return obj.map(deepParse);
-                if (obj && typeof obj === 'object') {
-                    const out = {};
-                    for (const [k, v] of Object.entries(obj)) out[k] = deepParse(v);
-                    return out;
-                }
-                return obj;
-            }
-            element.textContent = JSON.stringify(deepParse(data), null, 2);
-        }
-        catch { element.textContent = 'Unable to render JSON'; }
-    }
-
-    function fetchMetadata() {
-        const imdbId = (imdbInput.value || '').trim();
-        if (!imdbId) { setStatus('Please enter an IMDB ID.', true); return; }
-        setStatus('Fetching...');
-        result.style.display = 'none';
-        fetch(`/metadata/api/item/${encodeURIComponent(imdbId)}`)
-            .then(r => r.json())
-            .then(data => {
-                if (data && !data.error) {
-                    renderJSON(itemBlock, data.item);
-                    renderJSON(metadataBlock, data.metadata);
-                    renderJSON(seasonsBlock, data.seasons);
-                    result.style.display = 'block';
-                    setStatus('Fetched.');
-                } else {
-                    setStatus(data && data.error ? data.error : 'Not found.', true);
-                }
-            })
-            .catch(() => setStatus('Error fetching metadata.', true));
-    }
-
-    function deleteByImdb() {
-        const imdbId = (imdbInput.value || '').trim();
-        if (!imdbId) { setStatus('Please enter an IMDB ID.', true); return; }
-        showPopup({
-            type: POPUP_TYPES.CONFIRM,
-            title: 'Confirm',
-            message: `Recreate item ${imdbId}?`,
-            confirmText: 'Yes',
-            cancelText: 'No',
-            onConfirm: () => {
-                setStatus('Deleting...');
-                fetch(`/metadata/api/delete/${encodeURIComponent(imdbId)}`, { method: 'POST' })
-                    .then(r => r.json())
-                    .then(data => {
-                        if (data && data.success) {
-                            setStatus('Deleted.');
-                            result.style.display = 'none';
-                            itemBlock.textContent = '';
-                            metadataBlock.textContent = '';
-                            seasonsBlock.textContent = '';
-                        } else {
-                            setStatus('Delete failed.' + (data.error ? ` ${data.error}` : ''), true);
-                        }
-                    })
-                    .catch(() => setStatus('Error deleting item.', true))
-                    .finally(() => {
-                        fetchMetadata();
-                    });
-            }
-        });
-    }
-
-    function deleteOnlyByImdb() {
-        const imdbId = (imdbInput.value || '').trim();
-        if (!imdbId) { setStatus('Please enter an IMDB ID.', true); return; }
-        showPopup({
-            type: POPUP_TYPES.CONFIRM,
-            title: 'Confirm',
-            message: `Delete item ${imdbId}? This will not re-fetch.`,
-            confirmText: 'Yes',
-            cancelText: 'No',
-            onConfirm: () => {
-                setStatus('Deleting...');
-                fetch(`/metadata/api/delete/${encodeURIComponent(imdbId)}`, { method: 'POST' })
-                    .then(r => r.json())
-                    .then(data => {
-                        if (data && data.success) {
-                            setStatus('Deleted.');
-                            result.style.display = 'none';
-                            itemBlock.textContent = '';
-                            metadataBlock.textContent = '';
-                            seasonsBlock.textContent = '';
-                        } else {
-                            setStatus('Delete failed.' + (data.error ? ` ${data.error}` : ''), true);
-                        }
-                    })
-                    .catch(() => setStatus('Error deleting item.', true));
-            }
-        });
-    }
-
-    fetchBtn.addEventListener('click', fetchMetadata);
-    deleteBtn.addEventListener('click', deleteByImdb);
-    deleteOnlyBtn.addEventListener('click', deleteOnlyByImdb);
-    imdbInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') { e.preventDefault(); fetchMetadata(); }});
-});
-</script>
-
-<script>
 (function() {
 // ── JSON tree renderer (same logic as design file) ────────
 let _tmdUid = 0;
@@ -485,18 +321,10 @@ document.addEventListener('DOMContentLoaded', function() {
   document.getElementById('tmdCopySeasons').addEventListener('click', ()=>{ if(_tmdData.seasons) tmdCopy(_tmdData.seasons); });
   input.addEventListener('keydown', e=>{ if(e.key==='Enter'){e.preventDefault();tmdFetch();} });
 
-  // Mirror classic input ↔ tangerine input
-  const classicInput = document.getElementById('imdbIdInput');
-  if (classicInput) {
-    input.addEventListener('input', ()=>{ classicInput.value = input.value; });
-    classicInput.addEventListener('input', ()=>{ input.value = classicInput.value; });
-  }
-
   // Auto-fetch if imdb_id passed as URL param
   const urlImdbId = new URLSearchParams(window.location.search).get('imdb_id');
   if (urlImdbId) {
     input.value = urlImdbId;
-    if (classicInput) classicInput.value = urlImdbId;
     tmdFetch();
   }
 });
@@ -524,16 +352,35 @@ function tmdFetch() {
     .catch(()=>tmdSetStatus('Error fetching metadata.','red'));
 }
 
-function tmdRecreate() {
-  // Delegate to classic button which has the showPopup confirm
-  const btn = document.getElementById('deleteBtn');
-  if (btn) { document.getElementById('imdbIdInput').value = document.getElementById('tmdInput').value; btn.click(); }
+function tmdDeleteItem(recreate) {
+  const id = (document.getElementById('tmdInput').value||'').trim();
+  if (!id) { tmdSetStatus('Please enter an IMDB ID.', 'red'); return; }
+  showPopup({
+    type: POPUP_TYPES.CONFIRM,
+    title: 'Confirm',
+    message: recreate ? `Recreate item ${id}?` : `Delete item ${id}? This will not re-fetch.`,
+    confirmText: 'Yes',
+    cancelText: 'No',
+    onConfirm: () => {
+      tmdSetStatus('Deleting…', 'blue');
+      fetch('/metadata/api/delete/'+encodeURIComponent(id), { method: 'POST' })
+        .then(r=>r.json())
+        .then(data=>{
+          if (data && data.success) {
+            document.getElementById('tmdResults').style.display = 'none';
+            _tmdData.item = _tmdData.meta = _tmdData.seasons = null;
+            tmdSetStatus('Deleted.', 'green');
+          } else {
+            tmdSetStatus('Delete failed.' + (data && data.error ? ' ' + data.error : ''), 'red');
+          }
+        })
+        .catch(()=>tmdSetStatus('Error deleting item.', 'red'))
+        .finally(()=>{ if (recreate) tmdFetch(); });
+    }
+  });
 }
-
-function tmdDelete() {
-  const btn = document.getElementById('deleteOnlyBtn');
-  if (btn) { document.getElementById('imdbIdInput').value = document.getElementById('tmdInput').value; btn.click(); }
-}
+function tmdRecreate() { tmdDeleteItem(true); }
+function tmdDelete() { tmdDeleteItem(false); }
 
 })();
 </script>

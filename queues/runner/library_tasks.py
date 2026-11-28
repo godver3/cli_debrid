@@ -225,3 +225,11 @@ class LibraryTasks:
             run_plex_movie_boxsets()
         except Exception as e:
             logging.error(f"Plex movie box sets task failed: {e}", exc_info=True)
+
+    def task_plex_preset_collections(self):
+        """Sync the preset Plex collections (Christmas, Blockbusters, decades...)."""
+        try:
+            from database.plex_preset_collections import run_preset_collections
+            run_preset_collections()
+        except Exception as e:
+            logging.error(f"Plex preset collections task failed: {e}", exc_info=True)

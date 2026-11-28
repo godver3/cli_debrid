@@ -54,7 +54,7 @@ function renderActive(torrents) {
         const checked = checkboxStates[t.id] ? 'checked' : '';
         return `<tr data-id="${t.id}" data-search="${searchText.replace(/"/g,'&quot;')}" ${hidden ? 'style="display:none"' : ''}>
             <td class="dm-col-check"><input type="checkbox" class="row-check" data-id="${t.id}" ${checked}></td>
-            <td class="dm-col-name" title="${(t.filename||'').replace(/"/g,'&quot;')}">${t.filename || '—'}</td>
+            <td class="dm-col-name" title="${escHtml(t.filename||'')}">${escHtml(t.filename || '—')}</td>
             <td class="dm-col-progress">
                 <div class="dm-progress-wrap">
                     <div class="dm-progress-bar" style="width:${Math.min(t.progress||0,100)}%"></div>
@@ -275,7 +275,7 @@ async function loadHistory() {
         window._historyLoaded = true;
         renderHistory();
     } catch(e) {
-        tbody.innerHTML = `<tr class="dm-empty-row"><td colspan="6">Error loading history: ${e.message}</td></tr>`;
+        tbody.innerHTML = `<tr class="dm-empty-row"><td colspan="6">Error loading history: ${escHtml(e.message)}</td></tr>`;
     }
 }
 
@@ -297,12 +297,12 @@ function renderHistory() {
         const present = e.is_still_present
             ? '<span class="dm-status-badge dm-status-downloaded">Downloaded</span>'
             : '<span class="dm-status-badge dm-status-removed">Removed</span>';
-        const trigger_cls = `dm-trigger-${(e.trigger_source||'').replace(/_/g,'-')}`;
+        const trigger_cls = `dm-trigger-${escHtml((e.trigger_source||'').replace(/_/g,'-'))}`;
         return `<tr data-id="${e.id}" ${hidden ? 'style="display:none"' : ''}>
-            <td class="dm-col-ts">${e.timestamp}</td>
-            <td class="dm-col-name" title="${(e.label||'').replace(/"/g,'&quot;')}">${e.label || '—'}</td>
-            <td class="dm-col-trigger"><span class="dm-trigger-badge ${trigger_cls}">${e.trigger_source||'—'}</span></td>
-            <td class="dm-col-rationale">${e.rationale||'—'}</td>
+            <td class="dm-col-ts">${escHtml(e.timestamp)}</td>
+            <td class="dm-col-name" title="${escHtml(e.label||'')}">${escHtml(e.label || '—')}</td>
+            <td class="dm-col-trigger"><span class="dm-trigger-badge ${trigger_cls}">${escHtml(e.trigger_source||'—')}</span></td>
+            <td class="dm-col-rationale">${escHtml(e.rationale||'—')}</td>
             <td class="dm-col-status">${present}</td>
             <td class="dm-col-actions">
                 <button class="dm-btn dm-btn-secondary dm-btn-sm" onclick="showDetail(${e.id})">
@@ -338,33 +338,33 @@ function showDetail(id) {
 
     const section = (title, html) => `<div class="dm-detail-section"><h4>${title}</h4>${html}</div>`;
     const dl = (pairs) => '<dl class="dm-detail-dl">' + pairs.filter(([,v])=>v!=null&&v!=='').map(([k,v])=>`<dt>${k}</dt><dd>${v}</dd>`).join('') + '</dl>';
-    const pre = (obj) => `<pre class="dm-detail-pre">${JSON.stringify(obj, null, 2)}</pre>`;
+    const pre = (obj) => `<pre class="dm-detail-pre">${escHtml(JSON.stringify(obj, null, 2))}</pre>`;
 
     let html = section('Basic Information', dl([
-        ['Hash', `<code>${e.torrent_hash}</code>`],
-        ['Added', e.timestamp],
+        ['Hash', `<code>${escHtml(e.torrent_hash)}</code>`],
+        ['Added', escHtml(e.timestamp)],
         ['Status', e.is_still_present ? '<span class="dm-status-badge dm-status-downloaded">Present</span>' : `<span class="dm-status-badge dm-status-error">Removed</span>`],
-        ['Removed At', e.removal_timestamp || ''],
-        ['Removal Reason', e.removal_reason || ''],
+        ['Removed At', escHtml(e.removal_timestamp || '')],
+        ['Removal Reason', escHtml(e.removal_reason || '')],
     ]));
 
     html += section('Trigger', dl([
-        ['Source', `<span class="dm-trigger-badge dm-trigger-${(e.trigger_source||'').replace(/_/g,'-')}">${e.trigger_source}</span>`],
-        ['Rationale', e.rationale],
+        ['Source', `<span class="dm-trigger-badge dm-trigger-${escHtml((e.trigger_source||'').replace(/_/g,'-'))}">${escHtml(e.trigger_source)}</span>`],
+        ['Rationale', e.rationale ? escHtml(e.rationale) : e.rationale],
         ['Details', e.trigger_details ? pre(trigger) : ''],
     ]));
 
     if (e.item_data) {
         html += section('Media Information', dl([
-            ['Title', item.title||''],
-            ['Year', item.year||''],
-            ['Type', item.type||item.media_type||''],
-            ['Season', item.season_number!=null ? item.season_number : ''],
-            ['Episode', item.episode_number!=null ? item.episode_number : ''],
-            ['Version', item.version||''],
-            ['Selected File', item.filled_by_file ? `<code>${item.filled_by_file}</code>` : ''],
-            ['Torrent Title', item.filled_by_title ? `<code>${item.filled_by_title}</code>` : ''],
-            ['TMDB ID', item.tmdb_id||''],
+            ['Title', escHtml(item.title||'')],
+            ['Year', escHtml(item.year||'')],
+            ['Type', escHtml(item.type||item.media_type||'')],
+            ['Season', item.season_number!=null ? escHtml(item.season_number) : ''],
+            ['Episode', item.episode_number!=null ? escHtml(item.episode_number) : ''],
+            ['Version', escHtml(item.version||'')],
+            ['Selected File', item.filled_by_file ? `<code>${escHtml(item.filled_by_file)}</code>` : ''],
+            ['Torrent Title', item.filled_by_title ? `<code>${escHtml(item.filled_by_title)}</code>` : ''],
+            ['TMDB ID', escHtml(item.tmdb_id||'')],
         ]));
     }
 
@@ -374,7 +374,7 @@ function showDetail(id) {
         const _sfVideo = _sfAll.filter(f => _sfVideoExts.test(f.path||f.name||''));
         const _sfDisplay = _sfVideo.length ? _sfVideo : _sfAll;
         const rows = _sfDisplay.map(f =>
-            `<tr><td><code>${f.path||f.name||''}</code></td><td>${((f.bytes||0)/1024/1024).toFixed(2)} MB</td><td>${f.selected ? '✓' : '✗'}</td></tr>`
+            `<tr><td><code>${escHtml(f.path||f.name||'')}</code></td><td>${((f.bytes||0)/1024/1024).toFixed(2)} MB</td><td>${f.selected ? '✓' : '✗'}</td></tr>`
         ).join('');
         html += section('Selected Files', `<table class="dm-table dm-table-compact"><thead><tr><th>Path</th><th>Size</th><th>Selected</th></tr></thead><tbody>${rows}</tbody></table>`);
     }
@@ -382,10 +382,10 @@ function showDetail(id) {
     if (meta.debrid_info) {
         const di = meta.debrid_info;
         html += section('Debrid Information', dl([
-            ['Provider', (di.provider||'').toUpperCase()],
-            ['Torrent ID', di.torrent_id ? `<code>${di.torrent_id}</code>` : ''],
-            ['Status', di.status||''],
-            ['Filename', di.filename ? `<code>${di.filename}</code>` : ''],
+            ['Provider', escHtml((di.provider||'').toUpperCase())],
+            ['Torrent ID', di.torrent_id ? `<code>${escHtml(di.torrent_id)}</code>` : ''],
+            ['Status', escHtml(di.status||'')],
+            ['Filename', di.filename ? `<code>${escHtml(di.filename)}</code>` : ''],
         ]));
     }
 

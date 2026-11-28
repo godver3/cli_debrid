@@ -225,7 +225,7 @@
                         showPopup({
                             type: POPUP_TYPES.SUCCESS,
                             title: 'Authorization Successful',
-                            message: `${data.friend_name}'s Trakt account has been successfully authorized.`
+                            message: `${String(data.friend_name ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}'s Trakt account has been successfully authorized.`
                         });
 
                         // Reload the friends list

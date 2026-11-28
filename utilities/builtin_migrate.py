@@ -888,6 +888,60 @@ def compare(engine, climount_root: str, builtin_root: str, sample: int = 10,
     return {'checked': len(rows), 'identical': same, 'rows': rows}
 
 
+# ---- extensions the library already uses ------------------------------------
+
+_EXT_RE = re.compile(r'^[a-z0-9]{1,5}$')
+#: Never added for the library's sake: archives aren't playable files.
+_NOT_MEDIA = {'zip', 'rar', '7z', 'nzb', 'par2', 'nfo', 'txt', 'jpg', 'png'}
+
+
+def library_extensions() -> Dict[str, int]:
+    """Extensions of the files live library items (Collected/Upgrading) are filled by, with counts."""
+    from database.core import get_db_connection
+    counts: Dict[str, int] = {}
+    conn = get_db_connection()
+    try:
+        rows = conn.execute("SELECT filled_by_file FROM media_items "
+                            "WHERE state IN ('Collected', 'Upgrading') "
+                            "AND filled_by_file IS NOT NULL AND filled_by_file != ''")
+        for (name,) in rows:
+            ext = os.path.splitext(str(name))[1].lstrip('.').lower()
+            if _EXT_RE.match(ext) and ext not in _NOT_MEDIA:
+                counts[ext] = counts.get(ext, 0) + 1
+    finally:
+        conn.close()
+    return counts
+
+
+def hidden_library_extensions(allowed: List[str], counts: Optional[Dict[str, int]] = None) -> Dict[str, int]:
+    """Library extensions the built-in mount's allowed list would hide.
+
+    cli_mount didn't apply its own allowed_file_types to Real-Debrid
+    torrents (getSelectedFiles lists every selected file), so a library
+    built on it can hold files (.ts, .m2ts, ...) the built-in mount, which
+    applies the list everywhere, no longer shows: their symlinks go dead at
+    the switch."""
+    if not allowed:  # empty list = every file is listed
+        return {}
+    counts = library_extensions() if counts is None else counts
+    return {e: n for e, n in sorted(counts.items()) if e not in allowed}
+
+
+def keep_library_extensions(get_setting: Callable, set_setting: Callable) -> Dict[str, int]:
+    """Add the extensions the library uses to the built-in mount's allowed
+    list, so the switch doesn't hide files cli_mount was showing. Returns
+    what was added."""
+    from utilities import builtin_engine
+    bm_cfg = get_setting('Built-in Mount') or {}
+    allowed = builtin_engine.allowed_extensions(bm_cfg)
+    hidden = hidden_library_extensions(allowed)
+    if hidden:
+        set_setting('Built-in Mount', 'allowed_extensions', ','.join(allowed + list(hidden)))
+        logging.info(f'[migrate] allowed extensions: added {", ".join(hidden)} for '
+                     f'{sum(hidden.values())} collected files cli_mount was showing')
+    return hidden
+
+
 # ---- switch over / back ------------------------------------------------------
 
 def climount_mount_root(get_setting: Callable) -> str:

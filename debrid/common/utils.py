@@ -8,6 +8,59 @@ VIDEO_EXTENSIONS = [
     'mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'm4v', 'webm', 'mpg', 'mpeg', 'm2ts', 'ts'
 ]
 
+_PACK_FILE_EXTENSIONS = (
+    '.mkv', '.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm',
+    '.m4v', '.mpg', '.mpeg', '.ts', '.m2ts', '.vob', '.ogv',
+    '.zip', '.rar',
+)
+
+
+def _common_top_level_folder(files: List[Dict]) -> str:
+    """Return the shared top-level folder of all torrent file paths, or ''."""
+    roots = set()
+    for f in files:
+        path = f.get('path') if isinstance(f, dict) else str(f or '')
+        parts = [p for p in (path or '').replace('\\', '/').split('/') if p]
+        if len(parts) < 2:
+            return ''
+        roots.add(parts[0])
+    return roots.pop() if len(roots) == 1 else ''
+
+
+def _looks_like_pack_file_name(name: Optional[str]) -> bool:
+    """True if name ends with a video or archive extension."""
+    _, ext = os.path.splitext((name or '').strip().lower())
+    return ext in _PACK_FILE_EXTENSIONS
+
+
+def resolve_torrent_title(
+    torrent_info: Optional[Dict],
+    chosen_result_info: Optional[Dict] = None,
+) -> str:
+    """Resolve the release title for a torrent (used for filled_by_title and record_grab).
+
+    When a magnet has no dn=, providers such as TorBox name a multi-file pack
+    after one of its files (e.g. '...S01E04....mkv'). If the provider name ends
+    with a video or archive extension and the torrent contains more than one
+    file, prefer the common top-level folder of the file paths if all files
+    share one, else the scraped release title, else the provider name.
+    Single-file torrents keep their provider name unchanged.
+    """
+    torrent_info = torrent_info or {}
+    provider_name = (torrent_info.get('title') or torrent_info.get('filename') or '').strip()
+    scraped_title = ((chosen_result_info or {}).get('title') or '').strip()
+    if not provider_name:
+        return scraped_title or "Unknown Torrent Title"
+
+    files = torrent_info.get('files') or []
+    if len(files) > 1 and _looks_like_pack_file_name(provider_name):
+        common_folder = _common_top_level_folder(files)
+        if common_folder:
+            return common_folder
+        if scraped_title:
+            return scraped_title
+    return provider_name
+
 def is_video_file(filename: str) -> bool:
     """Check if a file is a video file based on its extension"""
     result = any(filename.lower().endswith(f'.{ext}') for ext in VIDEO_EXTENSIONS)

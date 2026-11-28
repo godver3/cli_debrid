@@ -69,7 +69,7 @@ def _compare_resolutions_from_ptt(ptt_resolution: str | None, version_max_res_st
     # For simplicity, assuming PTT outputs match the common terms.
     # You might need a mapping if PTT uses different terms than your version_config
     
-    res_order = {"480p": 1, "sd": 1, "720p": 2, "1080p": 3, "2160p": 4, "4k": 4, "uhd": 4}
+    res_order = {"480p": 1, "480i": 1, "sd": 1, "720p": 2, "720i": 2, "1080p": 3, "1080i": 3, "2160p": 4, "4k": 4, "uhd": 4}
     
     ptt_res_val = res_order.get(ptt_resolution.lower())
     

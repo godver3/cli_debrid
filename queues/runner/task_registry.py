@@ -122,7 +122,7 @@ def _verify_symlinks_default(get):
 
 
 def _external_adds_default(get):
-    return _fm(get) == 'Symlinked/Local' and bool(get('File Management', 'scan_mount_for_external_adds', False))
+    return _fm(get) in ('Symlinked/Local', 'Plex') and bool(get('File Management', 'scan_mount_for_external_adds', False))
 
 
 def _direct_mount_jellyfin(get):
@@ -207,6 +207,8 @@ _SPECS = [
              controlled_by='Settings → Media Server → Plex Reported Issues'),
     TaskSpec('task_plex_smart_collection_posters', 'Smart collection posters', 'media_server', DAY, default=_plex_mode),
     TaskSpec('task_plex_movie_boxsets', 'Movie box sets', 'media_server', DAY, default=_plex_mode),
+    TaskSpec('task_plex_preset_collections', 'Preset collections', 'media_server', DAY, default=_plex_mode,
+             controlled_by='Settings → Media Server → Plex Collections (Preset collections)'),
     TaskSpec('task_overlay_sync', 'Poster overlays', 'media_server', HOUR, default=_overlays,
              controlled_by='Overlays page (Enable overlays)'),
     TaskSpec('task_overlay_cleanup', 'Poster overlay cleanup', 'media_server', DAY, default=_overlays,

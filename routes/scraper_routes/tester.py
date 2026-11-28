@@ -213,8 +213,10 @@ def run_scrape():
         skip_cache_check = data.get('skip_cache_check', False)  # Default to NOT skipping cache check
         
         if media_type == 'episode':
-            season = int(data.get('season', 1))  # Convert to int, default to 1
-            episode = int(data.get('episode', 1))  # Convert to int, default to 1
+            raw_season = data.get('season')
+            raw_episode = data.get('episode')
+            season = int(raw_season) if raw_season is not None and raw_season != '' else 1
+            episode = int(raw_episode) if raw_episode is not None and raw_episode != '' else 1
             multi = data.get('multi', False)
         else:
             season = None

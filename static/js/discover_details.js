@@ -393,13 +393,13 @@ function displayCast(cast) {
     const castHeader = document.getElementById('cast-header');
 
     castGrid.innerHTML = cast.map(person => `
-        <div class="cast-card${person.id ? ' cast-card-link' : ''}" ${person.id ? `data-person-id="${person.id}"` : ''} title="${person.name}${person.character ? ` · ${person.character}` : ''}">
+        <div class="cast-card${person.id ? ' cast-card-link' : ''}" ${person.id ? `data-person-id="${person.id}"` : ''} title="${escapeHtml(person.name)}${person.character ? ` · ${escapeHtml(person.character)}` : ''}">
             <img src="${person.profile_path ? `https://image.tmdb.org/t/p/w185${person.profile_path}` : '/static/images/placeholder.png'}"
-                 alt="${person.name}"
+                 alt="${escapeHtml(person.name)}"
                  class="cast-photo"
                  onerror="this.src='/static/images/placeholder.png'">
-            <div class="cast-name">${person.name}</div>
-            <div class="cast-character">${person.character || ''}</div>
+            <div class="cast-name">${escapeHtml(person.name)}</div>
+            <div class="cast-character">${escapeHtml(person.character || '')}</div>
         </div>
     `).join('');
     castGrid.querySelectorAll('[data-person-id]').forEach(card => {
@@ -950,7 +950,7 @@ function showVersionModal(data) {
     subEl.className = 'dialog-sub';
     const isTV = data.media_type === 'tv';
     const year = data.release_date ? data.release_date.split('-')[0] : (data.first_air_date ? data.first_air_date.split('-')[0] : '');
-    subEl.innerHTML = `<i class="fa-solid fa-${isTV ? 'tv' : 'film'}"></i> Requesting: ${data.title}${year ? ` (${year})` : ''}`;
+    subEl.innerHTML = `<i class="fa-solid fa-${isTV ? 'tv' : 'film'}"></i> Requesting: ${escapeHtml(data.title)}${year ? ` (${year})` : ''}`;
     versionCheckboxes.appendChild(subEl);
 
     // TV show: request type radio rows
@@ -1314,10 +1314,7 @@ function formatDate(date) {
 }
 
 function escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+    return String(text ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
 function handleMagnetAssignSeason(showData, seasonNumber) {

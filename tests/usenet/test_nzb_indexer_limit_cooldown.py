@@ -215,6 +215,49 @@ class TestProcessNzbResult(unittest.TestCase):
         self.assertEqual(hits, 1)
         self.client.add_nzb_content.assert_called_once()
 
+    def test_fallback_newznab_limit_error_defers_instead_of_dropping(self):
+        import requests
+        calls = {'n': 0}
+
+        def fake_get(url, **kw):
+            if url != self.URL:
+                return _Resp(404, '')
+            calls['n'] += 1
+            if calls['n'] == 1:
+                raise requests.exceptions.ConnectionError('transient timeout')
+            return _Resp(200, LIMIT_XML)
+
+        api = mock.Mock()
+        api.get.side_effect = fake_get
+        with mock.patch('routes.api_tracker.api', api):
+            out = self.proc._process_nzb_result(dict(self.result), dict(self.item))
+        self.assertIs(out, NZB_DEFERRED_INDEXER_COOLDOWN)
+        self.assertEqual(calls['n'], 2)
+        self.client.add_nzb.assert_called_once()
+        self.assertIsNotNone(cd.cooldown_reason(self.URL))
+
+    def test_fallback_raised_429_defers_instead_of_dropping(self):
+        import requests
+        calls = {'n': 0}
+        err_429 = requests.exceptions.HTTPError('429 Client Error', response=_Resp(429, 'Too Many Requests'))
+
+        def fake_get(url, **kw):
+            if url != self.URL:
+                return _Resp(404, '')
+            calls['n'] += 1
+            if calls['n'] == 1:
+                raise requests.exceptions.ConnectionError('transient timeout')
+            raise err_429
+
+        api = mock.Mock()
+        api.get.side_effect = fake_get
+        with mock.patch('routes.api_tracker.api', api):
+            out = self.proc._process_nzb_result(dict(self.result), dict(self.item))
+        self.assertIs(out, NZB_DEFERRED_INDEXER_COOLDOWN)
+        self.assertEqual(calls['n'], 2)
+        self.client.add_nzb.assert_called_once()
+        self.assertIsNotNone(cd.cooldown_reason(self.URL))
+
 
 @unittest.skipIf(TorrentProcessor is None, f'torrent_processor not importable: {_IMPORT_ERR}')
 class TestProcessResultsKeepsCooledResults(unittest.TestCase):
@@ -259,6 +302,314 @@ class TestProcessResultsKeepsCooledResults(unittest.TestCase):
         self.assertEqual(out, (None, None, None))
         self.assertEqual(len(self.item['scrape_results']), 3)
         self.update.assert_not_called()
+
+
+@unittest.skipIf(TorrentProcessor is None, f'torrent_processor not importable: {_IMPORT_ERR}')
+class TestCooldownParksItemInAdding(unittest.TestCase):
+    """A cooling-down NZB keeps the item's results but must not freeze the show."""
+
+    URL = 'https://ninjacentral.co.za/getnzb/abc.nzb'
+
+    def setUp(self):
+        import queues.adding_queue as aq
+        self.aq = aq
+        aq._cooldown_wake.clear()
+        aq._cooldown_notes.clear()
+        cd.reset_fetch_cooldowns()
+        self.addCleanup(aq._cooldown_wake.clear)
+        self.addCleanup(aq._cooldown_notes.clear)
+        self.addCleanup(cd.reset_fetch_cooldowns)
+        self.nzb = {'title': 'Survivor.S21E04.1080p', 'nzb_url': self.URL, 'protocol': 'nzb'}
+        self.item = {'id': 7, 'title': 'Survivor', 'imdb_id': 'tt0239195', 'type': 'episode',
+                     'state': 'Adding', 'filled_by_torrent_id': None,
+                     'scrape_results': [dict(self.nzb)]}
+        self.proc = TorrentProcessor.__new__(TorrentProcessor)
+        self.proc._check_sibling_debrid_pack = lambda *a, **k: None
+        p = mock.patch('database.database_writing.update_media_item')
+        self.update = p.start()
+        self.addCleanup(p.stop)
+
+    def _process(self, nzb_outcome):
+        self.proc._process_nzb_result = lambda r, item, adding_queue_items=None: nzb_outcome
+        return self.proc._process_results_inner([dict(self.nzb)], False, self.item)
+
+    def test_cooling_indexer_records_wait_until_cooldown_ends(self):
+        cd.record_indexer_limit(self.URL, 1800)
+        out = self._process(NZB_DEFERRED_INDEXER_COOLDOWN)
+        self.assertEqual(out, (None, None, None))
+        wait = self.item[self.aq.NZB_COOLDOWN_WAIT_KEY]
+        self.assertTrue(1700 < wait <= 1800, wait)
+        # Nothing dropped, blacklisted or marked not-wanted.
+        self.assertEqual(len(self.item['scrape_results']), 1)
+        self.update.assert_not_called()
+
+    def test_parked_item_does_not_block_sibling_scraping(self):
+        self.assertTrue(self.aq.adding_item_blocks_scraping(self.item))
+        self.aq.park_for_indexer_cooldown(self.item['id'], 1800)
+        self.assertTrue(self.aq.item_parked_for_cooldown(7))
+        self.assertFalse(self.aq.adding_item_blocks_scraping(self.item))
+        # Another show's Adding item is unaffected.
+        self.assertTrue(self.aq.adding_item_blocks_scraping({'id': 8, 'filled_by_torrent_id': ''}))
+
+    def test_item_retried_once_cooldown_ends(self):
+        with mock.patch.object(self.aq.time, 'monotonic', return_value=1000.0):
+            self.aq.park_for_indexer_cooldown(7, 1800)
+            self.assertTrue(self.aq.item_parked_for_cooldown(7))
+        with mock.patch.object(self.aq.time, 'monotonic', return_value=1000.0 + 1801):
+            self.assertFalse(self.aq.item_parked_for_cooldown(7))
+            self.assertTrue(self.aq.adding_item_blocks_scraping(self.item))
+        # The NZB result is still there to be submitted.
+        self.assertEqual(self.item['scrape_results'][0]['nzb_url'], self.URL)
+
+    def test_quota_hold_without_end_time_rechecks_soon(self):
+        self._process(NZB_DEFERRED_INDEXER_COOLDOWN)
+        from queues.torrent_processor import NZB_QUOTA_RECHECK_SECONDS
+        self.assertEqual(self.item[self.aq.NZB_COOLDOWN_WAIT_KEY], NZB_QUOTA_RECHECK_SECONDS)
+
+    def test_normal_nzb_failure_pops_result_and_does_not_park(self):
+        out = self._process(None)
+        self.assertEqual(out, (None, None, None))
+        self.assertNotIn(self.aq.NZB_COOLDOWN_WAIT_KEY, self.item)
+        self.assertEqual(self.item['scrape_results'], [])
+
+    def test_rejected_result_after_a_cooled_one_clears_the_wait(self):
+        cd.record_indexer_limit(self.URL, 1800)
+        other = {'title': 'B', 'nzb_url': 'https://other/b', 'protocol': 'nzb'}
+        self.item['scrape_results'] = [dict(self.nzb), other]
+        self.proc._process_nzb_result = lambda r, item, adding_queue_items=None: (
+            NZB_DEFERRED_INDEXER_COOLDOWN if 'ninja' in r['nzb_url'] else None)
+        self.proc._process_results_inner([dict(self.nzb), dict(other)], False, self.item)
+        self.assertNotIn(self.aq.NZB_COOLDOWN_WAIT_KEY, self.item)
+        self.assertEqual([r['title'] for r in self.item['scrape_results']], [self.nzb['title']])
+
+    def test_note_names_the_indexer_and_why(self):
+        cd.record_indexer_limit(self.URL, 1800, cd.refusal_why(429, ''))
+        with mock.patch('usenet.indexer_quota.instance_for_url', return_value='NinjaCentral_1'):
+            self._process(NZB_DEFERRED_INDEXER_COOLDOWN)
+        self.assertEqual(self.item[self.aq.NZB_COOLDOWN_NOTES_KEY], {'NinjaCentral': 'out of downloads'})
+
+    def test_note_falls_back_to_host_and_quota_reason(self):
+        with mock.patch('usenet.indexer_quota.instance_for_url', return_value=None):
+            self._process(NZB_DEFERRED_INDEXER_COOLDOWN)
+        self.assertEqual(self.item[self.aq.NZB_COOLDOWN_NOTES_KEY],
+                         {'ninjacentral.co.za': 'daily grab limit used up'})
+
+    def test_queue_page_note_while_parked(self):
+        with mock.patch.object(self.aq.time, 'monotonic', return_value=1000.0):
+            self.aq.park_for_indexer_cooldown(7, 1800, {'NinjaCentral': 'out of downloads'})
+            self.assertEqual(self.aq.cooldown_note(7), 'NinjaCentral out of downloads, retrying in 30 min')
+            self.assertIsNone(self.aq.cooldown_note(8))
+        with mock.patch.object(self.aq.time, 'monotonic', return_value=1000.0 + 1801):
+            self.assertIsNone(self.aq.cooldown_note(7))
+        self.aq.unpark_item(7)
+        self.assertNotIn(7, self.aq._cooldown_notes)
+
+    def test_refusal_why(self):
+        self.assertEqual(cd.refusal_why(429, ''), 'out of downloads')
+        self.assertEqual(cd.refusal_why(200, '<error code="501" description="Download limit reached"/>'),
+                         'out of downloads')
+        self.assertEqual(cd.refusal_why(503, '<html>maintenance</html>'), 'unavailable (HTTP 503)')
+
+    def test_remove_item_and_add_item_unpark_item(self):
+        q = self.aq.AddingQueue.__new__(self.aq.AddingQueue)
+        q.items = [dict(self.item)]
+        q._nzb_submitted_ids = set()
+        q._adding_ticks = {}
+
+        self.aq.park_for_indexer_cooldown(7, 1800, {'NinjaCentral': 'out of downloads'})
+        self.assertTrue(self.aq.item_parked_for_cooldown(7))
+        q.remove_item(self.item)
+        self.assertFalse(self.aq.item_parked_for_cooldown(7))
+        self.assertIsNone(self.aq.cooldown_note(7))
+
+        # Re-entering Adding via add_item also clears any stale park state.
+        self.aq.park_for_indexer_cooldown(7, 1800, {'NinjaCentral': 'out of downloads'})
+        self.assertTrue(self.aq.item_parked_for_cooldown(7))
+        q.add_item(dict(self.item))
+        self.assertFalse(self.aq.item_parked_for_cooldown(7))
+        self.assertIsNone(self.aq.cooldown_note(7))
+
+
+@unittest.skipIf(TorrentProcessor is None, f'torrent_processor not importable: {_IMPORT_ERR}')
+class TestHybridModeWithCooledNzb(unittest.TestCase):
+    """A cooled-down NZB deferral must not block Hybrid mode's uncached torrent pass."""
+
+    URL = 'https://ninjacentral.co.za/getnzb/abc.nzb'
+    MAGNET = 'magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567'
+
+    def setUp(self):
+        import queues.adding_queue as aq
+        self.aq = aq
+        aq._cooldown_wake.clear()
+        aq._cooldown_notes.clear()
+        cd.reset_fetch_cooldowns()
+        self.addCleanup(aq._cooldown_wake.clear)
+        self.addCleanup(aq._cooldown_notes.clear)
+        self.addCleanup(cd.reset_fetch_cooldowns)
+
+    def _make_queue(self, item):
+        q = self.aq.AddingQueue.__new__(self.aq.AddingQueue)
+        q.items = [item]
+        q._adding_ticks = {}
+        q._nzb_submitted_ids = set()
+        q._nzb_downloading_job_ids = set()
+        q._held_summary = None
+        q._held_summary_at = 0.0
+        q.torrent_processor = mock.Mock()
+        q.media_matcher = mock.Mock()
+        q.debrid_provider = mock.Mock()
+        q.remove_item = mock.Mock()
+        q._handle_failed_item = mock.Mock()
+        return q
+
+    def _run_process(self, item, side_effect):
+        q = self._make_queue(item)
+        calls = []
+
+        def fake_process_results(results, accept_uncached=False, item=None, adding_queue_items=None):
+            calls.append(accept_uncached)
+            return side_effect(results, accept_uncached, item)
+
+        q.torrent_processor.process_results.side_effect = fake_process_results
+        qm = mock.Mock()
+        qm.queues = {}
+        qm.upgrade_process_locks = set()
+
+        def gs(section, key, default=None):
+            if section == 'Scraping' and key == 'hybrid_mode':
+                return True
+            if section == 'Queue' and key == 'item_process_delay_seconds':
+                return 0.0
+            return default
+
+        # Return Pending Uncached after processing when the uncached torrent was added,
+        # so process() cleanly exits after verifying the torrent was accepted.
+        added_holder = {'added': False}
+
+        def get_item_by_id(_id):
+            if added_holder['added']:
+                return {'id': _id, 'state': 'Pending Uncached'}
+            return {'id': _id, 'state': 'Adding'}
+
+        def wrapped_side_effect(results, accept_uncached, it):
+            res = side_effect(results, accept_uncached, it)
+            if res[0] is not None and res[1] is not None:
+                added_holder['added'] = True
+            return res
+
+        q.torrent_processor.process_results.side_effect = lambda results, accept_uncached=False, item=None, adding_queue_items=None: (
+            calls.append(accept_uncached) or wrapped_side_effect(results, accept_uncached, item)
+        )
+
+        with mock.patch.object(self.aq, 'get_setting', side_effect=gs), \
+             mock.patch.object(self.aq, 'accepts_uncached_now', return_value=False), \
+             mock.patch('database.get_media_item_by_id', side_effect=get_item_by_id), \
+             mock.patch('debrid.get_debrid_providers', return_value=[]), \
+             mock.patch('utilities.acquisition_health.usable_results', side_effect=lambda rs, *a, **k: rs):
+            q.process(qm)
+        return q, calls, added_holder['added']
+
+    def test_cooled_nzb_and_uncached_torrent_adds_torrent_in_hybrid_mode(self):
+        """[cooled NZB, uncached torrent] in Hybrid mode adds the torrent instead of parking."""
+        cd.record_indexer_limit(self.URL, 1800)
+        nzb = {'title': 'Show.S01E01.NZB', 'nzb_url': self.URL, 'protocol': 'nzb'}
+        torrent = {'title': 'Show.S01E01.TOR', 'magnet': self.MAGNET}
+        item = {'id': 42, 'title': 'Show', 'type': 'movie', 'state': 'Adding',
+                'filled_by_torrent_id': None, 'scrape_results': [dict(nzb), dict(torrent)]}
+
+        # Use the real _process_results_inner for NZB handling; simulate an uncached torrent
+        # that is skipped when accept_uncached=False and accepted when accept_uncached=True.
+        proc = TorrentProcessor.__new__(TorrentProcessor)
+        proc._check_sibling_debrid_pack = lambda *a, **k: None
+        proc._process_nzb_result = lambda r, it, adding_queue_items=None: NZB_DEFERRED_INDEXER_COOLDOWN
+
+        def fake_process_torrent(link):
+            return link, None
+
+        proc.process_torrent = fake_process_torrent
+        proc._resolved_hash_not_wanted = lambda *a, **k: False
+
+        def process_results_real_nzb(results, accept_uncached, it):
+            for r in results:
+                if r.get('protocol') == 'nzb' or r.get('nzb_url'):
+                    # Exercise the real cooldown-deferral branch in _process_results_inner.
+                    proc._process_results_inner([r], accept_uncached, it)
+                elif accept_uncached:
+                    return ({'id': 'tor-1', 'filename': 'Show.mkv', 'files': []}, self.MAGNET, r)
+            return None, None, None
+
+        q, calls, added = self._run_process(item, process_results_real_nzb)
+        self.assertEqual(calls, [False, True], 'Hybrid second pass must run after cooldown-only deferral')
+        self.assertTrue(added, 'uncached torrent must be added on the hybrid second pass')
+        self.assertFalse(self.aq.item_parked_for_cooldown(42), 'item must not be parked when torrent was added')
+        q._handle_failed_item.assert_not_called()
+
+    def test_real_nzb_attempt_still_skips_hybrid_second_pass(self):
+        """A real NZB submission attempt (not a cooldown deferral) still caps at one attempt per tick."""
+        nzb = {'title': 'Show.S01E01.NZB', 'nzb_url': self.URL, 'protocol': 'nzb'}
+        torrent = {'title': 'Show.S01E01.TOR', 'magnet': self.MAGNET}
+        item = {'id': 43, 'title': 'Show', 'type': 'movie', 'state': 'Adding',
+                'filled_by_torrent_id': None, 'scrape_results': [dict(nzb), dict(torrent)]}
+
+        proc = TorrentProcessor.__new__(TorrentProcessor)
+        proc._check_sibling_debrid_pack = lambda *a, **k: None
+        proc._process_nzb_result = lambda r, it, adding_queue_items=None: None  # real attempt failed
+
+        with mock.patch('database.database_writing.update_media_item'):
+            _, calls, added = self._run_process(
+                item, lambda rs, au, it: proc._process_results_inner(rs, au, it)
+            )
+        self.assertEqual(calls, [False], 'Hybrid second pass must be skipped after a real NZB attempt')
+        self.assertFalse(added)
+
+    def test_only_cooled_nzbs_still_parks_item(self):
+        """When only cooled NZBs exist (no usable torrent), the item is still parked."""
+        cd.record_indexer_limit(self.URL, 1800)
+        nzb = {'title': 'Show.S01E01.NZB', 'nzb_url': self.URL, 'protocol': 'nzb'}
+        item = {'id': 44, 'title': 'Show', 'type': 'movie', 'state': 'Adding',
+                'filled_by_torrent_id': None, 'scrape_results': [dict(nzb)]}
+
+        proc = TorrentProcessor.__new__(TorrentProcessor)
+        proc._check_sibling_debrid_pack = lambda *a, **k: None
+        proc._process_nzb_result = lambda r, it, adding_queue_items=None: NZB_DEFERRED_INDEXER_COOLDOWN
+
+        q, calls, added = self._run_process(
+            item, lambda rs, au, it: proc._process_results_inner(rs, au, it)
+        )
+        self.assertEqual(calls, [False])
+        self.assertFalse(added)
+        self.assertTrue(self.aq.item_parked_for_cooldown(44))
+        q._handle_failed_item.assert_not_called()
+
+    def test_parked_items_skipped_before_per_tick_work_and_info_log(self):
+        """Parked items are excluded by partition_adding_items and produce no INFO log or queue fetches."""
+        self.aq.park_for_indexer_cooldown(45, 1800, {'NinjaCentral': 'out of downloads'})
+        item = {'id': 45, 'title': 'Show', 'type': 'episode', 'episode_number': 1,
+                'state': 'Adding', 'filled_by_torrent_id': None,
+                'scrape_results': [{'title': 'Show.S01E01.NZB', 'nzb_url': self.URL, 'protocol': 'nzb'}]}
+        actionable, awaiting, downloading, locked = self.aq.partition_adding_items([item])
+        self.assertEqual((actionable, awaiting, downloading, locked), ([], 0, 0, 0))
+
+        q = self.aq.AddingQueue.__new__(self.aq.AddingQueue)
+        q.items = [item]
+        q._nzb_downloading_job_ids = set()
+        q._nzb_submitted_ids = set()
+        q._adding_ticks = {}
+        q._held_summary = None
+        q._held_summary_at = 0.0
+        qm = mock.Mock()
+        qm.queues = {'Wanted': mock.Mock(), 'Scraping': mock.Mock()}
+        qm.upgrade_process_locks = set()
+
+        with mock.patch.object(self.aq.logging, 'info') as log_info, \
+                mock.patch.object(self.aq, 'collected_elsewhere_check') as ce_check:
+            result = q.process(qm)
+
+        self.assertFalse(result)
+        log_info.assert_not_called()
+        qm.queues['Wanted'].get_contents.assert_not_called()
+        qm.queues['Scraping'].get_contents.assert_not_called()
+        ce_check.assert_not_called()
 
 
 if __name__ == '__main__':

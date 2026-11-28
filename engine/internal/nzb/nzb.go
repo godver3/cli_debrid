@@ -43,6 +43,11 @@ type File struct {
 // Complete reports whether every segment 1..Total is listed.
 func (f File) Complete() bool { return len(f.Missing) == 0 }
 
+// HasPrefix reports whether segments 1..n are all listed.
+func (f File) HasPrefix(n int) bool {
+	return n <= f.Total && (len(f.Missing) == 0 || f.Missing[0] > n)
+}
+
 // NZB is a parsed NZB document.
 type NZB struct {
 	Meta  map[string]string // <head><meta type=...> (title, password, ...)

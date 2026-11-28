@@ -81,6 +81,8 @@ def remove_show_from_plex(show_title: str, imdb_id: str = None, tmdb_id: str = N
                     if not (imdb_id or tmdb_id) or matched:
                         if show.title.lower() == show_title.lower() or matched:
                             logger.info(f"[PLEX_SHOW_DELETE] Found show '{show.title}' in section '{section.title}'. Deleting entire show.")
+                            # Kept even when the delete fails (400): resent once the files are gone
+                            result['rating_key'] = getattr(show, 'ratingKey', None)
                             try:
                                 show.delete()
                                 result['success'] = True
@@ -190,6 +192,8 @@ def remove_season_from_plex(show_title: str, season_number: int, imdb_id: str = 
                             for season in show.seasons():
                                 if season.seasonNumber == season_number:
                                     logger.info(f"[PLEX_SEASON_DELETE] Found season {season_number} of '{show.title}'. Deleting entire season.")
+                                    # Kept even when the delete fails (400): resent once the files are gone
+                                    result['rating_key'] = getattr(season, 'ratingKey', None)
                                     try:
                                         season.delete()
                                         result['success'] = True
@@ -297,6 +301,8 @@ def remove_movie_from_plex(movie_title: str, imdb_id: str = None, tmdb_id: str =
                     if not (imdb_id or tmdb_id) or matched:
                         if movie.title.lower() == movie_title.lower() or matched:
                             logger.info(f"[PLEX_MOVIE_DELETE] Found movie '{movie.title}' in section '{section.title}'. Deleting.")
+                            # Kept even when the delete fails (400): resent once the files are gone
+                            result['rating_key'] = getattr(movie, 'ratingKey', None)
                             try:
                                 movie.delete()
                                 result['success'] = True
@@ -326,6 +332,53 @@ def remove_movie_from_plex(movie_title: str, imdb_id: str = None, tmdb_id: str =
         logger.error(f"[PLEX_MOVIE_DELETE] General error removing movie '{movie_title}': {str(e)}")
         result['error'] = str(e)
         return result
+
+def _plex_for_removal():
+    """PlexServer for the configured file management mode, or None."""
+    mode = get_setting('File Management', 'file_collection_management')
+    if mode == 'Plex':
+        url, token = (get_setting('Plex', 'url') or '').rstrip('/'), get_setting('Plex', 'token')
+    elif mode == 'Symlinked/Local':
+        url = get_setting('File Management', 'plex_url_for_symlink', default='')
+        token = get_setting('File Management', 'plex_token_for_symlink', default='')
+    else:
+        return None
+    if not url or not token:
+        return None
+    return plexapi.server.PlexServer(url, token, timeout=30)
+
+
+def finish_plex_content_delete(rating_key, plex=None) -> bool:
+    """Call after the files are gone. True when Plex no longer has `rating_key`.
+
+    Plex answers DELETE /library/metadata/<key> with 200 even when it couldn't
+    delete the files itself (e.g. symlinks it has no write access to, logged as
+    "Couldn't delete the file ... Permission denied") and then keeps the items.
+    Once the files are gone the same DELETE removes the item, so send it again
+    when the item is still there.
+    """
+    if not rating_key:
+        return False
+    from plexapi.exceptions import NotFound
+    try:
+        plex = plex or _plex_for_removal()
+        if plex is None:
+            return False
+        for attempt in range(2):
+            try:
+                item = plex.fetchItem(int(rating_key))
+            except NotFound:
+                return True
+            if attempt == 0:
+                logger.info(f"[PLEX_CONTENT_DELETE] Plex kept '{item.title}' ({rating_key}) after the first delete; "
+                            f"deleting again now that its files are gone")
+                item.delete()
+        logger.warning(f"[PLEX_CONTENT_DELETE] Plex still has {rating_key} after a second delete")
+        return False
+    except Exception as e:
+        logger.warning(f"[PLEX_CONTENT_DELETE] Could not confirm Plex removed {rating_key}: {e}")
+        return False
+
 
 def remove_file_from_plex(item_title, item_path, episode_title=None):
     try:

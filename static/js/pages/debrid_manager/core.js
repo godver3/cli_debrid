@@ -20,9 +20,12 @@ function _getReinsertProviderName() {
 // ── helpers ────────────────────────────────────────────────────────────────
 function escHtml(s) {
     if (s == null) return '';
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
-function _esc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function _esc(s) { return escHtml(s ?? ''); }
+// A value for an inline handler argument: onclick="fn(${_jsArg(name)})".
+// JSON gives a valid JS string literal; escaping it keeps the attribute intact.
+function _jsArg(v) { return escHtml(JSON.stringify(v ?? '')); }
 
 function fmt_bytes(b) {
     if (!b) return '—';

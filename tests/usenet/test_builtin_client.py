@@ -289,6 +289,13 @@ class EngineManagerTests(unittest.TestCase):
         self.assertEqual((cfg['umask'], cfg['uid'], cfg['gid']), (0o027, 1000, 1001))
         self.assertEqual((cfg['cache_expiry_seconds'], cfg['health_sample_percent']), (7200, 100))
 
+    def test_import_workers_settings(self):
+        settings = self.settings()
+        self.assertEqual(self.be.build_config(settings)['import_workers'], 8)
+        settings['Built-in Mount'].update(import_workers='4', processing_connections='20')
+        cfg = self.be.build_config(settings)
+        self.assertEqual((cfg['import_workers'], cfg['parallel']), (4, 20))
+
     def test_debrid_streaming_settings(self):
         s = self.settings()
         cfg = self.be.build_config(s)

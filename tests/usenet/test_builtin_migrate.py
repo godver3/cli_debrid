@@ -569,3 +569,24 @@ class UpstreamV2MetaTests(unittest.TestCase):
             with open(os.path.join(d, 'old.meta'), 'wb') as f:
                 f.write(META)
             self.assertEqual(bm.meta_sizes(d), {'new': len(v2) * bm.V2_SIZE_FACTOR, 'old': len(META)})
+
+
+class LibraryExtensionsTests(unittest.TestCase):
+    def test_includes_upgrading_items_and_excludes_inactive_states(self):
+        import sqlite3
+        conn = sqlite3.connect(':memory:')
+        conn.execute('CREATE TABLE media_items (state TEXT, filled_by_file TEXT)')
+        conn.executemany(
+            'INSERT INTO media_items (state, filled_by_file) VALUES (?, ?)',
+            [
+                ('Collected', 'Show.S01E01.mkv'),
+                ('Upgrading', 'Show.S01E02.ts'),
+                ('Wanted', 'Old.S01E03.wmv'),
+                ('Blacklisted', 'Bad.S01E04.flv'),
+                ('Collected', 'archive.rar'),
+            ],
+        )
+        with unittest.mock.patch('database.core.get_db_connection', return_value=conn):
+            counts = bm.library_extensions()
+        self.assertEqual(counts, {'mkv': 1, 'ts': 1})
+        self.assertEqual(bm.hidden_library_extensions(['mkv', 'mp4'], counts), {'ts': 1})

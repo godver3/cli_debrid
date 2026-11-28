@@ -105,7 +105,10 @@ def item_detail(item_id):
         plex_streams = subtitle_resync.plex_streams(subtitle_resync.item_rk(item))
     for lang, paths in status_mod.sidecar_langs(item.get('location_on_disk'), {}).items():
         for p in paths:
-            files.append({'language': lang, 'path': p, 'name': os.path.basename(p)})
+            files.append({
+                'language': lang, 'path': p, 'name': os.path.basename(p),
+                'clyde_owned': subtitle_history.is_clyde_path(p),
+            })
     return jsonify({
         'id': item_id, 'label': status_mod.label(item), 'type': item.get('type'),
         'release': item.get('filled_by_title') or item.get('original_scraped_torrent_title') or '',
@@ -227,13 +230,16 @@ def auto(item_id):
 @subtitle_manager_bp.route('/api/subtitles/item/<int:item_id>/delete', methods=['POST'])
 @admin_required
 def delete_sidecar(item_id):
-    """Delete one sidecar subtitle of this item (Symlinked/Local only)."""
+    """Delete one Clyde-written sidecar subtitle of this item (Symlinked/Local only)."""
+    from database import subtitle_history
     item = _item(item_id)
     if not item:
         return jsonify({'error': 'Item not found or not collected'}), 404
     path = (request.get_json(silent=True) or {}).get('path') or ''
     if path not in _sidecar_paths(item):
         return jsonify({'error': 'Not a subtitle of this item'}), 400
+    if os.path.islink(path) or not subtitle_history.is_clyde_path(path, saved_via='sidecar'):
+        return jsonify({'error': 'Cannot delete a subtitle that came with the release'}), 400
     try:
         os.remove(path)
     except OSError as e:
@@ -262,8 +268,8 @@ def plex_delete(item_id):
         return jsonify({'error': 'Item not found or not collected'}), 404
     st = subtitle_resync.plex_stream_of_item(item, (request.get_json(silent=True) or {}).get('stream_id'))
     if not st:
-        return jsonify({'error': 'Not an uploaded subtitle of this item (embedded ones cannot be removed)'}), 400
-    ok, code = subtitle_resync.plex_delete(st)
+        return jsonify({'error': 'Not a subtitle uploaded by Clyde (embedded and release subtitles cannot be removed)'}), 400
+    ok, code = subtitle_resync.plex_delete(st, item=item)
     if not ok:
         return jsonify({'error': f'Plex refused the delete (HTTP {code})'}), 502
     logging.info(f"[subs] removed Plex subtitle stream {st['id']} ({st.get('language')}) from item {item_id}")
@@ -311,6 +317,8 @@ def orphans_delete():
         return jsonify({'error': 'Only for Symlinked/Local file management.'}), 400
     deleted, failed = 0, 0
     for p in find_orphan_subtitles(root):
+        if os.path.islink(p):
+            continue
         try:
             os.remove(p)
             deleted += 1

@@ -61,13 +61,47 @@ def unwrap_release_title(title: str) -> str | None:
     return m.group('inner') if m else None
 
 
+_INTERLACED_RE = re.compile(r'^(\d{3,4})i$', re.IGNORECASE)
+
+
+def progressive_resolution(resolution):
+    """PTT 1.8+ reports interlaced resolutions as-is ('1080i'); 1.7 called them
+    '1080p'. Our resolution tables, filters and bitrate caps match on 'NNNp',
+    so treat an interlaced release like its progressive twin."""
+    if isinstance(resolution, str):
+        m = _INTERLACED_RE.match(resolution.strip())
+        if m:
+            return f"{m.group(1)}p"
+    return resolution
+
+
+# A trailing release group that starts like a season ("-S0NNY"): PTT 1.8 reads
+# it as season 0, which turns a movie into an episode and gets it rejected.
+_GROUP_SEASON_RE = re.compile(r'-(S(\d{1,2})[A-Za-z][A-Za-z0-9]*)(?:\.[A-Za-z0-9]{2,4})?\s*$')
+_SEASON_MARKER_RE = re.compile(r'(?:^|[\s._\-\[(])(?:S\d{1,4}(?![A-Za-z])|Season\W?\d|Specials?\b)', re.IGNORECASE)
+
+
+def _drop_group_season(title: str, result: Dict[str, Any]) -> Dict[str, Any]:
+    m = _GROUP_SEASON_RE.search(title or '')
+    if not m or result.get('episodes') or result.get('seasons') != [int(m.group(2))]:
+        return result
+    if _SEASON_MARKER_RE.search(title[:m.start()]):
+        return result  # a real season marker elsewhere in the name
+    result = dict(result)
+    result['seasons'] = []
+    result.setdefault('group', None)
+    if not result.get('group'):
+        result['group'] = m.group(1)
+    return result
+
+
 def parse_title_unwrapped(title: str, parse=parse_title) -> Dict[str, Any]:
     """PTT parse that retries without the wrapper when a bracket-wrapped name yields no title."""
-    result = parse(title)
+    result = _drop_group_season(title, parse(title))
     if not result.get('title'):
         inner = unwrap_release_title(title)
         if inner:
-            unwrapped = parse(inner)
+            unwrapped = _drop_group_season(inner, parse(inner))
             if unwrapped.get('title'):
                 return unwrapped
     return result
@@ -139,7 +173,7 @@ def parse_with_ptt(title: str) -> Dict[str, Any]:
             'original_title': result.get('original_title'),
             'type': 'movie' if not result.get('seasons') and not result.get('episodes') else 'episode',
             'year': result.get('year'),
-            'resolution': result.get('resolution', 'Unknown'),
+            'resolution': progressive_resolution(result.get('resolution', 'Unknown')),
             'source': result.get('source'),
             'audio': result.get('audio'),
             'codec': result.get('codec'),

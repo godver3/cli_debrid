@@ -95,14 +95,19 @@ function togglePlexSection() {
         // Handle path fields
         const pathElements = [
             originalFilesPath?.closest('.settings-form-group'),
-            symlinkedFilesPath?.closest('.settings-form-group'),
-            // Symlink-mode only: the scan imports mount content by symlinking it
-            externalAddScan?.closest('.settings-form-group')
+            symlinkedFilesPath?.closest('.settings-form-group')
         ].filter(Boolean);
 
         pathElements.forEach(element => {
             element.style.display = isSymlinked ? 'block' : 'none';
         });
+
+        // Symlink mode imports mount content by symlinking it; Direct Mount asks
+        // the media server to scan it. Other modes don't use the scan.
+        const externalAddGroup = externalAddScan?.closest('.settings-form-group');
+        if (externalAddGroup) {
+            externalAddGroup.style.display = (isSymlinked || fileManagementSelect.value === 'Plex') ? 'block' : 'none';
+        }
 
         // Handle Plex symlink settings - only show if media server type is plex
         if (isSymlinked) {
@@ -531,7 +536,7 @@ export function updateSettings() {
     }
 
     // Remove any scrapers that are not actual scrapers
-    const validScraperTypes = ['Zilean', 'MediaFusion', 'AIOStreams', 'AIOStreams-API', 'Jackett', 'Torrentio', 'Nyaa', 'Prowlarr', 'OldNyaa', 'Newznab'];
+    const validScraperTypes = ['Zilean', 'MediaFusion', 'Comet', 'AIOStreams', 'AIOStreams-API', 'Jackett', 'Torrentio', 'Nyaa', 'Prowlarr', 'OldNyaa', 'Newznab'];
     if (settingsData['Scrapers'] && typeof settingsData['Scrapers'] === 'object') {
         Object.keys(settingsData['Scrapers']).forEach(key => {
             if (settingsData['Scrapers'][key] && settingsData['Scrapers'][key].type && !validScraperTypes.includes(settingsData['Scrapers'][key].type)) {
@@ -541,7 +546,7 @@ export function updateSettings() {
     }
     
     // Update the list of top-level fields to include UI Settings
-    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Debrid Provider', 'Usenet Provider', 'Torrentio', 'Scraping', 'Queue', 'Trakt', 'Scrob', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'TVDB', 'UI Settings', 'File Management', 'Subtitle Settings', 'Bazarr Integration', 'Overlay Settings', 'Staleness Threshold', 'Custom Post-Processing', 'System Load Regulation', 'Library Manager', 'MDBList', 'Floppy', 'Simkl', 'Discover Settings', 'AI Assistant', 'Plex Smart Collections', 'Plex Movie Box Sets', 'Plex Reported Issues'];
+    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Debrid Provider', 'Usenet Provider', 'Torrentio', 'Scraping', 'Queue', 'Trakt', 'Scrob', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'TVDB', 'UI Settings', 'File Management', 'Subtitle Settings', 'Bazarr Integration', 'Overlay Settings', 'Staleness Threshold', 'Custom Post-Processing', 'System Load Regulation', 'Library Manager', 'MDBList', 'Floppy', 'Simkl', 'Discover Settings', 'AI Assistant', 'Plex Smart Collections', 'Plex Movie Box Sets', 'Plex Preset Collections', 'Plex Reported Issues'];
     Object.keys(settingsData).forEach(key => {
         if (!topLevelFields.includes(key)) {
             delete settingsData[key];

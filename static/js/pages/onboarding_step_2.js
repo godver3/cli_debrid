@@ -443,7 +443,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                                 const serverCard = document.createElement('div');
                                                 serverCard.className = 'plex-server-card';
                                                 serverCard.innerHTML = `
-                                                    <div class="plex-server-name">${server.name}</div>
+                                                    <div class="plex-server-name">${escapeHtml(server.name)}</div>
                                                     <div class="plex-connection-type">
                                                         ${server.owned ? 'Owned Server' : 'Shared Server'}
                                                         ${server.connections.some(c => c.local) ? ' (Local Access Available)' : ''}

@@ -199,10 +199,30 @@ func (c *Client) attempt(ctx context.Context, prio Priority, id string,
 				}
 				break
 			}
+			if err := ctx.Err(); err != nil {
+				pl.release(cn)
+				return err
+			}
 			acquired(ctx)
 			idleFor := time.Since(cn.lastUsed)
 			began := time.Now()
+			// An article can keep making progress past the caller's deadline,
+			// or be blocked in a read with a much longer provider timeout.
+			// Cancellation interrupts the socket; a cancelled command cannot
+			// leave a connection positioned for reuse.
+			closed := make(chan struct{})
+			stop := context.AfterFunc(ctx, func() {
+				cn.abort()
+				close(closed)
+			})
 			found, err := fn(cn)
+			if !stop() {
+				<-closed
+			}
+			if err := ctx.Err(); err != nil {
+				pl.discard(cn)
+				return err
+			}
 			pl.record(began, cn.lastBytes, found, err)
 			switch {
 			case err == nil && found:

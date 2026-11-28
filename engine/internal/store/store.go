@@ -13,6 +13,7 @@
 package store
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -125,6 +126,9 @@ type Store struct {
 	deleted []Tombstone
 	now     func() time.Time
 
+	imports      map[string]*context.CancelFunc
+	importCommit sync.Mutex // serializes import publication with deletion
+
 	dirty     atomic.Bool // index out of date
 	saveMu    sync.Mutex
 	stop      chan struct{}
@@ -138,7 +142,7 @@ type Store struct {
 // in result.json) are converted on the way.
 func Open(dir string) (*Store, error) {
 	s := &Store{dir: dir, jobs: map[string]*Job{}, results: map[string]*job.Result{},
-		stamps: map[string]stamps{}, now: time.Now, stop: make(chan struct{}), done: make(chan struct{})}
+		stamps: map[string]stamps{}, imports: map[string]*context.CancelFunc{}, now: time.Now, stop: make(chan struct{}), done: make(chan struct{})}
 	if err := os.MkdirAll(filepath.Join(dir, "jobs"), 0o755); err != nil {
 		return nil, err
 	}
@@ -312,6 +316,10 @@ func (s *Store) Create(j Job, nzbData []byte) (Job, error) {
 func (s *Store) Update(id string, fn func(*Job)) (Job, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.updateLocked(id, fn)
+}
+
+func (s *Store) updateLocked(id string, fn func(*Job)) (Job, error) {
 	cur, ok := s.jobs[id]
 	if !ok {
 		return Job{}, ErrNotFound
@@ -329,6 +337,47 @@ func (s *Store) Update(id string, fn func(*Job)) (Job, error) {
 	s.stamps[id] = st
 	s.dirty.Store(true)
 	return next, nil
+}
+
+// BeginImport claims a queued job and ties the attempt to the job's lifetime.
+func (s *Store) BeginImport(parent context.Context, id string) (Job, context.Context, func(), error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := parent.Err(); err != nil {
+		return Job{}, nil, nil, err
+	}
+	j, ok := s.jobs[id]
+	if !ok {
+		return Job{}, nil, nil, ErrNotFound
+	}
+	if j.Status != Queued {
+		return Job{}, nil, nil, fmt.Errorf("store: job %s cannot be imported (%s)", id, j.Status)
+	}
+	started, err := s.updateLocked(id, func(j *Job) { j.Status = Importing })
+	if err != nil {
+		return Job{}, nil, nil, err
+	}
+	ctx, cancel := context.WithCancel(parent)
+	s.imports[id] = &cancel
+	return started, ctx, func() {
+		s.mu.Lock()
+		if s.imports[id] == &cancel {
+			delete(s.imports, id)
+		}
+		s.mu.Unlock()
+		cancel()
+	}, nil
+}
+
+// CommitImport applies an attempt's outcome if its job still exists. The
+// callback can change metadata and publish a folder atomically with respect
+// to deletion, including when the same ID is submitted again.
+func (s *Store) CommitImport(ctx context.Context, commit func()) {
+	s.importCommit.Lock()
+	defer s.importCommit.Unlock()
+	if ctx.Err() == nil {
+		commit()
+	}
 }
 
 // SetResult stores an import result and marks the job ready.
@@ -436,6 +485,8 @@ func (s *Store) List() []Job {
 
 // Delete removes a job and records a tombstone.
 func (s *Store) Delete(id string) error {
+	s.importCommit.Lock()
+	defer s.importCommit.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	j, ok := s.jobs[id]
@@ -444,6 +495,10 @@ func (s *Store) Delete(id string) error {
 	}
 	if err := os.RemoveAll(filepath.Join(s.dir, "jobs", id)); err != nil {
 		return err
+	}
+	if cancel := s.imports[id]; cancel != nil {
+		(*cancel)()
+		delete(s.imports, id)
 	}
 	delete(s.jobs, id)
 	delete(s.results, id)

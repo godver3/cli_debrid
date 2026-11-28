@@ -14,6 +14,24 @@ import threading
 from ._common import settings_bp
 from .versions import get_content_source_settings_route
 
+def _builtin_mount_debrid(config):
+    """The built-in mount serves the debrid files (shows Streaming only)."""
+    try:
+        from utilities import builtin_engine
+        return builtin_engine.selected(config)
+    except Exception:
+        return False
+
+
+def _preset_collection_groups():
+    try:
+        from database.plex_preset_collections import catalog_for_template
+        return catalog_for_template()
+    except Exception as e:
+        logging.error(f"Could not load preset collection catalog: {e}")
+        return []
+
+
 @settings_bp.route('/', methods=['GET'])
 @admin_required
 @onboarding_required
@@ -148,6 +166,8 @@ def index():
                                content_source_settings=content_source_settings,
                                version_names=scraping_versions,
                                settings_schema=SETTINGS_SCHEMA,
+                               preset_collection_groups=_preset_collection_groups(),
+                               builtin_mount_debrid=_builtin_mount_debrid(config),
                                is_windows=is_windows,
                                allow_windows_symlinks=allow_windows_symlinks_value,
                                environment_mode=environment_mode))
@@ -319,7 +339,9 @@ def update_settings():
 
         # Detect if ONLY UI settings are being changed (no restart/reload needed)
         # Compare new settings with current config to find what actually changed
-        ui_only_categories = {'Library Manager', 'Discover Settings', 'Overlay Settings', 'AI Assistant'}
+        # Read live on every run, so saving them needs no restart
+        ui_only_categories = {'Library Manager', 'Discover Settings', 'Overlay Settings', 'AI Assistant',
+                              'Plex Preset Collections'}
         actually_changed_categories = set()
 
         for category, values in new_settings.items():
@@ -582,6 +604,15 @@ def update_settings():
                 _save_state(_sc_state)
             except Exception:
                 pass
+
+        # Switching a preset collection on or off takes effect right away
+        if 'Plex Preset Collections' in actually_changed_categories:
+            try:
+                from database.plex_preset_collections import run_preset_collections
+                threading.Thread(target=run_preset_collections, daemon=True,
+                                  name='plex-preset-collections').start()
+            except Exception as e:
+                logging.warning(f"Could not start preset collections sync: {e}")
 
         # For no changes or UI-only changes, skip cache clearing and reinitialization
         if skip_restart:

@@ -197,7 +197,7 @@ async function loadMaintenance() {
         _xpPopulateFiles(data);
         _xpCheckOnLoad();
     } catch(e) {
-        document.getElementById('bk-activity').innerHTML = `<div class="dm-error">Failed to load: ${e.message}</div>`;
+        document.getElementById('bk-activity').innerHTML = `<div class="dm-error">Failed to load: ${escHtml(e.message)}</div>`;
     }
     // Load climount URL (non-blocking)
     try {
@@ -549,7 +549,7 @@ async function _xpDoRestore(dryRun) {
                         const pr = await fetch('/debrid_manager/api/backup/restore-to-provider/progress');
                         const p = await pr.json();
                         if (p.status === 'running') {
-                            const name = p.current_name ? ` · ${p.current_name.slice(0, 55)}` : '';
+                            const name = p.current_name ? ` · ${escHtml(p.current_name.slice(0, 55))}` : '';
                             msg.innerHTML = `<span class="dm-spinner"></span> ${p.current} of ${p.total}${name}`;
                             setTimeout(_poll, 1000);
                         } else if (p.status === 'done') {
@@ -613,7 +613,7 @@ async function _xpCheckOnLoad() {
             if (restBtn) restBtn.disabled = true;
             msg.style.display = '';
             msg.className = 'dm-backup-msg';
-            const name = p.current_name ? ` · ${p.current_name.slice(0, 55)}` : '';
+            const name = p.current_name ? ` · ${escHtml(p.current_name.slice(0, 55))}` : '';
             msg.innerHTML = `<span class="dm-spinner"></span> ${p.current} of ${p.total}${name}`;
             // Resume polling — reuse the same poll logic by triggering a fake restore start
             const _resumePoll = async () => {

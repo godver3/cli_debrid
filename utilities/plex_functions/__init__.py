@@ -60,6 +60,7 @@ from .recent import (
 )
 from .removal import (
     _find_plex_owner_of_file,
+    finish_plex_content_delete,
     remove_file_from_plex,
     remove_movie_from_plex,
     remove_season_from_plex,
@@ -205,6 +206,7 @@ __all__ = [
     'refresh_plex_movie_cache',
     'refresh_plex_show_cache',
     'remove_dead_plex_versions_after_scan',
+    'finish_plex_content_delete',
     'remove_file_from_plex',
     'remove_movie_from_plex',
     'remove_replaced_plex_media_after_scan',

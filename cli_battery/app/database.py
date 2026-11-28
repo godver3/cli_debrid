@@ -240,7 +240,7 @@ def run_migrations(eng):
                     logger.info("Adding is_movie column to episodes table...")
                     conn.execute(text("ALTER TABLE episodes ADD COLUMN is_movie BOOLEAN"))
 
-            # --- seasons: add plex_guid, tmdb_id, tvdb_id ---
+            # --- seasons: add plex_guid, tmdb_id, tvdb_id, title ---
             if 'seasons' in inspector.get_table_names():
                 columns = [col['name'] for col in inspector.get_columns('seasons')]
                 if 'plex_guid' not in columns:
@@ -252,6 +252,9 @@ def run_migrations(eng):
                 if 'tvdb_id' not in columns:
                     logger.info("Adding tvdb_id column to seasons table...")
                     conn.execute(text("ALTER TABLE seasons ADD COLUMN tvdb_id STRING"))
+                if 'title' not in columns:
+                    logger.info("Adding title column to seasons table...")
+                    conn.execute(text("ALTER TABLE seasons ADD COLUMN title STRING"))
 
             # --- metadata: index the item_id foreign key ---
             # SQLite doesn't index foreign keys, so every per-item metadata
@@ -320,6 +323,7 @@ class Season(Base):
     id = Column(Integer, primary_key=True)
     item_id = Column(Integer, ForeignKey('items.id'), nullable=False)
     season_number = Column(Integer, nullable=False)
+    title = Column(String)
     episode_count = Column(Integer)
     plex_guid = Column(String, nullable=True)
     tmdb_id = Column(String, nullable=True)

@@ -29,10 +29,46 @@ class _SkipPlexConnect(Exception):
     """Plex mode run with Silo: task_check_plex_files skips the Plex connection."""
 
 
+def _real_mount_folder(item_dict):
+    """The folder the built-in mount really made for the item's torrent (it
+    can be "Name (2)"), tried before any name worked out from the release."""
+    try:
+        tid = item_dict['filled_by_torrent_id']
+    except (KeyError, IndexError):
+        return None
+    if not tid:
+        return None
+    from utilities.mount_debrid import folder_for
+    from utilities.settings import get_setting
+    return folder_for(tid, get_setting)
+
+
+def _guard_ambiguous(base_path, paths, filename, item_dict, real):
+    """Drop name-guess paths that sit in one of several same-named folders
+    ("Name", "Name (2)") when the torrent's real folder isn't known: the
+    file there may belong to another torrent. See
+    local_library_scan._unambiguous_source."""
+    if real:
+        return paths
+    from utilities.local_library_scan import _unambiguous_source
+    out = []
+    for p in paths:
+        path = p['path'] if isinstance(p, dict) else p
+        if os.path.exists(path) and not _unambiguous_source(base_path, path, os.path.dirname(path), filename,
+                                                            {'filled_by_torrent_id': item_dict['filled_by_torrent_id']
+                                                             if 'filled_by_torrent_id' in item_dict.keys() else None})[0]:
+            continue
+        out.append(p)
+    return out
+
+
 def _mount_file_candidates(item_dict, base_path):
     """Where an item's file can be under the mount, in task_check_plex_files' order."""
     filename = item_dict['filled_by_file']
     names = []
+    real = _real_mount_folder(item_dict)
+    if real:
+        names.append(real)
     for key in ('debrid_folder_name', 'original_scraped_torrent_title', 'real_debrid_original_title', 'filled_by_title'):
         name = item_dict[key] or ''
         if name:
@@ -45,7 +81,7 @@ def _mount_file_candidates(item_dict, base_path):
     paths += [path for _name, path in _category_folder_paths(
         base_path, [item_dict[k] or '' for k in ('debrid_folder_name', 'original_scraped_torrent_title',
                                                  'real_debrid_original_title', 'filled_by_title')], filename)]
-    return paths
+    return _guard_ambiguous(base_path, paths, filename, item_dict, real)
 
 
 def _category_folder_paths(base_path, folder_names, filename):
@@ -389,7 +425,7 @@ class PlexTasks:
                 # --- START: Ensure new field is fetched ---
                 original_scraped_torrent_title = item_dict['original_scraped_torrent_title'] or ''
                 real_debrid_original_title = item_dict['real_debrid_original_title'] or ''
-                debrid_folder_name = item_dict['debrid_folder_name'] or ''
+                debrid_folder_name = _real_mount_folder(item_dict) or item_dict['debrid_folder_name'] or ''
                 # --- END: Ensure new field is fetched ---
 
                 if not filled_by_title or not filled_by_file: # This check might need re-evaluation if filled_by_title can be empty but other titles exist
@@ -447,6 +483,9 @@ class PlexTasks:
                 paths_to_check += [path for _name, path in _category_folder_paths(
                     base_path, [debrid_folder_name, original_scraped_torrent_title, real_debrid_original_title, filled_by_title],
                     current_filename)]
+
+                paths_to_check = _guard_ambiguous(base_path, paths_to_check, current_filename, item_dict,
+                                                  _real_mount_folder(item_dict))
 
                 # --- Check paths in order ---
                 file_found_on_disk = False
@@ -651,7 +690,7 @@ class PlexTasks:
                 # --- START: Ensure new field is fetched ---
                 original_scraped_torrent_title = item_dict['original_scraped_torrent_title'] or ''
                 real_debrid_original_title = item_dict['real_debrid_original_title'] or ''
-                debrid_folder_name = item_dict['debrid_folder_name'] or ''
+                debrid_folder_name = _real_mount_folder(item_dict) or item_dict['debrid_folder_name'] or ''
                 # --- END: Ensure new field is fetched ---
 
                 if not filled_by_title or not current_filename: 
@@ -716,6 +755,8 @@ class PlexTasks:
                         current_filename):
                     paths_to_check_info.append({'name': _cat_name, 'path': _cat_path, 'type': 'category_folder'})
 
+                paths_to_check_info = _guard_ambiguous(base_path, paths_to_check_info, current_filename, item_dict,
+                                                       _real_mount_folder(item_dict))
                 file_found_on_disk = False
                 actual_file_path = None
                 folder_name_for_plex_scan = None 

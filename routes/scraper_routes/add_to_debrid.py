@@ -106,15 +106,24 @@ def add_torrent_to_debrid():
             genres = []
         logging.info(f"Genres from metadata: {genres}")
 
-        # Convert season and episode to integers or None
-        try:
-            season_number = int(season) if season and season.lower() != 'null' else None
-        except (ValueError, TypeError):
-            season_number = None
+        # Convert season and episode to integers or None (keep 0 for Specials on TV; movies have no season/episode)
+        def _parse_opt_int(val):
+            if val is None:
+                return None
+            s = str(val).strip()
+            if not s or s.lower() in ('null', 'none'):
+                return None
+            try:
+                return int(s)
+            except (ValueError, TypeError):
+                return None
 
-        try:
-            episode_number = int(episode) if episode and episode.lower() != 'null' else None
-        except (ValueError, TypeError):
+        # Only a movie has no season: an empty/missing media_type keeps the numbers as before
+        if media_type != 'movie':
+            season_number = _parse_opt_int(season)
+            episode_number = _parse_opt_int(episode)
+        else:
+            season_number = None
             episode_number = None
             
         # NZB / Usenet path — route to cli_mount instead of debrid
@@ -225,9 +234,9 @@ def add_torrent_to_debrid():
                 return jsonify({'error': error_message}), 400
 
         # Add magnet/torrent to debrid provider — try each provider in order
-        from debrid import get_debrid_providers
+        from debrid import get_grab_providers
         from debrid.base import ProviderUnavailableError
-        providers = get_debrid_providers()
+        providers = get_grab_providers()
         torrent_id = None
         # None on a usenet-only setup; the add loop below simply won't run and we
         # return the "failed to add torrent" error.
@@ -420,16 +429,21 @@ def add_torrent_to_debrid():
                         logging.warning(f"Failed to get IMDB ID: {e}")
                 
                 # Get release date from metadata
+                episode_data = {}
                 if media_type in ['tv', 'show']:
                     release_date = 'Unknown'  # Initialize to 'Unknown'
                     # For TV shows, get episode-specific release date
                     metadata = get_metadata(tmdb_id=int(tmdb_id), item_media_type=media_type)
-                    if metadata and metadata.get('seasons'):
-                        # Use integer keys directly since that's how the data is structured
-                        season_data = metadata['seasons'].get(season_number, {})
-                        
-                        # Use integer keys for episodes as well
-                        episode_data = season_data.get('episodes', {}).get(episode_number, {})
+                    if metadata and metadata.get('seasons') and season_number is not None:
+                        seasons_meta = metadata['seasons']
+                        season_data = seasons_meta.get(season_number)
+                        if season_data is None:
+                            season_data = seasons_meta.get(str(season_number), {})
+                        if episode_number is not None:
+                            episodes_meta = season_data.get('episodes', {})
+                            episode_data = episodes_meta.get(episode_number)
+                            if episode_data is None:
+                                episode_data = episodes_meta.get(str(episode_number), {})
                         
                         first_aired_str = episode_data.get('first_aired')
                         
@@ -473,8 +487,13 @@ def add_torrent_to_debrid():
                 largest_file = max(video_files, key=lambda x: x.get('bytes', 0))
                 filled_by_file = os.path.basename(largest_file['path'])
                 # Get the torrent title from torrent_info's filename
-                filled_by_title = torrent_info.get('filename', '') or os.path.basename(os.path.dirname(largest_file['path']))
-                debrid_folder_name = torrent_info.get('debrid_folder_name') or filled_by_title
+                raw_torrent_title = torrent_info.get('filename', '') or os.path.basename(os.path.dirname(largest_file['path']))
+                from debrid.common.utils import resolve_torrent_title
+                filled_by_title = resolve_torrent_title(
+                    {'title': raw_torrent_title, 'files': files},
+                    {'title': original_scraped_torrent_title} if original_scraped_torrent_title else None,
+                )
+                debrid_folder_name = torrent_info.get('debrid_folder_name') or raw_torrent_title
 
                 # Extract resolution from torrent title
                 resolution = extract_resolution_from_filename(original_scraped_torrent_title) if original_scraped_torrent_title else None
@@ -515,7 +534,7 @@ def add_torrent_to_debrid():
                     item.update({
                         'season_number': season_number,
                         'episode_number': episode_number,
-                        'episode_title': episode_data.get('title', f'Episode {episode_number}') if episode_number else None
+                        'episode_title': episode_data.get('title', f'Episode {episode_number}') if episode_number is not None else None
                     })
 
                 # If this is a season pack (has season but no episode number)
@@ -524,8 +543,10 @@ def add_torrent_to_debrid():
                     # Get metadata for all episodes in the season
                     metadata = get_metadata(tmdb_id=int(tmdb_id), item_media_type=media_type)
                     if metadata and metadata.get('seasons'):
-                        # Use integer season_number as key
-                        season_data = metadata['seasons'].get(season_number, {}) # Use integer season_number directly
+                        seasons_meta = metadata['seasons']
+                        season_data = seasons_meta.get(season_number)
+                        if season_data is None:
+                            season_data = seasons_meta.get(str(season_number), {})
                         episodes = season_data.get('episodes', {})
                         
                         # Create a MediaMatcher instance

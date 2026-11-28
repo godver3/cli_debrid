@@ -1,11 +1,9 @@
 // Tangerine nav wiring for base.html (moved out of the template so browsers cache it).
 // Loaded as a plain script at the same place in <body>, so it runs at the same time.
 
-// Reset scroll to top on page load for tangerine theme (sticky nav gets cut off by browser scroll restore)
-if (localStorage.getItem('selectedTheme') === 'tangerine') {
-    if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
-    window.scrollTo(0, 0);
-}
+// Reset scroll to top on page load (sticky nav gets cut off by browser scroll restore)
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+window.scrollTo(0, 0);
 // Tangerine nav JS (prefixed st_ to avoid conflicts)
 function stToggleDD(id) {
     document.querySelectorAll('.st-nav-item.open').forEach(function(el) {
@@ -74,8 +72,19 @@ document.addEventListener('DOMContentLoaded', function() {
         allOrigNotifBtns.forEach(function(btn) {
             new MutationObserver(syncNotifIndicator).observe(btn, { attributes: true, attributeFilter: ['class'] });
         });
-        // Fallback poll every 500ms in case observer misses initial set
-        setInterval(function() { if (!document.hidden) syncNotifIndicator(); }, 500);
+        // The unread count changes without the button class changing (one of several
+        // read), so also watch the list itself. Replaces a 500ms poll on every page.
+        function watchNotifList() {
+            var list = document.getElementById('notifications-container');
+            if (list) {
+                new MutationObserver(syncNotifIndicator).observe(list, {
+                    childList: true, subtree: true, attributes: true, attributeFilter: ['class']
+                });
+            }
+            syncNotifIndicator();
+        }
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', watchNotifList);
+        else watchNotifList();
     }
     // Sync release notes button
     var stRelBtn = document.getElementById('st_releaseNotesButton');
@@ -339,10 +348,9 @@ document.addEventListener('DOMContentLoaded', function() {
         // Run once immediately in case task_monitor.js already populated the DOM
         stSyncFromDisplay();
 
-        // Replace "Interval:" with "Intvl:" in task display — tangerine only
+        // Replace "Interval:" with "Intvl:" in task display
         (function() {
             function shortenInterval(root) {
-                if (!document.body.classList.contains('tangerine-theme')) return;
                 root.querySelectorAll('.task-timing span, .current-task-time').forEach(function(el) {
                     if (el.textContent.includes('Interval:')) {
                         el.textContent = el.textContent.replace(/Interval:/g, 'Intvl:');

@@ -5,6 +5,7 @@ subtitle cli_debrid uploaded, since the file itself lives in Plex.
 """
 import json
 import logging
+import os
 
 from database.core import get_db_connection
 
@@ -37,6 +38,7 @@ def _ensure_table(conn):
         );
         CREATE INDEX IF NOT EXISTS idx_subtitle_history_item ON subtitle_history (item_id);
         CREATE INDEX IF NOT EXISTS idx_subtitle_history_created ON subtitle_history (created_at);
+        CREATE INDEX IF NOT EXISTS idx_subtitle_history_path ON subtitle_history (path);
     """)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS subtitle_sync_checked (
@@ -63,15 +65,20 @@ def record(item_id, title, language, provider, score, max_score, matches,
     conn = get_db_connection()
     try:
         _ensure_table(conn)
+        norm_path = os.path.normpath(str(path)) if (path and saved_via == 'sidecar') else path
         conn.execute(
             "INSERT INTO subtitle_history (item_id, title, language, provider, score, max_score, "
             "matches, release, format, saved_via, path, source, sync, media_key) "
             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (item_id, title, language, provider, score, max_score, json.dumps(sorted(matches or [])),
-             release, fmt, saved_via, path, source, sync, media_key))
+             release, fmt, saved_via, norm_path, source, sync, media_key))
+        # Sidecar rows with a path are the only record that Clyde wrote that
+        # file (deletes, resync and orphan cleanup only touch recorded files),
+        # so they are never trimmed; one row per subtitle written.
         conn.execute(
             "DELETE FROM subtitle_history WHERE id <= "
-            "(SELECT MAX(id) FROM subtitle_history) - ?", (_KEEP_ROWS,))
+            "(SELECT MAX(id) FROM subtitle_history) - ? "
+            "AND NOT (saved_via = 'sidecar' AND path IS NOT NULL AND path != '')", (_KEEP_ROWS,))
         conn.commit()
     except Exception as e:
         logging.debug(f"[subs] history write failed: {e}")
@@ -224,5 +231,97 @@ def sync_result(digest):
         _ensure_table(conn)
         row = conn.execute("SELECT result FROM subtitle_sync_checked WHERE digest = ?", (digest,)).fetchone()
         return (row[0] or '') if row else None
+    finally:
+        conn.close()
+
+
+def clyde_sidecar_paths(saved_via='sidecar'):
+    """Set of normalized paths Clyde recorded writing via `saved_via`
+    (default 'sidecar'). Returns an empty set on DB error so callers
+    prefer keeping a file over deleting or overwriting it."""
+    try:
+        conn = get_db_connection()
+    except Exception:
+        return set()
+    try:
+        _ensure_table(conn)
+        if saved_via is None:
+            rows = conn.execute(
+                "SELECT DISTINCT path FROM subtitle_history "
+                "WHERE path IS NOT NULL AND path != ''").fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT DISTINCT path FROM subtitle_history "
+                "WHERE saved_via = ? AND path IS NOT NULL AND path != ''",
+                (saved_via,)).fetchall()
+        return {os.path.normpath(r[0]) for r in rows if r[0]}
+    except Exception as e:
+        logging.debug(f"[subs] history path lookup failed: {e}")
+        return set()
+    finally:
+        conn.close()
+
+
+def is_clyde_path(path, saved_via='sidecar'):
+    """True only when `path` is recorded in subtitle_history as written by
+    Clyde (and, for local sidecars, is not a symlink). On missing/ambiguous
+    history or DB error, returns False so callers keep the file."""
+    if not path:
+        return False
+    p_str = str(path)
+    if saved_via == 'sidecar' and os.path.islink(p_str):
+        return False
+    norm = os.path.normpath(p_str)
+    try:
+        conn = get_db_connection()
+    except Exception:
+        return False
+    try:
+        _ensure_table(conn)
+        candidates = (p_str,) if norm == p_str else (p_str, norm)
+        q = ','.join('?' * len(candidates))
+        if saved_via is None:
+            row = conn.execute(
+                f"SELECT 1 FROM subtitle_history WHERE path IN ({q}) LIMIT 1",
+                candidates).fetchone()
+        else:
+            row = conn.execute(
+                f"SELECT 1 FROM subtitle_history WHERE saved_via = ? AND path IN ({q}) LIMIT 1",
+                (saved_via, *candidates)).fetchone()
+        return row is not None
+    except Exception as e:
+        logging.debug(f"[subs] history path check failed: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def plex_uploaded_languages(item_id, keys=None):
+    """Set of languages Clyde recorded uploading directly to Plex
+    (`saved_via = 'plex'`) for `item_id` (filtered by media_key when both
+    are present). Returns an empty set on error."""
+    if item_id is None:
+        return set()
+    try:
+        conn = get_db_connection()
+    except Exception:
+        return set()
+    try:
+        _ensure_table(conn)
+        want = None
+        if keys:
+            want = set(keys) if isinstance(keys, (tuple, set, list)) else {keys}
+        out = set()
+        for r in conn.execute(
+                "SELECT language, media_key FROM subtitle_history "
+                "WHERE item_id = ? AND saved_via = 'plex'", (item_id,)):
+            if want and r[1] and r[1] not in want:
+                continue
+            if r[0]:
+                out.add(r[0])
+        return out
+    except Exception as e:
+        logging.debug(f"[subs] plex upload history lookup failed: {e}")
+        return set()
     finally:
         conn.close()

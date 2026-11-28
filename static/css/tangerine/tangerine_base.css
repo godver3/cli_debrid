@@ -4073,6 +4073,52 @@ body[data-notifications-disabled="true"] #notifications_button.has-notifications
     font-size: 11px;
     margin-top: 8px;
 }
+/* Multi-line notification bodies (collected, blacklisted, ...) */
+.toast-main {
+    color: #fff;
+    font-weight: 600;
+    font-size: 13.5px;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+}
+.toast-line {
+    margin-top: 4px;
+    overflow-wrap: anywhere;
+}
+.toast-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 8px;
+}
+.toast-tag {
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 5px;
+    color: #e6e6e6;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+    padding: 3px 6px;
+    white-space: nowrap;
+}
+.toast-file {
+    color: #9a9a9a;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px;
+    line-height: 1.35;
+    margin-top: 6px;
+    overflow-wrap: anywhere;
+}
+.toast-meta {
+    color: #aaa;
+    font-size: 12px;
+    line-height: 1.45;
+    margin-top: 8px;
+}
+.toast-meta-key {
+    color: #777;
+}
 
 /* Toast types */
 .toast.success {
