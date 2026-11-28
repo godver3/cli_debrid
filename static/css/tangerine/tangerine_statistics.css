@@ -60,6 +60,7 @@
     display: flex; align-items: center; gap: 6px;
     flex-wrap: wrap; min-width: 0;
 }
+.tb-row-status { justify-content: center; }
 .tb-row-tools { flex-wrap: nowrap; }
 
 /* Per-provider subscription days and the queue snapshot */
@@ -276,7 +277,7 @@ input:checked + .toggle-slider:before { transform: translateX(15px); background:
 
 /* Slim card: label and number on one line */
 .stats-box.collection-stats .stat-item .stat-text-content {
-    display: flex; flex-direction: row; align-items: baseline;
+    display: flex; flex-direction: row; align-items: center;
     justify-content: space-between; gap: 8px; flex: 1; min-width: 0;
 }
 .stats-box.collection-stats .stat-item .stat-label {
@@ -286,6 +287,7 @@ input:checked + .toggle-slider:before { transform: translateX(15px); background:
     color: var(--st-text2);
     font-weight: 600;
     margin-bottom: 0;
+    line-height: 1;
     white-space: nowrap;
 }
 .stats-box.collection-stats .stat-item .stat-number {

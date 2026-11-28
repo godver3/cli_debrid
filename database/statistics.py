@@ -656,7 +656,9 @@ def _refresh_subscription_blocking():
         chain = get_debrid_providers() if _debrid_key else []
         prev = download_stats_cache.get('subscription') or {}
         previous = {e.get('name'): e for e in (prev.get('providers') or [])}
-        entries = [_provider_subscription(p, previous) for p in chain if p is not None]
+        # Streaming-only fallbacks get no new releases, so their days aren't shown.
+        entries = [_provider_subscription(p, previous) for p in chain
+                   if p is not None and not getattr(p, 'stream_only', False)]
         if entries:
             subscription = {k: entries[0].get(k) for k in _SUB_KEYS}
         else:

@@ -492,7 +492,6 @@ function renderSubscriptions(entries) {
         const days = (s.days_remaining === null || s.days_remaining === undefined) ? null : Number(s.days_remaining);
         let title = s.name || '';
         if (s.expiration) title += ` \u00b7 expires ${String(s.expiration).slice(0, 10)}`;
-        if (s.stream_only) title += ' \u00b7 streaming only';
         const label = s.label ? `<span class="tb-label">${_statEsc(s.label)}</span> ` : '';
         return `<span class="tb-sub${days !== null && days < 10 ? ' critical' : ''}" title="${_statEsc(title)}">`
             + `${label}<span class="tb-val">${days === null ? 'N/A' : days + 'd'}</span></span>`;

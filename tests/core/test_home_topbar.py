@@ -30,12 +30,17 @@ def test_every_provider_in_the_chain_is_listed():
     sub = _refresh([
         _Provider('Real-Debrid', {'days_remaining': 30, 'expiration': '2026-12-27T00:00:00', 'premium': True,
                                   'email': 'not@shown'}),
-        _Provider('Torbox', {'days_remaining': 5, 'premium': True}, stream_only=True),
+        _Provider('Torbox', {'days_remaining': 5, 'premium': True}),
     ])
     assert sub['days_remaining'] == 30  # top level stays the primary provider
-    assert [(e['label'], e['days_remaining'], e['stream_only']) for e in sub['providers']] == [
-        ('RD', 30, False), ('TB', 5, True)]
+    assert [(e['label'], e['days_remaining']) for e in sub['providers']] == [('RD', 30), ('TB', 5)]
     assert 'email' not in sub['providers'][0]
+
+
+def test_streaming_only_providers_are_left_out():
+    sub = _refresh([_Provider('Real-Debrid', {'days_remaining': 30}),
+                    _Provider('Torbox', {'days_remaining': 188}, stream_only=True)])
+    assert [e['label'] for e in sub['providers']] == ['RD']
 
 
 def test_a_failing_provider_keeps_its_last_good_entry():

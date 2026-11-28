@@ -1067,7 +1067,7 @@ def _subscription_entries():
     """Per-provider subscription days from the background cache."""
     from database.statistics import get_cached_subscription_status
     sub = get_cached_subscription_status() or {}
-    return [{k: e.get(k) for k in ('name', 'label', 'days_remaining', 'expiration', 'premium', 'error', 'stream_only')}
+    return [{k: e.get(k) for k in ('name', 'label', 'days_remaining', 'expiration', 'premium', 'error')}
             for e in (sub.get('providers') or [])]
 
 
