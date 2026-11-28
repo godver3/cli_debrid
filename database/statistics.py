@@ -619,60 +619,35 @@ def _refresh_download_stats_blocking():
 
     return download_stats_cache['active_downloads'], download_stats_cache['usage_stats']
 
-_SUB_LABELS = {'Real-Debrid': 'RD', 'Torbox': 'TB', 'AllDebrid': 'AD', 'Premiumize': 'PM',
-               'Debrid-Link': 'DL', 'HighWay': 'HW'}
-_SUB_KEYS = ('days_remaining', 'expiration', 'premium', 'error')
-
-
-def _provider_subscription(provider, previous):
-    """One provider's subscription entry for the dashboard. On an error the
-    last good entry for that provider is kept (stale-if-error)."""
-    name = getattr(provider, 'PROVIDER_NAME', '') or type(provider).__name__
-    try:
-        sub = provider.get_subscription_status() or {}
-    except ProviderUnavailableError:
-        sub = {'error': 'provider_unavailable'}
-    except Exception as e:
-        logging.error(f"Error refreshing {name} subscription status: {str(e)}")
-        sub = {'error': str(e)}
-    entry = {k: sub.get(k) for k in _SUB_KEYS}
-    entry.update(name=name, label=_SUB_LABELS.get(name, name[:2].upper()),
-                 stream_only=bool(getattr(provider, 'stream_only', False)))
-    old = previous.get(name)
-    if entry['error'] and old and not old.get('error'):
-        return old
-    return entry
-
-
 def _refresh_subscription_blocking():
-    """Fetch subscription status for every provider in the chain (may block on
-    provider I/O).
+    """Fetch subscription status from the provider (may block on provider I/O).
 
-    Always run OFF the request thread via _run_subscription_refresh. The top-level
-    keys describe the primary provider; ``providers`` lists the whole chain."""
+    Always run OFF the request thread via _run_subscription_refresh. On a provider
+    error the last good value is preserved (stale-if-error)."""
     try:
-        from debrid import get_debrid_providers
         _debrid_key = get_setting('Debrid Provider', 'api_key', default='').strip()
-        chain = get_debrid_providers() if _debrid_key else []
-        prev = download_stats_cache.get('subscription') or {}
-        previous = {e.get('name'): e for e in (prev.get('providers') or [])}
-        # Streaming-only fallbacks get no new releases, so their days aren't shown.
-        entries = [_provider_subscription(p, previous) for p in chain
-                   if p is not None and not getattr(p, 'stream_only', False)]
-        if entries:
-            subscription = {k: entries[0].get(k) for k in _SUB_KEYS}
-        else:
-            subscription = {'days_remaining': None, 'expiration': None, 'premium': None, 'error': None}
-        subscription['providers'] = entries
+        provider = get_debrid_provider() if _debrid_key else None
+        subscription = provider.get_subscription_status() if provider and hasattr(provider, 'get_subscription_status') else {
+            'days_remaining': None,
+            'expiration': None,
+            'premium': None
+        }
         download_stats_cache['subscription'] = subscription
         download_stats_cache['subscription_update'] = time.time()
+    except ProviderUnavailableError:
+        _prev = download_stats_cache.get('subscription')
+        if not (_prev and _prev.get('error') is None):
+            download_stats_cache['subscription'] = {
+                'days_remaining': None, 'expiration': None, 'premium': None,
+                'error': 'provider_unavailable'
+            }
     except Exception as e:
         logging.error(f"Error refreshing subscription status: {str(e)}")
         _prev = download_stats_cache.get('subscription')
         if not (_prev and _prev.get('error') is None):
             download_stats_cache['subscription'] = {
                 'days_remaining': None, 'expiration': None, 'premium': None,
-                'error': str(e), 'providers': (_prev or {}).get('providers') or []
+                'error': str(e)
             }
 
 

@@ -477,54 +477,17 @@ function updateStatsToggleBarPill(data) {
         if (brokenIcon) brokenIcon.style.color = total > 0 ? 'var(--st-red)' : 'var(--st-yellow)';
     }
 
+    const subToggle = document.getElementById('subscription-days-toggle');
+    if (!subToggle) return;
     const subData = data.subscription_status || (data.stats && data.stats.subscription_status) || null;
-    if (!subData) return;
-    renderSubscriptions(subData.providers && subData.providers.length
-        ? subData.providers
-        : [{days_remaining: subData.days_remaining}]);
-}
-
-// Top bar: subscription days per provider ("RD 30d  TB 112d").
-function renderSubscriptions(entries) {
-    const el = document.getElementById('subscription-days-toggle');
-    if (!el || !Array.isArray(entries) || !entries.length) return;
-    el.innerHTML = entries.map(s => {
-        const days = (s.days_remaining === null || s.days_remaining === undefined) ? null : Number(s.days_remaining);
-        let title = s.name || '';
-        if (s.expiration) title += ` \u00b7 expires ${String(s.expiration).slice(0, 10)}`;
-        const label = s.label ? `<span class="tb-label">${_statEsc(s.label)}</span> ` : '';
-        return `<span class="tb-sub${days !== null && days < 10 ? ' critical' : ''}" title="${_statEsc(title)}">`
-            + `${label}<span class="tb-val">${days === null ? 'N/A' : days + 'd'}</span></span>`;
-    }).join('');
-}
-
-// Top bar: queue snapshot counts.
-function renderQueueSnapshot(queues) {
-    if (!Array.isArray(queues)) return;
-    queues.forEach(q => {
-        const el = document.querySelector(`#tb-queues .tb-q[data-queue="${q.name}"]`);
-        if (!el) return;
-        el.classList.toggle('zero', !q.count);
-        el.querySelector('.tb-val').textContent = Number(q.count || 0).toLocaleString('en-US');
-    });
-}
-
-// Refresh the queue snapshot and subscriptions every 30 s while the tab is visible.
-(function () {
-    function poll() {
-        if (document.hidden) return;
-        fetch('/statistics/api/topbar')
-            .then(r => r.ok ? r.json() : null)
-            .then(d => {
-                if (!d) return;
-                renderQueueSnapshot(d.queues);
-                if (d.subscriptions && d.subscriptions.length) renderSubscriptions(d.subscriptions);
-            })
-            .catch(() => {});
+    if (subData && subData.days_remaining !== null && subData.days_remaining !== undefined) {
+        subToggle.textContent = `${subData.days_remaining} days`;
+        subToggle.classList.toggle('critical', Number(subData.days_remaining) < 10);
+    } else if (subData) {
+        subToggle.textContent = 'N/A';
+        subToggle.classList.remove('critical');
     }
-    setInterval(poll, 30000);
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
-})();
+}
 
 // Function to reattach external links listeners
 function reattachExternalLinksListeners() {
