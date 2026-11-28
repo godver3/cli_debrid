@@ -1,7 +1,6 @@
 /* Card pages built from the old Debug page: Tools, Maintenance, Diagnostics. */
-/* ── Tangerine debug — show/hide ── */
+/* Cards render hidden; tool_cards.js moves them into the grid */
 body.tangerine-theme .debug-container { display: none !important; }
-body:not(.tangerine-theme) #tngDebug { display: none !important; }
 
 /* ── Tangerine debug styles ── */
 #tngDebug {

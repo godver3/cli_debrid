@@ -202,7 +202,7 @@ input:checked + .toggle-slider:before { transform: translateX(15px); background:
     flex-wrap: unset !important;
     justify-content: unset !important;
 }
-/* Each KPI card — override classic statistics.css bleeding rules */
+/* Each KPI card */
 .stats-box.collection-stats .stat-item {
     background: var(--st-surf);
     border: 1px solid var(--st-border);
@@ -282,13 +282,6 @@ input:checked + .toggle-slider:before { transform: translateX(15px); background:
 /* Uptime value — accent */
 #kpi-uptime .stat-number { color: var(--st-accent) !important; }
 
-.stats-box.collection-stats .stat-item .stat-badges { display: none; }
-
-/* classic stat-item warning/critical labels */
-.stat-item p[data-label="Active Downloads"].warning,
-.stat-item p[data-label="Daily Usage"].warning  { color: #ffa500; }
-.stat-item p[data-label="Active Downloads"].critical,
-.stat-item p[data-label="Daily Usage"].critical { color: #e17c52; }
 
 /* ─────────────────────────────────────────────────────────
    Grid layouts — top-stats (3-col) and recently-added (3-col)

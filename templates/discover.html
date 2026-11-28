@@ -1152,3 +1152,5 @@
 {% block head_last %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_discover.css') }}">
 {% endblock %}
+
+{% block page_modals %}{% include "partials/_discover_settings_modal.html" %}{% endblock %}

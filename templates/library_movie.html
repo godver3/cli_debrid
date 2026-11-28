@@ -437,3 +437,5 @@
 <script src="{{ url_for('static', filename='js/trailer_modal.js') }}"></script>
 <script src="{{ url_for('static', filename='js/fix_match_modal.js') }}"></script>
 {% endblock %}
+
+{% block page_modals %}{% include "partials/_library_settings_modal.html" %}{% endblock %}

@@ -1,0 +1,48 @@
+{# Library settings modal: included only by the pages that open it (block page_modals). #}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_library_settings_modal.css') }}">
+<!-- Library Settings Modal -->
+<div id="librarySettingsModal" class="library-settings-modal" style="display: none;">
+    <div class="library-settings-modal-overlay"></div>
+    <div class="library-settings-modal-content">
+        <div class="library-settings-modal-header">
+            <h2>Library Manager Settings</h2>
+            <button class="library-settings-modal-close" aria-label="Close">&times;</button>
+        </div>
+        <div class="library-settings-modal-body">
+            <div class="library-setting-group">
+                <label for="autoGhostlistDeleted">
+                    <input type="checkbox" id="autoGhostlistDeleted" class="library-setting-checkbox">
+                    Ghostlist Mode
+                </label>
+                <p class="library-setting-description">Add shows and movies to the ghostlist to prevent them from being re-added. When enabled, deleting content will mark it as ghosted in the database. When disabled, deleted content can be re-added by dynamic content sources.</p>
+            </div>
+
+            <div class="library-setting-group">
+                <label for="removeFromContentSources">
+                    <input type="checkbox" id="removeFromContentSources" class="library-setting-checkbox">
+                    Remove From Content Sources
+                </label>
+                <p class="library-setting-description">Remove items from content sources (Trakt lists, Overseerr requests, Plex Watchlist, etc.) during deletion. When enabled, the app will remove items from these sources to prevent them from being automatically re-added, but this makes deletion slower. When disabled, deletion is faster but the item might be re-added if it's still on your lists. <strong>Tip:</strong> Enable this when ghostlist mode is OFF. Disable this when ghostlist mode is ON (since ghostlist already prevents re-addition, and disabling makes deletion much faster).</p>
+            </div>
+
+            <div class="library-setting-group">
+                <label for="hideSeasonZero">
+                    <input type="checkbox" id="hideSeasonZero" class="library-setting-checkbox">
+                    Hide Season 0
+                </label>
+                <p class="library-setting-description">Hide Season 0 (Specials) tab and its episodes from the TV show page.</p>
+            </div>
+
+            <div class="library-setting-group">
+                <label>Clear Artwork Cache</label>
+                <p class="library-setting-description">Remove all cached posters and backdrops. Artwork will be re-downloaded from TMDB on next library load.</p>
+                <button type="button" id="clearLibraryCacheBtn" class="library-settings-btn-clear-cache">Clear Cache</button>
+            </div>
+        </div>
+        <div class="library-settings-modal-footer">
+            <button class="library-settings-btn-cancel">Cancel</button>
+            <button class="library-settings-btn-save">Save Settings</button>
+        </div>
+    </div>
+</div>
+<script src="{{ url_for('static', filename='js/library_settings_modal.js') }}" defer></script>

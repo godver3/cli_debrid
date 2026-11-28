@@ -1136,3 +1136,5 @@
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/pages/overlays-2.js') }}"></script>
 {% endblock %}
+
+{% block page_modals %}{% include "partials/_overlay_settings_modal.html" %}{% endblock %}

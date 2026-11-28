@@ -175,10 +175,6 @@
                             <div class="stat-number">{{ "{:,}".format(stats.total_movies | int) }}</div>
                         </div>
                     </div>
-                    <!-- <div class="stat-badges">
-                        <span class="stat-badge files">{{ stats.total_movie_files }} files</span>
-                        <span class="stat-badge warning">{{ stats.wanted_movies|default(0) }} wanted</span>
-                    </div> -->
                 </div>
                 <div class="stat-item stat-item-clickable" onclick="window.location.href='/library?status=all&type=show&sort=added_desc'">
                     <div class="stat-content">
@@ -190,10 +186,6 @@
                             <div class="stat-number">{{ "{:,}".format(stats.total_shows | int) }}</div>
                         </div>
                     </div>
-                    <!-- <div class="stat-badges">
-                        <span class="stat-badge episodes">{{ stats.total_episodes }} episodes</span>
-                        <span class="stat-badge warning">{{ stats.missing_episodes|default(0) }} missing</span>
-                    </div> -->
                 </div>
                 <div class="stat-item">
                     <div class="stat-content">
@@ -315,11 +307,11 @@
                 return (h ? h + ':' + (m < 10 ? '0' : '') : '') + m + ':' + (sec < 10 ? '0' : '') + sec;
             }
             function mb(b) { return b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB/s' : (b / 1024).toFixed(0) + ' KB/s'; }
-            // Coloured quality badges like Recently Added (same parser, Tangerine
-            // theme); plain tags otherwise or when the parser finds nothing.
+            // Coloured quality badges like Recently Added (same parser); plain
+            // tags when the parser isn't loaded or finds nothing.
             function npTags(s) {
                 var name = s.source || s.file || '';
-                if (document.body.getAttribute('data-theme') === 'tangerine' && name && typeof extractQualityTags === 'function') {
+                if (name && typeof extractQualityTags === 'function') {
                     var qt = extractQualityTags(name) || [];
                     if (qt.length) {
                         return '<div class="np-tags release-tags">' + qt.map(function (t) {
@@ -650,15 +642,8 @@
 </div>
 
 <script>
-// Convert filenames to quality badges on statistics page (Tangerine theme only)
+// Convert filenames to quality badges on the statistics page
 function applyQualityBadges() {
-    // Only apply badges for tangerine theme
-    const currentTheme = document.body.getAttribute('data-theme');
-    if (currentTheme !== 'tangerine') {
-        console.log('Not tangerine theme, skipping badge application');
-        return;
-    }
-
     // Check if functions are available
     if (typeof extractQualityTags !== 'function' || typeof createQualityBadge !== 'function') {
         console.warn('Quality badge functions not available yet, retrying...');

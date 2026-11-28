@@ -72,8 +72,19 @@ document.addEventListener('DOMContentLoaded', function() {
         allOrigNotifBtns.forEach(function(btn) {
             new MutationObserver(syncNotifIndicator).observe(btn, { attributes: true, attributeFilter: ['class'] });
         });
-        // Fallback poll every 500ms in case observer misses initial set
-        setInterval(function() { if (!document.hidden) syncNotifIndicator(); }, 500);
+        // The unread count changes without the button class changing (one of several
+        // read), so also watch the list itself. Replaces a 500ms poll on every page.
+        function watchNotifList() {
+            var list = document.getElementById('notifications-container');
+            if (list) {
+                new MutationObserver(syncNotifIndicator).observe(list, {
+                    childList: true, subtree: true, attributes: true, attributeFilter: ['class']
+                });
+            }
+            syncNotifIndicator();
+        }
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', watchNotifList);
+        else watchNotifList();
     }
     // Sync release notes button
     var stRelBtn = document.getElementById('st_releaseNotesButton');
