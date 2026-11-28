@@ -58,3 +58,13 @@ class PttUpgradeCases(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def test_interlaced_resolution_reads_as_progressive():
+    from scraper.functions.ptt_parser import parse_with_ptt, progressive_resolution
+    assert progressive_resolution('1080i') == '1080p'
+    assert progressive_resolution('576I') == '576p'
+    assert progressive_resolution('2160p') == '2160p'
+    assert progressive_resolution(None) is None
+    # 1.8 returns '1080i' raw; our standard parse keeps the 1.7 contract
+    assert parse_with_ptt('Some.Show.S01E01.1080i.HDTV.H264-GRP')['resolution'] == '1080p'

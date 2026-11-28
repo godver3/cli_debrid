@@ -61,6 +61,20 @@ def unwrap_release_title(title: str) -> str | None:
     return m.group('inner') if m else None
 
 
+_INTERLACED_RE = re.compile(r'^(\d{3,4})i$', re.IGNORECASE)
+
+
+def progressive_resolution(resolution):
+    """PTT 1.8+ reports interlaced resolutions as-is ('1080i'); 1.7 called them
+    '1080p'. Our resolution tables, filters and bitrate caps match on 'NNNp',
+    so treat an interlaced release like its progressive twin."""
+    if isinstance(resolution, str):
+        m = _INTERLACED_RE.match(resolution.strip())
+        if m:
+            return f"{m.group(1)}p"
+    return resolution
+
+
 def parse_title_unwrapped(title: str, parse=parse_title) -> Dict[str, Any]:
     """PTT parse that retries without the wrapper when a bracket-wrapped name yields no title."""
     result = parse(title)
@@ -139,7 +153,7 @@ def parse_with_ptt(title: str) -> Dict[str, Any]:
             'original_title': result.get('original_title'),
             'type': 'movie' if not result.get('seasons') and not result.get('episodes') else 'episode',
             'year': result.get('year'),
-            'resolution': result.get('resolution', 'Unknown'),
+            'resolution': progressive_resolution(result.get('resolution', 'Unknown')),
             'source': result.get('source'),
             'audio': result.get('audio'),
             'codec': result.get('codec'),
