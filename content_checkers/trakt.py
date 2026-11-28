@@ -793,6 +793,34 @@ def fetch_items_from_trakt(
     logging.error(f"Failed to fetch items from Trakt API after {max_retries} attempts: {url}")
     return []
 
+def fetch_all_pages_from_trakt(
+    endpoint: str,
+    headers: Dict[str, str] | None = None,
+    limit: int = PAGINATION_LIMIT,
+    max_pages: int = 200,
+) -> List[Dict[str, Any]]:
+    """Fetch every page of a paginated Trakt list endpoint (watchlists etc.).
+
+    Trakt returns only the first page (100 items) when no page/limit is given,
+    so unpaginated calls silently truncate large watchlists. Reuses
+    fetch_items_from_trakt for retries/rate limiting, so custom (friend) headers work.
+    """
+    sep = '&' if '?' in endpoint else '?'
+    all_items: List[Dict[str, Any]] = []
+    for page in range(1, max_pages + 1):
+        batch = fetch_items_from_trakt(f"{endpoint}{sep}page={page}&limit={limit}", headers)
+        if not batch or not isinstance(batch, list):
+            break
+        all_items.extend(batch)
+        if len(batch) < limit:
+            break
+        sleep(PAGINATION_DELAY)
+    else:
+        logging.warning(f"[Trakt] {endpoint}: stopped after {max_pages} pages ({len(all_items)} items)")
+    logging.debug(f"[Trakt] {endpoint}: fetched {len(all_items)} items")
+    return all_items
+
+
 def assign_media_type(item: Dict[str, Any]) -> str:
     if 'movie' in item:  # Item is a wrapper e.g. {"movie": {...}}
         return 'movie'
@@ -1228,17 +1256,20 @@ def get_wanted_from_trakt_watchlist(versions: Dict[str, bool], unblacklist: bool
                 logging.debug("Trakt watchlist removal enabled" + (" (keeping series)" if keep_series else ""))
             # Skip API fetch if watchlist hasn't changed and removal is not enabled
             # (removal needs fresh items to check which are collected)
-            cached_processed = cache.get('processed_items') if isinstance(cache, dict) else None
+            # Caches written before pagination held at most one page (100 items); ignore them.
+            cached_processed = cache.get('processed_items') if isinstance(cache, dict) and cache.get('paginated') else None
             if not should_remove and cached_processed and not check_for_updates(cache_ttl_minutes=30):
                 logging.debug("Trakt watchlist unchanged (check_for_updates=False), using cached items")
                 processed_items = cached_processed
                 all_wanted_items.append((processed_items, versions))
                 continue
 
-            watchlist_items = fetch_items_from_trakt("/sync/watchlist")
+            watchlist_items = fetch_all_pages_from_trakt("/sync/watchlist")
             processed_items = process_trakt_items(watchlist_items, unblacklist=unblacklist)
+            logging.info(f"Fetched {len(watchlist_items)} Trakt watchlist entries ({len(processed_items)} usable)")
             # Save to cache for future skip-if-unchanged logic
             cache['processed_items'] = processed_items
+            cache['paginated'] = True
             save_trakt_cache(cache, TRAKT_WATCHLIST_CACHE_FILE)
             
             # Handle removal of collected items if enabled
@@ -1486,7 +1517,7 @@ def get_wanted_from_friend_trakt_watchlist(source_config: Dict[str, Any], versio
         endpoint = f"/users/{clean_username}/watchlist"
         logging.debug(f"Making watchlist request to endpoint: {endpoint}")
         logging.debug(f"Using headers: {headers}")
-        items = fetch_items_from_trakt(endpoint, headers)
+        items = fetch_all_pages_from_trakt(endpoint, headers)
         
         # Process the items
         processed_items = process_trakt_items(items, unblacklist=unblacklist)
@@ -1510,7 +1541,7 @@ def get_wanted_from_friend_trakt_watchlist(source_config: Dict[str, Any], versio
             if user_id:
                 logging.info(f"Trying fallback with user ID: {user_id}")
                 endpoint = f"/users/{user_id}/watchlist"
-                items = fetch_items_from_trakt(endpoint, headers)
+                items = fetch_all_pages_from_trakt(endpoint, headers)
 
                 processed_items = process_trakt_items(items, unblacklist=unblacklist)
                 logging.info(f"Found {len(processed_items)} wanted items from friend's Trakt watchlist using user ID: {user_id}")
