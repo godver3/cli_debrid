@@ -26,6 +26,9 @@ INSTRUCTIONS = (
     "library/symlinks -> Plex/Jellyfin). Start with get_overview. Use explain_setting/list_settings to explain "
     "settings, search_logs/recent_errors to diagnose problems, lookup_item to follow one movie or episode. "
     "To help report a bug, use prepare_issue_report; for how a feature works, get_help. "
+    "get_overview's debrid_chain shows which debrid accounts get new releases and which are 'streaming only' "
+    "(kept for playing their files). external_scan_status explains imports of files added outside Clyde. "
+    "NFO, Upgrade Hub and Plex Preset Collections settings live on their own pages; list_settings shows them too. "
     "Secrets are always masked. Nothing can be changed through this server: tell the user which setting to change "
     "and where (Settings page section/key, or the Mount page for 'Built-in Mount')."
 )
@@ -107,17 +110,47 @@ def _setting_row(section: str, key: str, spec: dict, current: dict) -> dict:
     return row
 
 
+# Settings kept in the same config but edited on their own pages, so the
+# settings schema doesn't describe them: section -> where the user changes them.
+EXTRA_SECTIONS = {
+    'NFO': 'Tools -> NFO Files (mode: off / changed = only shows whose episode order was changed / all)',
+    'Upgrade Hub': 'Upgrade Hub page -> Settings',
+    'Plex Preset Collections': 'Settings -> Media Server -> Plex Collections card (preset collections)',
+}
+# Keys inside a schema section that the schema doesn't list.
+EXTRA_KEYS = {
+    'Debrid Provider': {
+        'fallback_providers': (
+            'Fallback debrid accounts tried after the primary, in order: [{provider, api_key, stream_only}]. '
+            'stream_only (Settings -> Required -> Debrid, "Streaming only", shown from the second row on) keeps '
+            'the account for playing files it already holds but never adds new releases to it. It only applies '
+            'when the built-in mount serves debrid; with cli_mount/Zurg/rclone it is ignored.'),
+    },
+}
+
+
+def _all_sections(schema: dict) -> List[str]:
+    return sorted(set(schema) | set(EXTRA_SECTIONS))
+
+
 def tool_list_settings(section: str = '') -> dict:
     schema = _schema()
     if not section:
-        return {'sections': sorted(schema), 'hint': 'Call again with section=<name> for its settings.'}
-    match = next((s for s in schema if s.lower() == section.lower()), None)
+        return {'sections': _all_sections(schema), 'hint': 'Call again with section=<name> for its settings.'}
+    match = next((s for s in _all_sections(schema) if s.lower() == section.lower()), None)
     if match is None:
-        return {'error': f'no settings section {section!r}', 'sections': sorted(schema)}
+        return {'error': f'no settings section {section!r}', 'sections': _all_sections(schema)}
     current = _get_setting(match) or {}
     current = current if isinstance(current, dict) else {}
-    return {'section': match, 'settings': [_setting_row(match, k, spec, current)
-                                           for k, spec in _section_items(schema[match]).items()]}
+    if match not in schema:
+        return {'section': match, 'edited_on': EXTRA_SECTIONS[match],
+                'note': 'Saved values only (no descriptions); unset keys use built-in defaults.',
+                'settings': [{'setting': k, 'value': (MASK_SET if v not in (None, '') else MASK_UNSET)
+                              if _sensitive(k) else redact(v)} for k, v in sorted(current.items())]}
+    rows = [_setting_row(match, k, spec, current) for k, spec in _section_items(schema[match]).items()]
+    for k, desc in EXTRA_KEYS.get(match, {}).items():
+        rows.append({'setting': k, 'value': redact(current.get(k)), 'description': desc})
+    return {'section': match, 'settings': rows}
 
 
 def tool_explain_setting(section: str, key: str) -> dict:
@@ -186,6 +219,63 @@ def tool_connection_health() -> dict:
         return {'error': str(e)}
 
 
+def _debrid_chain() -> dict:
+    """Which debrid accounts get new releases and which only serve their files."""
+    try:
+        import debrid
+        chain = debrid.get_debrid_providers()
+        return {'all': [p.PROVIDER_NAME for p in chain],
+                'adds_new_releases': [p.PROVIDER_NAME for p in debrid.get_grab_providers()],
+                'streaming_only': [p.PROVIDER_NAME for p in chain if getattr(p, 'stream_only', False) is True]}
+    except Exception as e:
+        return {'error': str(e)}
+
+
+def _nfo_mode() -> str:
+    try:
+        from utilities import nfo_writer
+        return nfo_writer.mode()
+    except Exception as e:
+        return f'unknown ({e})'
+
+
+def tool_external_scan_status(limit: int = 30) -> dict:
+    """The "Scan Mount For External Adds" task: what it found outside Clyde and what became of it."""
+    try:
+        from utilities import external_mount_scan as ems
+    except Exception as e:
+        return {'error': f'external scan unavailable: {e}'}
+    limit = max(1, min(int(limit or 30), 200))
+    fm = _get_setting('File Management') or {}
+    out = {'enabled': bool(fm.get('scan_mount_for_external_adds')),
+           'library_mode': fm.get('file_collection_management'),
+           'how_it_works': 'Runs every 15 minutes. The first run only records what is already on the mount '
+                           '(baseline). New folders wait to settle, then import; folders Clyde added itself are '
+                           'skipped; a folder with no media yet is retried, then given up after '
+                           f'{ems.PENDING_GIVE_UP_SECONDS // 3600} h or {ems.MAX_ATTEMPTS} failed imports.'}
+    path = ems._state_path()
+    data, err = ems._read_state_file(path) if os.path.exists(path) else ({}, None)
+    if data is None:
+        return dict(out, error=f'state file unreadable: {err}')
+    meta = data.get(ems.META_KEY) or {}
+    out['last_run'] = meta.get('last_run')
+    counts, recent = {}, []
+    for name, e in data.items():
+        if name == ems.META_KEY or not isinstance(e, dict):
+            continue
+        status = ('imported' if e.get('imported') else 'given_up' if e.get('given_up') else
+                  'rejected' if e.get('rejected') else 'baseline' if e.get('baseline') else
+                  'gone' if e.get('gone_since') else 'waiting_for_media' if e.get('no_media') else 'pending')
+        counts[status] = counts.get(status, 0) + 1
+        if status != 'baseline':
+            recent.append({'folder': name, 'status': status, 'attempts': e.get('attempts', 0),
+                           'first_seen': e.get('first_seen'), 'last_attempt': e.get('last_attempt')})
+    recent.sort(key=lambda r: r.get('first_seen') or 0, reverse=True)
+    out.update(counts=counts, recent=recent[:limit],
+               note='Times are Unix seconds. For why one failed, search_logs query "[ExternalScan]" and the folder name.')
+    return out
+
+
 def tool_get_overview() -> dict:
     fm = _get_setting('File Management') or {}
     version = ''
@@ -200,7 +290,10 @@ def tool_get_overview() -> dict:
         'library_mode': fm.get('file_collection_management'),
         'media_server': fm.get('media_server_type') or 'plex',
         'debrid_provider': (_get_setting('Debrid Provider') or {}).get('provider'),
+        'debrid_chain': _debrid_chain(),
         'usenet_provider': (_get_setting('Usenet Provider') or {}).get('provider'),
+        'nfo_mode': _nfo_mode(),
+        'scan_mount_for_external_adds': bool(fm.get('scan_mount_for_external_adds')),
         'connections': tool_connection_health(),
         'queues': tool_queue_status().get('items_by_state'),
     }
@@ -424,6 +517,12 @@ TOOLS: Dict[str, Dict[str, Any]] = {
                        'report. Nothing is sent anywhere; the user shares logs from the Logs page.',
         'schema': _obj({'description': {'type': 'string', 'description': "the user's own words about the problem"},
                         'item': {'type': 'string', 'description': 'title or IMDb id of the movie/show involved'}})},
+    'external_scan_status': {
+        'fn': tool_external_scan_status,
+        'description': 'The "Scan Mount For External Adds" task (files added outside Clyde, e.g. via DMM or the '
+                       "debrid site): whether it's on, last run, and what happened to each folder it found "
+                       '(imported, pending, waiting for media, given up, rejected).',
+        'schema': _obj({'limit': {'type': 'integer', 'minimum': 1, 'maximum': 200}})},
     'lookup_item': {
         'fn': tool_lookup_item,
         'description': 'Find movies/episodes by title or IMDb id: state, version, the release and file it was '
