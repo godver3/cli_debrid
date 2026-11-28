@@ -524,7 +524,7 @@
         {% endif %}
         {% if config.type == 'Comet' %}
         <div class="settings-form-group">
-            <small class="settings-description">Paste a Comet instance URL, or your configured <code>.../manifest.json</code> URL (Clyde works out the base from it). The public instance <code>https://comet.feels.legal</code> works with no config at all. Some instances, such as ElfHosted, refuse requests without one.</small>
+            <small class="settings-description">Paste a Comet instance URL, or your configured <code>.../manifest.json</code> URL (Clyde works out the base from it). The public instance <code>https://comet.feels.legal</code> works with no config at all. Some instances, such as ElfHosted, refuse requests without one. For your own Comet on the local network, an address like <code>192.168.1.5:8000</code> is fine: Clyde uses plain <code>http://</code> for local addresses.</small>
         </div>
         <div class="settings-form-group">
             <small class="settings-description"><strong>Leave Comet's own filters off.</strong> Clyde filters and ranks every result by your versions (resolution, size, language and the rest). Anything Comet filters out never reaches Clyde: a "1080p only" Comet config, for example, hides every release from your 4K version and from upgrades. If you configure Comet, turn off its resolution, size and language filters and set its results limit high or to unlimited.</small>

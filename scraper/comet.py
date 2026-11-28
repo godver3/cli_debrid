@@ -11,6 +11,7 @@ The URL the user supplies may carry their debrid key inside the base64 config
 segment, so it is never written to the log: see ``redact_url``.
 """
 import base64
+import ipaddress
 import json
 import logging
 import random
@@ -67,6 +68,20 @@ def _encode_config(config: str) -> str:
     return config.strip('/')
 
 
+def _is_local_host(url_without_scheme: str) -> bool:
+    """A self-hosted instance on the LAN usually speaks plain http."""
+    host = url_without_scheme.split('/', 1)[0].rsplit('@', 1)[-1]
+    host = host[1:].split(']', 1)[0] if host.startswith('[') else host.split(':', 1)[0]
+    host = host.lower()
+    if host == 'localhost' or host.endswith('.local') or host.endswith('.lan') or '.' not in host:
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return ip.is_private or ip.is_loopback or ip.is_link_local
+
+
 def derive_base_url(url: str, config: str = '') -> str:
     """Normalise whatever the user pasted into a Comet base URL (no trailing slash).
 
@@ -81,7 +96,7 @@ def derive_base_url(url: str, config: str = '') -> str:
     if url.lower().startswith('stremio://'):
         url = 'https://' + url[len('stremio://'):]
     elif not re.match(r'^https?://', url, re.IGNORECASE):
-        url = 'https://' + url
+        url = ('http://' if _is_local_host(url) else 'https://') + url
     parts = urlsplit(url)
     path = parts.path.rstrip('/')
     for suffix in ('/manifest.json', '/configure'):
