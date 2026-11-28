@@ -97,3 +97,27 @@ func TestSurplusDoesNotHideShortfallOrGaps(t *testing.T) {
 		t.Fatalf("got %v, want not-found proof on the needed article", err)
 	}
 }
+
+// lyingFirst reports a smaller whole-file size in the first article's header
+// only, which on its own looks exactly like trailing surplus.
+type lyingFirst struct {
+	Fetcher
+	firstID string
+	size    int64
+}
+
+func (l lyingFirst) Body(ctx context.Context, p nntp.Priority, id string) ([]byte, nntp.Meta, error) {
+	d, m, err := l.Fetcher.Body(ctx, p, id)
+	if id == l.firstID {
+		m.FileSize = l.size
+	}
+	return d, m, err
+}
+
+func TestSurplusNeedsLastNeededHeaderToAgree(t *testing.T) {
+	_, _, _, c, f := setup(t, 2_100_000, 700_000)
+	lie := lyingFirst{Fetcher: c, firstID: f.Segments[0].ID, size: 1_400_000}
+	if _, err := Probe(context.Background(), lie, NewCache(64<<20), f); !errors.Is(err, ErrLayout) {
+		t.Fatalf("a lying first header must not pass as surplus: got %v", err)
+	}
+}
