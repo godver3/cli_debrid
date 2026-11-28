@@ -1,0 +1,264 @@
+{% extends "base.html" %}
+{% block title %}NFO Files{% endblock %}
+{% block head %}
+<style>
+.nfo{max-width:900px;margin:0 auto;padding:16px;color:#ddd}
+.nfo h2{margin:4px 0}
+.nfo .sub{color:#999;margin:0 0 16px}
+.nfo .card{background:#1e1e1e;border:1px solid #333;border-radius:8px;padding:14px 16px;margin-bottom:14px}
+.nfo .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.nfo .btn{background:#2d6cdf;color:#fff;border:0;border-radius:6px;padding:6px 12px;cursor:pointer}
+.nfo .btn.sec{background:#3a3a3a}
+.nfo .btn:disabled{opacity:.5;cursor:default}
+.nfo .muted{color:#999;font-size:.9em}
+.nfo .ok{color:#6c6}.nfo .warn{color:#e0a040}.nfo .bad{color:#e66}
+.nfo table{width:100%;border-collapse:collapse;font-size:.92em}
+.nfo td,.nfo th{padding:4px 6px;border-bottom:1px solid #2a2a2a;text-align:left;vertical-align:top}
+.nfo ul{margin:6px 0 0 18px;padding:0}
+.nfo code{background:#111;border:1px solid #333;border-radius:4px;padding:0 4px}
+.nfo .modes{display:flex;flex-direction:column;gap:8px;margin:10px 0}
+.nfo .modes label{display:block;cursor:pointer}
+.nfo .modes .muted{display:block;margin-left:22px}
+</style>
+{% endblock %}
+{% block content %}
+<div class="nfo">
+  <h2>NFO Files</h2>
+  <p class="sub">From 3 December 2026 Plex numbers TV shows by TMDB, while Clyde names your episode files by its own
+    metadata (TVDB numbering, or the episode order you picked for a show). Where the two disagree, Plex shows the wrong
+    episode titles. NFO files next to your episodes carry Clyde's title, plot and air date for exactly the episode in
+    each file. Plex, Jellyfin, Emby and Kodi all read them.</p>
+
+  <div class="card" id="modeWarn" style="display:none"><span class="warn">NFO files need <b>Symlinked/Local</b> file management:
+    in Plex mode Clyde has no library folder to write them to.</span></div>
+
+  <div class="card" id="snapCard">
+    <div class="row"><strong>Save Plex's current episode details</strong>
+      <button type="button" class="btn" id="snapTake">Snapshot Plex now</button></div>
+    <p class="muted" style="margin:6px 0">Reads what Plex shows today for every episode in the TV library (TheTVDB titles,
+      descriptions and air dates, and anything you edited by hand) and saves it as NFO files next to the episodes.
+      After 3 December Plex can only refill episodes from TMDB, so take it <b>before then</b>. Plex isn't changed, and this
+      works with NFO files Off: the files just wait until you switch Plex (or Jellyfin, Emby, Kodi) to an agent that reads
+      them. NFO files Clyde makes for a mode below, and NFO files you made yourself, are never replaced. Upgraded episodes
+      keep theirs. Every snapshot is also kept in <code>plex_metadata_snapshot.db</code>.</p>
+    <div id="snapAfter" class="warn" style="display:none;margin:6px 0">It's 3 December or later: Plex may already show
+      TMDB's details for refreshed shows, so a new snapshot saves those. Older snapshots below are kept.</div>
+    <div id="snapJob" class="muted"></div>
+    <div id="snapList" style="margin-top:6px"></div>
+  </div>
+
+  <div class="card">
+    <strong>NFO files for my TV library</strong> <span id="nfoMsg" class="muted"></span>
+    <div class="modes">
+      <label><input type="radio" name="nfoMode" value="off"> <b>Off</b>
+        <span class="muted">No NFO files; Plex shows its own details, as before. Shows whose numbering differs from Plex's
+        (custom orders, many anime) will show Plex's episode details from 3 December.</span></label>
+      <label><input type="radio" name="nfoMode" value="changed"> <b>Shows with a changed episode order</b>
+        <span class="muted">NFO files only for shows you set to another order (Show options or Manual Assign), written
+        automatically when you change it. Every other show looks exactly as Plex makes it.</span></label>
+      <label><input type="radio" name="nfoMode" value="all"> <b>All shows</b>
+        <span class="muted">Every show gets NFO files. Where Plex already numbers an episode the same way it's a minimal
+        file, so Plex still supplies its title, description, thumbnail and cast; only episodes Plex would mix up get
+        Clyde's details. Also fixes default-order shows that TMDB numbers differently.</span></label>
+    </div>
+    <label style="display:block;margin:4px 0 8px"><input type="checkbox" id="plexAgentSwitch">
+      Switch my Plex TV library to the NFO agent when NFO files are turned on
+      <span class="muted" style="display:block;margin-left:22px">Unticked: the NFO files are written and Plex stays exactly
+      as it is (its agent, episode ordering and titles). Switch later with <b>Set up Plex agent</b> below.</span></label>
+    <ul class="muted">
+      <li>Files go under <code id="root"></code>: <code>tvshow.nfo</code> (ids only) and one <code>.nfo</code> per episode file,
+        kept up to date as episodes are added, upgraded, removed or renumbered.</li>
+      <li>With Plex, turning NFO files on switches the TV library to an agent that reads them (then refreshes it); shows
+        without NFO files keep matching through Plex Series exactly as before. Off puts Plex's previous agent back and
+        deletes the NFO files Clyde wrote (snapshot NFOs come back in their place). NFO files you made yourself are never
+        changed or deleted.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <div class="row"><strong>Library</strong>
+      <button type="button" class="btn" id="convert">Convert entire library</button>
+      <span class="muted">Rewrites every show's NFO files, then sets up Plex and refreshes the library.</span></div>
+    <div id="job" class="muted" style="margin-top:8px"></div>
+  </div>
+
+  <div class="card" id="checkCard">
+    <strong>Check a show in Plex</strong>
+    <p class="muted" style="margin:6px 0">Compares every episode file of a show with what Plex shows for that season/episode.</p>
+    <div class="row"><input type="text" id="showQ" placeholder="Show title" style="flex:1;min-width:160px;background:#111;color:#ddd;border:1px solid #333;border-radius:6px;padding:5px 8px">
+      <button type="button" class="btn sec" id="showFind">Find</button></div>
+    <div id="showList" style="margin-top:8px"></div>
+    <div id="checkResult" style="margin-top:8px"></div>
+  </div>
+
+  <div class="card" id="plexCard">
+    <div class="row"><strong>Plex</strong>
+      <button type="button" class="btn sec" id="plexApply">Set up Plex agent</button>
+      <button type="button" class="btn sec" id="plexRestore">Restore Plex's previous agent</button>
+      <button type="button" class="btn sec" id="plexCheck">Check</button></div>
+    <p class="muted" style="margin:8px 0">The agent Clyde makes, <b>Clyde NFO + Plex Series</b>, reads the NFO file first,
+      then Plex Series for anything the NFO doesn't say (cast, artwork, Discover), then local media. Shows keep their Plex
+      identity, so watch history and collections stay. Needs Plex Media Server 1.43.1 or newer.</p>
+    <div id="plexStatus"></div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  const $ = s => document.querySelector(s);
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  let timer = null;
+  function post(url, body) {
+    return fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {})})
+      .then(r => r.json());
+  }
+  function renderJob(j) {
+    if (!j || (!j.running && !j.finished && !j.plex && !j.removed)) { $('#job').textContent = ''; return; }
+    const c = j.counts || {};
+    let html = j.running
+      ? `Writing… ${j.shows_done || 0}/${j.shows_total || 0} shows <span class="muted">${esc(j.current)}</span>`
+      : (j.shows_total ? `Done: ${j.shows_done}/${j.shows_total} shows` : '');
+    if (j.shows_total) html += ` — ${c.written || 0} written, ${c.unchanged || 0} unchanged, ${c.removed || 0} old removed`
+      + (c.foreign ? `, ${c.foreign} left alone (not written by Clyde)` : '')
+      + (c.skipped_folders ? `, ${c.skipped_folders} shared folder(s) skipped` : '')
+      + (c.error ? `, <span class="bad">${c.error} errors</span>` : '');
+    if (j.error) html += `<div class="bad">${esc(j.error)}</div>`;
+    if (j.plex) html += j.plex.error ? `<div class="bad">Plex: ${esc(j.plex.error)}</div>`
+      : j.plex.skipped ? `<div>${esc(j.plex.skipped)}</div>`
+      : `<div class="ok">Plex: ${esc((j.plex.sections || []).join(', ') || 'nothing to change')}${j.plex.group_id ? ' now use the NFO agent; refresh started' : ' back on their previous agent'}</div>`;
+    if (j.removed) html += `<div>Removed ${j.removed.removed} NFO file(s) written by Clyde.</div>`;
+    if (j.snapshot_restored) html += `<div>Put back ${j.snapshot_restored.written || 0} snapshot NFO file(s).</div>`;
+    $('#job').innerHTML = html;
+  }
+  function renderPlex(p) {
+    if (!p) return;
+    if (p.error) { $('#plexStatus').innerHTML = `<span class="bad">${esc(p.error)}</span>`; return; }
+    if (!p.sections.length) { $('#plexStatus').innerHTML = '<span class="warn">No Plex TV library reads the symlinked folder.</span>'; return; }
+    $('#plexStatus').innerHTML = '<table><tr><th>TV library</th><th>Folders</th><th>Agent</th></tr>' + p.sections.map(s =>
+      `<tr><td>${esc(s.title)}</td><td class="muted">${s.locations.map(esc).join('<br>')}</td>` +
+      `<td>${s.uses_nfo_agent ? '<span class="ok">Clyde NFO + Plex Series</span>' : esc(s.agent) + ' <span class="muted">(group ' + esc(s.group_id) + ')</span>'}</td></tr>`).join('') + '</table>';
+  }
+  function load(withPlex) {
+    return fetch('/nfo/api/status' + (withPlex ? '?plex=1' : '')).then(r => r.json()).then(d => {
+      document.querySelectorAll('input[name=nfoMode]').forEach(r => { r.checked = r.value === d.mode; r.disabled = (r.value !== 'off' && !d.symlinked_mode) || (d.job && d.job.running); });
+      $('#root').textContent = d.library_root || '(symlinked files path)';
+      $('#modeWarn').style.display = d.symlinked_mode ? 'none' : '';
+      $('#convert').disabled = !d.enabled || (d.job && d.job.running);
+      $('#plexCard').style.display = d.media_server_plex ? '' : 'none';
+      $('#plexAgentSwitch').checked = d.plex_agent !== 'leave';
+      $('#snapCard').style.display = d.media_server_plex && d.symlinked_mode ? '' : 'none';
+      renderSnap(d.snapshot);
+      renderJob(d.job);
+      if (d.plex) renderPlex(d.plex);
+      clearTimeout(timer);
+      if ((d.job && d.job.running) || (d.snapshot && d.snapshot.job && d.snapshot.job.running)) timer = setTimeout(() => load(false), 2000);
+      else if (d.job && d.job.finished && !withPlex && d.media_server_plex) load(true);
+    });
+  }
+  function renderSnap(sn) {
+    if (!sn) return;
+    if (sn.error) { $('#snapJob').innerHTML = `<span class="bad">${esc(sn.error)}</span>`; return; }
+    $('#snapAfter').style.display = sn.after_switch ? '' : 'none';
+    const j = sn.job || {};
+    const busy = !!j.running;
+    $('#snapTake').disabled = busy;
+    let html = busy ? `Working… <span class="muted">${esc(j.step)}</span>` : '';
+    if (!busy && j.finished) {
+      if (j.error) html += `<span class="bad">${esc(j.error)}</span>`;
+      if (j.snapshot) html += `<div class="ok">Saved ${j.snapshot.episodes} Plex episodes of ${j.snapshot.shows} shows (${j.snapshot.files} files)` +
+        (j.snapshot.unmatched ? `; ${j.snapshot.unmatched} Plex episodes have no Clyde file` : '') + '.</div>';
+      const w = j.written;
+      if (w) html += `<div>NFO files: ${w.written} written, ${w.unchanged} unchanged` +
+        (w.writer_shows ? `, ${w.writer_shows} show(s) left to the NFO mode's own files` : '') +
+        (w.foreign ? `, ${w.foreign} existing NFO file(s) left alone` : '') +
+        (w.gone ? `, ${w.gone} file(s) no longer in the library` : '') +
+        (w.error ? `, <span class="bad">${w.error} errors</span>` : '') + '.</div>';
+      if (j.removed != null) html += `<div>Removed ${j.removed} snapshot NFO file(s).</div>`;
+    }
+    $('#snapJob').innerHTML = html;
+    const list = sn.snapshots || [];
+    $('#snapList').innerHTML = !list.length ? '<span class="muted">No snapshot yet.</span>' :
+      '<table><tr><th>Taken</th><th>Episodes</th><th>Shows</th><th></th></tr>' + list.map(x =>
+        `<tr><td>${esc(x.taken_at)}${x.id === sn.in_use ? ' <span class="ok">(NFO files in the library)</span>' : ''}</td>` +
+        `<td>${x.episodes}</td><td>${x.shows}</td><td><button type="button" class="btn sec snapWrite" data-id="${x.id}"${busy ? ' disabled' : ''}>` +
+        `${x.id === sn.in_use ? 'Rewrite' : 'Use this one'}</button></td></tr>`).join('') + '</table>' +
+      (sn.in_use ? `<div class="row" style="margin-top:6px"><button type="button" class="btn sec" id="snapRemove"${busy ? ' disabled' : ''}>Delete snapshot NFO files</button></div>` : '');
+    document.querySelectorAll('.snapWrite').forEach(b => b.onclick = () => {
+      if (!confirm('Write this snapshot\'s NFO files into the library? Other snapshot NFO files are replaced; other NFO files are left alone.')) return;
+      post('/nfo/api/snapshot/write', {id: Number(b.dataset.id)}).then(d => { if (!d.success) alert(d.error); load(false); });
+    });
+    const rm = $('#snapRemove');
+    if (rm) rm.onclick = () => {
+      if (!confirm('Delete the NFO files made from Plex snapshots? The snapshots themselves are kept.')) return;
+      post('/nfo/api/snapshot/remove').then(d => { if (!d.success) alert(d.error); load(false); });
+    };
+  }
+  $('#snapTake').onclick = () => {
+    if (!confirm('Read every episode of the Plex TV library and save its details as NFO files? Plex is not changed.')) return;
+    $('#snapJob').textContent = 'Starting…';
+    post('/nfo/api/snapshot', {write: true}).then(d => { if (!d.success) alert(d.error); load(false); });
+  };
+  $('#plexAgentSwitch').onchange = e => post('/nfo/api/plex_agent', {value: e.target.checked ? 'switch' : 'leave'})
+    .then(d => { if (!d.success) { alert(d.error); load(false); } });
+  let current = null;
+  document.querySelectorAll('input[name=nfoMode]').forEach(r => r.onchange = e => {
+    const mode = e.target.value;
+    const plexStep = $('#plexAgentSwitch').checked ? ', then set up Plex and refresh the TV library?' : '? Plex\'s agent is left as it is.';
+    const msg = {
+      off: 'Turn NFO files off? Plex\'s previous agent is put back and the NFO files Clyde wrote are deleted.',
+      changed: 'Write NFO files for shows with a changed episode order (and remove them from other shows)' + plexStep,
+      all: 'Write NFO files for every show' + plexStep}[mode];
+    if (!confirm(msg)) { load(false); return; }
+    post('/nfo/api/mode', {mode}).then(d => {
+      $('#nfoMsg').textContent = d.success ? d.message : (d.error || 'Failed');
+      load(false);
+    });
+  });
+  $('#convert').onclick = () => {
+    if (!confirm('Rewrite every show\'s NFO files, then set up Plex and refresh the TV library?')) return;
+    post('/nfo/api/convert', {plex: true}).then(d => { if (!d.success) alert(d.error); load(false); });
+  };
+  const plexAction = (a, q) => () => { if (q && !confirm(q)) return;
+    $('#plexStatus').textContent = 'Working…';
+    post('/nfo/api/plex/' + a, {refresh: true}).then(d => { if (!d.success) alert(d.error); load(true); }); };
+  $('#plexApply').onclick = plexAction('apply', 'Switch the TV libraries that read the symlinked folder to the NFO agent and refresh them?');
+  $('#plexRestore').onclick = plexAction('restore', 'Put the TV libraries back on the agent they had before and refresh them?');
+  $('#plexCheck').onclick = () => { $('#plexStatus').textContent = 'Checking…'; load(true); };
+  const OV = {auto: 'Follow the mode', full: 'Always full details', none: 'No NFO files'};
+  function showRow(sh) {
+    return `<tr><td><a href="#" data-imdb="${esc(sh.imdb_id)}" class="pick">${esc(sh.title)}</a></td><td class="muted">${esc(sh.order)}</td>` +
+      `<td class="muted">${sh.files} files</td><td>${sh.gets_nfos ? '<span class="ok">NFO files</span>' : '<span class="muted">no NFO files</span>'}</td></tr>`;
+  }
+  $('#showFind').onclick = () => fetch('/nfo/api/shows?q=' + encodeURIComponent($('#showQ').value)).then(r => r.json()).then(d => {
+    $('#checkResult').innerHTML = '';
+    $('#showList').innerHTML = d.shows.length ? '<table>' + d.shows.map(showRow).join('') + '</table>' : '<span class="muted">No show found.</span>';
+    document.querySelectorAll('.pick').forEach(a => a.onclick = e => { e.preventDefault(); check(a.dataset.imdb, a.textContent); });
+  });
+  $('#showQ').onkeydown = e => { if (e.key === 'Enter') $('#showFind').click(); };
+  function check(imdb, title) {
+    $('#checkResult').innerHTML = `Checking ${esc(title)} in Plex…`;
+    fetch('/nfo/api/check?imdb_id=' + encodeURIComponent(imdb)).then(r => r.json()).then(d => {
+      const r = d.result || {};
+      if (!d.success) { $('#checkResult').innerHTML = `<span class="bad">${esc(d.error)}</span>`; return; }
+      let html = `<div><b>${esc(title)}</b> ${r.plex_show ? '(Plex: ' + esc(r.plex_show) + ')' : ''}</div>`;
+      if (r.error) html += `<div class="warn">${esc(r.error)}</div>`;
+      if (r.library_uses_nfo_agent === false) html += '<div class="bad">The TV library is no longer on the NFO agent; Fix puts it back.</div>';
+      else html += `<div>${r.right}/${r.checked} episodes right` + (r.wrong.length ? `, <span class="bad">${r.wrong.length} wrong</span>` : '') +
+        (r.missing.length ? `, <span class="warn">${r.missing.length} not in Plex</span>` : '') + '</div>';
+      if (r.wrong && r.wrong.length) html += '<table><tr><th>Episode</th><th>Plex shows</th><th>Should be</th><th>NFO</th></tr>' +
+        r.wrong.slice(0, 50).map(w => `<tr><td>${w.episode}</td><td>${esc(w.plex)}</td><td>${esc(w.expected)}</td><td class="muted">${w.nfo}</td></tr>`).join('') + '</table>';
+      if (r.missing && r.missing.length) html += `<div class="muted">Not in Plex yet: ${r.missing.slice(0, 20).map(m => m.episode).join(', ')}${r.missing.length > 20 ? '…' : ''}</div>`;
+      html += `<div class="row" style="margin-top:8px"><label>NFO files for this show: <select id="ovSel">` +
+        Object.entries(OV).map(([k, v]) => `<option value="${k}"${k === r.override ? ' selected' : ''}>${v}</option>`).join('') +
+        `</select></label><button type="button" class="btn" id="fixBtn">Fix: rewrite and refresh in Plex</button><span id="fixMsg" class="muted"></span></div>`;
+      $('#checkResult').innerHTML = html;
+      $('#ovSel').onchange = e => post('/nfo/api/override', {imdb_id: imdb, value: e.target.value}).then(x => { $('#fixMsg').textContent = x.success ? x.message : x.error; });
+      $('#fixBtn').onclick = () => { $('#fixMsg').textContent = 'Working…';
+        post('/nfo/api/fix', {imdb_id: imdb}).then(x => { $('#fixMsg').textContent = x.success ? x.message + ' Check again in a minute.' : x.error; }); };
+    });
+  }
+  load(true);
+})();
+</script>
+{% endblock %}

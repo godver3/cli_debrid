@@ -34,6 +34,9 @@ func fetchBody(ctx context.Context, f Fetcher, prio nntp.Priority, id string,
 	start := time.Now()
 	delay := retryFirst
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, nntp.Meta{}, err
+		}
 		var data []byte
 		var meta nntp.Meta
 		var err error
@@ -42,7 +45,10 @@ func fetchBody(ctx context.Context, f Fetcher, prio nntp.Priority, id string,
 		} else {
 			data, meta, err = f.Body(ctx, prio, id)
 		}
-		if err == nil || !retryable(ctx, prio, err) || time.Since(start)+delay > retryBudget {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, nntp.Meta{}, ctxErr
+		}
+		if err == nil || !retryable(prio, err) || time.Since(start)+delay > retryBudget {
 			return data, meta, err
 		}
 		t := time.NewTimer(delay)
@@ -57,8 +63,8 @@ func fetchBody(ctx context.Context, f Fetcher, prio nntp.Priority, id string,
 }
 
 // retryable: only unproven failures of reads someone is waiting for.
-func retryable(ctx context.Context, prio nntp.Priority, err error) bool {
-	if prio == nntp.Prefetch || ctx.Err() != nil {
+func retryable(prio nntp.Priority, err error) bool {
+	if prio == nntp.Prefetch {
 		return false
 	}
 	if nntp.IsNotFound(err) || errors.Is(err, nntp.ErrMismatch) || errors.Is(err, nntp.ErrNoProviders) {

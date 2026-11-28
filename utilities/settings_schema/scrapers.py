@@ -53,6 +53,12 @@ SECTIONS = {
                 "priority": {"type": "integer", "default": 0, "description": "Scraper priority score (higher = better priority)"},
                 "url": {"type": "string", "default": "", "validate": "url"},
             },
+            "Comet": {
+                "enabled": {"type": "boolean", "default": False},
+                "priority": {"type": "integer", "default": 0, "description": "Scraper priority score (higher = better priority)"},
+                "url": {"type": "string", "default": "", "validate": "url"},
+                "config": {"type": "string", "default": "", "sensitive": True}
+            },
             "AIOStreams": {
                 "enabled": {"type": "boolean", "default": False},
                 "priority": {"type": "integer", "default": 0, "description": "Scraper priority score (higher = better priority)"},

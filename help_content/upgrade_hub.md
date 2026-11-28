@@ -1,25 +1,29 @@
 ### Upgrade Hub Help
 
-The Upgrade Hub is a dedicated tool for identifying and queuing quality upgrades across your entire collected media library. It scans your collected items against a local Zilean instance to find better versions — higher resolution, improved encoding, or full season packs that replace individual episodes — and lets you review candidates before queuing them for download.
+The Upgrade Hub finds better releases for items you already have, lets you review them, and queues the ones you pick. It also holds every upgrade setting. It is a beta feature, so check a suggestion before you queue it.
 
-**Prerequisites:**
+**Where candidates come from:**
 
-*   **Local Zilean:** A local Zilean instance is required. Configure the URL in **Settings → Scraper Settings → Zilean Scraper** before using this page.
-*   **Collected Items:** The scan only operates on items already in a Collected state in your database — items still being downloaded or in other queue states are skipped.
+*   **Your scrapers.** A scan can search your enabled scrapers for items released recently (see **Fresh Release Search**), and **Search Recent Releases** does the same on demand.
+*   **Bulk Sources.** These check the whole library on every scan: **Zilean** (its database) and **NZB indexers** (see below). Pick them in the Settings tab.
+*   **Only items in the Collected state** are scanned. Items still downloading or in other queues are skipped.
+
+At least one source must be available, or the scan will not start: Zilean or a Newznab indexer set up in Settings → Scrapers, or Fresh Release Search turned on.
 
 ---
 
 **Page Header:**
 
 *   **Status text:** Displays the current state — idle, scan in progress, or when the last scan completed.
-*   **Scan for Upgrades:** Triggers a fresh scan immediately. A progress bar and label appear during the scan. Results replace any previously displayed candidates once the scan completes.
+*   **Scan for Upgrades:** Starts a scan now. A progress bar and label appear during the scan. Results replace the candidates shown before.
+*   **Search Recent Releases:** Searches your scrapers for a better release of every collected item released in the last N days. A popup asks for the number of days (it starts at your **Release Age**), then tells you how many items it will search and asks you to confirm. At most 2,000 items are searched per run, the ones checked longest ago first. Run it again for the rest. Zilean and the NZB feed history are skipped. Whatever it finds is added to your current results.
 *   **Summary chips:** After a scan completes, a row of chips appears showing totals: upgrades found, packs found, movies scanned, episodes scanned, and any errors encountered. A "Direct DB" chip appears if the scan fell back to direct database access.
 
 ---
 
 **Upgrades Tab:**
 
-Displays individual item upgrade candidates — movies and episodes where a better quality version was found in Zilean. The tab badge shows the total count of upgrade candidates.
+Displays individual item upgrade candidates — movies and episodes where a better release was found. The tab badge shows the total count of upgrade candidates.
 
 *   **Filter bar:** Text or regular expression search against the title, current filename, candidate filename, type, and version fields.
 *   **Type filter:** Narrow the view to **All**, **Movies**, or **Shows** (episodes) using the pill buttons.
@@ -35,6 +39,8 @@ Displays individual item upgrade candidates — movies and episodes where a bett
     *   **Version** — The quality version profile matched (e.g., "1080p", "4K").
     *   **Score Δ** — The improvement percentage between your current file's score and the candidate's score. Higher is better.
     *   **Size** — The candidate torrent's file size.
+*   **NZB / Debrid badges:** Show whether the current file and the candidate came from Usenet or from debrid.
+*   **Cache badges:** **Cached** or **Not Cached** show what your debrid service reports for the candidate (Real-Debrid through Phalanx, TorBox through its own cache check). **Cached Bypass** means there was no recent Zilean result, but your debrid service says the torrent is cached.
 *   **Infinite scroll:** The table renders results in batches as you scroll down, so large result sets load progressively without freezing the page.
 
 ---
@@ -60,22 +66,35 @@ Displays season-level upgrade candidates — complete season packs that would re
 
 **Settings Tab:**
 
-Persistent configuration for the Upgrade Hub. Changes take effect after clicking **Save Settings**.
+All upgrade settings live here. Changes take effect after clicking **Save Settings**.
+
+**Upgrading** (what happens right after an item is collected)
+
+*   **Keep Searching After Collecting:** Newly collected items that are recent releases go to the `Upgrading` queue and are searched again every hour during the upgrade window. A better release replaces the file.
+*   **Release Age:** Only items released this many days ago or less get the upgrade window. Default is 7 days. A big number means many more hourly searches. This is also the default for **Search Recent Releases**.
+*   **Upgrade Window:** How many hours a new item keeps being searched before it settles as Collected.
+*   **Score Improvement Needed:** How much higher (in %) a release must score than your current file to replace it. Scans use it too.
+*   **Stop at Score:** Items that already score this or higher are not searched again. 0 means no limit.
+*   **One Extra Search After Release:** Searches once more this many days after release, when better encodes have usually appeared. 0 turns it off.
+*   **Remove the Old Copy:** After an upgrade is collected, removes the original from the media server and the debrid service.
 
 **Automatic Scan**
 
-*   **Automatic Scan toggle:** When enabled, the hub will run a scan automatically every 24 hours. Requires the corresponding task to also be turned on on the Automation page (Library & Upgrades).
-*   **Score Threshold:** Sets a global minimum improvement percentage. Candidates below this threshold are hidden by default in both the Upgrades and Season Packs tabs. This is the saved default; the per-tab sliders in each tab can override it for that session.
-*   **Only Show Recent Items:** When enabled, the Recent Only filter is active by default when the page loads. Items older than the Recent Threshold are hidden unless you toggle the filter off manually.
-*   **Recent Threshold:** The number of days used to define "recent." Candidates with a best-found torrent indexed within this many days are considered recent. Default is 90 days.
-*   **Scan Limit:** Maximum number of Collected items to scan per run. Use this to limit scan time on large libraries or to test results on a subset. Options are All, 100, 500, 1000, 2000, or 5000.
+*   The schedule itself is turned on or off on the Automation page ("Upgrade Hub scan"). While it is on, an hourly **Upgrade Hub NZB feed sync** task also reads the newest releases from each Newznab indexer (usually one or two API calls each) and keeps the ones that match your library for 90 days. Scans check that history.
+*   **Score Threshold:** Minimum improvement to show a candidate in both tabs. The sliders in each tab can override it for that session.
+*   **Only Show Recent Items:** The Recent Only filter is on by default when the page loads.
+*   **Recent Threshold:** How many days count as "recent". Default is 90.
+*   **Fresh Release Search:** Off by default. When on, each scan also searches your scrapers for items released within the given number of days (default 30), up to the given number of items per scan (default 20). Each item is a full search with one API call per indexer, so keep the limit low. Items checked longest ago go first.
+*   **Scan Limit:** Maximum number of Collected items to scan per run: All, 100, 500, 1000, 2000 or 5000.
 
 **Auto Queue**
 
-*   **Auto Queue toggle:** When enabled, upgrade candidates above the Score Threshold are automatically queued for download after each scheduled scan completes. Requires Automatic Scan to be active. Respects the Upgrades Per Run limit.
-*   **Hide Episodes Already in Season Packs:** When enabled, individual episode upgrade candidates are hidden from the Upgrades tab if the same episode is already covered by a Season Pack candidate. Prevents redundant queuing of episodes that will be replaced by a pack.
-*   **Upgrades Per Run:** The maximum number of items queued per category per auto-queue run. Applied independently to Upgrades and Season Packs — for example, a value of 3 allows up to 3 individual upgrades plus up to 3 season packs per run. Default is 10.
-*   **Excluded Genres:** Items matching any genre in this list are skipped during scan. Applies to both movies and shows. Use the search field to find and add genres; click a genre chip's remove icon to delete it.
+*   The schedule is turned on or off on the Automation page ("Upgrade Hub auto-queue"). After each scheduled scan it queues candidates above the Score Threshold, up to **Upgrades Per Run**. Cached candidates go first, and ones reported not cached are skipped unless you accept uncached results.
+*   **Hide Episodes Already in Season Packs:** Hides single-episode candidates that a Season Pack candidate already covers.
+*   **Upgrades Per Run:** Maximum items queued per run, counted separately for Upgrades and Season Packs. Default is 10.
+*   **Exclude NAS Items:** Skips items whose file path starts with a NAS path set in Settings → Library & Files → Library Management → NAS / Network Drive.
+*   **Bulk Sources:** Which library-wide sources a scan reads, besides your scrapers: **Both (Zilean + NZB Indexers)**, **Zilean Only**, **NZB Indexers Only** or **None (fresh-release search only)**. Zilean is fast with the direct DB connection in Settings → Scrapers and slow without it.
+*   **Excluded Genres:** Items in these genres are skipped during scans, for movies and shows. Search for a genre to add it and remove a chip to delete it.
 
 **Settings Footer Actions**
 
@@ -87,7 +106,7 @@ Persistent configuration for the Upgrade Hub. Changes take effect after clicking
 
 **Activity Tab:**
 
-A chronological log of every action performed by the Upgrade Hub — both manual user-triggered operations and automated scheduled runs. Entries are retained for 30 days.
+A chronological log of every action performed by the Upgrade Hub — both manual user-triggered operations and automated scheduled runs. Entries are kept for 30 days.
 
 *   **Type filter:** Filter the log to a specific action category:
     *   **All actions** — Every recorded event.
@@ -107,7 +126,7 @@ A chronological log of every action performed by the Upgrade Hub — both manual
 
 **How the Upgrade Hub Works:**
 
-1.  **Scan:** Clicking Scan for Upgrades (or the scheduled task running) queries your local Zilean instance for each Collected item in your database. Zilean is searched by title and returns torrents it has indexed. The results are scored using the same version-matching system used by the main scraper.
+1.  **Scan:** Clicking Scan for Upgrades (or the scheduled task running) checks each Collected item against the sources you chose: Zilean, the NZB feed history and, if Fresh Release Search is on, your scrapers. Results are scored with the same version rules as the main scraper. A filter-out term set to Debrid or NZB in a version only applies to releases from that source.
 2.  **Candidate Selection:** Items where a higher-scoring torrent is found are presented as upgrade candidates. Season packs covering multiple collected episodes are identified separately and shown in the Season Packs tab.
 3.  **Review:** Use the filters, type pills, Recent Only toggle, and threshold slider to focus on the candidates most relevant to you.
 4.  **Queue:** Select the items you want and click Queue Selected. Selected items are added to the hub pre-queue and will be processed by the upgrading queue on the next cycle.
@@ -118,7 +137,7 @@ A chronological log of every action performed by the Upgrade Hub — both manual
 
 **Important Notes:**
 
-*   **Zilean is required.** Without a locally running Zilean instance, scans will fail immediately. Zilean must be indexing your region's torrent sources for results to be meaningful.
+*   **Zilean is optional.** If you use it, it must be reachable, or the Zilean part of a scan fails. You can run on scrapers and NZB indexers only.
 *   **Scan time scales with library size.** Scanning 10,000+ collected items can take several minutes. Use the Scan Limit setting to cap scan time if needed.
 *   **Queuing is not immediate download.** Queued items enter the hub pre-queue and are processed by the upgrading queue on schedule — they do not bypass the normal upgrading queue limits.
 *   **Ignore list is permanent.** Items added to the ignore list are excluded from all future scans. Currently there is no UI to manage the ignore list directly — clear it via the database if needed.

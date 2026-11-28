@@ -98,8 +98,10 @@ func fits(s Source, f *nzb.File) bool {
 	case len(s.Map) > 0:
 		return len(f.Segments) == len(s.Map)
 	case s.Layout.PartSize > 0:
-		need := int((s.Layout.Size + s.Layout.PartSize - 1) / s.Layout.PartSize)
-		return need == len(f.Segments) || need == f.Total
+		// An NZB may list trailing surplus past the file's end (see
+		// stream.Probe); it still fits when it has every needed article.
+		need := s.Layout.Parts()
+		return need == len(f.Segments) || need == f.Total || (need < f.Total && f.HasPrefix(need))
 	}
 	return true
 }

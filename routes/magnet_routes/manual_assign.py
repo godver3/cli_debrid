@@ -78,7 +78,8 @@ def prepare_manual_assignment():
             else:
                 try:
                     from metadata.metadata import get_metadata
-                    seasons_meta = get_metadata(tmdb_id=int(tmdb_id), item_media_type=media_type).get('seasons') or {}
+                    # The form says 'show'; get_metadata only returns seasons for 'tv'.
+                    seasons_meta = get_metadata(tmdb_id=int(tmdb_id), item_media_type='tv').get('seasons') or {}
                 except Exception as _me:
                     logging.error(f"[NZB] Could not load seasons for manual assign: {_me}")
                     seasons_meta = {}
@@ -174,6 +175,8 @@ def prepare_manual_assignment():
                 elif not isinstance(files, list):
                     files = []
             
+            from debrid.common.utils import resolve_torrent_title
+            torrent_filename = resolve_torrent_title({'title': torrent_filename, 'files': files})
             logging.info(f"Retrieved {len(files)} files for manual assignment. Torrent ID: {torrent_id}, Filename: {torrent_filename}")
             
         finally:
@@ -328,6 +331,8 @@ def fill_gaps():
         if result is None:
             return jsonify({'success': False, 'error': 'Failed to retrieve file list from debrid service. Torrent might be invalid or provider error.'}), 503
         files, torrent_filename, torrent_id = result
+        from debrid.common.utils import resolve_torrent_title
+        torrent_filename = resolve_torrent_title({'title': torrent_filename, 'files': files})
         video_files = _video_files(files)
         if not video_files:
             return jsonify({'success': False, 'error': 'No video files found in that magnet link.'}), 400

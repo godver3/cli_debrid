@@ -4,7 +4,7 @@
 // mount engine's) and, with an external cli_mount, cli_mount's own. The result
 // opens as a prefilled GitHub issue or is copied for Discord.
 (function () {
-    const GITHUB_NEW_ISSUE = 'https://github.com/godver3/cli_debrid/issues/new';
+    const GITHUB_NEW_ISSUE = 'https://github.com/godver3/clyde/issues/new';
     const DISCORD_URL = 'https://discord.com/channels/691282102162948107';
     const DISCORD_LIMIT = 2000;
     const GITHUB_URL_LIMIT = 7500;

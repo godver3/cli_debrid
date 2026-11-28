@@ -105,30 +105,56 @@ def release_country_suffix(normalized_parsed_title: str, normalized_base_title: 
     if rest in _COUNTRY_NAMES:
         return _COUNTRY_NAMES[rest]
     code = rest.upper()
-    code = 'UK' if code == 'GB' else code
+    # Scene name for South Africa ("Survivor.SA"); only read right after the base title.
+    code = {'GB': 'UK', 'SA': 'ZA'}.get(code, code)
     return code if code in _COUNTRY_CODES else None
 
 
-def extract_year_from_title(title: str) -> Optional[int]:
-    """
-    Simple year extraction from title when PTT fails to parse it.
-    Looks for 4-digit years and returns the earliest one found.
-    """
-    if not title:
+def release_country_in_name(release_name: str, normalized_base_title: str) -> Optional[str]:
+    """Country right after the base title (or base title + year) in the raw
+    release name, for names whose country PTT drops from its title
+    ('Survivor.IL.VIP.S02E03' -> 'IL', 'Survivor.2000.AU.S11E03' -> 'AU').
+    Only a country name or code directly following the whole base title and
+    optional year counts."""
+    if not release_name or not normalized_base_title:
         return None
-    
-    # Find all 4-digit numbers that could be years (1900-2099)
-    year_pattern = r'\b(19[0-9]{2}|20[0-9]{2})\b'
-    years = re.findall(year_pattern, title)
-    
-    if years:
-        # Convert to integers and return the earliest year
-        year_ints = [int(year) for year in years]
-        earliest_year = min(year_ints)
-        logging.debug(f"Extracted year {earliest_year} from title: '{title}' (found years: {year_ints})")
-        return earliest_year
-    
+    words = [w for w in re.split(r'[\s._-]+', release_name.lower()) if w]
+    base = normalized_base_title.split('.')
+    if words[:len(base)] != base:
+        return None
+    rest = words[len(base):]
+    if rest and _YEAR_TOKEN.fullmatch(rest[0].strip('()')):
+        rest = rest[1:]
+    for n in (2, 1):
+        if len(rest) >= n:
+            code = release_country_suffix(normalized_base_title + '.' + '.'.join(rest[:n]),
+                                          normalized_base_title)
+            if code:
+                return code
     return None
+
+
+_YEAR_PATTERN = r'\b(19[0-9]{2}|20[0-9]{2})\b'
+
+
+def release_years_outside_title(parsed_year, release_name: str, wanted_title: str, extract_fallback: bool = False) -> List[int]:
+    """The release-name years to check, leaving out any that belong to the title.
+
+    A year-like number in the show or movie's own name ("Blade Runner 2099",
+    "1923", "2001: A Space Odyssey") is read by the parser as a release year,
+    which then fails the year check on every release. Such years are dropped.
+    With extract_fallback, when nothing is left, the earliest other year in the
+    release name is used (PTT sometimes parses none).
+    """
+    title_years = {int(y) for y in re.findall(_YEAR_PATTERN, wanted_title or '')}
+    raw = parsed_year if isinstance(parsed_year, list) else ([] if parsed_year is None else [parsed_year])
+    years = [int(y) for y in raw if str(y).isdigit() and int(y) not in title_years]
+    if not years and extract_fallback:
+        found = [int(y) for y in re.findall(_YEAR_PATTERN, release_name or '') if int(y) not in title_years]
+        if found:
+            years = [min(found)]
+            logging.info(f"Using year {years[0]} from release name: '{release_name}'")
+    return years
 
 
 def tv_release_year_matches(release_year: int, show_year: Optional[int], season_year: int) -> bool:
@@ -238,6 +264,59 @@ def _episode_words_after_title(parsed_title, target_titles, episode_title):
         if ep_words and fuzz.token_set_ratio(' '.join(extra), ' '.join(ep_words)) >= 85:
             return ' '.join(extra)
     return ''
+
+
+_SUB_SERIES_GENERIC_WORDS = {'series', 'saga', 'arc', 'part', 'season', 'chapter', 'cour', 'volume', 'vol'}
+
+
+def _sub_series_alias_words(alias, main_title):
+    """Distinguishing words in a title extension such as 'Pokémon the Series: XY'."""
+    main_words = re.findall(r'[a-z0-9]+', main_title)
+    alias_words = re.findall(r'[a-z0-9]+', alias)
+    if not main_words or alias_words[:len(main_words)] != main_words:
+        return set()
+    if release_country_suffix('.'.join(alias_words), '.'.join(main_words)):
+        return set()
+    return {word for word in alias_words[len(main_words):]
+            if word not in _TITLE_FILLER_WORDS
+            and word not in _SUB_SERIES_GENERIC_WORDS
+            and not _YEAR_TOKEN.fullmatch(word)}
+
+
+def _is_nzb_result(result):
+    return bool(result.get('protocol') == 'nzb' or result.get('nzb_url')
+                or str(result.get('scraper_type') or '').lower() == 'newznab')
+
+
+# Words a pack adds after the show's name that aren't part of it.
+_PACK_TITLE_WORDS = {'complete', 'collection', 'series', 'season', 'seasons', 'box', 'set', 'boxset', 'pack'}
+
+
+def _named_season_or_pack_title(parsed_title, query_title, season_words, result_seasons, result_episodes, season):
+    """True when the parsed title is the show's title plus only the searched season's
+    own name or pack words: 'Survivor Borneo' (Season 1 of Survivor is 'Borneo') or
+    'Survivor Collection' (an S01-S21 pack). Without this they score 0.4 and are
+    dropped, though TorBox has both cached.
+
+    Season-name words count only when the release covers that season (or names no
+    season); pack words only on a release with seasons and no episodes.
+    """
+    if not parsed_title or not query_title:
+        return False
+    parsed = re.findall(r'[a-z0-9]+', parsed_title)
+    query = re.findall(r'[a-z0-9]+', query_title)
+    if not query or len(parsed) <= len(query) or parsed[:len(query)] != query:
+        return False
+    extra = {w for w in parsed[len(query):] if w not in _TITLE_FILLER_WORDS and not _YEAR_TOKEN.fullmatch(w)}
+    if not extra:
+        return False
+    seasons = set(result_seasons or [])
+    allowed = set()
+    if season_words and (not seasons or season in seasons):
+        allowed |= season_words
+    if seasons and not result_episodes:
+        allowed |= _PACK_TITLE_WORDS
+    return extra <= allowed
 
 
 def _inserts_a_title_word(parsed_title, target_title):
@@ -383,6 +462,7 @@ def filter_results(
     # --- Cache for API fallback results within this filter_results call ---
     _fetched_detailed_seasons_data_cache = None
     _episode_title_cache = {'loaded': False, 'title': ''}  # the searched episode's title, fetched on first need
+    season_title_words = None  # Computed once from the metadata already loaded for the show.
     _absolute_season_counts = None  # full season counts, loaded on the first absolute-numbered batch
     _order_map = False  # aired numbering -> the show's episode order; loaded on the first season pack
     
@@ -668,9 +748,7 @@ def filter_results(
 
                     if check_title_numbers and _drops_title_number(normalized_parsed_title, alias):
                         alias_sim = 0.0
-                    alias_similarities.append(alias_sim)
-
-            best_alias_sim = max(alias_similarities) if alias_similarities else 0.0
+                    alias_similarities.append((alias, alias_sim))
 
             # --- Translated Title Similarity ---
             translated_title_sim = 0.0
@@ -724,9 +802,6 @@ def filter_results(
                     paren_title_sim = (paren_sim_set + paren_sim_sort) / 2.0
                 if paren_title_sim >= 0.85:
                     logging.info(f"Parenthesized title match: '{paren_title_str}' sim={paren_title_sim:.2f} for query '{title}'")
-
-            # Compute initial best similarity score (without API aliases)
-            best_sim = max(main_title_sim, best_alias_sim, translated_title_sim, paren_title_sim)
 
             # --- Fetch additional aliases via DirectAPI ---
             item_aliases = {}
@@ -785,6 +860,23 @@ def filter_results(
             except Exception as meta_err:
                 logging.warning(f"Failed to fetch original_title for {imdb_id}: {meta_err}")
 
+            if is_episode and season_title_words is None:
+                metadata = _show_metadata_cache.get(imdb_id)
+                seasons = metadata.get('seasons') if isinstance(metadata, dict) else None
+                # XEM may have replaced season with the scene numbering.
+                metadata_season = original_season if original_season is not None else season
+                raw_season_title = None
+                if isinstance(seasons, dict):
+                    season_info = seasons.get(metadata_season) or seasons.get(str(metadata_season))
+                    if isinstance(season_info, dict):
+                        raw_season_title = season_info.get('title') or season_info.get('name')
+                season_title = normalize_title(raw_season_title) if isinstance(raw_season_title, str) else ''
+                season_title_words = (
+                    set() if not re.search(r'[a-z]', season_title)
+                    or re.fullmatch(r'(?:season|series)(?:[.-]*\d+)?|specials', season_title)
+                    else set(re.findall(r'[a-z0-9]+', season_title))
+                )
+
             # Deduplicate and log aliases
             item_aliases = {k: list(set(v)) for k, v in item_aliases.items()}
             
@@ -831,21 +923,7 @@ def filter_results(
                 # logging.info(f"No language codes detected in original title or aliases. Language code filtering disabled.")
             # --- End Language Code Detection ---
 
-            # -------------------------------------------------------------
-            # Re-evaluate alias similarities with the newly fetched aliases
-            # -------------------------------------------------------------
-            # Build a combined list of aliases (those provided as function
-            # arguments plus those fetched from the API) so that every
-            # available synonym can help a release pass the similarity check.
-            # NOTE: we keep the original `alias_similarities` list because it
-            # already contains scores for `matching_aliases`. We now extend it
-            # with scores calculated for API aliases and then recompute
-            # best_alias_sim / best_sim prior to the threshold comparison.
-
-            item_alias_similarities: list = []
-            alias_debug_info = []  # For debugging
-            if item_aliases:
-                pass
+            # Score API aliases alongside the caller-supplied aliases.
             for alias_list in item_aliases.values():
                 for alias in alias_list:
                     normalized_api_alias = normalize_title(alias).lower()
@@ -924,29 +1002,34 @@ def filter_results(
 
                     if check_title_numbers and _drops_title_number(normalized_parsed_title, normalized_api_alias):
                         final_alias_sim = 0.0
-                    item_alias_similarities.append(final_alias_sim)
+                    alias_similarities.append((normalized_api_alias, final_alias_sim))
 
-                    # Store debug info for troublesome titles
-                    if "araiguma" in original_title.lower() or "calcal" in original_title.lower():
-                        alias_debug_info.append({
-                            'alias': alias,
-                            'normalized_alias': normalized_api_alias,
-                            'similarity': final_alias_sim
-                        })
+            best_alias_sim = max((score for _, score in alias_similarities), default=0.0)
+            if (season_title_words and normalized_parsed_title
+                    and max(main_title_sim, paren_title_sim) < result_similarity_threshold
+                    <= max(best_alias_sim, translated_title_sim)):
+                # Translations can also come from the provider's alias list.
+                alias_similarities = [
+                    (alias, score) for alias, score in alias_similarities
+                    if score < result_similarity_threshold
+                    or _sub_series_alias_words(alias, normalized_query_title) <= season_title_words
+                ]
+                best_alias_sim = max((score for _, score in alias_similarities), default=0.0)
+                if (normalized_translated_title and translated_title_sim >= result_similarity_threshold
+                        and _sub_series_alias_words(normalized_translated_title, normalized_query_title)
+                        - season_title_words):
+                    translated_title_sim = 0.0
 
-            # Combine and (re)compute best alias / best overall similarity
-            if item_alias_similarities:
-                alias_similarities.extend(item_alias_similarities)
-                best_alias_sim = max(alias_similarities)
-                best_sim = max(main_title_sim, best_alias_sim, translated_title_sim, paren_title_sim)
-            else:
-                best_sim = max(main_title_sim, best_alias_sim, translated_title_sim, paren_title_sim)
+            if (main_title_sim < result_similarity_threshold
+                    and _named_season_or_pack_title(
+                        normalized_parsed_title, normalized_query_title, season_title_words,
+                        parsed_info.get('seasons'), parsed_info.get('episodes'),
+                        original_season if original_season is not None else season)):
+                logging.info(f"Title match: '{original_title}' is '{title}' plus its season name or pack words")
+                main_title_sim = result_similarity_threshold
 
+            best_sim = max(main_title_sim, best_alias_sim, translated_title_sim, paren_title_sim)
 
-            # -------------------------------------------------------------
-            # Check if the best similarity meets the threshold (now updated)
-            # -------------------------------------------------------------
-            
             # --- ANIME-SPECIFIC SANITY CHECK ---
             # For anime, add additional validation to prevent false matches from fuzzy token overlap
             if is_anime and best_sim >= result_similarity_threshold:
@@ -1069,9 +1152,13 @@ def filter_results(
                             _episode_title_cache['title'] = ep.get('title') or ''
                     except Exception as ep_err:
                         logging.debug(f"Episode title lookup failed for {imdb_id} S{season}E{episode}: {ep_err}")
+                label_targets = [normalized_query_title]
+                label_targets.extend(
+                    alias for alias in normalized_aliases
+                    if not season_title_words or _sub_series_alias_words(alias, normalized_query_title) <= season_title_words
+                )
                 label = _episode_words_after_title(
-                    normalized_parsed_title, [normalized_query_title, *normalized_aliases],
-                    _episode_title_cache['title'])
+                    normalized_parsed_title, label_targets, _episode_title_cache['title'])
                 if label:
                     logging.info(f"Title match: '{original_title}' is '{normalized_query_title}' with the episode label "
                                  f"'{label}' before S{season:02d}E{episode:02d} (similarity was {best_sim:.2f})")
@@ -1168,8 +1255,14 @@ def filter_results(
                 result_language_code = None
                 if result_country:
                     result_language_code = country_code_mapping.get(result_country.lower(), result_country.upper())
-                elif normalized_base_title:
-                    result_language_code = release_country_suffix(normalized_parsed_title, normalized_base_title)
+                else:
+                    # The show's title may carry no tag ("Survivor"): the release's
+                    # own country word right after the title still names another version.
+                    suffix_base = normalized_base_title or normalized_query_title
+                    result_language_code = (
+                        release_country_suffix(normalized_parsed_title, suffix_base)
+                        or release_country_in_name(original_title, suffix_base)
+                    )
 
                 if result_language_code:
                     # Result has language codes - check if they match expected
@@ -1237,14 +1330,9 @@ def filter_results(
             
             # Content type specific checks
             if is_movie and not is_ufc:
-                parsed_year = parsed_info.get('year')
+                parsed_year = release_years_outside_title(parsed_info.get('year'), original_title, title)
                 if parsed_year and year is not None:
-                    if isinstance(parsed_year, list):
-                        if not any(abs(int(py) - year) <= 1 for py in parsed_year):
-                            result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {year})"
-                            logging.info(f"Rejected: Movie year list {parsed_year} doesn't match {year} for '{original_title}' (Size: {result['size']:.2f}GB)")
-                            continue
-                    elif abs(int(parsed_year) - year) > 1:
+                    if not any(abs(py - year) <= 1 for py in parsed_year):
                         result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {year})"
                         logging.info(f"Rejected: Movie year {parsed_year} doesn't match {year} for '{original_title}' (Size: {result['size']:.2f}GB)")
                         continue
@@ -1291,15 +1379,11 @@ def filter_results(
                 # first special's air year. Specials only get the looser
                 # "not before the show existed" check below instead.
                 if not is_formula_1 and season != 0: # Only perform year check if not Formula 1 or a special
-                    parsed_year = parsed_info.get('year')
-                    
-                    # If PTT didn't parse a year, try our own simple extraction
-                    if parsed_year is None:
-                        extracted_year = extract_year_from_title(original_title)
-                        if extracted_year:
-                            parsed_year = extracted_year
-                            logging.info(f"PTT didn't parse year, extracted {extracted_year} from title: '{original_title}'")
-                    
+                    # Years in the show's own name don't count; if PTT gave
+                    # none, fall back to our own extraction from the release name.
+                    parsed_year = release_years_outside_title(
+                        parsed_info.get('year'), original_title, title, extract_fallback=True)
+
                     if parsed_year and year is not None:
                         # For TV shows, we should compare against the season's air date, not the original show premiere
                         # Get the season-specific year if available, otherwise fall back to the original year
@@ -1374,60 +1458,18 @@ def filter_results(
                                     logging.warning(f"Error getting season year for {imdb_id} S{year_lookup_season}: {season_year_err}, using original show year ({year})")
                                     _season_year_cache[cache_key] = year  # Cache the fallback
                         
-                        if isinstance(parsed_year, list):
-                            # Ensure all elements in parsed_year are convertible to int before comparison
-                            try:
-                                # For TV shows, be more lenient with year matching
-                                # Check if any year in the list matches with appropriate tolerance
-                                year_matches = [int(py) for py in parsed_year
-                                                if str(py).isdigit() and tv_release_year_matches(int(py), year, target_year)]
-
-                                if not year_matches:
-                                    result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {target_year}, original show: {year})"
-                                    logging.info(f"Rejected: TV year list {parsed_year} doesn't match season year {target_year} for '{original_title}' (Size: {result['size']:.2f}GB)")
-                                    continue
-                            except ValueError:
-                                # Handle cases where a year in the list is not a valid integer
-                                logging.warning(f"Skipping year check due to invalid year format in list for '{original_title}': {parsed_year}")
-                                result['filter_reason'] = f"Invalid year format in list: {parsed_year}"
-                                continue
-
-                        elif isinstance(parsed_year, (int, str)) and str(parsed_year).isdigit():
-                            parsed_year_int = int(parsed_year)
-                            
-                            # For TV shows, be more lenient with year matching
-                            # Many torrents incorrectly use the original show year instead of the season air date
-                            year_difference = abs(parsed_year_int - target_year)
-                            
-                            # DEBUG: Add detailed logging for Frasier-like cases
-                            if "frasier" in original_title.lower() or "1993" in original_title or "2004" in original_title:
-                                logging.info(f"DEBUG FRASIER: '{original_title}'")
-                                logging.info(f"  - parsed_year: {parsed_year} (int: {parsed_year_int})")
-                                logging.info(f"  - original show year: {year}")
-                                logging.info(f"  - target_year (season/fallback): {target_year}")
-                                logging.info(f"  - year_difference: {year_difference}")
-                                logging.info(f"  - parsed_year_int == year: {parsed_year_int == year}")
-                                logging.info(f"  - target_year != year: {target_year != year}")
-                            
-                            if not tv_release_year_matches(parsed_year_int, year, target_year):
-                                result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {target_year}, original show: {year})"
-                                logging.info(f"Rejected: TV year {parsed_year} doesn't match season year {target_year} for '{original_title}' (Size: {result['size']:.2f}GB)")
-                                continue
-                        else:
-                            # Handle cases where parsed_year is not a list or a valid int/str digit
-                            logging.warning(f"Skipping year check due to invalid year format for '{original_title}': {parsed_year}")
-                            # Optionally, you could reject here if strict year parsing is required
-                            # result['filter_reason'] = f"Invalid year format: {parsed_year}"
-                            # continue
+                        if not any(tv_release_year_matches(py, year, target_year) for py in parsed_year):
+                            result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {target_year}, original show: {year})"
+                            logging.info(f"Rejected: TV year {parsed_year} doesn't match season year {target_year} for '{original_title}' (Size: {result['size']:.2f}GB)")
+                            continue
                 elif season == 0 and not is_formula_1:
                     # Keep the one guarantee year matching still gives specials: a
                     # release dated before the show premiered is a different
                     # same-titled show, not a remaster of this one.
-                    parsed_year = parsed_info.get('year') or extract_year_from_title(original_title)
+                    parsed_year = release_years_outside_title(
+                        parsed_info.get('year'), original_title, title, extract_fallback=True)
                     if parsed_year and year is not None:
-                        _special_years = parsed_year if isinstance(parsed_year, list) else [parsed_year]
-                        _special_years = [int(py) for py in _special_years if str(py).isdigit()]
-                        if _special_years and all(py < year - 1 for py in _special_years):
+                        if all(py < year - 1 for py in parsed_year):
                             result['filter_reason'] = f"Year mismatch: {parsed_year} predates show premiere ({year})"
                             logging.info(f"Rejected: Special's release year {parsed_year} predates show premiere {year} for '{original_title}' (Size: {result['size']:.2f}GB)")
                             continue
@@ -1807,12 +1849,23 @@ def filter_results(
                     season_pack = season_episode_info.get('season_pack', 'Unknown')
                     is_potential_single_season_pack = False # Default to false
 
+                    # A torrent pack that covers the season is kept for a single episode:
+                    # the debrid service serves the one file from it, and a cached pack
+                    # (TorBox had Survivor S01-S22, 2026-11-26) beats an uncached or
+                    # missing single. Ranking puts packs below singles (-500 in single
+                    # mode), so they're only tried once the singles fail. NZBs still
+                    # take singles only: a pack would be downloaded whole.
+                    torrent_pack_for_episode = not multi and not _is_nzb_result(result)
                     if not multi:
                         # Check for multi-season packs (e.g., "Complete", "S01,S02")
                         if (season_pack == 'Complete' or (season_pack not in ['N/A', 'Unknown'] and ',' in season_pack)):
-                            result['filter_reason'] = "Multi-season pack when searching for single episode"
-                            logging.info(f"Rejected: Multi-season pack in single episode mode for '{original_title}' (Size: {result['size']:.2f}GB)")
-                            continue
+                            if torrent_pack_for_episode and (not result_seasons or season in result_seasons):
+                                result['pack_for_single_episode'] = True
+                                logging.info(f"Keeping multi-season torrent pack for S{season}E{episode}: '{original_title}'")
+                            else:
+                                result['filter_reason'] = "Multi-season pack when searching for single episode"
+                                logging.info(f"Rejected: Multi-season pack in single episode mode for '{original_title}' (Size: {result['size']:.2f}GB)")
+                                continue
 
                         # Allow multi-episode files (e.g. S01E01E02) if target episode is included
                         # Reject only if target episode is NOT in the file
@@ -1854,31 +1907,27 @@ def filter_results(
                     # else: parsed_date_str remains None if neither method works
 
                     if not result_episodes:
-                        # Case 1: No episode numbers parsed by PTT. Check date or fallback number.
-                        comparison_result = "Skipped" # Default if check doesn't run
+                        # PTT found no episode number. Preserve date matching and the
+                        # existing number fallback for releases with a definite season.
                         if target_air_date and parsed_date_str:
-                             # Perform the comparison
-                             date_match = (target_air_date == parsed_date_str)
-                             comparison_result = f"Target='{target_air_date}' == Parsed='{parsed_date_str}' -> {date_match}"
-                             if date_match:
-                                 episode_match = True
-                                 #logging.debug(f"Episode matched via date: {comparison_result} for '{original_title}'")
-                        elif not lenient_season_pass and not is_potential_single_season_pack:
-                             # Only log comparison if the primary date check didn't pass/run
-                             #logging.debug(f"Date check failed or skipped. Target='{target_air_date}', Parsed='{parsed_date_str}'. Falling back to number check.")
-                             pass
-                             if re.search(rf'\b{episode}\b', original_title):
-                                 episode_match = True
-                                 #logging.debug(f"Episode number {episode} found directly in title '{original_title}' (non-lenient season match, not a detected pack).")
+                            episode_match = target_air_date == parsed_date_str
                         else:
-                            # Log why we didn't even attempt the fallback number check
-                            #logging.debug(f"Date check failed/skipped (Target='{target_air_date}', Parsed='{parsed_date_str}') and fallback number check skipped (lenient_season={lenient_season_pass}, potential_pack={is_potential_single_season_pack}).")
-                            pass
-                            
-                        # Log the comparison result if the primary date check was attempted
-                        if target_air_date and parsed_date_str and not episode_match:
-                             #logging.debug(f"Date comparison result: {comparison_result} for '{original_title}'")
-                             pass
+                            if (is_anime and season_title_words and not result_seasons
+                                    and not is_potential_single_season_pack and normalized_parsed_title):
+                                # PTT can leave a bare padded episode in the title
+                                # ("Pokemon Indigo League 082"). Require the full named-season alias.
+                                release_alias, _, padded_episode = normalized_parsed_title.rpartition('.')
+                                target_abs = result.get('target_abs_episode') or absolute_from_counts(
+                                    season, episode, season_episode_counts)
+                                alias_words = _sub_series_alias_words(release_alias, normalized_query_title)
+                                if (re.fullmatch(r'0[0-9]{2,3}', padded_episode)
+                                        and int(padded_episode) == target_abs
+                                        and alias_words and alias_words <= season_title_words
+                                        and any(_same_exact_title(release_alias, alias)
+                                                for alias, _ in alias_similarities if alias)):
+                                    episode_match = True
+                            if not episode_match and not lenient_season_pass and not is_potential_single_season_pack:
+                                episode_match = bool(re.search(rf'\b{episode}\b', original_title))
 
                     elif episode in result_episodes:
                         # Case-2: parsed episode matches the mapped episode (S/E match).
@@ -1969,6 +2018,13 @@ def filter_results(
                             episode_match = True
                             logging.info(f"Episode matched via original episode number {original_episode} found in title for '{original_title}'")
                     # --- End original episode fallback ---
+
+                    if not episode_match and (result.get('pack_for_single_episode') or (
+                            torrent_pack_for_episode and is_potential_single_season_pack)):
+                        if not result.get('pack_for_single_episode'):
+                            logging.info(f"Keeping season torrent pack for S{season}E{episode}: '{original_title}'")
+                        result['pack_for_single_episode'] = True
+                        episode_match = True
 
                     if not episode_match:
                         # Before rejecting, check if it was identified as a potential single season pack earlier
@@ -2435,9 +2491,10 @@ def get_resolution_value(resolution: str) -> int:
     resolution_order = {
         '2160p': 2160, '4k': 2160, 'uhd': 2160,
         '1440p': 1440, 'qhd': 1440,
-        '1080p': 1080, 'fhd': 1080,
-        '720p': 720, 'hd': 720,
-        '480p': 480, 'sd': 480,
+        # PTT 1.8+ reports interlaced resolutions as-is ('1080i'); rate them like their progressive twin
+        '1080p': 1080, '1080i': 1080, 'fhd': 1080,
+        '720p': 720, '720i': 720, 'hd': 720,
+        '480p': 480, '480i': 480, 'sd': 480,
         '360p': 360
     }
     return resolution_order.get(resolution.lower(), 0)

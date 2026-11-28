@@ -184,7 +184,11 @@ def _check_acquisition_providers(get_setting, providers_factory, usenet_factory)
                             f"{'expired' if kind == 'SUBSCRIPTION_EXPIRED' else 'status could not be verified'}: {summary}")
                     continue
                 statuses[_provider_key(provider)] = True
-                healthy += 1
+                # A streaming-only fallback keeps a status (the checking queue
+                # still polls torrents it holds) but can't take new grabs, so
+                # it doesn't count as a usable acquisition backend.
+                if getattr(provider, 'stream_only', False) is not True:
+                    healthy += 1
             except Exception as e:
                 failure(service, 'CONNECTION_ERROR', f'Connectivity check error: {e}')
 

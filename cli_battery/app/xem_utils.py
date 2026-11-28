@@ -37,7 +37,7 @@ def fetch_xem_mapping(tvdb_id: int) -> Optional[List[Dict[str, Any]]]:
     params = {'id': tvdb_id, 'origin': 'tvdb'}
     url = f"{XEM_API_URL}"
     headers = {
-        'User-Agent': 'cli_debrid/1.0 (https://github.com/godver3/cli_debrid)'
+        'User-Agent': 'cli_debrid/1.0 (https://github.com/godver3/clyde)'
     }
 
     try:

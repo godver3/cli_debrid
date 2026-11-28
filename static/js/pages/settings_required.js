@@ -1,6 +1,9 @@
 // Page script for templates/settings_tabs/required.html.
 import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
 
+// Escape names/titles/messages before they go into innerHTML or an attribute.
+function _srEsc(v) { return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
 document.addEventListener('DOMContentLoaded', function() {
     const collectionTypeSelect = document.querySelector('select[name="File Management.file_collection_management"]');
     // Read values from data attributes, parsing the JSON string representation
@@ -375,7 +378,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                                 const serverCard = document.createElement('div');
                                                 serverCard.className = 'plex-server-card';
                                                 serverCard.innerHTML = `
-                                                    <div class="plex-server-name">${server.name}</div>
+                                                    <div class="plex-server-name">${_srEsc(server.name)}</div>
                                                     <div class="plex-connection-type">
                                                         ${server.owned ? 'Owned Server' : 'Shared Server'}
                                                         ${server.connections.some(c => c.local) ? ' (Local Access Available)' : ''}

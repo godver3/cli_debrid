@@ -23,11 +23,6 @@ def direct_mount_server(get=None) -> Optional[str]:
     return server if server in SERVERS else 'plex'
 
 
-def is_direct_mount_plex(get=None) -> bool:
-    """Direct Mount with Plex as its server (the original Plex mode)."""
-    return direct_mount_server(get) == 'plex'
-
-
 def is_direct_mount_jellyfin(get=None) -> bool:
     """Direct Mount with Jellyfin or Emby as its server."""
     return direct_mount_server(get) == 'jellyfin'
@@ -37,10 +32,6 @@ def is_direct_mount_without_plex(get=None) -> bool:
     """Direct Mount whose server isn't Plex (Silo, Jellyfin or Emby): Plex's own
     connection, sections and features don't apply."""
     return direct_mount_server(get) in ('silo', 'jellyfin')
-
-
-def server_label(get=None) -> str:
-    return {'plex': 'Plex', 'silo': 'Silo', 'jellyfin': 'Jellyfin/Emby'}.get(direct_mount_server(get) or '', 'Plex')
 
 
 def unconfigured_server(get=None) -> Optional[str]:

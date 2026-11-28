@@ -1,69 +1,72 @@
 ### Database Help
 
-This page provides an interactive view of your collected media items (movies and episodes) stored in the application's database. You can browse, filter, sort, and perform various actions on these items.
+This page lists every movie and episode Clyde knows about. You can browse, filter, sort and change items, one at a time or in bulk.
 
-**Statistics Panel:**
+**Top bar:**
 
-*   Click the <i class="fas fa-chart-bar"></i> icon (on the far left) to toggle a panel displaying collection statistics:
-    *   Total Movies
-    *   Total Shows
-    *   Total Episodes
+*   **Total Items:** every row in the database.
+*   **Unique Items:** rows that match the current filter, with versions of the same movie or episode counted once.
+*   **Pages:** how many pages the current filter has.
+*   **Per Page:** how many rows load at a time (100, 250, 500 or 1000). Your choice is saved in your browser.
+*   **Columns:** opens the column selector.
+*   **Reset Cols:** puts column widths back to the defaults.
+*   **Filter & Sort:** opens the filter and sort panel.
+*   The <i class="fas fa-chart-bar"></i> button opens a small panel with Total Movies, Total Shows and Total Episodes.
 
-**Table View:**
+**The table:**
 
-This is the main area displaying your database items.
+*   **All / Movies / Episodes** above the table switch the type. Your choice is saved.
+*   **#, A-Z:** the letter links show only titles that start with that letter. `#` is titles that start with a digit or symbol. `All` removes the letter filter.
+*   More rows load as you scroll, so there are no page buttons. The button at the bottom right takes you back to the top.
+*   Click a column header to sort by it. Click again to flip the order. Drag a column border to resize it.
+*   Long cells are cut short. Hover (or tap on mobile) to see the full text.
+*   The **Source** column shows whether the item came from debrid or Usenet. It is added to the view automatically.
+*   The first column is a checkbox. Hold `Shift` and click a second checkbox to select the whole range between them.
 
-*   **Content Type Filter:**
-    *   Click `Movies` or `Episodes` links above the table to switch the view between these types. Your selection is saved.
-*   **Pagination:**
-    *   **Alphabetical:** Click letters (`#`, `A`-`Z`) to show items whose titles start with that letter or symbol.
-*   **Columns:** The table displays various details about each item. You can customize which columns are visible (see "Column Selector" below).
-*   **Item Actions (per row):**
-    *   `▶️` (Play): Opens the video player for this item (highly alpha feature).
-    *   `X` (Delete): Deletes the item from the database. A confirmation popup appears, asking if you also want to **blacklist** the item to prevent it from being added again automatically.
-    *   `↻` (Rescrape): Deletes the item (including associated files and Plex entries) and moves it back to the `Wanted` queue to be searched for again. A confirmation popup appears.
-*   **Selection:**
-    *   Use the checkboxes in the first column to select individual items for bulk actions.
-    *   Click the `Select All` / `Unselect All` button above the table to toggle selection for all *currently visible* items.
-    *   Hold `Shift` and click a checkbox to select a range of items between the last clicked checkbox and the current one.
-*   **Cell Content:**
-    *   Cells with long content might be truncated. Hover over (desktop) or tap (mobile) a truncated cell to see the full content in a tooltip or popup.
+**Row buttons:**
 
-**Column Selector:**
+*   **Delete (trash):** removes the item from the database. A popup lets you also **blacklist** it so it is not added again.
+*   **Rescrape (circular arrows):** deletes the item, its file on disk and its Plex entry, then puts it in the `Wanted` queue to be searched again. A popup asks you to confirm.
+*   **Open in Library (arrow out of a box):** opens the item's Library page in a new tab. Needs a TMDB or IMDb ID.
+*   **Move to Wanted (plus):** moves the item to the `Wanted` queue after you confirm.
+*   **Blacklist (circle with a slash):** moves the item to `Blacklisted` after you confirm.
 
-*   Click the `Select Columns to Display` button to reveal the column selection interface.
-*   **Available Columns:** Shows columns currently hidden from the table.
-*   **Selected Columns:** Shows columns currently visible in the table.
-*   Use the `>` and `<` buttons to move columns between the lists. Select one or more columns before clicking.
-*   Click `Update View` to apply your column selections to the table. Your choices are saved in your browser.
+**Columns:**
 
-**Filter and Sort:**
+*   Click **Columns** (or **Select Columns to Display**) to open the selector.
+*   **Available Columns** are hidden. **Selected Columns** are shown.
+*   Select one or more and use `>` or `<` to move them across. `▲` and `▼` change the order of the selected columns.
+*   Click **Update View** to apply. The choice is saved in your browser.
 
-This section allows you to refine the items displayed in the table.
+**Filter & Sort:**
 
-*   **Adding/Removing Filters:**
-    *   Click `Add Filter` to create a new filter condition row.
-    *   Click the `×` button on a filter row to remove it.
-*   **Filter Conditions:** Each row defines a filter:
-    *   `Select Column`: Choose the database field to filter on (e.g., `title`, `state`, `year`).
-    *   `Select Operator`: Choose how to compare (e.g., `equals`, `contains`, `greater than`).
-    *   `Value`: Enter the value to compare against. This might be a text box or a dropdown with predefined options (like for the `state` column). For `content_source`, it shows user-friendly list names.
-*   **Filter Logic:** Choose how multiple filters are combined:
-    *   `AND`: *All* filter conditions must be true for an item to be shown.
-    *   `OR`: *Any* of the filter conditions can be true for an item to be shown.
-*   **Sorting:**
-    *   `Sort Column`: Select a column to sort the results by.
-    *   `Sort Order`: Choose `Ascending` (A-Z, 0-9) or `Descending` (Z-A, 9-0).
-*   **Applying/Clearing:**
-    *   Click `Apply` to update the table with the current filter and sort settings.
-    *   Click `Clear Filter & Sort` to remove all filters, reset sorting, and revert to the default view (usually Movies starting with 'A').
+*   Click **Add Filter** for a new row: pick a column, an operator (such as equals, contains, greater than) and a value. Some columns, like `state` and `content_source`, give you a list of values to pick from.
+*   The **Title**, **State**, **Version**, **IMDB ID** and **Type** buttons add a filter row for that column.
+*   Click the `×` on a row to remove that filter.
+*   **Filter Logic:** `AND` means every filter must match. `OR` means any one is enough.
+*   **Sort Column** and **Sort Order** (Ascending or Descending) sort the results.
+*   Click **Apply** to use the settings. **Clear all** removes the filters and the sort.
+*   The line under the title shows how many results match, how many are unique, and the total pages and items.
+*   Your filters, sort and letter are saved in your browser, so the page opens the same way next time.
 
-**Bulk Actions:**
+**Saved Presets:**
 
-These actions apply to all currently selected items (using the checkboxes). Buttons are enabled only when items are selected.
+*   **Save Preset** saves the current filters, sort, columns, type, letter and rows per page under a name. Presets are kept in your browser only.
+*   **Load** in the **Saved Presets** list applies a preset. `✕` deletes it.
 
-*   `Delete Selected`: Deletes all selected items. A confirmation popup appears with an option to blacklist them.
-*   `Rescrape Selected`: Performs the "Rescrape" action (delete and move to `Wanted`) on all selected items after confirmation.
-*   `Move Selected to Queue...`: A dropdown menu to move selected items directly to a specific processing queue (e.g., `Wanted`, `Blacklisted`, `Sleeping`). Choose a queue and confirm the action.
-*   `Change Selected Version...`: A dropdown menu populated with available quality/release versions (from settings). Select a version to apply it to all selected items and confirm.
-*   `Mark Selected as Early Release`: Flags the selected items as "Early Release", potentially affecting how they are processed (useful for items released before their official date). Requires confirmation.
+**Bulk actions:**
+
+These work on the ticked rows and stay greyed out until you tick something.
+
+*   **Select All:** ticks the rows on screen. A link next to it, **Select all N matching**, picks every row the filter matches, including rows not loaded yet. Ticks stay when you scroll.
+*   **Delete Selected:** deletes the items. You can also blacklist them.
+*   **Rescrape Selected:** deletes the items, their files and Plex entries, and puts them in `Wanted`.
+*   **Move Selected to Queue...:** moves the items to the queue you pick (Adding, Blacklisted, Checking, Final Scrape, Pending Uncached, Scraping, Sleeping, Unreleased, Upgrading, Wanted or Ghostlist).
+*   **Change Selected Version...:** sets the version to one of your versions from Settings.
+*   **Tags...:** pick one of your tags, then choose **Add** (adds the tag), **Update** (sets the tags to just this one) or **Remove**.
+*   **Early Release:** marks the items as early releases, for items out before their official date.
+*   **Force Priority:** makes the items jump to the front of their queues.
+*   **Resync Selected:** resyncs symlinks and database paths for the items.
+*   **Verify Symlinks:** adds the items to the symlink verification queue, which checks the files were picked up by Plex.
+
+Each bulk action asks you to confirm first.

@@ -55,10 +55,6 @@ def plex_server(get_setting: Callable) -> tuple:
     return url, token
 
 
-def plex_sessions(url: str, token: str, timeout: float = 5) -> List[dict]:
-    return plex_sessions_checked(url, token, timeout)[0]
-
-
 def plex_sessions_checked(url: str, token: str, timeout: float = 5) -> tuple:
     """(sessions, error): error is '' when Plex answered."""
     if not url or not token:

@@ -310,7 +310,7 @@ async function debridViewBroken() {
             tbody.innerHTML = d.items.map((item, idx) => {
                 const bg = idx % 2 === 0 ? 'transparent' : 'rgba(128,128,128,0.04)';
                 const name        = _esc(item.entry_name || item.name || item.title || '—');
-                const rawName     = (item.entry_name || item.name || item.title || '').replace(/'/g, "\\'");
+                const rawEntry    = item.entry_name || item.name || item.title || '';
                 const broken      = item.broken_count || (item.broken_files ? item.broken_files.length : '?');
                 const reason      = item.failure_reason || '—';
                 const isGhost     = item.is_ghost === true;
@@ -321,7 +321,7 @@ async function debridViewBroken() {
                     ? `<span style="color:#f59e0b">ghost</span>`
                     : `<span style="color:#CE93D8">${_esc(reason)}</span>`;
                 const actionCell  = isGhost
-                    ? `<button onclick="debridDeleteGhostSingle('${rawName}', this)" class="un-btn" style="padding:4px 12px;font-size:12px;color:#f59e0b;border-color:#f59e0b"><i class="fa-solid fa-ghost"></i> Delete</button>`
+                    ? `<button onclick="debridDeleteGhostSingle(${_jsArg(rawEntry)}, this)" class="un-btn" style="padding:4px 12px;font-size:12px;color:#f59e0b;border-color:#f59e0b"><i class="fa-solid fa-ghost"></i> Delete</button>`
                     : `<button onclick="debridFixSingle(${idx}, this)" class="un-btn" style="padding:4px 12px;font-size:12px">${actionLabel}</button>`;
                 return `<tr style="border-bottom:1px solid var(--border-color,#2a2a2a);background:${bg};${rowOpacity}">
                     <td style="padding:8px 12px;font-weight:500">${name}</td>

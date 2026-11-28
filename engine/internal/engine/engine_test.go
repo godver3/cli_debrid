@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
+	"errors"
 	"math/rand"
 	"strings"
 	"testing"
@@ -77,8 +78,7 @@ func TestImportSampleOffStillImports(t *testing.T) {
 func TestImportTimeoutIsRetryable(t *testing.T) {
 	s := nntptest.Start(t)
 	// One connection and three files: the probes queue behind each other,
-	// and the deadline passes while they wait. (A fetch already on the wire
-	// finishes; the connection's own read timeout covers hung servers.)
+	// and the deadline cancels both the waits and the in-flight fetch.
 	e := newEngine(t, s, func(c *Config) {
 		c.ImportTimeout, c.Providers[0].MaxConns = 1, 1
 		c.RetryBackoff = []time.Duration{50 * time.Millisecond}
@@ -263,5 +263,98 @@ func TestImportMappedEncryptedMember(t *testing.T) {
 	big.Size = int64(len(ct)) + 1
 	if _, err := e.ImportMapped("5a1d0c3e-0000-4000-8000-0000000000e3", "Big", "", nil, []MappedFileSpec{big}); err == nil {
 		t.Fatal("plaintext larger than the map accepted")
+	}
+}
+
+func TestImportQueueAdvancesWhileFetchStalls(t *testing.T) {
+	for _, mode := range []string{"watchdog", "engine delete", "store delete", "default worker pool"} {
+		t.Run(mode, func(t *testing.T) {
+			s := nntptest.Start(t)
+			e := newEngine(t, s, func(c *Config) {
+				c.Providers[0].MaxConns = 2
+				if mode != "default worker pool" {
+					c.ImportWorkers = 1
+					c.Providers[0].MaxConns = 1
+				}
+				c.RetryBackoff = []time.Duration{}
+				c.Providers[0].Timeout = 10 * time.Second
+				if mode == "watchdog" {
+					c.ImportTimeout = 1
+				}
+			})
+			defer s.CloseConns()
+			if mode == "default worker pool" && e.Config().ImportWorkers != 8 {
+				t.Fatalf("default worker count = %d, want 8", e.Config().ImportWorkers)
+			}
+			slow := nntptest.PostNZB(s, "slow", nntptest.File{Name: "Slow.mkv", Data: data(8, 1024)})
+			fast := nntptest.PostNZB(s, "fast", nntptest.File{Name: "Fast.mkv", Data: data(9, 1024)})
+			s.SetDelay(8 * time.Second) // the server delays the first BODY beyond the import deadline
+			stalled, err := e.Submit(slow, "Slow", "movies", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			deadline := time.Now().Add(3 * time.Second)
+			for len(s.BodyOrder()) == 0 {
+				if time.Now().After(deadline) {
+					t.Fatal("slow import never reached the server")
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			s.SetDelay(0)
+
+			var replacementID string
+			switch mode {
+			case "engine delete":
+				err = e.Delete(stalled.ID)
+				replacementID = stalled.ID
+			case "store delete":
+				err = e.Store.Delete(stalled.ID)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			next, err := e.Submit(fast, "Fast", "movies", replacementID)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			deadline = time.Now().Add(4 * time.Second)
+			for {
+				got, _, err := e.Store.Get(next.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got.Status == store.Ready {
+					break
+				}
+				if got.Status == store.Failed || time.Now().After(deadline) {
+					t.Fatalf("next import did not become ready before the slow server replied: %+v", got)
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+
+			old, _, err := e.Store.Get(stalled.ID)
+			switch mode {
+			case "default worker pool":
+				if !e.Cache.Started("slow0.1@test") {
+					t.Fatal("slow fetch ended before the next job was ready")
+				}
+				if err != nil || old.Status != store.Importing {
+					t.Fatalf("first job should still be importing: %+v, %v", old, err)
+				}
+			case "watchdog":
+				if err != nil || old.Status != store.Failed || !old.Retryable || !strings.Contains(old.Error, "longer than 1s") {
+					t.Fatalf("watchdog outcome = %+v, %v", old, err)
+				}
+			case "store delete":
+				if !errors.Is(err, store.ErrNotFound) {
+					t.Fatalf("deleted job is still in store: %+v, %v", old, err)
+				}
+			case "engine delete":
+				if err != nil || old.Name != "Fast" || old.Status != store.Ready {
+					t.Fatalf("replacement outcome = %+v, %v", old, err)
+				}
+			}
+		})
 	}
 }

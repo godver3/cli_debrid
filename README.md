@@ -9,8 +9,8 @@
 
 *Same app, same images and settings, new name. See [Renamed from cli_debrid](#renamed-from-cli_debrid).*
 
-[![Dev version](https://img.shields.io/github/v/release/godver3/cli_debrid?include_prereleases&label=dev&color=orange)](https://github.com/godver3/cli_debrid/releases)
-[![Main version](https://img.shields.io/github/v/release/godver3/cli_debrid?label=main)](https://github.com/godver3/cli_debrid/releases/latest)
+[![Dev version](https://img.shields.io/github/v/release/godver3/clyde?include_prereleases&label=dev&color=orange)](https://github.com/godver3/clyde/releases)
+[![Main version](https://img.shields.io/github/v/release/godver3/clyde?label=main)](https://github.com/godver3/clyde/releases/latest)
 [![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/ynqnXGJ4hU)
 
 Clyde is a successor to, and pays homage to, plex_debrid. It watches your lists, finds the best release for everything on them, gets it through your debrid service or Usenet, and keeps your Plex or Jellyfin library organised and upgraded, with no files downloaded to your server. Its **built-in mount** streams your debrid account and your Usenet server itself, so a single container is all you need.
@@ -32,22 +32,22 @@ The easiest setup is a single container: Clyde with its **built-in mount**, whic
 
 ```bash
 # Linux with Docker Engine
-mkdir -p ${HOME}/cli_debrid && cd ${HOME}/cli_debrid
-curl -o docker-compose.yml https://raw.githubusercontent.com/godver3/cli_debrid/dev/docker-compose.builtin.yml
+mkdir -p ${HOME}/clyde && cd ${HOME}/clyde
+curl -o docker-compose.yml https://raw.githubusercontent.com/godver3/clyde/dev/docker-compose.builtin.yml
 docker compose up -d
 ```
 
 Then open Clyde at `http://your-server-ip:5000` and follow the onboarding wizard. Keep **Built-in mount** as the mount tool; it fills in `/mnt/clid/__all__`. Give your media server the same folders at the same paths: `/mnt/clid` (with `:rslave` if it runs in Docker) and, for Symlink mode, `/mnt/symlinks`. The compose file has a Plex service you can uncomment. The [built-in mount guide](https://godver3.github.io/cli_docs/integrations/builtin-mount/) covers the settings, WebDAV for a media server on another machine, and moving over from cli_mount.
 
-**Prefer a separate mount container?** [docker-compose.cli_mount.yml](https://raw.githubusercontent.com/godver3/cli_debrid/dev/docker-compose.cli_mount.yml) runs Clyde and **[cli_mount](https://github.com/mash2k3/decypharr/tree/dev)** together:
+**Prefer a separate mount container?** [docker-compose.cli_mount.yml](https://raw.githubusercontent.com/godver3/clyde/dev/docker-compose.cli_mount.yml) runs Clyde and **[cli_mount](https://github.com/mash2k3/decypharr/tree/dev)** together:
 
 ```bash
 # Create the shared folders once:
 sudo mkdir -p /mnt/cli_mount /mnt/symlinks
 sudo chown 1000:1000 /mnt/cli_mount
 
-mkdir -p ${HOME}/cli_debrid && cd ${HOME}/cli_debrid
-curl -o docker-compose.yml https://raw.githubusercontent.com/godver3/cli_debrid/dev/docker-compose.cli_mount.yml
+mkdir -p ${HOME}/clyde && cd ${HOME}/clyde
+curl -o docker-compose.yml https://raw.githubusercontent.com/godver3/clyde/dev/docker-compose.cli_mount.yml
 docker compose up -d
 ```
 
@@ -55,7 +55,7 @@ docker compose up -d
 2. Open Clyde at `http://your-server-ip:5000` and follow the onboarding wizard. Choose **cli_mount** as the mount tool, with the mount path `/mnt/cli_mount/__all__`. If you use Usenet, click **Detect** next to the mount URL; it finds `http://cli_mount:8282`. After onboarding, **Settings → Required → Usenet Mount → Detect** also fills in cli_mount's data path (`/climount_data`), which turns on backups of cli_mount's databases.
 3. Give your media server the same folders at the same paths: `/mnt/cli_mount` (with `:rslave` if it runs in Docker) and, for Symlink mode, `/mnt/symlinks`.
 
-The [Docker guide](https://godver3.github.io/cli_docs/installation/docker/) explains each line and covers Plex in the same stack. Already have a mount, or using Zurg or Decypharr? Use the plain [docker-compose.yml](https://raw.githubusercontent.com/godver3/cli_debrid/dev/docker-compose.yml) instead.
+The [Docker guide](https://godver3.github.io/cli_docs/installation/docker/) explains each line and covers Plex in the same stack. Already have a mount, or using Zurg or Decypharr? Use the plain [docker-compose.yml](https://raw.githubusercontent.com/godver3/clyde/dev/docker-compose.yml) instead.
 
 Each image tag works on both AMD64 and ARM64:
 
@@ -81,7 +81,7 @@ Clyde needs a mount for your debrid and/or Usenet files: its own built-in mount,
 - **Configuring:** [Required](https://godver3.github.io/cli_docs/configuration/required/), [Content Sources](https://godver3.github.io/cli_docs/configuration/content-sources/), [Scrapers](https://godver3.github.io/cli_docs/configuration/scrapers/), [Versions](https://godver3.github.io/cli_docs/configuration/versions/), [Users](https://godver3.github.io/cli_docs/configuration/manage-users/), [Notifications](https://godver3.github.io/cli_docs/configuration/notifications/)
 - **Scrapers:** [Torrentio](https://godver3.github.io/cli_docs/scrapers/torrentio/), [Jackett](https://godver3.github.io/cli_docs/scrapers/jackett/), [Prowlarr](https://godver3.github.io/cli_docs/scrapers/prowlarr/), [Zilean](https://godver3.github.io/cli_docs/scrapers/zilean/), [Nyaa](https://godver3.github.io/cli_docs/scrapers/nyaa/), [MediaFusion](https://godver3.github.io/cli_docs/scrapers/mediafusion/), [AIOStreams](https://godver3.github.io/cli_docs/scrapers/aiostreams/), [Newznab](https://godver3.github.io/cli_docs/scrapers/newznab/)
 - **Integrations:** [Built-in mount](https://godver3.github.io/cli_docs/integrations/builtin-mount/), [cli_mount](https://godver3.github.io/cli_docs/integrations/cli_mount/), [Decypharr](https://godver3.github.io/cli_docs/integrations/decypharr/), [Zurg](https://godver3.github.io/cli_docs/integrations/zurg/), [Plex](https://godver3.github.io/cli_docs/integrations/plex/), [Jellyfin](https://godver3.github.io/cli_docs/integrations/jellyfin/), [Seerr](https://godver3.github.io/cli_docs/integrations/seerr/)
-- **Features:** [Library](https://godver3.github.io/cli_docs/features/library/), [Queues](https://godver3.github.io/cli_docs/features/queues/), [Upgrade Hub](https://godver3.github.io/cli_docs/features/upgrade-hub/), [Discover](https://godver3.github.io/cli_docs/features/discover/), [Overlays](https://godver3.github.io/cli_docs/features/overlays/), [Plex Collections](https://godver3.github.io/cli_docs/features/plex-collections/), [Debrid Manager](https://godver3.github.io/cli_docs/features/debrid-manager/), [Scraper Tester](https://godver3.github.io/cli_docs/features/scraper-tester/), [Automation](https://godver3.github.io/cli_docs/features/automation/), [Tools](https://godver3.github.io/cli_docs/features/tools/), [Maintenance](https://godver3.github.io/cli_docs/features/maintenance/)
+- **Features:** [Library](https://godver3.github.io/cli_docs/features/library/), [Queues](https://godver3.github.io/cli_docs/features/queues/), [Upgrade Hub](https://godver3.github.io/cli_docs/features/upgrade-hub/), [Discover](https://godver3.github.io/cli_docs/features/discover/), [Overlays](https://godver3.github.io/cli_docs/features/overlays/), [Plex Collections](https://godver3.github.io/cli_docs/features/plex-collections/), [Preset Collections](https://godver3.github.io/cli_docs/features/plex-preset-collections/), [NFO Files](https://godver3.github.io/cli_docs/features/nfo-files/), [Debrid Manager](https://godver3.github.io/cli_docs/features/debrid-manager/), [Scraper Tester](https://godver3.github.io/cli_docs/features/scraper-tester/), [Automation](https://godver3.github.io/cli_docs/features/automation/), [Tools](https://godver3.github.io/cli_docs/features/tools/), [Maintenance](https://godver3.github.io/cli_docs/features/maintenance/)
 - **Troubleshooting:** [FAQ](https://godver3.github.io/cli_docs/faq/)
 
 ### dev vs main
@@ -140,7 +140,7 @@ Content sources ──> Scrapers ──> Debrid / Usenet ──> Mount ──> L
 ### Getting content
 - **Debrid providers:** Real-Debrid, AllDebrid, Premiumize, TorBox, Debrid-Link and HighWay.
 - **Usenet:** NZBs from your Newznab indexers, streamed through the [built-in mount](https://godver3.github.io/cli_docs/integrations/builtin-mount/), [cli_mount](https://github.com/mash2k3/decypharr/tree/dev), NzbDAV or Zurg, with no download step. Usenet can be used alone or next to a debrid service.
-- **Scrapers:** Torrentio, Jackett, Prowlarr, Zilean, Nyaa, MediaFusion, AIOStreams and Newznab, with SeaDex for best-release anime picks.
+- **Scrapers:** Torrentio, Jackett, Prowlarr, Zilean, Nyaa, MediaFusion, Comet, AIOStreams and Newznab, with SeaDex for best-release anime picks.
 - **Content sources:** MDBList, Trakt (watchlists, lists, collection, friends), Plex (your watchlist, other users' and friends' watchlists, RSS), Seerr/Overseerr, Agregarr, Scrob, Adaptive Lists and your existing collection.
 - **Manual and magnet assign:** paste a magnet, torrent or NZB, then map the files to episodes yourself or let the matcher do it. It understands season packs, absolute-numbered anime packs and multi-episode files, and can replace episodes already in your library.
 
@@ -157,7 +157,9 @@ Content sources ──> Scrapers ──> Debrid / Usenet ──> Mount ──> L
 
 ### Library and media servers
 - **Direct Mount or symlinked library:** with Direct Mount your media server (Plex, Silo, Jellyfin or Emby) reads the mount itself and Clyde tracks your library through its API. Symlinked/Local builds a clean folder tree from your mount, with naming templates, for Plex, Jellyfin, Emby or Silo.
-- **Plex extras:** collections, smart collections, labels, movie box sets and poster overlays.
+- **Preset collections (Plex):** Kometa-style collections you switch on one by one, built from what's already in your library: Christmas, Halloween, Box Office Blockbusters, Top Rated, Trending, decades, Oscar and Emmy winners, and studios like Pixar, Marvel and A24. Nothing is downloaded, and collections you made yourself are never emptied or deleted. See [Preset Collections](https://godver3.github.io/cli_docs/features/plex-preset-collections/).
+- **NFO files** (Tools → NFO Files, Symlinked/Local): keep Plex on Clyde's episode numbering after Plex drops TheTVDB on 3 December 2026, for custom orders and anime. Snapshot what Plex shows today, write NFOs for changed-order shows or every show, and let Clyde set up a Plex agent that reads them. Jellyfin, Emby and Kodi read the same files. See [NFO Files](https://godver3.github.io/cli_docs/features/nfo-files/).
+- **Plex extras:** list collections, smart collection posters, labels, movie box sets and poster overlays.
 - **Subtitle manager** (Tools → Subtitles): finds subtitles that match your exact release by file hash and release name, from OpenSubtitles, SubDL, SubSource and more. See what each item has, search and compare scores, pick one or let it choose, fill in everything that's missing in one go, and import your existing subtitles from Bazarr. Bazarr can still connect to Clyde as if it were Radarr/Sonarr.
 
 ### Web interface

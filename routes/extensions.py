@@ -445,7 +445,7 @@ def add_security_headers(response):
     elif enable_caching:
         # Add cache control headers for static assets
         if request.path.startswith('/static/'):
-            # Special handling for CSS files - shorter cache with revalidation to support theme switching
+            # Special handling for CSS files - shorter cache with revalidation so style updates show up quickly
             if request.path.endswith('.css'):
                 response.headers['Cache-Control'] = 'public, max-age=300, must-revalidate'  # 5 minutes with revalidation
                 if not response.headers.get('ETag'):

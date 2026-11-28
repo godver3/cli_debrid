@@ -479,7 +479,7 @@ def _build_assignment(video_files, tmdb_id, media_type, title, year, version, to
 
         # Compare this file against all currently UNASSIGNED episode items
         for idx, item in enumerate(unassigned_items):
-            item_episode_title = item.get('episode_title', '').lower()
+            item_episode_title = (item.get('episode_title') or '').lower()
             item_key = item.get('item_key', 'N/A')
 
             # Skip generic titles or items without titles

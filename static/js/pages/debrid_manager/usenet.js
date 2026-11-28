@@ -469,7 +469,7 @@ async function usenetViewBroken() {
             tbody.innerHTML = d.items.map((i, idx) => {
                 const bg = idx % 2 === 0 ? 'transparent' : 'rgba(128,128,128,0.04)';
                 const name = _esc(i.entry_name || i.name || i.title || '—');
-                const rawName = (i.entry_name || i.name || i.title || '').replace(/'/g, "\\'");
+                const rawEntry = i.entry_name || i.name || i.title || '';
                 // broken_files is a list of {file_name, reason} (cli_mount and
                 // the built-in mount); older backends sent a count.
                 const files = Array.isArray(i.broken_files) ? i.broken_files : [];
@@ -479,7 +479,7 @@ async function usenetViewBroken() {
                     <td style="padding:8px 12px;font-weight:500">${name}</td>
                     <td style="padding:8px 12px;color:#ff4444;font-weight:600;text-align:right;white-space:nowrap" title="${tip}">${_esc(String(broken))}${files.length ? ' file' + (files.length === 1 ? '' : 's') : ''}</td>
                     <td style="padding:8px 12px;text-align:center;white-space:nowrap">
-                        <button onclick="usenetFixSingle('${rawName}', this)" class="un-btn" style="padding:4px 12px;font-size:12px">Fix</button>
+                        <button onclick="usenetFixSingle(${_jsArg(rawEntry)}, this)" class="un-btn" style="padding:4px 12px;font-size:12px">Fix</button>
                     </td>
                 </tr>`;
             }).join('');
@@ -740,14 +740,14 @@ async function afLoad() {
             const canDelete = item.cliDebridId != null || item.entryName;
             const idsJson = JSON.stringify(item.cliDebridIds || {}).replace(/"/g,'&quot;');
             const delBtn = canDelete
-                ? `<button class="af-del-btn" data-ids="${idsJson}" data-entry="${(item.entryName||'').replace(/"/g,'&quot;')}" onclick="afDelete(this)">Delete</button>`
+                ? `<button class="af-del-btn" data-ids="${idsJson}" data-entry="${escHtml(item.entryName||'')}" onclick="afDelete(this)">Delete</button>`
                 : '';
 
             const div = document.createElement('div');
             div.className = 'af-item';
             div.innerHTML = `
                 <div class="af-item-info">
-                    <div class="af-item-name" title="${item.name.replace(/"/g,'&quot;')}">${item.name}</div>
+                    <div class="af-item-name" title="${escHtml(item.name)}">${escHtml(item.name)}</div>
                     <div class="af-item-meta">
                         <span class="af-source-badge ${srcClass}">${srcLabel}</span>
                         ${dur ? `<span class="af-duration">⏱ ${dur}</span>` : ''}

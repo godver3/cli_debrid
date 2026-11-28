@@ -3,6 +3,7 @@ import logging
 import logging.handlers
 from urllib.parse import urlparse, parse_qs
 import time
+import re
 from collections import defaultdict, deque
 from flask import current_app, g
 from requests.adapters import HTTPAdapter
@@ -81,6 +82,9 @@ def _internal_hosts():
     return _internal_hosts_cache[1]
 
 
+_ADDON_CONFIG_PATH = re.compile(r'^/.+?/(stream/|manifest\.json)')
+
+
 def _log_outbound(request):
     logger = globals().get('api_logger')
     if logger is None:
@@ -88,8 +92,11 @@ def _log_outbound(request):
     parsed = urlparse(request.url)
     if parsed.netloc.lower() in _internal_hosts():
         return
-    # Domain and path only: query strings can carry API keys.
-    logger.info(f"{request.method} {parsed.netloc}{parsed.path}")
+    # Domain and path only: query strings can carry API keys. Stremio addons
+    # (Comet, Torrentio, ...) carry their config, often with a debrid key, as
+    # the path before /stream/ or /manifest.json, so that part is hidden too.
+    path = _ADDON_CONFIG_PATH.sub(r'/<config>/\1', parsed.path, count=1)
+    logger.info(f"{request.method} {parsed.netloc}{path}")
 
 
 def install_request_logging():
@@ -198,7 +205,7 @@ class APITracker:
         self.session.mount('https://', adapter)
         self.session.mount('http://', adapter)
         self.session.headers.update({
-            'User-Agent': f'cli_debrid/{get_app_version()} (+https://github.com/godver3/cli_debrid)'
+            'User-Agent': f'cli_debrid/{get_app_version()} (+https://github.com/godver3/clyde)'
         })
         self.cookies = requests.cookies
         self.exceptions = requests.exceptions

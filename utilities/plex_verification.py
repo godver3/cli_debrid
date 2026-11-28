@@ -453,6 +453,7 @@ def _run_plex_verification_scan(max_files: int, recent_only: bool, max_attempts:
 
     verified_count = 0
     total_processed = 0
+    verified_shows = set()  # imdb ids of episodes Plex just added
 
     for file_data in unverified_files:
         total_processed += 1
@@ -510,6 +511,8 @@ def _run_plex_verification_scan(max_files: int, recent_only: bool, max_attempts:
             # Mark as verified
             if mark_file_as_verified(verification_id):
                 verified_count += 1
+                if media_item.get('type') == 'episode' and media_item.get('imdb_id'):
+                    verified_shows.add(media_item['imdb_id'])
                 logger.info(f"Successfully marked verification ID {verification_id} as verified for '{os.path.basename(file_data['full_path'])}'")
             else:
                 logger.error(f"Failed to mark verification ID {verification_id} as verified in DB for '{os.path.basename(file_data['full_path'])}'")
@@ -546,6 +549,18 @@ def _run_plex_verification_scan(max_files: int, recent_only: bool, max_attempts:
                     logger.warning(f"Plex directory scan trigger failed or returned False for directory containing: {base_filename}")
             except Exception as e:
                 logger.error(f"Error triggering Plex update after failed verification: {str(e)}", exc_info=True)
+
+    # NFO files on: a show new to Plex is numbered by TMDB like its NFOs.
+    # Off: nothing (no Plex edits outside an order change)
+    from utilities.nfo_writer import enabled as _nfo_enabled
+    if verified_shows and _nfo_enabled():
+        try:
+            import threading
+            from utilities.plex_order_metadata import pin_new_nfo_shows
+            threading.Thread(target=pin_new_nfo_shows, args=(verified_shows,),
+                             name='plex-nfo-new-shows', daemon=True).start()
+        except Exception as e:
+            logger.warning(f"Could not start TMDB numbering for new NFO shows: {e}")
 
     # Log stats
     try:

@@ -283,6 +283,28 @@ def save_plex_boxsets_settings():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@settings_bp.route('/api/plex-preset-collections/status', methods=['GET'])
+@admin_required
+def get_plex_preset_collections_status():
+    """Last run time and result for the preset collections."""
+    try:
+        from database.plex_preset_collections import get_status
+        return jsonify({'success': True, **get_status()})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@settings_bp.route('/api/plex-preset-collections/run', methods=['POST'])
+@admin_required
+def run_plex_preset_collections():
+    """Sync the preset collections now, in the background."""
+    try:
+        import threading
+        from database.plex_preset_collections import run_preset_collections
+        threading.Thread(target=run_preset_collections, daemon=True, name='plex-preset-collections').start()
+        return jsonify({'success': True, 'message': 'Preset collections sync started'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @settings_bp.route('/api/plex-libraries', methods=['GET'])
 @admin_required
 def get_plex_libraries():

@@ -26,7 +26,7 @@ iso8601==2.1.0
 Pillow==13.0.0
 supervisor==4.2.5
 ntplib==0.4.0
-parsett==1.7.0
+parsett==1.8.5
 pytz==2024.1
 tzdata==2026.5
 psutil==6.0.0

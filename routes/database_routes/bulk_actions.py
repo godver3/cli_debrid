@@ -1,10 +1,9 @@
 """Bulk queue actions on selected items."""
 
-from flask import jsonify, request, current_app
+from flask import jsonify, request
 import sqlite3
 import logging
 from utilities.settings import get_setting
-import json
 from ..models import admin_required
 from database.database_reading import get_media_item_by_id
 import os
@@ -14,7 +13,6 @@ from utilities.local_library_scan import convert_item_to_symlink
 from database.database_writing import update_media_item, RESET_COLLECTION_STATE_SQL
 from database.symlink_verification import add_symlinked_file_for_verification
 from ._common import BATCH_SIZE, database_bp, queue_plex_removal_for_item, sync_queues_after_rescrape
-from .item_actions import delete_item
 from utilities.paths import safe_realpath
 
 @database_bp.route('/bulk_queue_action', methods=['POST'])
@@ -73,57 +71,45 @@ def bulk_queue_action():
             logging.info(log_message)
 
 
+        if action == 'delete':
+            logging.info(f"Entering batched 'delete' block for {len(selected_items)} items.")
+            valid_ids = []
+            for raw_id in selected_items:
+                try:
+                    valid_ids.append(int(raw_id))
+                except (TypeError, ValueError):
+                    error_count += 1
+                    errors.append(f"Invalid item ID: {raw_id}")
+
+            if valid_ids:
+                from utilities.deletion_manager import DeletionManager
+                deletion_manager = DeletionManager()
+                result = deletion_manager.delete_multiple_items(
+                    item_ids=valid_ids,
+                    blacklist=blacklist,
+                    delete_from_media_server=True,
+                    delete_files=True,
+                    delete_from_debrid=False,
+                    delete_symlinks=True,
+                    clear_cache=False,
+                    remove_from_content_source=False,
+                    remove_original_files=True,
+                    remove_climount_entries=True,
+                )
+                if result.get('database_locked'):
+                    logging.error("Database is locked during bulk delete.")
+                    return jsonify({'success': False, 'error': 'database is locked', 'database_locked': True}), 503
+                total_processed = result.get('deleted_count', 0)
+                error_count += result.get('failed_count', 0)
+                errors.extend(result.get('errors', []))
+
         for i in range(0, len(selected_items), batch_size):
+            if action == 'delete':
+                break
             batch = selected_items[i:i + batch_size]
             logging.info(f"Processing batch {i//batch_size + 1}. Action: '{action}'")
 
-            if action == 'delete':
-                logging.info("Entering 'delete' block.")
-                # Process each item in the batch through delete_item
-                for item_id in batch:
-                    try:
-                        # Create a new request with our data
-                        with current_app.test_request_context(
-                            method='POST',
-                            data=json.dumps({
-                                'item_id': item_id,
-                                'blacklist': blacklist
-                            }),
-                            content_type='application/json'
-                        ):
-                            response = delete_item()
-                            
-                            if isinstance(response, tuple):
-                                success = response[0].json.get('success', False)
-                                if response[0].json.get('error') == 'database is locked':
-                                    # Propagate the specific error response
-                                    return jsonify({'success': False, 'error': 'database is locked', 'database_locked': True}), 503
-                            else:
-                                success = response.json.get('success', False)
-                                if response.json.get('error') == 'database is locked':
-                                     return jsonify({'success': False, 'error': 'database is locked', 'database_locked': True}), 503
-                                
-                            if success:
-                                total_processed += 1
-                            else:
-                                error_count += 1
-                                error_msg = response.json.get('error', 'Unknown error')
-                                errors.append(f"Error processing item {item_id}: {error_msg}")
-                                
-                    except sqlite3.OperationalError as e:
-                        if "database is locked" in str(e):
-                            logging.error(f"Database is locked during bulk delete for item {item_id}.")
-                            return jsonify({'success': False, 'error': 'database is locked', 'database_locked': True}), 503
-                        else:
-                            error_count += 1
-                            errors.append(f"Error processing item {item_id}: {str(e)}")
-                            logging.error(f"Error processing item {item_id} in bulk delete: {str(e)}")
-                    except Exception as e:
-                        error_count += 1
-                        errors.append(f"Error processing item {item_id}: {str(e)}")
-                        logging.error(f"Error processing item {item_id} in bulk delete: {str(e)}")
-                        
-            elif action == 'move' and target_queue:
+            if action == 'move' and target_queue:
                 logging.info("Entering 'move' block.")
                 # Keep existing move functionality
                 conn = get_db_connection()

@@ -160,3 +160,72 @@ class EndpointTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class NewFeatureTests(unittest.TestCase):
+    """Settings outside the schema, the debrid chain and the external scan (0.9.3)."""
+
+    def test_extra_sections_listed_and_masked(self):
+        cfg = {'NFO': {'mode': 'changed', 'snapshot_id': 3, 'tvdb_api_key': 'abc'}}
+        with mock.patch.object(mcp, '_schema', return_value={'Scraping': {}}), \
+                mock.patch.object(mcp, '_get_setting', side_effect=lambda s, *a: cfg.get(s, {})):
+            self.assertIn('NFO', mcp.tool_list_settings()['sections'])
+            out = mcp.tool_list_settings('nfo')
+        self.assertEqual(out['section'], 'NFO')
+        self.assertIn('NFO Files', out['edited_on'])
+        rows = {r['setting']: r['value'] for r in out['settings']}
+        self.assertEqual(rows['mode'], 'changed')
+        self.assertEqual(rows['tvdb_api_key'], mcp.MASK_SET)
+
+    def test_fallback_providers_shown_with_keys_masked(self):
+        schema = {'Debrid Provider': {'provider': {'type': 'string', 'default': 'RealDebrid'}}}
+        cur = {'provider': 'RealDebrid', 'fallback_providers': [
+            {'provider': 'Torbox', 'api_key': 'SECRETKEY', 'stream_only': True}]}
+        with mock.patch.object(mcp, '_schema', return_value=schema), \
+                mock.patch.object(mcp, '_get_setting', return_value=cur):
+            row = mcp.tool_explain_setting('Debrid Provider', 'fallback_providers')
+            text = mcp.call_tool('list_settings', {'section': 'Debrid Provider'})['content'][0]['text']
+        self.assertEqual(row['value'], [{'provider': 'Torbox', 'api_key': mcp.MASK_SET, 'stream_only': True}])
+        self.assertIn('streaming', row['description'].lower())
+        self.assertNotIn('SECRETKEY', text)
+
+    def test_debrid_chain_splits_streaming_only(self):
+        import types
+        rd = types.SimpleNamespace(PROVIDER_NAME='Real-Debrid', stream_only=False)
+        tb = types.SimpleNamespace(PROVIDER_NAME='Torbox', stream_only=True)
+        fake = types.ModuleType('debrid')
+        fake.get_debrid_providers = lambda: [rd, tb]
+        fake.get_grab_providers = lambda: [rd]
+        with mock.patch.dict(sys.modules, {'debrid': fake}):
+            self.assertEqual(mcp._debrid_chain(), {'all': ['Real-Debrid', 'Torbox'],
+                                                   'adds_new_releases': ['Real-Debrid'],
+                                                   'streaming_only': ['Torbox']})
+
+    def test_external_scan_status_reads_state(self):
+        import tempfile
+        from utilities import external_mount_scan as ems
+        state = {ems.META_KEY: {'last_run': 100},
+                 'Old.Show.S01': {'baseline': True},
+                 'New.Movie.2024.1080p': {'imported': True, 'first_seen': 50},
+                 'Empty.Folder': {'no_media': True, 'first_seen': 60},
+                 'Broken.Release': {'given_up': True, 'attempts': 3, 'first_seen': 40}}
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, 'state.json')
+            with open(path, 'w') as f:
+                json.dump(state, f)
+            with mock.patch.object(ems, '_state_path', return_value=path), \
+                    mock.patch.object(mcp, '_get_setting', return_value={'scan_mount_for_external_adds': True}):
+                out = mcp.tool_external_scan_status()
+        self.assertTrue(out['enabled'])
+        self.assertEqual(out['last_run'], 100)
+        self.assertEqual(out['counts'], {'baseline': 1, 'imported': 1, 'waiting_for_media': 1, 'given_up': 1})
+        self.assertEqual([r['folder'] for r in out['recent']], ['Empty.Folder', 'New.Movie.2024.1080p', 'Broken.Release'])
+
+    def test_external_scan_status_without_state_file(self):
+        from utilities import external_mount_scan as ems
+        with mock.patch.object(ems, '_state_path', return_value='/nonexistent/state.json'), \
+                mock.patch.object(mcp, '_get_setting', return_value={}):
+            out = mcp.tool_external_scan_status()
+        self.assertFalse(out['enabled'])
+        self.assertEqual(out['counts'], {})
+        self.assertNotIn('error', out)

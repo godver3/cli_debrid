@@ -1,6 +1,7 @@
 """Post-scan cleanup of replaced/dead Plex versions and Plex trash."""
 
 from utilities.settings import get_setting
+import threading
 import time
 import plexapi.server
 import os
@@ -198,7 +199,71 @@ def start_dead_plex_version_cleanup(item):
         logger.warning(f"[PLEX_DEAD_VERSIONS] Could not start cleanup for {item.get('title')}: {e}")
         return False
 
-def scan_and_empty_plex_trash(paths: list = None, section_type: str = None, empty_trash: bool = True) -> dict:
+
+_SCAN_WAIT_SYNC_S = 10      # wait this long in the caller for the scan to finish
+_SCAN_WAIT_BG_S = 15 * 60   # then up to this long in the background
+
+
+def _wait_for_scans(sections, timeout_s: float, poll_s: float = 2.0) -> bool:
+    """True once none of `sections` is refreshing (scanning), False on timeout.
+    A section whose state can't be read counts as done."""
+    deadline = time.monotonic() + timeout_s
+    while True:
+        busy = False
+        for s in sections:
+            try:
+                s.reload()
+                busy = busy or getattr(s, 'refreshing', False) is True
+            except Exception:
+                pass
+        if not busy:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(poll_s)
+
+
+def _empty_trash_after_scans(sections, section_type=None):
+    if not _wait_for_scans(sections, _SCAN_WAIT_BG_S, poll_s=5.0):
+        logger.warning("Plex scan still running after 15 min; emptying trash anyway")
+    for s in sections:
+        if section_type and s.type != section_type:
+            continue
+        try:
+            s.emptyTrash()
+            logger.info(f"Emptied trash for Plex section {s.title} after its scan finished")
+        except Exception as e:
+            logger.error(f"Failed to empty trash for section {s.title}: {e}")
+
+
+def _nearest_existing_scan_paths(paths: list, sections) -> list:
+    """For each path, the nearest folder that still exists (the path itself if
+    it does), stopping at the Plex section location that contains it. Order
+    kept, duplicates and paths already covered by another kept path dropped."""
+    locations = []
+    for section in sections:
+        for loc in (getattr(section, 'locations', None) or []):
+            locations.append(os.path.normpath(loc))
+    out = []
+    for path in paths or []:
+        p = os.path.normpath(path)
+        root = next((loc for loc in sorted(locations, key=len, reverse=True)
+                     if p == loc or p.startswith(loc.rstrip(os.sep) + os.sep)), None)
+        # Only walk when this filesystem sees Plex's path space (the section
+        # folder exists here). When Plex sees the library under another path
+        # every isdir() is False and the walk would end at the section root,
+        # turning each delete into a whole-section scan.
+        if root and os.path.isdir(root):
+            while p != root and not os.path.isdir(p):
+                p = os.path.dirname(p)
+        if p not in out:
+            out.append(p)
+    # A kept parent already covers its children
+    return [p for p in out if not any(o != p and p.startswith(o.rstrip(os.sep) + os.sep) for o in out)]
+
+
+def scan_and_empty_plex_trash(paths: list = None, section_type: str = None, empty_trash: bool = True,
+                              wait_s: float = 0) -> dict:
     """
     Scan specific Plex paths and then empty trash to clean up unavailable items.
 
@@ -210,6 +275,8 @@ def scan_and_empty_plex_trash(paths: list = None, section_type: str = None, empt
                If provided, only these paths will be scanned instead of entire sections.
         section_type: Optional - 'movie' or 'show' to filter sections for trash empty.
                       If None, empties trash for all sections.
+        wait_s: with empty_trash=False, wait up to this long for the scanned
+                sections to finish scanning (result 'scan_finished').
 
     Returns:
         dict with 'success', 'paths_scanned', 'sections_cleaned', 'errors'
@@ -287,6 +354,11 @@ def scan_and_empty_plex_trash(paths: list = None, section_type: str = None, empt
 
         # Step 1: Scan specific paths or sections
         if paths:
+            # A partial scan of a folder that no longer exists does nothing in
+            # Plex, so the removed episodes stayed (a show delete removes the
+            # season and show folders too). Scan the nearest folder that still
+            # exists, never above the section's own location.
+            paths = _nearest_existing_scan_paths(paths, sections)
             # Scan only the specific paths provided (much faster than full library scan)
             for path in paths:
                 try:
@@ -334,7 +406,26 @@ def scan_and_empty_plex_trash(paths: list = None, section_type: str = None, empt
 
         # Step 3: Empty trash ONLY for sections that were actually scanned
         if not empty_trash:
+            if wait_s and scanned_sections:
+                result['scan_finished'] = _wait_for_scans(
+                    [s for s in sections if s.key in scanned_sections], wait_s)
             return result
+
+        # Emptying the trash before the scan has marked the files missing does
+        # nothing, and with Plex's "Empty trash automatically after every scan"
+        # off (its default) the deleted items then stay in Plex. A scan of a
+        # whole section location takes far longer than the 2 s above, so wait
+        # for the scanned sections to finish; past a short wait, finish in the
+        # background so the caller isn't held up.
+        if scanned_sections:
+            scanning = [s for s in sections if s.key in scanned_sections]
+            if not _wait_for_scans(scanning, _SCAN_WAIT_SYNC_S):
+                logger.info("Plex is still scanning; emptying its trash once the scan finishes (background)")
+                threading.Thread(target=_empty_trash_after_scans, args=(scanning, section_type),
+                                 name='plex-empty-trash', daemon=True).start()
+                result['trash_deferred'] = True
+                result['sections_cleaned'] = [s.title for s in scanning]
+                return result
 
         # Safety: if specific paths were requested but none of them matched any
         # Plex library section (e.g. a debrid-mount path that doesn't match the

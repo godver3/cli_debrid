@@ -18,6 +18,15 @@ from database.core import (
 import math # Add math import for ceiling division
 from queues.config_manager import get_overseerr_instances, get_content_source_display_names # Added import
 
+
+def _source_label(source_id, display_names):
+    """The configured display name of a content source, else a readable form
+    of its id: built-in sources that aren't in the config (content_requester,
+    magnet_assigner...) showed as the raw id ("Source: content_requester")."""
+    if source_id in display_names:
+        return display_names[source_id]
+    return str(source_id).replace('_', ' ').strip().title() if source_id else source_id
+
 # Global notification buffer
 notification_buffer = []
 notification_timer = None
@@ -242,7 +251,7 @@ def format_notification_content(notifications, notification_type, notification_c
         if enable_detailed_info and (new_state == 'Collected' or new_state == 'Upgraded'):
             if content_source:
                 # Convert content source ID to display name
-                display_name = content_source_display_names.get(content_source, content_source)
+                display_name = _source_label(content_source, content_source_display_names)
                 formatted_title += f"\nSource: {display_name}"
             if content_source_detail:
                 formatted_title += f"\nRequested by: {content_source_detail}"
@@ -687,7 +696,7 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
                     source_info = []
                     if notification.get('content_source'):
                         # Convert content source ID to display name
-                        display_name = content_source_display_names.get(notification['content_source'], notification['content_source'])
+                        display_name = _source_label(notification['content_source'], content_source_display_names)
                         source_info.append(f"Source: {display_name}")
                     if notification.get('content_source_detail'):
                         source_info.append(f"Requested by: {notification['content_source_detail']}")
@@ -1235,7 +1244,7 @@ def send_ntfy_notification(host, api_key, priority, topic, content):
     if not priority:
         priority = "low"
     headers={
-                "Icon": "https://raw.githubusercontent.com/godver3/cli_debrid/refs/heads/main/static/white-icon-32x32.png",
+                "Icon": "https://raw.githubusercontent.com/godver3/clyde/refs/heads/main/static/white-icon-32x32.png",
                 "Priority": priority
             }
     if api_key:

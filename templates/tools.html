@@ -24,6 +24,7 @@
     <a class="tdb-tile" href="{{ url_for('symlink_tools.index') }}"><i class="fa-solid fa-link"></i><span><b>Create a Symlink</b><small>Make a single symlink by hand.</small></span></a>
     <a class="tdb-tile" href="{{ url_for('metadata.metadata_debug') }}"><i class="fa-solid fa-tags"></i><span><b>Metadata Lookup</b><small>See the metadata stored for a title.</small></span></a>
     <a class="tdb-tile" href="{{ url_for('overlay_page.overlays_page') }}"><i class="fa-solid fa-layer-group"></i><span><b>Overlays</b><small>Design the badges drawn on your posters.</small></span></a>
+    <a class="tdb-tile" href="{{ url_for('nfo.page') }}"><i class="fa-solid fa-file-code"></i><span><b>NFO Files</b><small>Write NFO files next to your episodes so Plex, Jellyfin and Kodi show cli_debrid's episode titles and order.</small></span></a>
     <a class="tdb-tile" href="{{ url_for('subtitle_manager.page') }}"><i class="fa-solid fa-closed-captioning"></i><span><b>Subtitle Manager</b><small>See which items are missing subtitles, search providers and pick one by hand.</small></span></a>
     {% if not is_limited_environment() %}<a class="tdb-tile" href="{{ url_for('upgrade_hub.index') }}"><i class="fa-solid fa-arrow-up"></i><span><b>Upgrade Hub</b><small>See and manage items Clyde is upgrading to a better release.</small></span></a>{% endif %}
     <a class="tdb-tile" href="{{ url_for('trakt_friends.manage_friends') }}"><i class="fa-solid fa-users"></i><span><b>Trakt Friends</b><small>Link friends' Trakt accounts.</small></span></a>

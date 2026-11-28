@@ -1,3 +1,6 @@
+// Escape names/titles/messages before they go into innerHTML or an attribute.
+function _crEsc(v) { return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
 let selectedContent = null;
 let availableVersions = [];
 
@@ -118,13 +121,13 @@ function displayResults(results) {
         
         card.innerHTML = `
             <div class="media-poster">
-                <img src="${posterUrl}" alt="${title}" loading="lazy">
+                <img src="${posterUrl}" alt="${_crEsc(title)}" loading="lazy">
                 <span class="media-type-badge">
                     ${result.mediaType === 'movie' ? 'MOVIE' : 'TV'}
                 </span>
                 <div class="media-overlay">
                     <div class="media-year">${result.year || 'N/A'}</div>
-                    <h3 class="media-title">${title}</h3>
+                    <h3 class="media-title">${_crEsc(title)}</h3>
                 </div>
             </div>
         `;
@@ -247,7 +250,7 @@ async function requestContent(content, selectedVersions) {
             window.showPopup({
                 type: window.POPUP_TYPES.SUCCESS,
                 title: 'Success',
-                message: `Successfully requested ${content.title}`,
+                message: `Successfully requested ${_crEsc(content.title)}`,
                 autoClose: 3000
             });
         } else {

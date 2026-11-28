@@ -484,3 +484,44 @@ func TestBackboneNotFoundSkipsSameBackbone(t *testing.T) {
 		t.Fatal("same backbone was asked")
 	}
 }
+
+func TestBodyDeadlineFreesOnlyConnection(t *testing.T) {
+	data := []byte("the next article")
+	good := nntptest.Post("good", "file.bin", data, len(data))[0]
+	stuck := nntptest.Article{ID: "stuck@test", Body: []byte("=ybegin line=128 size=99 name=stuck.bin\r\n")}
+	// The server sends a BODY header and a partial body, then waits for
+	// another command without sending the article terminator.
+	s := nntptest.Start(t, stuck, good)
+	p := provider(s, "a", 1)
+	p.Timeout = 10 * time.Second
+	c, err := NewClient([]Provider{p})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	first, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := c.Body(first, Prefetch, stuck.ID)
+		done <- err
+	}()
+	<-first.Done()
+	if s.Bodies.Load() != 1 {
+		t.Fatal("the first provider never began sending the stuck body")
+	}
+
+	next, cancelNext := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancelNext()
+	got, _, err := c.Body(next, Prefetch, good.ID)
+	if err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("next article: %q, %v", got, err)
+	}
+	if !errors.Is(<-done, context.DeadlineExceeded) {
+		t.Fatal("the first article did not return its deadline error")
+	}
+	if n := s.Accepts.Load(); n != 2 {
+		t.Fatalf("opened %d connections, want 2", n)
+	}
+}

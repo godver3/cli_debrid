@@ -859,6 +859,13 @@ def _scraper_reachable(scraper):
     """Quick check that a scraper's server answers. None when there's nothing to check."""
     scraper_type = scraper.get('type')
     url = scraper.get('url') or scraper.get('base_url')
+    if scraper_type == 'Comet':
+        # The URL may embed the user's debrid key; validate_manifest redacts it.
+        if not url:
+            return None
+        from scraper.comet import validate_manifest
+        ok, message, details = validate_manifest(url, scraper.get('config', ''))
+        return ok, (f"Reachable ({details.get('url')})" if ok else message)
     if scraper_type == 'Torrentio':
         url = 'https://torrentio.strem.fun/manifest.json'
     elif scraper_type in ('Nyaa', 'OldNyaa'):

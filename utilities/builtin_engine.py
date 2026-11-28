@@ -329,6 +329,7 @@ def build_config(settings: dict) -> dict:
         'virtual_folders': virtual_folders(bm),
         'plex_protection': bool(bm.get('plex_playback_protection', True)) and reserve_pct > 0,
         'max_conns_per_file': num('max_connections_per_file', 15),
+        'import_workers': num('import_workers', 8),
         'parallel': max(1, num('processing_connections', 8)),
         'import_timeout_seconds': num('processing_timeout_minutes', 5) * 60,
         'import_sample_percent': min(100, num('import_sample_percent', 1)),

@@ -670,21 +670,6 @@ function getPageName() {
     return pageName;
 }
 
-// Add this new function to handle user interactions
-function handleInteraction(event) {
-    if (event.type === 'scroll') {
-        // Hide immediately on scroll
-        hideMobileTooltip();
-    } else {
-        // For touch and click events, hide immediately
-        // but only if the click is not on the tooltip or the info button
-        if (!event.target.closest('.mobile-tooltip-content') && 
-            !event.target.classList.contains('mobile-tooltip-button')) {
-            hideMobileTooltip();
-        }
-    }
-}
-
 // Add styles for mobile tooltips
 function addMobileTooltipStyles() {
     const style = document.createElement('style');
@@ -742,29 +727,6 @@ function addMobileTooltipStyles() {
 
 // Call this function when the script loads
 addMobileTooltipStyles();
-
-function cleanupExistingTooltips() {
-    // Remove existing tooltip elements
-    const existingTooltips = document.querySelectorAll('.tooltip, .mobile-tooltip-content');
-    existingTooltips.forEach(tooltip => tooltip.remove());
-
-    // Remove existing event listeners
-    const tooltipElements = document.querySelectorAll('[data-tooltip], .truncate');
-    tooltipElements.forEach(element => {
-        element.removeEventListener('mouseenter', showTooltip);
-        element.removeEventListener('mouseleave', hideTooltip);
-        element.removeEventListener('mouseenter', showDatabaseTooltip);
-    });
-
-    // Remove mobile tooltip buttons
-    const mobileTooltipButtons = document.querySelectorAll('.mobile-tooltip-button');
-    mobileTooltipButtons.forEach(button => button.remove());
-
-    // Reset global variables
-    tooltipElement = null;
-    mobileTooltipContent = null;
-    activeTooltipElement = null;
-}
 
 // Add these functions to control content updating
 function setUpdatingContent(value) {

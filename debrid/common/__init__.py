@@ -14,6 +14,7 @@ from .utils import (
     pick_best_video_file,
     release_identity_has_episode_marker,
     is_likely_season_pack,
+    resolve_torrent_title,
 )
 from .cache import timed_lru_cache
 from .api import RateLimiter
@@ -34,4 +35,5 @@ __all__ = [
     'pick_best_video_file',
     'release_identity_has_episode_marker',
     'is_likely_season_pack',
+    'resolve_torrent_title',
 ]

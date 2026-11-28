@@ -253,7 +253,7 @@ def test_actual_torrent_processor_filters_known_offline_chain(monkeypatch):
     check([primary, fallback])
     monkeypatch.setitem(sys.modules, 'utilities.acquisition_health', health)
     providers = function('queues/torrent_processor.py', '_providers',
-                         {'get_debrid_providers': lambda: [primary, fallback]}, 'TorrentProcessor')
+                         {'get_grab_providers': lambda: [primary, fallback]}, 'TorrentProcessor')
     assert providers(None) == [fallback]
 
 
@@ -297,3 +297,14 @@ def test_deferred_item_logs_info_once_per_outage(caplog):
     health.log_deferred('Dune (2021)', 'backend down')
     infos = [r for r in caplog.records if r.levelno == logging.INFO and 'Dune (2021)' in r.getMessage()]
     assert len(infos) == 2
+
+
+def test_streaming_only_fallback_is_not_a_usable_backend():
+    """Primary down + healthy streaming-only fallback: acquisition must pause,
+    but the fallback keeps an 'available' status for torrents it already holds."""
+    primary, stream_only = Provider(False), Provider(True)
+    stream_only.stream_only = True
+    ok, failures = check([primary, stream_only], enabled=False)
+    assert ok is False and failures
+    assert health.provider_available(stream_only)
+    assert not health.provider_available(primary)

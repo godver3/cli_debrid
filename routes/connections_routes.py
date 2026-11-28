@@ -689,6 +689,18 @@ def check_scraper_connection(scraper_id, scraper_config):
                 base_response['error'] = f'Status code: {response.status_code}'
             base_response['details']['url'] = url
             
+        elif scraper_type == 'Comet':
+            from scraper.comet import validate_manifest
+            url = scraper_config.get('url', '').strip()
+            if not url:
+                base_response['error'] = 'URL not configured'
+                return base_response
+            ok, message, details = validate_manifest(url, scraper_config.get('config', ''))
+            base_response['connected'] = ok
+            if not ok:
+                base_response['error'] = message
+            base_response['details'].update(details)
+
         elif scraper_type == 'Torrentio':
             from scraper.torrentio import scrape_torrentio_instance
             

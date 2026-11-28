@@ -333,8 +333,53 @@ class SubsourceProvider(_KeyProvider):
         return r.content
 
 
+def _patch_opensubtitles_org_terminate():
+    """subliminal's OpenSubtitles.org provider ends with self.server.close(),
+    which xmlrpc sends to the server as a remote 'close' method; the server
+    answers 'method not found' and every subtitle run logs a traceback
+    ("Provider opensubtitles improperly terminated"). Log out, then close the
+    connection locally."""
+    try:
+        from subliminal.providers.opensubtitles import OpenSubtitlesProvider, checked
+    except Exception:
+        return
+    if getattr(OpenSubtitlesProvider.terminate, '_clyde_patched', False):
+        return
+
+    def terminate(self):
+        try:
+            if self.token:
+                checked(self.server.LogOut(self.token))
+        finally:
+            try:
+                self.server('close')()
+            except Exception:
+                pass
+            self.token = None
+
+    terminate._clyde_patched = True
+    OpenSubtitlesProvider.terminate = terminate
+
+
+class _NotFoundIsInfo(logging.Filter):
+    """Gestdown (Addic7ed) logs a show it doesn't carry as an ERROR
+    ("No show id found for 'Pokemon'"). That is a normal miss: log it as INFO."""
+    def filter(self, record):
+        if record.levelno >= logging.ERROR and str(record.msg).startswith('No show id found for'):
+            record.levelno, record.levelname = logging.INFO, 'INFO'
+        return True
+
+
+def _quiet_gestdown_misses():
+    log = logging.getLogger('subliminal.providers.gestdown')
+    if not any(isinstance(f, _NotFoundIsInfo) for f in log.filters):
+        log.addFilter(_NotFoundIsInfo())
+
+
 def register():
     """Make 'subdl' and 'subsource' available to subliminal's provider manager."""
+    _patch_opensubtitles_org_terminate()
+    _quiet_gestdown_misses()
     try:
         from subliminal.extensions import provider_manager
         names = set(provider_manager.names())

@@ -639,7 +639,10 @@ class MaintenanceTasks:
                         _folder_files_cache = {}  # folder_name -> video_files list, avoid repeat lookups
 
                         for item_id, sib, item in stranded_matches:
-                            folder_name = sib['filled_by_title'] or sib['debrid_folder_name'] or sib['location_basename']
+                            from utilities.mount_debrid import folder_for as _folder_for
+                            folder_name = (_folder_for(sib['filled_by_torrent_id'], get_setting)
+                                           or sib['filled_by_title'] or sib['debrid_folder_name']
+                                           or sib['location_basename'])
                             if not folder_name:
                                 continue
 

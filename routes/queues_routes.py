@@ -42,6 +42,8 @@ def _stream_item_copy(item: dict, queue_name: str) -> dict:
     time_added on items the queue thread was working on.
     """
     copy = {k: v for k, v in item.items() if k not in _STREAM_DROP_FIELDS}
+    if queue_name == 'Adding':
+        _add_waiting_note(copy)
     if queue_name in ('Adding', 'Checking'):
         torrent_id = str(item.get('filled_by_torrent_id') or '')
         if torrent_id.startswith('nzb:'):
@@ -54,6 +56,17 @@ def _stream_item_copy(item: dict, queue_name: str) -> dict:
                 _nzb_provider_display_cache[key] = label
             copy['provider_display'] = label
     return copy
+
+
+def _add_waiting_note(item: dict) -> None:
+    """Say why an Adding item is sitting still (its NZB indexer is out of downloads)."""
+    try:
+        from queues.adding_queue import cooldown_note
+        note = cooldown_note(item.get('id'))
+    except Exception:
+        note = None
+    if note:
+        item['waiting_note'] = note
 
 
 def _get_provider_display(item: dict) -> str:
@@ -71,24 +84,45 @@ def _get_provider_display(item: dict) -> str:
             title = item.get('original_scraped_torrent_title', '') or item.get('filled_by_file', '')
 
             def _extract_indexer(r):
-                # 'source' field is like "NZBGeek_1" or "althub_1"
-                source = r.get('source', '')
-                if source:
-                    cleaned = _re.sub(r'_\d+$', '', source)
-                    if cleaned and not cleaned.isdigit():
-                        return cleaned
-                # scraper_type is the indexer name e.g. "althub", "NZBGeek"
-                scraper_type = r.get('scraper_type', '')
-                if scraper_type and scraper_type not in ('Newznab', 'newznab') and not scraper_type.isdigit():
-                    return scraper_type
+                try:
+                    # 'source' field is like "NZBGeek_1" or "althub_1"
+                    source = r.get('source')
+                    if source is not None and source != '':
+                        cleaned = _re.sub(r'_\d+$', '', str(source)).strip()
+                        if cleaned and not cleaned.isdigit():
+                            return cleaned
+                    # scraper_type is the indexer name e.g. "althub", "NZBGeek"
+                    scraper_type = r.get('scraper_type')
+                    if scraper_type is not None and scraper_type != '':
+                        st = str(scraper_type).strip()
+                        if st and st not in ('Newznab', 'newznab') and not st.isdigit():
+                            return st
+                except Exception:
+                    pass
                 return ''
 
-            # Use first NZB result's indexer (all NZB results in a pack come from same indexer search)
-            for r in results:
-                if r.get('protocol') == 'nzb':
+            # The submitted NZB's indexer: its URL is filled_by_magnet. scrape_results
+            # mixes indexers, so its first NZB can be a different (even disabled) one.
+            submitted_url = str(item.get('filled_by_magnet') or '')
+            if submitted_url.startswith('http'):
+                try:
+                    from usenet.indexer_quota import instance_for_url
+                    name = _re.sub(r'_\d+$', '', instance_for_url(submitted_url) or '')
+                    if name:
+                        return name
+                except Exception:
+                    pass
+            nzb_results = [r for r in results if isinstance(r, dict) and r.get('protocol') == 'nzb']
+            for r in nzb_results:
+                if (submitted_url and r.get('nzb_url') == submitted_url) or (
+                        title and title in (r.get('original_title'), r.get('title'))):
                     name = _extract_indexer(r)
                     if name:
                         return name
+            for r in nzb_results:
+                name = _extract_indexer(r)
+                if name:
+                    return name
         except Exception:
             pass
         return 'Usenet'
@@ -818,6 +852,8 @@ def process_item_for_response(item, queue_name, currently_processing_upgrade_id=
 
         if queue_name in ['Adding', 'Checking'] and 'provider_display' not in item:
             item['provider_display'] = _get_provider_display(item)
+        if queue_name == 'Adding' and 'waiting_note' not in item:
+            _add_waiting_note(item)
 
         # Optimize JSON serialization - only process problematic fields
         datetime_fields = ['final_check_display_time', 'time_added', 'last_updated']
