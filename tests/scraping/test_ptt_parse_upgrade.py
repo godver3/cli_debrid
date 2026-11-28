@@ -68,3 +68,15 @@ def test_interlaced_resolution_reads_as_progressive():
     assert progressive_resolution(None) is None
     # 1.8 returns '1080i' raw; our standard parse keeps the 1.7 contract
     assert parse_with_ptt('Some.Show.S01E01.1080i.HDTV.H264-GRP')['resolution'] == '1080p'
+
+
+def test_group_named_like_a_season_is_not_a_season():
+    from scraper.functions.ptt_parser import parse_with_ptt
+    p = parse_with_ptt('Bill.Burr.Why.Do.I.Do.This.2008.NTSC.DVD.DD5.1.MPEG-2.REMUX-S0NNY')
+    assert p['seasons'] == [] and p['type'] == 'movie'
+    assert parse_with_ptt('Some.Movie.2010.1080p.BluRay.x264-S0NNY.mkv')['type'] == 'movie'
+    # real season 0 / specials keep their season
+    assert parse_with_ptt('Show.S00E01.Special.1080p-GRP')['seasons'] == [0]
+    assert parse_with_ptt('Show.Specials.S00.1080p-GRP')['seasons'] == [0]
+    assert parse_with_ptt('Show.S00.1080p.WEB-S0NNY')['seasons'] == [0]
+    assert parse_with_ptt('Show.S01E01.1080p-S0NNY')['seasons'] == [1]
