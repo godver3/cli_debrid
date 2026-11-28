@@ -320,9 +320,9 @@ class TestPruning(ExternalMountScanTestBase):
 
 
 class TestModeAndPathGuards(ExternalMountScanTestBase):
-    def test_skips_cleanly_outside_symlinked_mode(self):
+    def test_skips_cleanly_outside_supported_modes(self):
         self._mkfolder('Some.Show.S01')
-        summary = self._run_scan(mode='Plex')
+        summary = self._run_scan(mode='Zurg')
         self.assertIsNotNone(summary['skipped_reason'])
         self.assertIsNone(self._state())
         self.assertEqual(self.import_calls, [])
@@ -578,6 +578,8 @@ class TestHardening(ExternalMountScanTestBase):
         path = os.path.join(self.db_content_dir.name, ems.STATE_FILENAME)
         with open(path, 'w') as f:
             f.write('{not json')
+        with open(path + '.bak', 'w') as f:
+            f.write('{also not json')
         self._mkfolder('Arrived.Meanwhile')
         with self.assertLogs(level='ERROR'):
             summary = self._run_scan()
@@ -588,6 +590,48 @@ class TestHardening(ExternalMountScanTestBase):
         summary = self._run_scan()  # fresh baseline, no import
         self.assertEqual(summary['baselined'], 2)
         self.assertEqual(self.import_calls, [])
+
+    def test_corrupt_state_recovers_from_backup(self):
+        self._baselined()
+        self._mkfolder('Second.Save')
+        self._run_scan()  # records it: a second save, so a backup exists
+        path = os.path.join(self.db_content_dir.name, ems.STATE_FILENAME)
+        self.assertTrue(os.path.exists(path + '.bak'))
+        with open(path, 'w') as f:
+            f.write('{not json')
+        self._mkfolder('Arrived.Meanwhile')
+        with self.assertLogs(level='WARNING') as cm:
+            summary = self._run_scan()
+        self.assertTrue(any('Recovered from backup' in m for m in cm.output))
+        self.assertIsNone(summary['skipped_reason'])
+        # The folder that arrived since is new (recorded pending), not baselined
+        self.assertEqual(summary['baselined'], 0)
+        self.assertEqual(summary['pending'], 2)  # the backup predates Second.Save too
+        self.assertTrue(any('.corrupt-' in n for n in os.listdir(self.db_content_dir.name)))
+        self.assertIn('Arrived.Meanwhile', self._state())
+
+    @patch.object(ems, 'get_setting', side_effect=_settings_for('/x', '/y'))
+    def test_save_keeps_previous_good_file_as_backup(self, _gs):
+        path = os.path.join(self.db_content_dir.name, ems.STATE_FILENAME)
+        ems._save_state({'a': 1})
+        self.assertFalse(os.path.exists(path + '.bak'))
+        ems._save_state({'a': 2})
+        with open(path + '.bak') as f:
+            self.assertEqual(json.load(f), {'a': 1})
+        with open(path) as f:
+            self.assertEqual(json.load(f), {'a': 2})
+
+    @patch.object(ems, 'get_setting', side_effect=_settings_for('/x', '/y'))
+    def test_main_state_restored_when_backup_used_without_other_changes(self, _gs):
+        ems._save_state({'__meta__': {'last_run': time.time()}, 'x': {'imported': True}})
+        ems._save_state({'__meta__': {'last_run': time.time()}, 'x': {'imported': True}})
+        path = os.path.join(self.db_content_dir.name, ems.STATE_FILENAME)
+        with open(path, 'w') as f:
+            f.write('garbage')
+        with self.assertLogs(level='WARNING'):
+            data = ems._load_state()
+        self.assertIn('x', data)
+        self.assertEqual(ems._load_state(), data)  # main file is back
 
     def test_flaky_listing_skips_run_without_pruning(self):
         for i in range(25):
@@ -811,3 +855,144 @@ class TestRejectedSetConstruction(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDirectMountScan(ExternalMountScanTestBase):
+    """Direct Mount (Plex) mode: a targeted media server scan, own state file."""
+
+    def setUp(self):
+        super().setUp()
+        self.scan_calls = []
+        self.scan_outcome = 'accepted'
+        self.busy = False
+        self.due = True
+        self.unavailable = None
+
+        def fake_request(scan_path, name):
+            self.scan_calls.append(scan_path)
+            return self.scan_outcome
+
+        self._patches = [
+            patch.object(ems, '_request_media_server_scan', side_effect=fake_request),
+            patch.object(ems, '_plex_scan_unavailable', side_effect=lambda: self.unavailable),
+            patch.object(ems, '_media_server_busy', side_effect=lambda: self.busy),
+            patch.object(ems, '_scan_due', side_effect=lambda p: self.due),
+        ]
+        for p_ in self._patches:
+            p_.start()
+
+    def tearDown(self):
+        for p_ in self._patches:
+            p_.stop()
+        super().tearDown()
+
+    def _run_scan(self, mode='Plex'):
+        return super()._run_scan(mode)
+
+    def _plex_state_path(self):
+        return os.path.join(self.db_content_dir.name, ems.STATE_FILENAME_PLEX)
+
+    def _state(self):
+        if not os.path.exists(self._plex_state_path()):
+            return None
+        with open(self._plex_state_path()) as f:
+            return json.load(f)
+
+    def _write_state(self, state):
+        with open(self._plex_state_path(), 'w') as f:
+            json.dump(state, f)
+
+    def _new_settled(self, name):
+        self._mkfolder('Old.Show.S01')
+        self._run_scan()  # baseline
+        self._mkfolder(name)
+        return self._run_settled(name)
+
+    def test_new_folder_requests_scan_and_is_marked_imported(self):
+        summary = self._new_settled('New.Show.S01')
+        self.assertEqual(summary['imported'], 1)
+        self.assertEqual(len(self.scan_calls), 1)
+        self.assertTrue(self.scan_calls[0].endswith('New.Show.S01'))
+        self.assertEqual(self.import_calls, [])  # no symlink pipeline
+        self.assertTrue(self._state()['New.Show.S01']['imported'])
+        self.scan_calls.clear()
+        self._run_scan()
+        self.assertEqual(self.scan_calls, [])
+
+    def test_baseline_not_scanned_and_state_file_is_separate(self):
+        self._mkfolder('Existing.S01')
+        summary = self._run_scan()
+        self.assertEqual(summary['baselined'], 1)
+        self.assertEqual(self.scan_calls, [])
+        self.assertTrue(os.path.exists(self._plex_state_path()))
+        self.assertFalse(os.path.exists(os.path.join(self.db_content_dir.name, ems.STATE_FILENAME)))
+
+    def test_no_library_gives_up_with_warning_naming_path(self):
+        self.scan_outcome = 'no_library'
+        with self.assertLogs(level='WARNING') as cm:
+            summary = self._new_settled('New.Show.S01')
+        self.assertEqual(summary['given_up'], 1)
+        self.assertTrue(any('no media server library holds' in m and 'New.Show.S01' in m for m in cm.output))
+        self.assertTrue(self._state()['New.Show.S01']['given_up'])
+        self.scan_calls.clear()
+        self._run_scan()
+        self.assertEqual(self.scan_calls, [])
+
+    def test_failed_scan_is_retried_later_and_counts_attempts(self):
+        self.scan_outcome = 'failed'
+        summary = self._new_settled('New.Show.S01')
+        self.assertEqual(summary['failed'], 1)
+        entry = self._state()['New.Show.S01']
+        self.assertFalse(entry.get('imported'))
+        self.assertEqual(entry['attempts'], 1)
+        self.assertEqual(self._run_scan()['failed'], 0)  # inside the retry window
+
+    def test_cooldown_and_busy_server_defer_without_using_an_attempt(self):
+        self._mkfolder('Old.Show.S01')
+        self._run_scan()
+        self._mkfolder('New.Show.S01')
+        self._run_scan()
+        self._age('New.Show.S01')
+        self.due = False
+        self._run_scan()
+        self.due, self.busy = True, True
+        self._run_scan()
+        self.assertEqual(self.scan_calls, [])
+        self.assertNotIn('attempts', self._state()['New.Show.S01'])
+        self.busy = False
+        self.assertEqual(self._run_scan()['imported'], 1)
+
+    def test_unsupported_or_unconfigured_server_is_skipped_with_reason(self):
+        self.unavailable = 'Silo is not in library (Direct Mount) mode'
+        summary = self._run_scan()
+        self.assertEqual(summary['skipped_reason'], self.unavailable)
+        self.assertIsNone(self._state())
+
+    def test_prefers_plex_mounted_file_location(self):
+        other = tempfile.TemporaryDirectory()
+        try:
+            values = {
+                ('File Management', 'file_collection_management'): 'Plex',
+                ('File Management', 'original_files_path'): self.mount_dir.name,
+                ('Plex', 'mounted_file_location'): other.name,
+            }
+            os.makedirs(os.path.join(other.name, 'Plex.Side'))
+            with patch.object(ems, 'get_setting', side_effect=lambda s, k, d=None: values.get((s, k), d)):
+                ems.scan_mount_for_external_adds()
+            self.assertIn('Plex.Side', self._state())
+        finally:
+            other.cleanup()
+
+    def test_symlink_mode_still_uses_symlink_pipeline(self):
+        self._mkfolder('Old.Show.S01')
+        super()._run_scan('Symlinked/Local')
+        self.assertFalse(os.path.exists(self._plex_state_path()))
+
+    def test_other_modes_skipped(self):
+        self.assertTrue(super()._run_scan('Zurg')['skipped_reason'])
+
+    def test_guess_type(self):
+        self.assertEqual(ems._guess_type('Show.Name.S02.1080p'), 'episode')
+        self.assertEqual(ems._guess_type('Show Name Season 3'), 'episode')
+        self.assertEqual(ems._guess_type('Some.Movie.2020.1080p'), 'movie')
+

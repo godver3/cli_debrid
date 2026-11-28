@@ -195,6 +195,54 @@ def _load_known_original_paths(prefix: str) -> set:
         return set()
 
 
+_VIDEO_SCAN_EXTS = ('.mkv', '.mp4', '.avi', '.mov', '.m4v', '.ts', '.mpg', '.mpeg', '.wmv', '.flv', '.webm')
+
+
+def _scan_folder_for_item(item: dict) -> str:
+    """The folder plex_update_item would ask the media server to scan for this
+    item (a video file path -> its directory, anything else as is)."""
+    path = item.get('full_path') or item.get('location_on_disk') or item.get('location') or ''
+    if not path:
+        return ''
+    if path.lower().endswith(_VIDEO_SCAN_EXTS):
+        path = os.path.dirname(path)
+    return os.path.abspath(os.path.normpath(path))
+
+
+def _flush_plex_scans(items: list, task_id: str) -> None:
+    """One media-server scan per unique folder (and item type, which picks the
+    library section) instead of one per imported file."""
+    if not items:
+        return
+    from utilities.silo_functions import is_silo_mode
+    plex_url = get_setting('File Management', 'plex_url_for_symlink', '')
+    plex_token = get_setting('File Management', 'plex_token_for_symlink', '')
+    if not ((plex_url and plex_token) or is_silo_mode()):  # plex_update_item scans Silo when it is selected
+        logging.debug(f"[RcloneScan {task_id}] Plex URL/Token not configured in 'File Management' settings. Skipping Plex update despite trigger.")
+        return
+    unique = {}
+    for item in items:
+        folder = _scan_folder_for_item(item)
+        unique.setdefault((folder, item.get('type')) if folder else ('', id(item)), item)
+    logging.info(f"[RcloneScan {task_id}] Triggering {len(unique)} media server scan(s) for {len(items)} imported file(s).")
+    for (folder, _t), item in unique.items():
+        try:
+            plex_update_item(item=item)
+        except Exception as plex_err:
+            logging.error(f"[RcloneScan {task_id}] Failed to trigger Plex update for {folder}: {plex_err}", exc_info=True)
+
+
+def _flush_collected_notifications(items: list, task_id: str) -> None:
+    """One 'collected' notification call for everything the run imported."""
+    if not items:
+        return
+    try:
+        logging.info(f"[RcloneScan {task_id}] Sending 'collected' notification for {len(items)} item(s).")
+        send_notifications(items, get_enabled_notifications(), notification_category='collected')
+    except Exception as notify_err:
+        logging.error(f"[RcloneScan {task_id}] Failed to send notifications: {notify_err}", exc_info=True)
+
+
 def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dry_run, task_id, trigger_plex_update_on_success: bool = False, assumed_item_title_from_path: str = None, user_initiated: bool = False, skip_known_paths: bool = False): # Add new parameter
     """Background task to scan Rclone mount, fetch metadata, and create DB entries/symlinks.
 
@@ -315,6 +363,8 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
         total_files_scanned = 0
         media_files_found = 0
         items_processed = 0
+        plex_scan_items = []
+        notification_items = []
         items_added_to_db = 0
         symlinks_created = 0
         parser_errors = 0
@@ -881,24 +931,10 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                         processed_original_files.add(original_file_path_str)
                         save_rclone_progress()
                         
-                        # --- Conditionally Add Plex Update Call ---
-                        if trigger_plex_update_on_success: # Check the new parameter
-                            plex_url = get_setting('File Management', 'plex_url_for_symlink', '')
-                            plex_token = get_setting('File Management', 'plex_token_for_symlink', '')
-                            
-                            from utilities.silo_functions import is_silo_mode
-                            if (plex_url and plex_token) or is_silo_mode():  # plex_update_item scans Silo when it is selected
-                                logging.info(f"[RcloneScan {task_id}] Plex configured and update triggered. Attempting library update for: {symlink_dest_path}")
-                                try:
-                                    # Make sure item_for_db_filtered_for_db has the necessary info (title, year, type etc.)
-                                    plex_update_item(item=item_for_db_filtered_for_db)
-                                    logging.info(f"[RcloneScan {task_id}] Plex library update triggered for: {symlink_dest_path}")
-                                except Exception as plex_err:
-                                    logging.error(f"[RcloneScan {task_id}] Failed to trigger Plex update for {symlink_dest_path}: {plex_err}", exc_info=True)
-                            else:
-                                 logging.debug(f"[RcloneScan {task_id}] Plex URL/Token not configured in 'File Management' settings. Skipping Plex update despite trigger.")
-                        else:
-                            logging.debug(f"[RcloneScan {task_id}] Plex update not triggered for this task run.")
+                        # Scans are collected and issued once per folder after the loop:
+                        # a season pack is one folder, not one scan per episode.
+                        if trigger_plex_update_on_success:
+                            plex_scan_items.append(item_for_db_filtered_for_db)
                         # --- End Plex Update Call ---
                         
                         # --- Send Notification if from external_webhook ---
@@ -926,10 +962,9 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                                         'episode_title': item_for_db_filtered_for_db.get('episode_title')
                                     })
                                 
-                                logging.info(f"[RcloneScan {task_id}] Sending 'collected' notification for item: {notification_item.get('title')}")
-                                send_notifications([notification_item], get_enabled_notifications(), notification_category='collected')
+                                notification_items.append(notification_item)
                             except Exception as notify_err:
-                                logging.error(f"[RcloneScan {task_id}] Failed to send notification for {item_for_db_filtered_for_db.get('title')}: {notify_err}", exc_info=True)
+                                logging.error(f"[RcloneScan {task_id}] Failed to build notification for {item_for_db_filtered_for_db.get('title')}: {notify_err}", exc_info=True)
                         # --- End Notification ---
                         
                     except Exception as e:
@@ -937,6 +972,8 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                         symlink_errors += 1; error_list.append(f"Symlink Error ({item_path.name}): {e}"); update_progress(symlink_errors=symlink_errors, errors=error_list)
             update_progress(items_processed=items_processed)
 
+        _flush_plex_scans(plex_scan_items, task_id)
+        _flush_collected_notifications(notification_items, task_id)
 
         final_message_parts = [
             f"Rclone scan finished. Scanned: {total_files_scanned}, Media Files Initially Found: {media_files_found}, Items Chosen for Processing: {items_processed}."

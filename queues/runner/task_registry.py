@@ -122,7 +122,7 @@ def _verify_symlinks_default(get):
 
 
 def _external_adds_default(get):
-    return _fm(get) == 'Symlinked/Local' and bool(get('File Management', 'scan_mount_for_external_adds', False))
+    return _fm(get) in ('Symlinked/Local', 'Plex') and bool(get('File Management', 'scan_mount_for_external_adds', False))
 
 
 def _direct_mount_jellyfin(get):

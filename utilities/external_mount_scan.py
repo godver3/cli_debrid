@@ -1,11 +1,22 @@
 """
 Periodic scan of the debrid mount for content added outside cli_debrid.
 
-Symlink mode only. cli_debrid normally learns about new files because it put
+Symlink and Direct Mount (Plex) modes. cli_debrid normally learns about new files because it put
 them there itself (Wanted -> Scraping -> Adding -> Checking). Content added
 straight to the debrid account by something else -- DMM, the provider's own
 web UI, a manual magnet -- shows up in the mount with nothing in the database
 pointing at it, so no symlink is created and the media server is never told.
+
+In Symlinked/Local mode the new content is symlinked and the media server told.
+In Direct Mount the media server's libraries already point at the mount and
+collection happens through its library sync (get_and_add_recent_collected_from_plex
+-> add_collected_items, which inserts Collected rows for items not yet in the
+DB), so the scan only has to get the server to notice the folder: it requests a
+targeted scan of it (plex_update_item: Plex, Silo library mode, Jellyfin/Emby),
+honouring Plex mode's per-folder cooldown, and gives up with a warning when no
+library holds the folder. Direct Mount scans the Plex mounted_file_location (or
+original_files_path) and keeps its own state file so the two modes' baselines
+never mix.
 
 Zurg users get this handled by its on_library_update hook calling
 /webhook/rclone. Decypharr and plain rclone mounts have no such hook, so this
@@ -40,7 +51,8 @@ in a specific way:
     the pipeline is asked to skip files already in media_items so retries do not
     duplicate rows.
   * Baseline robustness: a '__meta__' key keeps baselined_at/last_run/
-    last_entry_count. A corrupt state file is moved aside and the run skipped;
+    last_entry_count. A corrupt state file is moved aside and replaced from its .bak (the previous
+    good save), the run continuing normally; with no usable backup the run is skipped;
     a listing under half the previous size is treated as a flaky mount; a run
     after a >2 day gap baselines new folders instead of importing them.
   * Layouts: original_files_path (stepping into '__all__' if the mount root was
@@ -54,6 +66,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import threading
 import time
 import uuid
@@ -62,6 +75,9 @@ from typing import Dict, List, Optional, Set, Tuple
 from utilities.settings import get_setting
 
 STATE_FILENAME = 'external_mount_scan_state.json'
+# Direct Mount keeps its own baseline: switching modes must not reuse (or
+# trample) the other mode's record of what the mount held.
+STATE_FILENAME_PLEX = 'external_mount_scan_state_plex.json'
 
 # Cap per run so a mount full of untracked folders can't spend hours in one
 # pass hammering the metadata APIs. The remainder is picked up next run.
@@ -108,35 +124,61 @@ _warned_all_dir = False
 _DUP_SUFFIX_RE = re.compile(r'\s*\(\d+\)\s*$')
 
 
+def _is_plex_mode() -> bool:
+    return get_setting('File Management', 'file_collection_management', 'Symlinked/Local') == 'Plex'
+
+
 def _state_path() -> str:
     db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
-    return os.path.join(db_content_dir, STATE_FILENAME)
+    return os.path.join(db_content_dir, STATE_FILENAME_PLEX if _is_plex_mode() else STATE_FILENAME)
 
 
 _CORRUPT = object()
 
 
-def _load_state():
-    """State dict, {} when there is none, or _CORRUPT after moving an unreadable
-    file aside. Silently re-baselining on a corrupt file would hide every folder
-    that arrived since; skipping once and baselining fresh next run is safer."""
-    path = _state_path()
-    if not os.path.exists(path):
-        return {}
+def _read_state_file(path: str):
+    """(dict, None) on success, (None, error text) otherwise."""
     try:
         with open(path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         if isinstance(data, dict):
-            return data
-        err = 'not a JSON object'
+            return data, None
+        return None, 'not a JSON object'
     except (json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
-        err = str(e)
+        return None, str(e)
+
+
+def _load_state():
+    """State dict, {} when there is none, or _CORRUPT when neither the state file
+    nor its .bak (the previous good save) is readable. An unreadable main file is
+    moved aside; a good .bak is restored in its place and the run continues as
+    normal, so folders added since are still treated as new. Silently
+    re-baselining on a corrupt file would hide every folder that arrived since;
+    skipping once and baselining fresh next run is the last resort."""
+    path = _state_path()
+    if not os.path.exists(path):
+        return {}
+    data, err = _read_state_file(path)
+    if data is not None:
+        return data
     dest = f"{path}.corrupt-{int(time.time())}"
     try:
         os.replace(path, dest)
         moved = f"moved to {dest}"
     except OSError as e:
         moved = f"could not be moved aside ({e})"
+    bak = path + '.bak'
+    if os.path.exists(bak):
+        data, bak_err = _read_state_file(bak)
+        if data is not None:
+            try:
+                shutil.copyfile(bak, path)
+            except OSError as e:
+                logging.warning(f"[ExternalScan] Could not restore {path} from backup: {e}")
+            logging.warning(f"[ExternalScan] State file {path} is unreadable ({err}); {moved}. "
+                            f"Recovered from backup {bak}.")
+            return data
+        err = f"{err}; backup also unreadable: {bak_err}"
     logging.error(f"[ExternalScan] State file {path} is unreadable ({err}); {moved}. "
                   f"Skipping this run; the next run baselines fresh.")
     return _CORRUPT
@@ -148,6 +190,13 @@ def _save_state(state: Dict) -> None:
     try:
         with open(tmp, 'w', encoding='utf-8') as f:
             json.dump(state, f, indent=2)
+        if os.path.exists(path):
+            # Keep the previous good file; _load_state falls back to it.
+            try:
+                shutil.copyfile(path, path + '.bak.tmp')
+                os.replace(path + '.bak.tmp', path + '.bak')
+            except OSError as e:
+                logging.warning(f"[ExternalScan] Could not back up state file {path}: {e}")
         os.replace(tmp, path)
     except OSError as e:
         logging.error(f"[ExternalScan] Could not write state file {path}: {e}")
@@ -235,7 +284,7 @@ def _is_ours(folder_name: str, ours_names: Set[str]) -> bool:
     return bool(_name_variants(folder_name, normalize_string_for_comparison) & ours_names)
 
 
-def _build_known_sets() -> tuple:
+def _build_known_sets(include_locations: bool = False) -> tuple:
     """Build in-memory lookups of what the DB already knows about.
 
     This is only a fast pre-filter for the common 'already tracked' case. The
@@ -243,6 +292,10 @@ def _build_known_sets() -> tuple:
     call, which is fine for one webhook but not for thousands of folders per
     run. Anything this filter does not positively identify still goes through
     those authoritative helpers, so the semantics match the webhook exactly.
+
+    include_locations (Direct Mount): rows collected through the media server's
+    library sync carry only location_on_disk (the mount path), not
+    original_path_for_symlink, so its path components count as known too.
     """
     from database.core import get_db_connection
     from database.database_reading import normalize_string_for_comparison
@@ -265,11 +318,11 @@ def _build_known_sets() -> tuple:
                     known_titles.update(_name_variants(value, normalize_string_for_comparison))
 
         rows = conn.execute(
-            'SELECT original_path_for_symlink FROM media_items '
-            'WHERE original_path_for_symlink IS NOT NULL'
+            'SELECT original_path_for_symlink, location_on_disk FROM media_items '
+            'WHERE original_path_for_symlink IS NOT NULL OR location_on_disk IS NOT NULL'
         ).fetchall()
         for row in rows:
-            path = row['original_path_for_symlink']
+            path = row['original_path_for_symlink'] or (row['location_on_disk'] if include_locations else None)
             if not path:
                 continue
             for part in path.replace('\\', '/').split('/'):
@@ -515,6 +568,65 @@ def _run_import(name: str, scan_path: str, symlink_base_path: str):
     return rclone_scan_progress.pop(task_id, None) or {}
 
 
+_EPISODE_RE = re.compile(r'(?i)(\bS\d{1,2}(E\d{1,3})?\b|\bseasons?[ ._-]*\d|\b\d{1,2}x\d{2}\b|\bcomplete[ ._-]series\b)')
+
+
+def _guess_type(name: str) -> str:
+    """'episode' for a folder named like a show release, else 'movie'. Picks which
+    library sections the media server tries first."""
+    return 'episode' if _EPISODE_RE.search(name) else 'movie'
+
+
+def _plex_scan_unavailable() -> Optional[str]:
+    """Why a Direct Mount scan request can't be made, or None. The media server
+    must be one plex_update_item can scan (Plex, Silo library mode, Jellyfin/Emby)
+    and be configured."""
+    from utilities.direct_mount import direct_mount_server, unconfigured_server
+    server = direct_mount_server()
+    if server not in ('plex', 'silo', 'jellyfin'):
+        return f"media server '{server}' is not supported for external-add scans"
+    missing = unconfigured_server()
+    if missing:
+        return f"{missing} is the media server but its URL or API key is not set"
+    if server == 'plex':
+        from utilities.plex_functions.scan_cleanup import plex_connection_settings
+        url, token = plex_connection_settings()
+        if not url or not token:
+            return 'Plex URL or token is not configured'
+    elif server == 'silo':
+        from utilities.silo_functions import is_silo_library_mode
+        if not is_silo_library_mode():
+            return 'Silo is not in library (Direct Mount) mode'
+    return None
+
+
+def _media_server_busy() -> bool:
+    from utilities import plex_health
+    return plex_health.recent_failure(60) is not None
+
+
+def _scan_due(path: str) -> bool:
+    from utilities.plex_functions import plex_mode_scan_due
+    return plex_mode_scan_due(path)
+
+
+def _request_media_server_scan(scan_path: str, name: str) -> str:
+    """Ask the media server to scan one mount folder (the same call the Checking
+    queue makes for Plex mode). Returns 'accepted', 'no_library' (no library holds
+    the folder, so asking again cannot help) or 'failed'."""
+    from utilities.plex_functions import plex_update_item
+    first = _guess_type(name)
+    outcome = 'failed'
+    for itype in (first, 'movie' if first == 'episode' else 'episode'):
+        scan_item = {'full_path': scan_path, 'location_on_disk': scan_path, 'type': itype, 'title': name}
+        if plex_update_item(scan_item):
+            return 'accepted'
+        if scan_item.get('_plex_scan_outcome') != 'no_library':
+            return 'failed'
+        outcome = 'no_library'
+    return outcome
+
+
 def scan_mount_for_external_adds() -> Dict:
     """Scan the mount(s) for folders cli_debrid has no record of and import them.
 
@@ -543,19 +655,36 @@ def scan_mount_for_external_adds() -> Dict:
 
 
 def _scan(summary: Dict) -> None:
-    if get_setting('File Management', 'file_collection_management', 'Symlinked/Local') != 'Symlinked/Local':
-        summary['skipped_reason'] = 'file collection management is not Symlinked/Local'
+    mode = get_setting('File Management', 'file_collection_management', 'Symlinked/Local')
+    plex_mode = mode == 'Plex'
+    if mode != 'Symlinked/Local' and not plex_mode:
+        summary['skipped_reason'] = 'file collection management is not Symlinked/Local or Direct Mount'
         return
 
-    mount_path = get_setting('File Management', 'original_files_path', '')
-    if not mount_path or not os.path.isdir(mount_path):
-        summary['skipped_reason'] = f"original_files_path '{mount_path}' is not a readable directory"
-        return
+    symlink_base_path = ''
+    if plex_mode:
+        # Direct Mount: Plex's libraries point at the mount, so scan what it sees.
+        candidates_paths = [(get_setting('Plex', 'mounted_file_location', '') or '').rstrip('/'),
+                            (get_setting('File Management', 'original_files_path', '') or '').rstrip('/')]
+        mount_path = next((c for c in candidates_paths if c and os.path.isdir(c)), '')
+        if not mount_path:
+            summary['skipped_reason'] = ("neither Plex mounted_file_location nor original_files_path "
+                                         "is a readable directory")
+            return
+        why = _plex_scan_unavailable()
+        if why:
+            summary['skipped_reason'] = why
+            return
+    else:
+        mount_path = get_setting('File Management', 'original_files_path', '')
+        if not mount_path or not os.path.isdir(mount_path):
+            summary['skipped_reason'] = f"original_files_path '{mount_path}' is not a readable directory"
+            return
 
-    symlink_base_path = get_setting('File Management', 'symlinked_files_path', '')
-    if not symlink_base_path:
-        summary['skipped_reason'] = 'symlinked_files_path is not configured'
-        return
+        symlink_base_path = get_setting('File Management', 'symlinked_files_path', '')
+        if not symlink_base_path:
+            summary['skipped_reason'] = 'symlinked_files_path is not configured'
+            return
 
     state = _load_state()
     if state is _CORRUPT:
@@ -673,7 +802,7 @@ def _scan(summary: Dict) -> None:
         finish()
         return
 
-    known_titles, known_components = _build_known_sets()
+    known_titles, known_components = _build_known_sets(include_locations=plex_mode)
     additions = _load_torrent_additions()
     rejected_names = _build_rejected_sets(additions)
     ours_names = _build_ours_sets(additions)
@@ -739,6 +868,42 @@ def _scan(summary: Dict) -> None:
         first_seen = entry.get('first_seen', now)
         if entry.get('no_media') and now - first_seen >= PENDING_GIVE_UP_SECONDS:
             _give_up(entry, name, '24h with no media files', summary)
+            continue
+
+        if plex_mode:
+            if _media_server_busy():
+                summary['pending'] += 1
+                logging.info("[ExternalScan] Media server not answering; holding remaining scans for next run.")
+                break
+            if not _scan_due(scan_path):
+                # Scanned moments ago by something else; plex_update_item would skip it.
+                summary['pending'] += 1
+                continue
+            logging.info(f"[ExternalScan] Requesting media server scan of external add: {scan_path}")
+            try:
+                outcome = _request_media_server_scan(scan_path, name)
+            except Exception as e:
+                outcome = 'failed'
+                logging.error(f"[ExternalScan] Scan request failed for '{name}': {e}", exc_info=True)
+            if outcome == 'accepted':
+                entry['imported'] = True
+                entry['media_server_scan'] = now
+                summary['imported'] += 1
+                logging.info(f"[ExternalScan] Media server accepted a scan of '{name}'; "
+                             f"Direct Mount collection picks it up from the library sync.")
+            elif outcome == 'no_library':
+                _give_up(entry, name, f"no media server library holds '{scan_path}' "
+                                      f"(check the library paths match the mount path Clyde sees)", summary)
+            else:
+                summary['failed'] += 1
+                logging.warning(f"[ExternalScan] Media server did not take the scan of '{name}' "
+                                f"(attempt {entry.get('attempts', 0) + 1}/{MAX_ATTEMPTS})")
+            if outcome != 'no_library':
+                entry['attempts'] = entry.get('attempts', 0) + 1
+                entry['last_attempt'] = now
+                if not entry.get('imported') and entry['attempts'] >= MAX_ATTEMPTS:
+                    _give_up(entry, name, f"{entry['attempts']} attempts", summary)
+            dirty = True
             continue
 
         logging.info(f"[ExternalScan] Importing external add: {scan_path}")
