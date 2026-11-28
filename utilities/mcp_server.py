@@ -263,8 +263,9 @@ def tool_external_scan_status(limit: int = 30) -> dict:
     for name, e in data.items():
         if name == ems.META_KEY or not isinstance(e, dict):
             continue
-        status = ('imported' if e.get('imported') else 'given_up' if e.get('given_up') else
-                  'rejected' if e.get('rejected') else 'baseline' if e.get('baseline') else
+        status = ('already_in_library' if e.get('tracked_existing') else 'imported' if e.get('imported') else
+                  'given_up' if e.get('given_up') else 'clydes_own_leftover' if e.get('ours') else
+                  'rejected_blacklisted' if e.get('rejected') else 'baseline' if e.get('baseline') else
                   'gone' if e.get('gone_since') else 'waiting_for_media' if e.get('no_media') else 'pending')
         counts[status] = counts.get(status, 0) + 1
         if status != 'baseline':
@@ -521,7 +522,7 @@ TOOLS: Dict[str, Dict[str, Any]] = {
         'fn': tool_external_scan_status,
         'description': 'The "Scan Mount For External Adds" task (files added outside Clyde, e.g. via DMM or the '
                        "debrid site): whether it's on, last run, and what happened to each folder it found "
-                       '(imported, pending, waiting for media, given up, rejected).',
+                       "(imported, already in library, pending, waiting for media, given up, Clyde's own leftover, blacklisted).",
         'schema': _obj({'limit': {'type': 'integer', 'minimum': 1, 'maximum': 200}})},
     'lookup_item': {
         'fn': tool_lookup_item,
