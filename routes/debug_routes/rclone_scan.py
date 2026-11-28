@@ -368,7 +368,9 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                     user_initiated=user_initiated, skip_known_paths=skip_known_paths)
         logging.info(f"[RcloneScan {task_id}] '{_flight_key}' is already being processed by another scan; "
                      f"{'skipping this dry run' if dry_run else 'it will be scanned again when that one ends'}.")
-        update_progress(status='complete', complete=True, success=True,
+        # busy: nothing was looked at, so callers must not read the zero counts
+        # as 'no media files' (the external scan would start its give-up clock).
+        update_progress(status='complete', complete=True, success=True, busy=True,
                         message='This path is already being scanned; it will be scanned again when that scan ends.'
                         if not dry_run else 'Skipped: this path is already being processed by another scan.')
         threading.Timer(300, lambda: rclone_scan_progress.pop(task_id, None)).start()

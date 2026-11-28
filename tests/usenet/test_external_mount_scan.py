@@ -80,6 +80,7 @@ class ExternalMountScanTestBase(unittest.TestCase):
         # Nothing is cli_debrid's own, by default (same lazy database.* imports).
         self._ours_patches = [
             patch.object(ems, '_load_torrent_additions', return_value=[]),
+            patch.object(ems, '_load_nzb_grab_titles', return_value=[]),
             patch.object(ems, '_build_ours_sets', return_value=set()),
             patch.object(ems, '_is_ours', return_value=False),
         ]
@@ -503,6 +504,33 @@ class TestHardening(ExternalMountScanTestBase):
             self.assertTrue(_REAL_IS_OURS('Some.Release-GRP (1)', ours))
             self.assertTrue(_REAL_IS_OURS('Other', ours))
             self.assertFalse(_REAL_IS_OURS('Unrelated', ours))
+
+    def test_ours_set_includes_nzb_grab_titles(self):
+        fake_db = types.ModuleType('database')
+        fake_dr = types.ModuleType('database.database_reading')
+        fake_dr.normalize_string_for_comparison = lambda v: v.lower()
+        with patch.dict(sys.modules, {'database': fake_db, 'database.database_reading': fake_dr}):
+            ours = _REAL_BUILD_OURS([], ['Movie.2020.1080p-GRP'])
+            self.assertTrue(_REAL_IS_OURS('Movie.2020.1080p-GRP', ours))
+            self.assertFalse(_REAL_IS_OURS('Someone.Elses.Movie', ours))
+
+    def test_busy_path_is_pending_not_empty_and_never_given_up(self):
+        """Another scan holding the path reports zero counts: that is not 'no
+        media files', so the 24h give-up clock and attempts stay untouched."""
+        self._baselined()
+        self._mkfolder('Busy.Show')
+        self.import_result = {'busy': True, 'status': 'complete', 'success': True,
+                              'items_added_to_db': 0, 'symlinks_created': 0, 'media_files_found': 0}
+        self._run_scan()
+        self._age('Busy.Show', seconds=ems.PENDING_GIVE_UP_SECONDS + 3600)
+        summary = self._run_scan()
+        entry = self._state()['Busy.Show']
+        self.assertEqual(len(self.import_calls), 1)
+        self.assertEqual(summary['pending'], 1)
+        self.assertEqual(summary['given_up'], 0)
+        self.assertFalse(entry.get('no_media'))
+        self.assertFalse(entry.get('given_up'))
+        self.assertEqual(entry.get('attempts', 0), 0)
 
     # D
     def test_zero_media_does_not_consume_attempt_and_gives_up_after_24h(self):

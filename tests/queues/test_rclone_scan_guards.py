@@ -28,6 +28,8 @@ class TestInFlightGuard(unittest.TestCase):
                     rs._run_rclone_to_symlink_task(d, d, False, 'guard-task')
                 progress = rs.rclone_scan_progress.pop('guard-task')
                 self.assertTrue(progress['complete'])
+                # Marked busy so the external scan doesn't read zero counts as 'no media'.
+                self.assertTrue(progress['busy'])
                 self.assertIn('scanned again', progress['message'])
                 # The guard must not release a path it never acquired.
                 self.assertIn(key, rs._IN_FLIGHT_SCAN_PATHS)

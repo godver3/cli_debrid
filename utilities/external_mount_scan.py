@@ -262,9 +262,32 @@ _OURS_KEYS = ('debrid_folder_name', 'filled_by_title', 'original_scraped_torrent
               'real_debrid_original_title')
 
 
-def _build_ours_sets(additions: Optional[List[Tuple[str, Dict]]] = None) -> Set[str]:
-    """Normalized names of every folder cli_debrid itself added to the account,
-    from any torrent_additions row regardless of not-wanted status."""
+def _load_nzb_grab_titles() -> List[str]:
+    """Release titles of every NZB cli_debrid grabbed. NZB grabs write no
+    torrent_additions row, so without these a job whose media item was later
+    deleted or upgraded away would look like an external add on the usenet root."""
+    conn = None
+    try:
+        from database.core import get_db_connection
+        conn = get_db_connection()
+        rows = conn.execute("SELECT DISTINCT release_title FROM scraper_grabs "
+                            "WHERE kind = 'nzb' AND release_title IS NOT NULL AND release_title != ''").fetchall()
+        return [row[0] for row in rows if isinstance(row[0], str)]
+    except Exception as e:
+        logging.debug(f"[ExternalScan] scraper_grabs unavailable: {e}")  # absent on a fresh install
+        return []
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _build_ours_sets(additions: Optional[List[Tuple[str, Dict]]] = None,
+                     nzb_titles: Optional[List[str]] = None) -> Set[str]:
+    """Normalized names of every folder cli_debrid itself added: any
+    torrent_additions row regardless of not-wanted status, plus its NZB grabs."""
     from database.database_reading import normalize_string_for_comparison
     if additions is None:
         additions = _load_torrent_additions()
@@ -274,6 +297,8 @@ def _build_ours_sets(additions: Optional[List[Tuple[str, Dict]]] = None) -> Set[
             value = data.get(key)
             if value and isinstance(value, str):
                 ours.update(_name_variants(value, normalize_string_for_comparison))
+    for title in nzb_titles or ():
+        ours.update(_name_variants(title, normalize_string_for_comparison))
     return ours
 
 
@@ -832,7 +857,7 @@ def _scan(summary: Dict) -> None:
     known_titles, known_components = _build_known_sets(include_locations=plex_mode)
     additions = _load_torrent_additions()
     rejected_names = _build_rejected_sets(additions)
-    ours_names = _build_ours_sets(additions)
+    ours_names = _build_ours_sets(additions, _load_nzb_grab_titles())
 
     ready = []
     for key, name, path in candidates:
@@ -937,6 +962,12 @@ def _scan(summary: Dict) -> None:
         attempt_used = True
         try:
             progress = _run_import(name, scan_path, symlink_base_path)
+            if progress.get('busy'):
+                # Another scan (e.g. the webhook) is importing this path right
+                # now: not empty, not failed. Retry next run, consume nothing.
+                summary['pending'] += 1
+                logging.info(f"[ExternalScan] '{name}' is being imported by another scan; will check next run.")
+                continue
             added = progress.get('items_added_to_db', 0)
             symlinks = progress.get('symlinks_created', 0)
             problems = [f"{label} {progress.get(k, 0)}" for k, label in (

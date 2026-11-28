@@ -31,14 +31,21 @@
         return urlParams.get(param);
     }
 
-    const savedFiltersJSON = localStorage.getItem(STORAGE_KEYS.FILTERS);
-    const savedSortColumn = localStorage.getItem(STORAGE_KEYS.SORT_COLUMN);
-    const savedSortOrder = localStorage.getItem(STORAGE_KEYS.SORT_ORDER);
-    const savedColumnsJSON = localStorage.getItem(STORAGE_KEYS.SELECTED_COLUMNS);
-    const savedContentType = localStorage.getItem(STORAGE_KEYS.CONTENT_TYPE);
-    const savedFilterLogic = localStorage.getItem(STORAGE_KEYS.FILTER_LOGIC);
-    const savedLetter = localStorage.getItem(STORAGE_KEYS.LETTER);
-    const savedPerPage = localStorage.getItem(STORAGE_KEYS.PER_PAGE);
+    // Storage can throw (site data blocked, some private modes). A shell page
+    // must still redirect, so every read falls back to the defaults.
+    function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+    function ssGet(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }
+    function ssSet(k, v) { try { sessionStorage.setItem(k, v); } catch (e) { /* ignore */ } }
+    function ssDel(k) { try { sessionStorage.removeItem(k); } catch (e) { /* ignore */ } }
+
+    const savedFiltersJSON = lsGet(STORAGE_KEYS.FILTERS);
+    const savedSortColumn = lsGet(STORAGE_KEYS.SORT_COLUMN);
+    const savedSortOrder = lsGet(STORAGE_KEYS.SORT_ORDER);
+    const savedColumnsJSON = lsGet(STORAGE_KEYS.SELECTED_COLUMNS);
+    const savedContentType = lsGet(STORAGE_KEYS.CONTENT_TYPE);
+    const savedFilterLogic = lsGet(STORAGE_KEYS.FILTER_LOGIC);
+    const savedLetter = lsGet(STORAGE_KEYS.LETTER);
+    const savedPerPage = lsGet(STORAGE_KEYS.PER_PAGE);
 
     const queryParams = new URLSearchParams();
     let needsRedirect = false;
@@ -105,7 +112,7 @@
     queryParams.set('per_page', perPage);
 
     const redirectFlag = 'database_redirect_marker';
-    const flagIsSet = sessionStorage.getItem(redirectFlag) === 'true';
+    const flagIsSet = ssGet(redirectFlag) === 'true';
 
     if (getQueryParam('ajax') === '1' || flagIsSet) {
         needsRedirect = false;
@@ -113,13 +120,13 @@
     if (SHELL) needsRedirect = true;
 
     if (needsRedirect) {
-        sessionStorage.setItem(redirectFlag, 'true');
+        ssSet(redirectFlag, 'true');
         const baseUrl = "{{ url_for('database.index') }}";
         const newUrl = queryParams.toString() ? `${baseUrl}?${queryParams.toString()}` : baseUrl;
         window.location.replace(newUrl);
     } else {
         if (flagIsSet) {
-            sessionStorage.removeItem(redirectFlag);
+            ssDel(redirectFlag);
         }
     }
 })();

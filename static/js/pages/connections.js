@@ -235,6 +235,12 @@
     allCards().forEach(e => { if (e.group === group) { e.status = 'checking'; e.ts = null; } });
   }
 
+  // A check that failed or timed out must not leave cards spinning: whatever in
+  // the group never got a result shows as offline (Refresh All retries).
+  function failUnchecked(group) {
+    allCards().forEach(e => { if (e.group === group && e.status === 'checking') { e.status = 'offline'; e.ts = Date.now(); } });
+  }
+
   function render() {
     tngRenderStats();
     tngRender();
@@ -279,8 +285,9 @@
         resolve(service, data[key].connected);
       }
     } catch (e) {
-      // Leave the cards as they are; "Refresh All" retries.
+      // Request failed or returned bad JSON: handled below.
     }
+    failUnchecked('system');
     render();
   }
 
@@ -291,7 +298,14 @@
     const seen = new Set();
     return new Promise((done) => {
       const es = new EventSource(url);
-      const finish = () => { es.close(); done(); };
+      let finished = false;
+      let timer = null;
+      const finish = () => {
+        if (finished) return;  // a later run's cards must not be failed by this run's timer
+        finished = true;
+        clearTimeout(timer);
+        es.close(); failUnchecked(group); render(); done();
+      };
       es.addEventListener(eventName, (e) => {
         const item = JSON.parse(e.data);
         const service = group + '-' + slugify(item.name);
@@ -307,7 +321,7 @@
         finish();
       });
       es.onerror = finish;
-      setTimeout(finish, timeoutMs);
+      timer = setTimeout(finish, timeoutMs);
     });
   }
 

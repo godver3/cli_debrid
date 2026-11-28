@@ -355,3 +355,17 @@ def test_registered_in_scraper_manager_and_schema():
     from utilities.settings_schema.scrapers import SECTIONS
     assert ScraperManager({}).scrapers['Comet'] is comet.scrape_comet_instance
     assert "Comet" in SECTIONS["Scrapers"]["schema"]
+
+
+def test_raw_json_config_never_encodes_a_slash():
+    # '?' at byte 3k+2 is the only ASCII that makes standard base64 emit '/'.
+    for pad in range(3):
+        raw = json.dumps({'k' * (pad + 1): 'a?b?c?d', 'name': 'caf\u00e9'})
+        seg = comet.derive_base_url('https://comet.example', raw).rsplit('/', 1)[1]
+        assert '/' not in seg
+        assert json.loads(base64.b64decode(seg)) == json.loads(raw)
+
+
+def test_redact_url_hides_multi_segment_config():
+    out = comet.redact_url('https://comet.example/AAA/BBB/stream/movie/tt1.json')
+    assert 'AAA' not in out and out == 'https://comet.example/<config>/stream/movie/tt1.json'

@@ -61,10 +61,15 @@ def _encode_config(config: str) -> str:
         return ''
     if config.startswith('{'):
         try:
-            json.loads(config)
+            parsed = json.loads(config)
         except ValueError as e:
             raise CometError(f"Comet 'config' is not valid JSON: {e}")
-        return base64.b64encode(config.encode('utf-8')).decode('ascii')
+        # Comet decodes with standard base64 and routes on one path segment, so
+        # the encoding must never contain '/'. Pure-ASCII bytes only produce '/'
+        # from '?' or DEL, so escape those (and non-ASCII) as \uXXXX: same JSON.
+        text = json.dumps(parsed, ensure_ascii=True, separators=(',', ':'))
+        text = text.replace('?', '\\u003f').replace('\x7f', '\\u007f')
+        return base64.b64encode(text.encode('ascii')).decode('ascii')
     return config.strip('/')
 
 
@@ -112,7 +117,9 @@ def derive_base_url(url: str, config: str = '') -> str:
 def redact_url(url: str) -> str:
     """Hide the (possibly debrid-key bearing) config segment of a Comet URL."""
     parts = urlsplit(url or '')
-    path = re.sub(r'/[^/]+/(stream/|manifest\.json)', r'/<config>/\1', parts.path, count=1)
+    # Everything between the host and /stream/ or /manifest.json, so a pasted
+    # config containing '/' is hidden whole.
+    path = re.sub(r'^/.+?/(stream/|manifest\.json)', r'/<config>/\1', parts.path, count=1)
     return f"{parts.scheme}://{parts.netloc}{path}" if parts.scheme else path
 
 
